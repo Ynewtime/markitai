@@ -17,6 +17,8 @@ import { basename, fmtBytes, fmtDateTime, fmtDay, localeTag, readable, timestamp
 import { cardFacts, parseFrontMatter } from "../lib/frontmatter.ts";
 import { FrontCard } from "./front-matter.tsx";
 import { loadArtifactImages, renderMarkdown, splitFrontmatter, type ImageLoads } from "../lib/markdown.ts";
+import { docsPage } from "../lib/docs.ts";
+import { typeset } from "../lib/math.ts";
 import { groupNotices, type NoticeGroup } from "../lib/notices.ts";
 import { cachedExcerpt, loadExcerpt, resultKey } from "../lib/results.ts";
 import { canRetry, isPreviewable, type SessionItem } from "../lib/session.ts";
@@ -38,6 +40,8 @@ export interface ItemActionsApi {
   retryPlain(item: SessionItem): void;
   retryWithOcr(item: SessionItem): void;
   enhance(item: SessionItem): void;
+  /** Convert this item's original again with options chosen on the Convert page: a new submission. */
+  reconvert(item: SessionItem): void;
   remove(item: SessionItem): Promise<boolean>;
   openModels(): void;
 }
@@ -124,7 +128,6 @@ export interface InspectorContext {
   failure: ActionFailure | null;
 }
 
-const docsPage = (docsUrl: string, page: string) => (/\/index\.md$/.test(docsUrl) ? docsUrl.replace(/index\.md$/, `${page}.md`) : docsUrl);
 
 export function costText(t: Dict, state: CostState): string {
   switch (state.kind) {
@@ -196,6 +199,9 @@ function itemLine(ctx: InspectorContext, item: SessionItem, elapsed: number | nu
   );
 }
 
+/** One wording seen several times (a count to show, since the title does not say it). */
+const isRepeated = (group: NoticeGroup) => group.kind === "other" && group.count > 1 && group.pages === null;
+
 function NoticeList({ t, groups, docsUrl, where, onShow }: { t: Dict; groups: NoticeGroup[]; docsUrl: string; where: boolean; onShow?: (group: NoticeGroup) => void }) {
   if (!groups.length) return null;
   return (
@@ -208,9 +214,14 @@ function NoticeList({ t, groups, docsUrl, where, onShow }: { t: Dict; groups: No
           <div class="notice-body">
             <p class="notice-text">
               {t.noticeTitle(group.kind, group.count, group.models, group.sample, group.pages)}
-              {group.kind === "other" && group.count > 1 && group.pages === null && <span class="notice-count"> ×{group.count}</span>}
+              {isRepeated(group) && !where && <span class="notice-count"> ×{group.count}</span>}
             </p>
-            {where && <p class="notice-where">{t.noticeWhere(group.names)}</p>}
+            {where && (
+              <p class="notice-where">
+                {isRepeated(group) && <span class="notice-count">×{group.count}</span>}
+                {t.noticeWhere(group.names)}
+              </p>
+            )}
             {(group.samples.length > 1 || group.kind !== "other") && (
               <details class="notice-details">
                 <summary>{t.notificationDetails}</summary>
@@ -286,6 +297,7 @@ function Excerpt({ ctx, item, onOpen }: { ctx: InspectorContext; item: SessionIt
         // The excerpt clips its own overflow: its few pictures load at once.
         for (const image of fragment.querySelectorAll("img")) image.setAttribute("loading", "eager");
         target.replaceChildren(fragment);
+        void typeset(target);
         loads = loadArtifactImages(
           target,
           (path) => fetchBlob(imagePath(item.jobId, item.itemId, path)).then((file) => file.blob),
@@ -362,6 +374,8 @@ export function itemActs(ctx: InspectorContext, item: SessionItem, actions: Item
   if (imageOnly && retryable) shown.push({ key: "ocr", label: t.enableOcr, primary: true, disabled: busy, run: () => actions.retryWithOcr(item) });
   if (previewable && !item.llmEnhanced && item.retryable && ctx.llmReady) more.push({ key: "enhance", label: t.enhance, icon: "MagicWand", disabled: busy, run: () => actions.enhance(item) });
   if (previewable && retryable === false && item.retryable) more.push({ key: "again", label: t.runAgain, icon: "ArrowCounterClockwise", disabled: busy, run: () => actions.retry(item) });
+  if (item.status !== "running" && item.status !== "queued")
+    more.push({ key: "reconvert", label: t.reconvert, title: t.reconvertItemTitle, icon: "ArrowCounterClockwise", disabled: busy, run: () => actions.reconvert(item) });
   const danger: MenuDanger | null =
     item.status !== "running" && item.status !== "queued"
       ? {

@@ -57,7 +57,16 @@ variable, for a provider that needs one; `key_variable` names the variable),
 (429), `network` (no answer: DNS, connection, TLS, or a redirect, which discovery
 does not follow), `timeout` (the request limit or the service backstop) or
 `provider_error` (404, which for a list means the address has none, any other
-status, or an answer without a readable list). `detail` reads
+status, or an answer without a readable list). A subscription runtime (Copilot,
+Claude Code, Codex) says its cause instead: `runtime_missing` (no program on the
+server's PATH, or the path variable names no file), `runtime_unsupported` (a
+release the adapter does not speak; `runtime.installed` has it when the runtime
+could be asked), `not_signed_in` (also when the Claude catalog loads but its
+account is not a subscription login), `runtime_failed` (the adapter's own fixed
+message is the `detail`) or `timeout`. The answer adds `runtime`
+(`{name, required, installed?}`) and, for the first three, `next_step`
+(`{kind: "install" | "sign_in", command}`: the pinned `npm install -g` command, or
+`markitai auth <provider> login`); nothing the runtime printed is repeated. `detail` reads
 `Model discovery returned HTTP 401: <the provider's message>` (the message from
 its JSON `error.message`, `message`, `error` or `detail`, else a short text
 excerpt without markup, at most 300 characters, with the key that was sent

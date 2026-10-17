@@ -226,7 +226,7 @@ fn built_assets_are_sent_compressed_or_plain_and_revalidate() {
     let directory = tempfile::tempdir().unwrap();
     let server = Server::start(directory.path());
     let js = "text/javascript; charset=utf-8";
-    let compressed: [(&str, &[u8], &[u8], &str); 4] = [
+    let compressed: [(&str, &[u8], &[u8], &str); 6] = [
         (
             "/ui/app.js",
             include_bytes!("../src/server/web/dist/app.js.gz"),
@@ -237,6 +237,18 @@ fn built_assets_are_sent_compressed_or_plain_and_revalidate() {
             "/ui/app.css",
             include_bytes!("../src/server/web/dist/app.css.gz"),
             include_bytes!("../src/server/web/dist/app.css"),
+            "text/css; charset=utf-8",
+        ),
+        (
+            "/ui/math.js",
+            include_bytes!("../src/server/web/dist/math.js.gz"),
+            include_bytes!("../src/server/web/dist/math.js"),
+            js,
+        ),
+        (
+            "/ui/math.css",
+            include_bytes!("../src/server/web/dist/math.css.gz"),
+            include_bytes!("../src/server/web/dist/math.css"),
             "text/css; charset=utf-8",
         ),
         (
@@ -278,7 +290,7 @@ fn built_assets_are_sent_compressed_or_plain_and_revalidate() {
         assert!(body.is_empty(), "{path}");
         assert_eq!(headers["content-type"], content_type, "{path}");
     }
-    let plain: [(&str, &[u8], &str); 3] = [
+    let plain: [(&str, &[u8], &str); 4] = [
         (
             "/ui/boot.js",
             include_bytes!("../src/server/web/dist/boot.js"),
@@ -292,6 +304,11 @@ fn built_assets_are_sent_compressed_or_plain_and_revalidate() {
         (
             "/ui/inter-latin-wght.woff2",
             include_bytes!("../../../vendor/web/inter-latin-wght-normal.woff2"),
+            "font/woff2",
+        ),
+        (
+            "/ui/KaTeX_Main-Regular.woff2",
+            include_bytes!("../../../vendor/web/KaTeX_Main-Regular.woff2"),
             "font/woff2",
         ),
     ];

@@ -1598,8 +1598,20 @@
           "detail": { "type": "string", "description": "English summary; for a failure its cause, such as `Model discovery returned HTTP 401: <the provider's message>`, `Model discovery timed out`, `Model discovery request failed: <cause>` or `DEEPSEEK_API_KEY is not set on the server, so nothing was sent`; never the key" },
           "reason": {
             "type": "string",
-            "description": "Only on a failed discovery (`status: \"unavailable\"` from a live list or a subscription runtime): why. `no_key`: no key while the provider needs one, found before any request, or a keyless request refused with 401/403; `key_rejected`: HTTP 401 or 403; `rate_limited`: HTTP 429; `network`: no HTTP response (name resolution, connection, TLS, a redirect, which discovery never follows); `timeout`: no answer in time; `provider_error`: anything else, HTTP 404 (the address lists no models) and an unreadable list included. `model_not_found` is listed for symmetry with the connection test and not sent by discovery",
-            "enum": ["no_key", "key_rejected", "model_not_found", "rate_limited", "network", "timeout", "provider_error"]
+            "description": "Only on a failed discovery (`status: \"unavailable\"` from a live list or a subscription runtime): why. `no_key`: no key while the provider needs one, found before any request, or a keyless request refused with 401/403; `key_rejected`: HTTP 401 or 403; `rate_limited`: HTTP 429; `network`: no HTTP response (name resolution, connection, TLS, a redirect, which discovery never follows); `timeout`: no answer in time; `provider_error`: anything else, HTTP 404 (the address lists no models) and an unreadable list included. `model_not_found` is listed for symmetry with the connection test and not sent by discovery. A subscription runtime (Copilot, Claude, ChatGPT/Codex) says its cause instead: `runtime_missing` (not found on the server's PATH, or the path variable names no file), `runtime_unsupported` (a release the adapter does not speak; `runtime.installed` names it when known), `not_signed_in`, `runtime_failed` (installed and signed in as far as known, but it failed; `detail` has the adapter's own fixed message), and `timeout`; these come with `runtime` and, except `runtime_failed` and `timeout`, a `next_step`",
+            "enum": ["no_key", "key_rejected", "model_not_found", "rate_limited", "network", "timeout", "provider_error", "runtime_missing", "runtime_unsupported", "not_signed_in", "runtime_failed"]
+          },
+          "runtime": {
+            "type": "object",
+            "required": ["name", "required"],
+            "description": "Only for a subscription runtime that gave no list: which official runtime, the release the adapter speaks and, when it could be asked, the release installed",
+            "properties": { "name": { "type": "string" }, "required": { "type": "string" }, "installed": { "type": "string" } }
+          },
+          "next_step": {
+            "type": "object",
+            "required": ["kind", "command"],
+            "description": "What to run on the machine where `markitai serve` runs: `install` (a command that installs a release the adapter speaks) or `sign_in` (the login command)",
+            "properties": { "kind": { "type": "string", "enum": ["install", "sign_in"] }, "command": { "type": "string" } }
           },
           "key_variable": { "type": "string", "description": "With `no_key`, the name of the environment variable the key would come from, when one is named; never its value" }
         }

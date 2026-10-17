@@ -9,7 +9,13 @@ key, using the provider's separately installed official command-line runtime:
 | `claude-agent/MODEL` | Claude Code CLI `2.1.284` or a later 2.1 patch release | `markitai auth claude status`, `markitai auth claude login` |
 | `chatgpt/gpt-5.5` | Codex CLI `0.159.0` | `markitai auth chatgpt status`, `markitai auth chatgpt login` |
 
-`markitai auth` alone reports all three. Other runtime versions fail explicitly
+`markitai auth` alone reports all three. When the workbench or
+`POST /api/settings/llm/model-discovery` cannot list a runtime's models, the answer names the cause
+(`runtime_missing`, `runtime_unsupported`, `not_signed_in`, `runtime_failed`; see
+[provider management](provider-management.md)) with the command to run: the
+runtimes are installed at the pinned release (`npm install -g @github/copilot@1.0.90-2`,
+`@anthropic-ai/claude-code@2.1.284`, `@openai/codex@0.159.0`) because they update
+themselves and a newer minor line is refused, and signed in with `markitai auth <provider> login`. Other runtime versions fail explicitly
 before a model request. Login is never started during a conversion, and these
 adapters support Unix and Windows process management. A compatible official
 runtime and its own platform prerequisites are still required; fixture coverage

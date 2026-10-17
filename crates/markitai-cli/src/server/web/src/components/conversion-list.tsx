@@ -13,14 +13,15 @@
 // one checked, Ctrl/⌘+A checks everything listed, Escape clears and Delete asks
 // to delete. Enter still opens. Items still converting cannot be checked.
 import { memo } from "preact/compat";
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { Dict, Locale } from "../i18n/index.ts";
 import { isGroup, jobKey, navigationOrder, presetOf, submissionLabel, type Submission } from "../lib/conversions.ts";
 import { fmtClock } from "../lib/format.ts";
-import { rowWarnings } from "../lib/notices.ts";
+import { groupNotices, rowWarnings } from "../lib/notices.ts";
 import type { SessionItem } from "../lib/session.ts";
 import { NameText } from "./file-name.tsx";
 import { Duration, glyphOf, StatusGlyph, statusWord, useElapsed } from "./item-bits.tsx";
+import { HelpTooltip } from "./help-tooltip.tsx";
 import { Icon } from "./icons.tsx";
 
 export const rowId = (key: string): string => `row-${key.replace(/[^\w-]/g, "-")}`;
@@ -39,6 +40,12 @@ function CheckBox({ check, label }: { check: Check; label: string }) {
       {check === "mixed" && <span class="check-dash" />}
     </span>
   );
+}
+
+/** What a row's warning mark says on hover, focus or tap: its notices, in the words of the details view. */
+function warningLines(t: Dict, item: SessionItem): string[] {
+  const entries = rowWarnings(item.warnings).map((text) => ({ itemKey: item.key, itemName: item.name, text }));
+  return groupNotices(entries).map((group) => t.noticeTitle(group.kind, group.count, group.models, group.sample, group.pages));
 }
 
 const Row = memo(function Row({
@@ -61,7 +68,8 @@ const Row = memo(function Row({
   check: Check;
 }) {
   const glyph = glyphOf(item);
-  const warnings = rowWarnings(item.warnings).length;
+  const shown = rowWarnings(item.warnings);
+  const warnings = useMemo(() => warningLines(t, item), [t, item.warnings]);
   const elapsed = useElapsed(item.status === "running" ? item.startedAt : null);
   const right =
     glyph === "running" ? (
@@ -88,11 +96,17 @@ const Row = memo(function Row({
       <StatusGlyph glyph={glyph} label={statusWord(t, glyph)} />
       <span class="row-name">
         <NameText name={item.name} kind={item.kind} />
-        {warnings > 0 && (
-          <span class="warn-mark" title={t.itemWarnings(warnings)}>
-            <Icon name="Warning" size={12} />
-            <span class="sr-only">{t.itemWarnings(warnings)}</span>
-            <span aria-hidden="true">{warnings}</span>
+        {shown.length > 0 && (
+          // A press here shows the warnings instead of opening the row.
+          <span class="warn-wrap" onClick={(event) => event.stopPropagation()} onDblClick={(event) => event.stopPropagation()}>
+            <HelpTooltip text={`${t.itemWarnings(shown.length)}: ${warnings.join(" ")}`} lines={warnings} disabled>
+              {() => (
+                <span class="warn-mark">
+                  <Icon name="Warning" size={12} />
+                  <span aria-hidden="true">{shown.length}</span>
+                </span>
+              )}
+            </HelpTooltip>
           </span>
         )}
       </span>
@@ -328,7 +342,7 @@ export function ConversionList({
           >
             <CheckBox check={check} label={t.selectBusy} />
             <span class="group-caret" aria-hidden="true">
-              <Icon name={open ? "CaretDown" : "CaretRight"} size={11} />
+              <Icon name={open ? "CaretDown" : "CaretRight"} size={14} />
             </span>
             <span class="group-label">
               <b>{label}</b>

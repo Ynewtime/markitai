@@ -7,6 +7,7 @@
 //! module never parses that store.
 mod cache;
 mod discovery;
+mod runtime;
 #[cfg(test)]
 mod tests;
 
@@ -449,20 +450,7 @@ fn discover_with_environment(request: &Value, allow_environment: bool) -> Result
         {
             return Err(Error::InvalidInput("Copilot discovery uses official CLI authentication, not API credentials or a base URL".into()));
         }
-        // A stored login can change within one HOME. No discovery cache keyed by
-        // a filesystem path can establish account identity, so query each time.
-        let result = crate::subscription::CopilotConfig::from_env(&env).and_then(|config| {
-            crate::subscription::models(&config, std::time::Duration::from_secs(15))
-                .map_err(|failure| failure.error)
-        });
-        return Ok(match result {
-            Ok(models) => {
-                json!({"provider":"copilot","status":"ok","source":"official_cli","authoritative":true,"cached":false,"stale":false,"models":models,"detail":"Models reported by the authenticated official Copilot runtime"})
-            }
-            Err(_) => {
-                json!({"provider":"copilot","status":"unavailable","source":"official_cli","authoritative":false,"cached":false,"stale":false,"models":[],"detail":"Official Copilot runtime or authentication is unavailable","reason":"provider_error"})
-            }
-        });
+        return Ok(runtime::discover(&provider, &env));
     }
     if provider == "claude-agent" {
         if field(request, "api_key")?.is_some_and(|value| !value.is_empty())
@@ -470,19 +458,7 @@ fn discover_with_environment(request: &Value, allow_environment: bool) -> Result
         {
             return Err(Error::InvalidInput("Claude discovery uses official CLI authentication, not API credentials or a base URL".into()));
         }
-        // A stored subscription can change accounts independently of this process.
-        let result = crate::subscription::claude::Config::from_env(&env).and_then(|config| {
-            crate::subscription::claude::models(&config, std::time::Duration::from_secs(15))
-                .map_err(|failure| failure.error)
-        });
-        return Ok(match result {
-            Ok(models) => {
-                json!({"provider":"claude-agent","status":"ok","source":"official_cli","authoritative":true,"cached":false,"stale":false,"models":models,"detail":"Models reported by the authenticated official Claude runtime"})
-            }
-            Err(_) => {
-                json!({"provider":"claude-agent","status":"unavailable","source":"official_cli","authoritative":false,"cached":false,"stale":false,"models":[],"detail":"Official Claude runtime or subscription authentication is unavailable","reason":"provider_error"})
-            }
-        });
+        return Ok(runtime::discover(&provider, &env));
     }
     if provider == "chatgpt" {
         if field(request, "api_key")?.is_some_and(|value| !value.is_empty())
@@ -490,19 +466,7 @@ fn discover_with_environment(request: &Value, allow_environment: bool) -> Result
         {
             return Err(Error::InvalidInput("Codex discovery uses official CLI authentication, not API credentials or a base URL".into()));
         }
-        // A stored subscription can change accounts independently of this process.
-        let result = crate::subscription::chatgpt::Config::from_env(&env).and_then(|config| {
-            crate::subscription::chatgpt::models(&config, std::time::Duration::from_secs(15))
-                .map_err(|failure| failure.error)
-        });
-        return Ok(match result {
-            Ok(models) => {
-                json!({"provider":"chatgpt","status":"ok","source":"adapter_allowlist","authoritative":false,"cached":false,"stale":false,"models":models,"detail":"Only the pinned gpt-5.5 adapter capability is listed; account entitlement is not discovered"})
-            }
-            Err(_) => {
-                json!({"provider":"chatgpt","status":"unavailable","source":"official_cli","authoritative":false,"cached":false,"stale":false,"models":[],"detail":"Official Codex runtime or subscription authentication is unavailable","reason":"provider_error"})
-            }
-        });
+        return Ok(runtime::discover(&provider, &env));
     }
     if !entry.discovery {
         // Validate the request as for any other provider, then say why no
@@ -680,3 +644,12 @@ fn probe_with_environment(request: &Value, allow_environment: bool) -> Result<Va
 pub fn probe_reasons() -> impl Iterator<Item = &'static str> {
     ProbeReason::ALL.into_iter().map(ProbeReason::name)
 }
+
+/// The further `reason`s a subscription runtime's discovery reports instead
+/// of `provider_error` (see [`runtime`]).
+pub const RUNTIME_REASONS: [&str; 4] = [
+    "runtime_missing",
+    "runtime_unsupported",
+    "not_signed_in",
+    "runtime_failed",
+];

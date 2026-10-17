@@ -433,9 +433,14 @@ export interface DiscoveryResult {
   stale?: boolean;
   models: ModelCandidate[];
   detail?: string;
-  /** v1.11: why an unavailable list failed, with the test's categories (v1.10). */
+  /** v1.11: why an unavailable list failed, with the test's categories (v1.10); a subscription runtime
+   * (Rust, v1.18) says `runtime_missing`, `runtime_unsupported`, `not_signed_in` or `runtime_failed` with `runtime` and `next_step`. */
   reason?: string;
   key_variable?: string;
+  /** v1.18, a subscription runtime that gave no list: which one, the release the adapter speaks, and the release installed when known. */
+  runtime?: { name: string; required: string; installed?: string };
+  /** v1.18: what to run on the machine the server runs on. */
+  next_step?: { kind: "install" | "sign_in"; command: string };
 }
 
 export interface ProbeResult {

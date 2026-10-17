@@ -42,6 +42,7 @@ import {
   splitFrontmatter,
   splitMarkdown,
 } from "../lib/markdown.ts";
+import { typeset } from "../lib/math.ts";
 import { groupNotices } from "../lib/notices.ts";
 import { cachedExcerpt, resultKey } from "../lib/results.ts";
 import type { SessionItem } from "../lib/session.ts";
@@ -401,6 +402,7 @@ export function MarkdownView({
               current.headings[position] = exact;
             }
             target.append(chunk);
+            void typeset(chunk);
             current.nodes.push(chunk);
             loads.add(chunk);
             highlight(chunk);

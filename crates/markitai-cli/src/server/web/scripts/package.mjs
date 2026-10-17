@@ -15,7 +15,7 @@
 // timestamp.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, writeFileSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
@@ -58,9 +58,11 @@ files.set("ui/purify.js", readFileSync(join(vendor, "purify.js")));
 for (const subset of ["latin", "latin-ext", "cyrillic", "cyrillic-ext", "greek", "greek-ext", "vietnamese"]) {
   files.set(`ui/inter-${subset}-wght.woff2`, readFileSync(join(vendor, `inter-${subset}-wght-normal.woff2`)));
 }
+// KaTeX's faces: the math stylesheet names them under /ui/.
+for (const name of readdirSync(vendor).filter((file) => /^KaTeX_.*\.woff2$/.test(file)).sort()) files.set(`ui/${name}`, readFileSync(join(vendor, name)));
 // The backends' block reader: Rust compiles it in; Python evaluates this copy.
 files.set("capture/page-blocks.js", readFileSync(join(root, capture)));
-for (const name of ["marked-LICENSE", "DOMPurify-LICENSE", "Inter-OFL.txt", "phosphor-LICENSE", "lobehub-icons-LICENSE", "preact-LICENSE"]) {
+for (const name of ["marked-LICENSE", "DOMPurify-LICENSE", "Inter-OFL.txt", "phosphor-LICENSE", "lobehub-icons-LICENSE", "preact-LICENSE", "KaTeX-LICENSE"]) {
   files.set(`LICENSES/${name}`, readFileSync(join(vendor, name)));
 }
 

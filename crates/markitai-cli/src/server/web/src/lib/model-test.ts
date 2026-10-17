@@ -36,6 +36,39 @@ export function testFailure(result: Pick<ProbeResult, "detail" | "reason" | "key
   return { reason, variable, detail };
 }
 
+export const RUNTIME_REASONS = ["runtime_missing", "runtime_unsupported", "not_signed_in", "runtime_failed"] as const;
+export type RuntimeReason = (typeof RUNTIME_REASONS)[number];
+
+/** A subscription runtime that gave no list: the cause, and what to run about it (Rust, contract v1.18). */
+export interface RuntimeFailure {
+  reason: RuntimeReason;
+  name: string;
+  required: string;
+  installed: string | null;
+  step: { kind: "install" | "sign_in"; command: string } | null;
+  /** The server's English sentence, kept as the detail. */
+  detail: string;
+}
+
+export function runtimeFailure(result: Pick<DiscoveryResult, "status" | "detail" | "reason" | "runtime" | "next_step">): RuntimeFailure | null {
+  if (result.status !== "unavailable") return null;
+  const reason = RUNTIME_REASONS.find((value) => value === result.reason);
+  if (!reason || !result.runtime || typeof result.runtime.name !== "string") return null;
+  const step = result.next_step && (result.next_step.kind === "install" || result.next_step.kind === "sign_in") && typeof result.next_step.command === "string" ? result.next_step : null;
+  return {
+    reason,
+    name: result.runtime.name,
+    required: String(result.runtime.required ?? ""),
+    installed: typeof result.runtime.installed === "string" ? result.runtime.installed : null,
+    step,
+    detail: result.detail ?? "",
+  };
+}
+
+/** Whether adding a model by hand can work at all: not while the runtime is missing, unsupported or signed out.
+ * A runtime that merely failed may do better next time, so entry stays open with a warning. */
+export const addingIsBlocked = (failure: RuntimeFailure | null): boolean => failure !== null && failure.reason !== "runtime_failed";
+
 /** Why a model list could not be loaded, when the server says so (v1.11
  * `reason`) or its text is a failed request (Python 1.2.1's "model discovery
  * failed (…)"); null for a list that is only partial or that the provider does

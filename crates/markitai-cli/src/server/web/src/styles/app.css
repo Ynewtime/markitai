@@ -572,7 +572,10 @@ textarea {
 }
 .sidebar-foot .version {
   padding: 6px 10px 0;
-  overflow-wrap: normal;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  letter-spacing: -0.02em;
   font-family: var(--font-mono);
   font-size: var(--text-xs);
   color: var(--text-3);
@@ -1130,7 +1133,7 @@ main:focus {
   justify-self: end;
 }
 .group-head.has-check {
-  grid-template-columns: 16px 18px minmax(0, 1fr) auto;
+  grid-template-columns: 16px 32px minmax(0, 1fr) auto;
   gap: 10px;
 }
 .row-check {
@@ -1218,7 +1221,20 @@ main:focus {
   color: color-mix(in srgb, var(--accent-contrast) 62%, var(--accent));
   border-color: transparent;
 }
+.select-bar .select-reconvert {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--accent-contrast) 16%, var(--accent));
+  color: var(--accent-contrast);
+}
+.select-bar .select-reconvert:disabled {
+  background: color-mix(in srgb, var(--accent-contrast) 14%, var(--accent));
+  color: color-mix(in srgb, var(--accent-contrast) 62%, var(--accent));
+}
+.select-bar .select-reconvert:not(:disabled):hover {
+  background: color-mix(in srgb, var(--accent-contrast) 24%, var(--accent));
+}
 .select-link:focus-visible,
+.select-bar .select-reconvert:focus-visible,
 .select-bar .select-delete:focus-visible {
   outline: 2px solid var(--accent-contrast);
   outline-offset: 1px;
@@ -1253,6 +1269,13 @@ main:focus {
 .nm.has-host .mid-host {
   color: var(--text-3);
 }
+.warn-wrap {
+  display: inline-flex;
+}
+.warn-wrap .help-anchor {
+  padding: 2px 4px;
+  border-radius: var(--r-xs);
+}
 .warn-mark {
   display: inline-flex;
   flex: none;
@@ -1264,8 +1287,8 @@ main:focus {
 }
 .group-head {
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) auto;
-  align-items: baseline;
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  align-items: center;
   gap: 8px;
   padding: 14px 8px 6px;
   border-bottom: 1px solid var(--hairline);
@@ -1273,15 +1296,19 @@ main:focus {
   color: var(--text-3);
   cursor: pointer;
 }
-/* the chevron sits in the status glyphs' column: one left edge with a lone
-   conversion's mark below it */
+/* the chevron's cell is the leading area of the header, as tall as the row (the padding above and
+   below it is taken back): a click anywhere in it opens or closes the submission */
 .group-caret {
-  display: inline-grid;
-  align-self: center;
+  display: grid;
+  align-self: stretch;
   place-items: center;
-  width: 18px;
-  height: 18px;
+  margin-block: -14px -6px;
+  border-radius: var(--r-xs);
   color: var(--text-3);
+  transition: background-color var(--dur-fast) ease, color var(--dur-fast) ease;
+}
+.group-head:hover .group-caret {
+  color: var(--text-1);
 }
 .group-label {
   min-width: 0;
@@ -1292,6 +1319,12 @@ main:focus {
 .group-label b {
   font-weight: 600;
   color: var(--text-1);
+}
+.group-side,
+.row-side {
+  /* the monospace figures ride a pixel above the sans names' centre */
+  position: relative;
+  top: 1px;
 }
 .group-side {
   font-family: var(--font-mono);
@@ -1517,6 +1550,10 @@ main:focus {
   font-size: var(--text-sm);
   color: var(--text-3);
 }
+/* the count leads the file list, on its line */
+.notice-where > .notice-count {
+  margin-right: 8px;
+}
 .notice-details ul {
   max-height: 160px;
   margin-top: 4px;
@@ -1709,8 +1746,8 @@ main:focus {
 }
 .front-table {
   display: grid;
-  grid-template-columns: minmax(5em, max-content) minmax(0, 1fr);
-  column-gap: 20px;
+  /* one key width for every document: long keys wrap inside it, short ones leave no hole */
+  grid-template-columns: 10.5em minmax(0, 1fr);
   margin: 0;
 }
 .front-row {
@@ -1721,11 +1758,18 @@ main:focus {
   padding: 6px 0;
   border-top: 1px solid var(--hairline);
 }
+.front-table > .front-row:last-child > * {
+  border-bottom: 1px solid var(--hairline);
+}
 .front-table dt {
+  padding-right: 12px;
+  overflow-wrap: anywhere;
+  border-right: 1px solid var(--hairline);
   color: var(--text-3);
 }
 .front-table dd {
   margin: 0;
+  padding-left: 14px;
   overflow-wrap: anywhere;
   color: var(--text-1);
 }
@@ -1745,8 +1789,10 @@ main:focus {
 }
 @media (max-width: 760px) {
   .front-table {
-    grid-template-columns: minmax(4.5em, max-content) minmax(0, 1fr);
-    column-gap: 12px;
+    grid-template-columns: 8.5em minmax(0, 1fr);
+  }
+  .front-table dd {
+    padding-left: 12px;
   }
 }
 /* The Details excerpt opens Preview: the whole card is one button under the properties control. */
@@ -2823,6 +2869,9 @@ kbd {
 }
 .settings-page > .version {
   margin-top: 20px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   text-align: center;
   font-family: var(--font-mono);
   font-size: var(--text-xs);
@@ -3264,6 +3313,14 @@ kbd {
 /* a row's help: one line on the row, then each choice and what it does */
 .help-bubble.is-list {
   width: min(360px, calc(100vw - 24px));
+  text-align: left;
+}
+.help-lines {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
   text-align: left;
 }
 .help-lede {
@@ -5139,9 +5196,24 @@ input[type="password"],
   border: 1px solid var(--hairline);
   border-radius: var(--r-sm);
 }
-/* the version line breaks only between its parts, never inside a commit or a date */
-.version-part {
-  white-space: nowrap;
+/* formulas: drawn by the lazily loaded renderer (math.css holds KaTeX's own rules); until then, or when one
+   does not parse, the source text shows in the code face */
+.math:not(.is-typeset) {
+  font-family: var(--font-mono);
+  color: var(--text-2);
+}
+.math-display {
+  display: block;
+  margin: 12px 0;
+  padding-block: 2px;
+  overflow-x: auto;
+  text-align: center;
+}
+.math-display .katex-display {
+  margin: 0;
+}
+.toc-text .katex {
+  font-size: 1em;
 }
 /* a linked video poster played in place: the picture's frame, at most the
    column's width and 70% of the view's height, letterboxed on the surface */
@@ -5770,11 +5842,6 @@ input[type="password"],
     -webkit-backdrop-filter: blur(12px);
     backdrop-filter: blur(12px);
   }
-  .phone-top .version {
-    font-family: var(--font-mono);
-    font-size: var(--text-xs);
-    color: var(--text-3);
-  }
   .tabbar {
     position: fixed;
     right: 0;
@@ -5846,7 +5913,11 @@ input[type="password"],
   .conv-head .conv-summary {
     flex: 1 0 100%;
     order: 1;
-    margin-top: -6px;
+    margin-top: 4px;
+  }
+  .conv-head .head-actions .btn:not(.btn-icon) {
+    gap: 5px;
+    padding-inline: 8px;
   }
   .conv-head .head-stop {
     order: 2;
@@ -5877,6 +5948,14 @@ input[type="password"],
   .row {
     min-height: 44px;
   }
+  /* a finger: the chevron's cell is 40 px wide and the header 44 px tall */
+  .group-head {
+    min-height: 44px;
+    grid-template-columns: 40px minmax(0, 1fr) auto;
+  }
+  .group-head.has-check {
+    grid-template-columns: 16px 40px minmax(0, 1fr) auto;
+  }
   /* Select mode on a phone: the bar sits over the tab bar's top edge, and the
      list leaves room for it under its last row */
   .select-bar {
@@ -5888,6 +5967,14 @@ input[type="password"],
   }
   .select-bar .select-link {
     height: 36px;
+  }
+  /* an icon on a phone: the bar's room goes to the count and the two actions */
+  .select-bar .select-reconvert-text {
+    display: none;
+  }
+  .select-bar .select-reconvert {
+    width: 36px;
+    padding: 0;
   }
   .conv-list.is-selecting {
     margin-bottom: 76px;
@@ -6558,9 +6645,51 @@ input[type="password"],
   color: var(--text-2);
   overflow-wrap: anywhere;
 }
+.runtime-notice .test-failure-copy {
+  grid-template-columns: minmax(0, 1fr);
+}
+.runtime-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 4px;
+  padding: 4px 4px 4px 12px;
+  border-radius: var(--r-xs);
+  background: var(--strip);
+}
+.runtime-step code {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--text-1);
+}
+.runtime-step-kind {
+  flex: none;
+  font-size: var(--text-sm);
+  color: var(--text-3);
+}
+.runtime-links {
+  margin-top: 4px;
+  font-size: var(--text-sm);
+}
+.manual-note {
+  margin-top: 6px;
+}
 .config-actions {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
+}
+/* the editor's footer: the JSON check at the left, the two actions at the right, one row */
+.config-actions.is-foot {
+  flex-wrap: nowrap;
+  align-items: center;
+}
+.config-actions.is-foot .config-check {
+  flex: 1 1 0;
+  min-width: 0;
+  margin-right: auto;
 }

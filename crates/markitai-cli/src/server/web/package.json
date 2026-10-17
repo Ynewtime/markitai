@@ -18,6 +18,7 @@
   },
   "devDependencies": {
     "esbuild": "0.28.2",
+    "katex": "0.19.0",
     "preact": "10.29.8",
     "typescript": "6.0.3"
   }

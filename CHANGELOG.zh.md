@@ -3,6 +3,11 @@
 ## [1.3.0]
 
 ### 新增
+- 订阅类提供商的官方运行时无法列出模型时会说明原因：`POST /api/settings/llm/model-discovery`（及用户路由）返回 `reason` 为 `runtime_missing`、`runtime_unsupported`、`not_signed_in` 或 `runtime_failed`（另有 `timeout`），并附 `runtime`（`name`、`required`、`installed`）和 `next_step`（`install`：固定版本的 `npm install -g …` 命令；`sign_in`：`markitai auth <provider> login`），Claude、Copilot、ChatGPT 一致，不再一律是 `provider_error`。工作台显示原因、带复制按钮的命令和设置指南，并在运行时缺失、版本不支持或未登录时关闭「按 ID 添加模型」（运行时出错但原因不明时只给出提醒）。工作台契约 v1.18。
+- 工作台转换列表中提交头部的展开箭头更大，其整个前导区域（宽屏 32 × 38 px，手机 40 × 44 px）都可点击展开或折叠。
+- 工作台支持数学公式：「渲染」视图、标题和目录中的 `$…$` 行内公式与 `$$…$$` 独立公式（含 aligned 等环境）。KaTeX 0.19.0 打包为单独的 `math.js`，连同样式表和 woff2 字体都由二进制提供，仅当文档含公式时才加载；无法绘制的公式保留为源码，`$5 and $6` 这类价格仍是文本。
+- 工作台的转换列表支持重新转换：选择栏里「删除」旁的「重新转换」（以及单个转换的 ⋯ 菜单）把所选已保留的原文件带回「转换」页（上传文件从服务器读回，网页按地址重新加入），默认展开选项，并作为新的一批转换，不覆盖第一次的结果；不再保留的原文件会被列出，没有可用模型时会立即说明。
+- 转换列表中的警告标记在悬停、聚焦或轻点时显示其提示内容。
 - 工作台「对照」为 PDF 提供阅读器工具栏：缩放（适合宽度、适合页面、50–200 %，指针在该栏上时 Ctrl/⌘ + − 0）、上一页/下一页和页码框，以及大纲面板（PDF 自带的书签，没有时为 Markdown 的标题，再没有时为页面缩略图）；任意缩放下块链接都保持有效，长 PDF 的页面文字在后台读取，使链接覆盖到最后一页（不再回绕到前面写着相同文字的页面）。`markitai serve` 新增 `GET …/original/outline`（`features.pdf_outline`），以 `{items: [{title, page, level}], truncated}` 返回 PDF 的书签。
 - `markitai serve` 为工作台的转换选项提供默认设置：`GET /api/convert-defaults` 返回服务器的默认设置（来自其配置：`llm.enabled`、`ocr.enabled`、`image.alt_enabled`、`image.desc_enabled`、`screenshot.enabled`、`screenshot.screenshot_only`、`llm.pure`、`cache.no_cache`、`image.compress`、`output.profile`、`fetch.strategy`），对用户令牌则是其自己的默认设置覆盖在服务器的之上；`PUT /api/convert-defaults` `{expected_revision, defaults}` 把管理员的默认设置写入 `config.json`（只写文件已有的键或与内置默认值不同的值），把用户的写入其自己的文件（`null` 表示重新跟随服务器）；Cloudflare 不能设为默认（422 `invalid_convert_defaults`），revision 过期返回 409（`features.convert_defaults`）。工作台契约 v1.17。
 - 工作台的转换选项从这些默认设置开始，说明当前选项是否就是默认设置，并提供「恢复默认」和「设为默认」（用户令牌还有「改用服务器的默认设置」）。
@@ -113,6 +118,7 @@
 - 工作台在「全部转换」列表之上用一个窗口打开转换：「详情」「预览」「对照」为标签页，带上一项/下一项及位置、「下载」（或修复操作：重试、添加模型、启用 OCR）和收纳其余操作的「⋯」，取代停靠在列表旁的检查器和单独的预览；手机上窗口铺满屏幕，取代底部抽屉和全屏预览。列表中方向键只移动，单击、Enter 或空格才打开；「汇总」打开全部条目的概览。「全部转换」页的输入行改为「新建转换」（拖入文件仍会转换；文件夹或多个文件在「转换」页等待）。控件统一为更小的尺寸（按钮 28 px、文字 13 px，手机 36 px，每个区域只有一个实心按钮，其余进「⋯」），所有选择都用同一种分段样式；「上传 ▾」改为「上传」和「文件夹」；手机上可复制和导出 PDF；手机上的短文字操作点击区域达到 44 px；设置页的主要操作（加载模型、保存）固定在底栏；宽窗口下每个页面都是居中的一栏。
 
 ### 修复
+- 工作台的版本行保持一行（手机顶栏不再重复，设置页末尾保留完整版本行）；重复提示的次数与文件列表同行；手机端「转换」页头部按钮更紧凑、摘要上方留白更足；「编辑配置」的 JSON 校验结果与「放弃」「查看更改」同一行；Cloudflare 的设置说明改为该行信息图标的提示；属性表改为统一键宽、键值之间有竖线的两列表格；打开的转换窗口里，浏览器返回键或触控板返回手势像 Esc 一样关闭窗口，而不是离开页面。
 - 网络请求失败时，操作系统层面的原因以类型和错误码表述（`connection refused (os error 111)`），不再使用系统自带的文字（Windows 上是用户语言），各机器上的提示一致。
 - `markitai doctor` 不再启动位于 macOS `.app` 包内的浏览器（只让它报告 `--version`），doctor 运行后 macOS 不再提示“终端被阻止修改你 Mac 上的 App”；标题下不再多一行空行，三条检查信息改为平实的陈述（“macOS Vision API is available”、PaddleOCR 模型文件“are installed and match their SHA-256”、“Old .doc and .ppt files are read by built-in readers; nothing to install”）。需要浏览器的转换仍照常启动它。
 - Anthropic 响应带 `usage.speed: "standard"` 时按普通请求计价（此前被判为没有价格，提示“No reviewed price for claude-haiku-5-5”）；`fast` 响应仍不计价。“Cost is incomplete”提示现在会说明请求为何没有价格（未知模型、不是供应商自有地址的端点、响应模型不同、不支持的计费类别）以及可以怎么改。

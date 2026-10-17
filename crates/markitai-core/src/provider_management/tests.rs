@@ -712,9 +712,140 @@ fn requests_validate_types_urls_without_echoing_values() {
     }
     assert!(probe(&json!({"model":"","api_key":"secret"})).is_err());
     assert!(probe(&json!({"model":"openai/x","fallbacks":["openai/y"]})).is_err());
+    // A subscription provider says why it has no list (see `subscription_runtimes_say_why_they_list_no_models`).
     let subscription = discover(&json!({"provider":"claude-agent"})).unwrap();
     assert_eq!(subscription["status"], "unavailable");
-    assert_eq!(subscription["reason"], "provider_error");
+    assert!(subscription["reason"].is_string());
+}
+
+/// A fake runtime's home: the adapters find it by the variable, the stand-in plays the scenario.
+fn fake_runtime_env(
+    path_variable: &str,
+    home_variable: &str,
+    scenario: Value,
+) -> (tempfile::TempDir, HashMap<String, String>) {
+    let home = tempfile::tempdir().unwrap();
+    crate::subscription::fake_runtime::install(home.path(), &scenario);
+    let env = HashMap::from([
+        (
+            path_variable.to_owned(),
+            crate::subscription::fake_runtime::program()
+                .to_string_lossy()
+                .into_owned(),
+        ),
+        (
+            home_variable.to_owned(),
+            home.path().to_string_lossy().into_owned(),
+        ),
+    ]);
+    (home, env)
+}
+
+#[test]
+fn subscription_runtimes_say_why_they_list_no_models() {
+    // Not installed: nothing named on PATH, and a path that leads nowhere.
+    let empty = tempfile::tempdir().unwrap();
+    let on_path = HashMap::from([(
+        "PATH".to_owned(),
+        empty.path().to_string_lossy().into_owned(),
+    )]);
+    for (provider, command) in [
+        (
+            "claude-agent",
+            "npm install -g @anthropic-ai/claude-code@2.1.284",
+        ),
+        ("copilot", "npm install -g @github/copilot@1.0.90-2"),
+        ("chatgpt", "npm install -g @openai/codex@0.159.0"),
+    ] {
+        let missing = runtime::discover(provider, &on_path);
+        assert_eq!(missing["status"], "unavailable", "{provider}");
+        assert_eq!(missing["reason"], "runtime_missing", "{provider}");
+        assert_eq!(
+            missing["next_step"],
+            json!({"kind":"install","command":command}),
+            "{provider}"
+        );
+        assert!(
+            missing["detail"].as_str().unwrap().contains("PATH"),
+            "{provider}"
+        );
+        assert!(missing["runtime"]["name"].is_string());
+    }
+    let nowhere = HashMap::from([(
+        "CLAUDE_CLI_PATH".to_owned(),
+        empty.path().join("claude").to_string_lossy().into_owned(),
+    )]);
+    let missing = runtime::discover("claude-agent", &nowhere);
+    assert_eq!(missing["reason"], "runtime_missing");
+    assert!(
+        missing["detail"]
+            .as_str()
+            .unwrap()
+            .contains("CLAUDE_CLI_PATH")
+    );
+
+    // Installed, but another release: the installed one is named.
+    let (_home, env) = fake_runtime_env(
+        "CLAUDE_CLI_PATH",
+        "CLAUDE_CONFIG_DIR",
+        json!({"mode":"wrong-version"}),
+    );
+    let old = runtime::discover("claude-agent", &env);
+    assert_eq!(old["reason"], "runtime_unsupported");
+    assert_eq!(old["runtime"]["installed"], "2.1.283");
+    assert!(old["detail"].as_str().unwrap().contains("2.1.283"));
+    assert_eq!(old["next_step"]["kind"], "install");
+    let (_home, env) = fake_runtime_env("CODEX_CLI_PATH", "CODEX_HOME", json!({"name":"version"}));
+    assert_eq!(
+        runtime::discover("chatgpt", &env)["reason"],
+        "runtime_unsupported"
+    );
+
+    // Installed, but not signed in: the next step is the sign-in command.
+    let (_home, env) =
+        fake_runtime_env("CODEX_CLI_PATH", "CODEX_HOME", json!({"name":"auth-none"}));
+    let signed_out = runtime::discover("chatgpt", &env);
+    assert_eq!(signed_out["reason"], "not_signed_in", "{signed_out}");
+    assert_eq!(
+        signed_out["next_step"],
+        json!({"kind":"sign_in","command":"markitai auth chatgpt login"})
+    );
+    let cache = tempfile::tempdir().unwrap();
+    let (_home, mut env) = fake_runtime_env(
+        "COPILOT_CLI_PATH",
+        "COPILOT_HOME",
+        json!({"mode":"unauth","home":std::env::var("HOME").ok(),"cache_home":cache.path()}),
+    );
+    env.insert(
+        "COPILOT_CACHE_HOME".into(),
+        cache.path().to_string_lossy().into_owned(),
+    );
+    let signed_out = runtime::discover("copilot", &env);
+    assert_eq!(signed_out["reason"], "not_signed_in", "{signed_out}");
+    assert_eq!(
+        signed_out["next_step"]["command"],
+        "markitai auth copilot login"
+    );
+
+    let (_home, env) = fake_runtime_env(
+        "CLAUDE_CLI_PATH",
+        "CLAUDE_CONFIG_DIR",
+        json!({"mode":"signed-out"}),
+    );
+    let signed_out = runtime::discover("claude-agent", &env);
+    assert_eq!(signed_out["reason"], "not_signed_in", "{signed_out}");
+    assert_eq!(
+        signed_out["next_step"]["command"],
+        "markitai auth claude login"
+    );
+    assert_eq!(signed_out["detail"], "Claude CLI is not signed in");
+
+    // Working runtimes still list.
+    let (_home, env) =
+        fake_runtime_env("CLAUDE_CLI_PATH", "CLAUDE_CONFIG_DIR", json!({"mode":"ok"}));
+    assert_eq!(runtime::discover("claude-agent", &env)["status"], "ok");
+    let (_home, env) = fake_runtime_env("CODEX_CLI_PATH", "CODEX_HOME", json!({"name":"ok"}));
+    assert_eq!(runtime::discover("chatgpt", &env)["status"], "ok");
 }
 
 #[test]

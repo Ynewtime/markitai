@@ -161,6 +161,7 @@ export function OptionsPanel({
   onChange,
   onFiles,
   onFolder,
+  openRequest = 0,
 }: {
   t: Dict;
   state: Composer;
@@ -183,10 +184,15 @@ export function OptionsPanel({
   onChange: (next: Composer) => void;
   onFiles: (files: File[]) => void;
   onFolder: (files: File[], hidden: number) => void;
+  /** Counts up each time something outside asks for the options to be shown (Re-convert). */
+  openRequest?: number;
 }) {
   const [id] = useState(() => `opts-${++panels}`);
   const modelNote = needsModel ?? t.advNeedsModel;
   const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (openRequest > 0) setOpen(true);
+  }, [openRequest]);
   // The advanced fold starts open only when something inside already differs.
   const [advOpen, setAdvOpen] = useState(() => hasAdvancedChoices(state.advanced));
   const [copied, setCopied] = useState<"idle" | "copied" | "failed">("idle");
@@ -445,8 +451,8 @@ export function OptionsPanel({
                     </div>
                   </div>
                   {reason && a.strategy !== "cloudflare" && a.backend !== "cloudflare" && <div class="opt-row">
-                    <span class="opt-label">Cloudflare</span>
-                    <div class="opt-controls"><p class="opt-note">{t.cloudflareReason(reason)}</p><details><summary>{t.helpLabel}</summary><p class="opt-note">{t.cloudflareSetup}</p></details></div>
+                    <RowLabel id={`${id}-cloudflare`} text="Cloudflare" hint={t.cloudflareSetup} items={[]} helpLabel={t.helpLabel} />
+                    <div class="opt-controls"><p class="opt-note">{t.cloudflareReason(reason)}</p></div>
                   </div>}
                   <div class="opt-row" role="group" aria-labelledby={`${id}-other`}>
                     <RowLabel

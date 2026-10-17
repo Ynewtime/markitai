@@ -381,6 +381,7 @@ def cli_attribution(root, licenses):
         "preact-LICENSE",
         "phosphor-LICENSE",
         "lobehub-icons-LICENSE",
+        "KaTeX-LICENSE",
         "Inter-OFL.txt",
         "provenance.json",
     ]:
