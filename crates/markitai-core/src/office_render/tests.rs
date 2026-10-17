@@ -817,3 +817,48 @@ fn a_metafile_is_drawn_as_a_png_in_a_process_of_its_own_within_limits() {
     );
     assert!(started.elapsed() < Duration::from_secs(10));
 }
+
+#[cfg(unix)]
+#[test]
+fn both_launches_get_a_profile_that_loads_no_linked_content() {
+    // LibreOffice runs in the profile; the fake goes on only when its
+    // settings block linked content and macros (and name no unknown key).
+    let checks = "grep -q '\"BlockUntrustedRefererLinks\" oor:op=\"fuse\"><value>true<' user/registrymodifications.xcu\n\
+         grep -q '\"DisableActiveContent\" oor:op=\"fuse\"><value>true<' user/registrymodifications.xcu\n\
+         grep -q '\"MacroSecurityLevel\" oor:op=\"fuse\"><value>3<' user/registrymodifications.xcu\n\
+         ! grep -q UpdateLink user/registrymodifications.xcu";
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("deck.pptx");
+    fs::write(&input, PRESENTATION).unwrap();
+    let document = dir.path().join("golden.pdf");
+    fs::write(&document, pdf(3)).unwrap();
+    let program = mock(
+        dir.path(),
+        &format!("{checks}\ncp {} \"$out/document.pdf\"", quote(&document)),
+    );
+    let exported = export_with(
+        &program,
+        &input,
+        OfficeKind::Presentation,
+        Duration::from_secs(5),
+        MAX_BYTES,
+    )
+    .unwrap();
+    assert_eq!(exported.pages, 3);
+    let picture = dir.path().join("drawn.png");
+    fs::write(&picture, png(100, 80)).unwrap();
+    let program = mock(
+        dir.path(),
+        &format!("{checks}\ncp {} \"$out/picture.png\"", quote(&picture)),
+    );
+    let drawn = metafile_png_with(
+        &program,
+        b"emf bytes",
+        "emf",
+        Duration::from_secs(5),
+        64 * 1024,
+        1 << 20,
+    )
+    .unwrap();
+    assert_eq!(drawn, fs::read(&picture).unwrap());
+}
