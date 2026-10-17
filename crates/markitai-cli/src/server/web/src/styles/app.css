@@ -1729,8 +1729,8 @@ main:focus {
 }
 .front-table {
   display: grid;
-  grid-template-columns: minmax(5em, max-content) minmax(0, 1fr);
-  column-gap: 20px;
+  /* one key width for every document: long keys wrap inside it, short ones leave no hole */
+  grid-template-columns: 10.5em minmax(0, 1fr);
   margin: 0;
 }
 .front-row {
@@ -1741,11 +1741,18 @@ main:focus {
   padding: 6px 0;
   border-top: 1px solid var(--hairline);
 }
+.front-table > .front-row:last-child > * {
+  border-bottom: 1px solid var(--hairline);
+}
 .front-table dt {
+  padding-right: 12px;
+  overflow-wrap: anywhere;
+  border-right: 1px solid var(--hairline);
   color: var(--text-3);
 }
 .front-table dd {
   margin: 0;
+  padding-left: 14px;
   overflow-wrap: anywhere;
   color: var(--text-1);
 }
@@ -1765,8 +1772,10 @@ main:focus {
 }
 @media (max-width: 760px) {
   .front-table {
-    grid-template-columns: minmax(4.5em, max-content) minmax(0, 1fr);
-    column-gap: 12px;
+    grid-template-columns: 8.5em minmax(0, 1fr);
+  }
+  .front-table dd {
+    padding-left: 12px;
   }
 }
 /* The Details excerpt opens Preview: the whole card is one button under the properties control. */
