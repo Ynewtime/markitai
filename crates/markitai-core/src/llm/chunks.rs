@@ -361,6 +361,32 @@ impl Protected {
         found
     }
 
+    /// The pages (by number) whose screenshot comment the `answer` follows
+    /// with text of its own before the next protected token: the pages the
+    /// model wrote something for, as opposed to one it skipped.
+    pub fn pages_with_text(&self, answer: &str) -> Vec<usize> {
+        let mut pages = Vec::new();
+        for (token, literal) in &self.literals {
+            let Some(page) = literal
+                .trim()
+                .strip_prefix("<!-- ![Page ")
+                .and_then(|rest| rest.split_once(']'))
+                .and_then(|(number, _)| number.parse::<usize>().ok())
+            else {
+                continue;
+            };
+            let Some(at) = answer.find(token.as_str()) else {
+                continue;
+            };
+            let after = &answer[at + token.len()..];
+            let span = after.find(&self.prefix).map_or(after, |end| &after[..end]);
+            if span.chars().any(char::is_alphanumeric) {
+                pages.push(page);
+            }
+        }
+        pages
+    }
+
     pub fn restore(&self, answer: &str) -> Result<String> {
         self.restore_hiding(answer, &[])
     }
@@ -698,6 +724,33 @@ mod tests {
         );
         assert!(hidden.starts_with("<!-- ![Image on page 1](.markitai/assets/a.jpg) -->"));
         assert!(hidden.contains("\n![A chart](.markitai/assets/b.jpg)"));
+    }
+
+    #[test]
+    fn only_the_scans_of_pages_the_model_wrote_text_for_are_hidden() {
+        let source = "![Image on page 1](.markitai/assets/a.jpg)\n\n<!-- ![Page 1](.markitai/screenshots/p1.jpg) -->\n\n![Image on page 2](.markitai/assets/b.jpg)\n\n<!-- ![Page 2](.markitai/screenshots/p2.jpg) -->\n";
+        let protected = Protected::new(source);
+        let token = |n: usize| protected.literals[n].0.clone();
+        // Text after page 1's comment, none after page 2's.
+        let answer = format!(
+            "{}\n\n{}\n\nWords of page one.\n\n{}\n\n{}\n",
+            token(0),
+            token(1),
+            token(2),
+            token(3)
+        );
+        assert_eq!(protected.pages_with_text(&answer), [1]);
+        let unread = [1, 2];
+        let read: Vec<usize> = unread
+            .iter()
+            .copied()
+            .filter(|page| protected.pages_with_text(&answer).contains(page))
+            .collect();
+        let hidden = protected.scan_pictures(&read);
+        assert_eq!(hidden, [0]);
+        let restored = protected.restore_hiding(&answer, &hidden).unwrap();
+        assert!(restored.contains("<!-- ![Image on page 1](.markitai/assets/a.jpg) -->"));
+        assert!(restored.contains("\n![Image on page 2](.markitai/assets/b.jpg)"));
     }
 
     #[test]

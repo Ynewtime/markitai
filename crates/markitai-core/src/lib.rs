@@ -937,8 +937,9 @@ fn convert_inner(
                         enhanced.push_str(&references.join("\n"));
                     }
                     // The model read the scanned pages: "run with --ocr" would
-                    // now be wrong, so it goes unless the answer has no text.
-                    if !unread_pages.is_empty() && has_prose(enhanced) {
+                    // now be wrong, so it goes, unless it skipped a page: then
+                    // the notice stays, as that page is still unread.
+                    if !unread_pages.is_empty() && unread_pages_written(enhanced, &unread_pages) {
                         result
                             .warnings
                             .retain(|warning| !formats::is_unrecovered_warning(warning));
@@ -1270,19 +1271,43 @@ fn unread_pdf_pages(doc: &Document) -> Vec<usize> {
         .unwrap_or_default()
 }
 
-/// Whether Markdown has text of its own, beyond comments and picture
-/// references.
-fn has_prose(markdown: &str) -> bool {
-    markdown
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.starts_with("<!--") && !line.starts_with("!["))
-        .any(|line| line.chars().any(char::is_alphanumeric))
+/// Whether the answer has text for every one of the `unread` pages: after
+/// each page's screenshot comment (`<!-- ![Page N](…) -->`), up to the next
+/// comment or picture, there is text of its own.
+fn unread_pages_written(markdown: &str, unread: &[usize]) -> bool {
+    let mut written = std::collections::HashSet::new();
+    let mut open = None;
+    for line in markdown.lines().map(str::trim) {
+        if let Some(page) = line
+            .strip_prefix("<!-- ![Page ")
+            .and_then(|rest| rest.split_once(']'))
+            .and_then(|(number, _)| number.parse::<usize>().ok())
+        {
+            open = Some(page);
+        } else if line.starts_with("<!--") || line.starts_with("![") {
+            open = None;
+        } else if let Some(page) = open
+            && line.chars().any(char::is_alphanumeric)
+        {
+            written.insert(page);
+        }
+    }
+    unread.iter().all(|page| written.contains(page))
 }
 
 #[cfg(test)]
 mod json_output_tests {
     use super::*;
+
+    #[test]
+    fn the_scan_notice_stays_while_an_unread_page_has_no_text_of_its_own() {
+        let both = "<!-- ![Page 1](a.jpg) -->\n\nText of one.\n\n<!-- Page number: 2 -->\n\n<!-- ![Image on page 2](x.jpg) -->\n\n<!-- ![Page 2](b.jpg) -->\n\nText of two.\n";
+        assert!(unread_pages_written(both, &[1, 2]));
+        let skipped = "<!-- ![Page 1](a.jpg) -->\n\nText of one.\n\n<!-- ![Page 2](b.jpg) -->\n\n<!-- Page images for reference -->\n";
+        assert!(unread_pages_written(skipped, &[1]));
+        assert!(!unread_pages_written(skipped, &[1, 2]));
+        assert!(!unread_pages_written("", &[1]));
+    }
 
     #[test]
     fn a_panic_is_the_shared_internal_error_envelope() {

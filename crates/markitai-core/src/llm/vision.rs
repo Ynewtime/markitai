@@ -300,16 +300,18 @@ pub(crate) fn process_vision_with_runtime(
         .iter()
         .zip(&answers)
         .map(|(item, answer)| {
-            // A model that read a scanned page has its text: the page's scan
-            // is then hidden as a comment, like the page screenshots. When the
-            // answer holds no text, the scan stays as the page's content.
-            let scans = item.protected.scan_pictures(request.unread_pages);
-            let read = item
-                .protected
-                .without_markers(&answer.markdown)
-                .chars()
-                .any(char::is_alphanumeric);
-            let hidden: &[usize] = if read { &scans } else { &[] };
+            // A model that wrote text for a scanned page has transcribed it:
+            // that page's scan is then hidden as a comment, like the page
+            // screenshots. A page it skipped keeps its scan as its content.
+            let written = item.protected.pages_with_text(&answer.markdown);
+            let read: Vec<usize> = request
+                .unread_pages
+                .iter()
+                .copied()
+                .filter(|page| written.contains(page))
+                .collect();
+            let hidden = item.protected.scan_pictures(&read);
+            let hidden = hidden.as_slice();
             item.protected.restore_hiding(&answer.markdown, hidden)
         })
         .collect::<Result<Vec<_>>>()?
