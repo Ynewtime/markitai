@@ -512,7 +512,8 @@ fn validate_pdf(bytes: &[u8], expected: Option<usize>) -> Result<usize> {
     if !bytes.starts_with(b"%PDF-") {
         return Err(failure("export is not a PDF document"));
     }
-    let pdf = lopdf::Document::load_mem(bytes).map_err(|_| failure("exported PDF is invalid"))?;
+    let pdf = crate::pdf_budget::within(bytes, || lopdf::Document::load_mem(bytes))
+        .map_err(|_| failure("exported PDF is invalid"))?;
     if pdf.is_encrypted() {
         return Err(failure("exported PDF is encrypted"));
     }

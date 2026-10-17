@@ -26,6 +26,8 @@ mod processor;
 mod toc;
 mod writer;
 
+// markitai: a decompression budget per caller.
+mod budget;
 mod load_options;
 mod object_stream;
 mod parser;
@@ -46,6 +48,7 @@ pub use encodings::{Encoding, encode_utf8, encode_utf16_be};
 pub use encryption::{EncryptionState, EncryptionVersion, Permissions};
 pub use error::{DecompressError, Error, ParseError, Result};
 pub use incremental_document::IncrementalDocument;
+pub use budget::{DecompressBudget, current_decompress_budget, with_current_decompress_budget, with_decompress_budget};
 pub use load_options::{FilterFunc, LoadOptions};
 pub use object_stream::{ObjectStream, ObjectStreamBuilder, ObjectStreamConfig};
 pub use outlines::Outline;

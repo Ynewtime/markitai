@@ -700,8 +700,8 @@ The local changes, each marked `markitai` (or, for sorts, made through
 
 - CJK layout (a Chinese form printed by iText). Covered by
   `crates/markitai-core/src/formats/pdf/cjk_layout_tests.rs` with the authored
-  fixtures in `crates/markitai-core/src/formats/pdf/fixtures/cjk-layout/`; each
-  test fails on the unmodified files.
+  fixtures in `crates/markitai-core/src/formats/pdf/fixtures/cjk-course/` (an
+  invented course enrolment form set in the same layout shapes).
   - `src/extractor/fonts.rs`, `src/types.rs`: the descriptor's FixedPitch flag
     yields to the width table when the embedded program does not confirm it
     (`FontStyle::fixed_pitch_by_program`): two different advances make the
@@ -751,6 +751,15 @@ The local changes, each marked `markitai` (or, for sorts, made through
   the crate's unit tests give 1,725 passed (5 added) and the same 21 failed as
   the unmodified files, by name; the `pdf2md` binary's one failure
   (`items_json_uses_supplied_pdf_password`) is unchanged.
+
+- `src/lib.rs` (`load_document_bytes`): a file below
+  `PARALLEL_LOAD_MIN_BYTES` loads on a one-thread pool of its own; that thread
+  now loads under the calling thread's lopdf decompression budget
+  (`lopdf::current_decompress_budget`, `with_current_decompress_budget`), so
+  the document's object streams draw from it as a larger file's do.
+
+  Run in the isolated copy (prepared as above), the crate's unit tests give
+  1,725 passed and the same 21 failed as the unmodified files, by name.
 
 The page-level OCR, font decoding, repair, limits and reliability routing remain
 the upstream paths, except as listed above. Markitai's own visibility warnings and layout agreement

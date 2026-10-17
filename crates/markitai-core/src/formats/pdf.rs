@@ -1313,9 +1313,11 @@ fn extract_pages_policy(
     max_pages: Option<usize>,
     mode: sanitize::Mode,
 ) -> Result<PdfPages> {
-    let mut pages = extract_pages_inner(bytes, max_pages, mode != sanitize::Mode::Remove)?;
-    sanitize::apply(bytes, max_pages, mode, &mut pages)?;
-    Ok(pages)
+    crate::pdf_budget::within(bytes, || {
+        let mut pages = extract_pages_inner(bytes, max_pages, mode != sanitize::Mode::Remove)?;
+        sanitize::apply(bytes, max_pages, mode, &mut pages)?;
+        Ok(pages)
+    })
 }
 
 /// Bound page processing before invoking the native text/layout reader.
@@ -2766,6 +2768,16 @@ mod tests {
                 .and_then(|title| title.as_str()),
             Some("Kept by lopdf")
         );
+        // The object stream (about 9 MiB) is decoded on lopdf's workers while
+        // the file loads; they draw from the document's budget, so a smaller
+        // one loses the title and the default keeps it.
+        let title = |document: &lopdf::Document| document.get_object((6, 0)).is_ok();
+        let bounded =
+            lopdf::with_decompress_budget(4 << 20, || lopdf::Document::load_mem(&bytes).unwrap());
+        assert!(!title(&bounded));
+        let generous =
+            crate::pdf_budget::within(&bytes, || lopdf::Document::load_mem(&bytes).unwrap());
+        assert!(title(&generous));
     }
 
     #[test]

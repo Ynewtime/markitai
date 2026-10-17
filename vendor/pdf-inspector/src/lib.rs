@@ -5435,7 +5435,12 @@ fn load_document_bytes(buf: &[u8], password: Option<&str>) -> Result<Document, l
     #[cfg(not(target_arch = "wasm32"))]
     if buf.len() < PARALLEL_LOAD_MIN_BYTES {
         if let Ok(pool) = rayon::ThreadPoolBuilder::new().num_threads(1).build() {
-            return pool.install(|| load_document_bytes_here(buf, password));
+            // The pool's thread loads for this one, under its decompression
+            // budget (markitai).
+            let budget = lopdf::current_decompress_budget();
+            return pool.install(|| {
+                lopdf::with_current_decompress_budget(budget, || load_document_bytes_here(buf, password))
+            });
         }
     }
     load_document_bytes_here(buf, password)

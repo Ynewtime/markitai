@@ -24,6 +24,7 @@ pub mod output;
 pub mod output_name;
 mod output_profiles;
 pub mod page_capture;
+mod pdf_budget;
 mod pdf_media;
 mod pdf_raster;
 #[doc(hidden)]
