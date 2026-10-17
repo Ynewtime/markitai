@@ -45,6 +45,13 @@ which pages the VLM receives. Explicit screenshots remain a separate request:
 with VLM OCR disabled, local OCR plus screenshot enhancement still sends page
 images, and the warning explains how to keep those images local.
 
+A scanned page is also read when OCR is off but the LLM is sent page images
+(a preset or flag with screenshots): the request names the pages no reader
+recovered and tells the model to transcribe them from their images, keeping
+their picture once after the text. The "PDF is scanned … run again with
+`--ocr`" notice is dropped once the answer has text; without page images or a
+model it stays. Pure mode sends no such instruction.
+
 For PDF files, pure mode without screenshot-only selects text enhancement even
 if OCR+LLM produced page images. When page images exist, screenshot-only takes
 precedence over pure and selects an image-only prompt. Without LLM, PDF

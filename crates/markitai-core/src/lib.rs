@@ -737,6 +737,19 @@ fn convert_inner(
             warnings: Vec::new(),
             metadata: None,
         };
+        // Scanned pages the model is to read from the page images it is sent.
+        let unread_pages: Vec<usize> = doc
+            .metadata
+            .get(formats::UNREAD_PAGES)
+            .and_then(Value::as_array)
+            .filter(|_| pdf_input && send_pdf_images && !pure)
+            .map(|pages| {
+                pages
+                    .iter()
+                    .filter_map(|page| usize::try_from(page.as_u64()?).ok())
+                    .collect()
+            })
+            .unwrap_or_default();
         let enhanced = if (is_url && !pure || send_pdf_images) && !screenshots.is_empty() {
             let image_refs: Vec<_> = screenshots
                 .iter()
@@ -773,6 +786,7 @@ fn convert_inner(
                         cache_context: source,
                         kind,
                         frames: &frames,
+                        unread_pages: &unread_pages,
                     },
                     &cfg,
                     llm_runtime,
@@ -832,6 +846,7 @@ fn convert_inner(
                         cache_context: source,
                         kind: llm::VisionKind::PagedDocument,
                         frames: &frames,
+                        unread_pages: &[],
                     },
                     &cfg,
                     llm_runtime,
@@ -910,6 +925,13 @@ fn convert_inner(
                     if !references.is_empty() {
                         enhanced.push_str("\n\n<!-- Page images for reference -->\n");
                         enhanced.push_str(&references.join("\n"));
+                    }
+                    // The model read the scanned pages: "run with --ocr" would
+                    // now be wrong, so it goes unless the answer has no text.
+                    if !unread_pages.is_empty() && has_prose(enhanced) {
+                        result
+                            .warnings
+                            .retain(|warning| !formats::is_unrecovered_warning(warning));
                     }
                 }
                 result.usage = enhancement.usage;
@@ -1219,6 +1241,16 @@ fn json_output_value(result: ConversionOutput) -> DetailedResult<Value> {
         ),
         usage: result.usage,
     })
+}
+
+/// Whether Markdown has text of its own, beyond comments and picture
+/// references.
+fn has_prose(markdown: &str) -> bool {
+    markdown
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.starts_with("<!--") && !line.starts_with("!["))
+        .any(|line| line.chars().any(char::is_alphanumeric))
 }
 
 #[cfg(test)]

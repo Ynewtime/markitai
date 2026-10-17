@@ -6,6 +6,8 @@ use std::net::TcpListener;
 #[cfg(target_os = "macos")]
 #[path = "conversion/pdf_media.rs"]
 mod pdf_media;
+#[path = "conversion/pdf_scan_notice.rs"]
+mod pdf_scan_notice;
 
 #[path = "conversion/url_pdf.rs"]
 mod url_pdf;

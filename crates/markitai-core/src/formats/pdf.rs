@@ -889,6 +889,16 @@ impl PdfPages {
             .iter()
             .map(|(number, reason)| (*number, reason.as_str()))
             .collect();
+        if !unrecovered.is_empty() {
+            document.metadata.insert(
+                UNREAD_PAGES.into(),
+                unrecovered
+                    .iter()
+                    .map(|(number, _)| *number)
+                    .collect::<Vec<_>>()
+                    .into(),
+            );
+        }
         for warning in unrecovered_warnings(&unrecovered, total) {
             deferred.push((unrecovered_index.unwrap_or_default(), warning));
         }
@@ -1011,6 +1021,17 @@ fn unrecovered_reason(page: &PdfPage) -> Option<&str> {
             .as_deref()
             .unwrap_or("empty native text extraction")
     })
+}
+
+/// Metadata key listing the pages whose text no reader recovered.
+pub(crate) const UNREAD_PAGES: &str = "unread_pages";
+
+/// Whether `warning` is one of [`unrecovered_warnings`]: it tells the user to
+/// run OCR, which a model that read the page images has made unnecessary.
+pub(crate) fn is_unrecovered_warning(warning: &str) -> bool {
+    warning.starts_with("PDF is scanned: ")
+        || (warning.starts_with("PDF page")
+            && warning.contains("): native text was not recovered ("))
 }
 
 /// The warnings for the pages whose native text was not recovered, as

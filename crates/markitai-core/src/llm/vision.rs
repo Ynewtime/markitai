@@ -24,6 +24,9 @@ pub(crate) struct VisionRequest<'a> {
     pub cache_context: &'a str,
     pub kind: VisionKind,
     pub frames: &'a [VisionFrame<'a>],
+    /// Pages (as frame numbers) whose text no reader recovered: their text
+    /// is the model's to transcribe from the page image.
+    pub unread_pages: &'a [usize],
 }
 #[derive(Debug)]
 pub(crate) struct VisionFailure {
@@ -147,6 +150,7 @@ pub(crate) fn process_vision_with_runtime(
             request.source_label,
             request.kind,
             frames,
+            request.unread_pages,
             index == 0,
             cfg,
         )?;
@@ -388,11 +392,25 @@ fn partition<'a>(
     )
 }
 
+/// The instruction for pages that are scans: their image token is the scan
+/// itself, which the general rule would leave to stand for the page's text.
+fn unread_rule(pages: &[usize]) -> String {
+    let list = pages
+        .iter()
+        .map(usize::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "Frames {list} are scanned pages: no reader recovered their text, so the extracted text holds only their pictures. A picture token on such a page is the scan of the page, not its content: read the page image and transcribe all of its text, headings, lists and tables as Markdown, then keep the token once after the transcription."
+    )
+}
+
 fn visual_prompts(
     source: &str,
     label: &str,
     kind: VisionKind,
     frames: &[VisionFrame<'_>],
+    unread_pages: &[usize],
     first: bool,
     cfg: &Value,
 ) -> Result<Prompts> {
@@ -406,9 +424,20 @@ fn visual_prompts(
     } else {
         "paged-document"
     };
+    let unread: Vec<usize> = frames
+        .iter()
+        .map(|f| f.number)
+        .filter(|number| unread_pages.contains(number))
+        .collect();
+    let unread = if unread.is_empty() {
+        String::new()
+    } else {
+        format!("\n{}", unread_rule(&unread))
+    };
     let scope = llm_cache::prompt_scope(&[
         "visual-structured-transport-v2",
         kind,
+        &unread,
         &system,
         &user,
         rules,
@@ -430,7 +459,7 @@ fn visual_prompts(
         .join(", ");
     Ok(Prompts {
         system: format!(
-            "{}\n{COMMON}\n{rules}\nThe attached images are {kind} frames in this exact order: {numbers}.",
+            "{}\n{COMMON}\n{rules}{unread}\nThe attached images are {kind} frames in this exact order: {numbers}.",
             render(&system)
         ),
         user: render(&user),

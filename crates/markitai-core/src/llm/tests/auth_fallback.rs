@@ -669,6 +669,7 @@ fn visual_documents_report_the_exclusion_once_per_run() {
         cache_context: "page.pdf",
         kind: VisionKind::PagedDocument,
         frames: &frames,
+        unread_pages: &[],
     };
     let first = process_vision_with_runtime(request(), &cfg, Some(&runtime)).unwrap();
     assert_eq!(first.warnings, vec![skipped("openai/bad")]);
