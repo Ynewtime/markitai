@@ -17,7 +17,7 @@ markitai 按下面的顺序找到第一个配置文件就用：
 
 1. `--config` 指定的路径（必须存在；`config set` 与 `config edit` 会创建它）
 2. `MARKITAI_CONFIG`
-3. 当前目录的 `./markitai.json`
+3. 当前目录的 `./markitai.json`。在这里找到时（未用 `--config` 或 `MARKITAI_CONFIG` 指定），`api_base` 不是服务商文档地址的模型只使用条目里写明的密钥：不读服务商的密钥变量，`env:` 密钥引用改为占位密钥 `markitai-no-key`（并提示）；自带地址的 Vertex AI、watsonx 或 GigaChat 模型会被略过，因为它会用本机的云登录凭据签名。`markitai doctor` 和 `--verbose` 会注明该文件是在当前文件夹找到的
 4. `~/.markitai/config.json`
 
 ### 初始化配置
@@ -248,6 +248,8 @@ LiteLLM 也会从 `GOOGLE_API_KEY` 读取 Gemini 的 key（优先于 `GEMINI_API
 ### `.env` 文件加载
 
 markitai 先加载 `./.env`，再加载 `~/.markitai/.env`。先加载的值优先，所以项目可以覆盖全局设置。
+
+你转换时所在的文件夹可能自带一个并非由你编写的 `.env`（下载或克隆的仓库），因此 `./.env` 可以设置密钥和选项，但不能设置程序、路径、地址、代理、主目录或凭据文件：`*_PATH`（含 `*_CLI_PATH` 和 `PATH`）、`*_EXECUTABLE`、`LD_*`、`DYLD_*`、`NODE_OPTIONS`、`PYTHON*`、`*_API_BASE`、`*_BASE_URL`、`*_ENDPOINT`、`HTTP(S)_PROXY`、`ALL_PROXY`、`NO_PROXY`（大小写均可）、`HOME`、`*_HOME`、`*_CONFIG_DIR`、`XDG_*`、`TMPDIR`/`TMP`/`TEMP`、`AWS_*_FILE`、`GOOGLE_APPLICATION_CREDENTIALS`、`CLOUDSDK_CONFIG`、`MARKITAI_CONFIG`/`MARKITAI_HOME`/`MARKITAI_LOG_DIR` 以及证书包变量。被忽略的名称会提示一次；这些值请放在环境变量或 `~/.markitai/.env` 中。
 
 ## LLM 配置
 

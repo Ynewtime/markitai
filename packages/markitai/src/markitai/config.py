@@ -971,6 +971,117 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
     return merged
 
 
+#: The key stored for a model that must not use the environment's key: the
+#: same placeholder the settings API stores (``serve.app.NO_KEY``). LiteLLM
+#: sends it as the key, so no provider variable stands in for a missing one.
+KEYLESS_PLACEHOLDER = "markitai-no-key"
+
+#: LiteLLM routes that sign with the machine's own cloud login (Google
+#: application default credentials, ``WATSONX_TOKEN``, ``GIGACHAT_ACCESS_TOKEN``)
+#: whatever key an entry has; the placeholder does not stop them.
+_AMBIENT_LOGIN_ROUTES = frozenset(
+    {"vertex_ai", "vertex_ai_beta", "watsonx", "watsonx_text", "gigachat"}
+)
+
+
+def _route_of(model: str) -> str:
+    """The LiteLLM route of *model*: its prefix, ``vertex_ai`` for a bare
+    Gemini/PaLM name (LiteLLM routes those to Vertex AI), else ``openai``."""
+    if "/" in model:
+        return model.split("/", 1)[0].strip().lower()
+    bare = model.strip().lower()
+    if bare.startswith(("gemini", "chat-bison", "text-bison", "codechat-bison")):
+        return "vertex_ai"
+    return "openai"
+
+
+def _custom_address(route: str, base: Any) -> bool:
+    """Whether *base* names an address that is not *route*'s documented one
+    (an ``env:`` reference is not a documented address)."""
+    from urllib.parse import urlsplit
+
+    from markitai.providers.connectable import default_base
+
+    if not isinstance(base, str) or not base.strip():
+        return False
+
+    def origin(text: str) -> tuple[str, str, int | None] | None:
+        try:
+            parts = urlsplit(text.strip())
+            port = parts.port or {"http": 80, "https": 443}.get(parts.scheme)
+        except ValueError:
+            return None
+        if not parts.scheme or not parts.hostname:
+            return None
+        return parts.scheme, parts.hostname.lower(), port
+
+    documented = default_base(route)
+    expected = origin(documented) if documented else None
+    return expected is None or expected != origin(base)
+
+
+def seal_project_models(data: dict[str, Any]) -> list[str]:
+    """Keep a configuration found in the working directory off the
+    environment's keys, in place; return a warning per change.
+
+    A folder may come with a ``markitai.json`` its user did not write. Each
+    model whose ``api_base`` is not its provider's documented address gets the
+    keyless placeholder instead of no key (LiteLLM would send the provider's
+    variable) or an ``env:`` reference; one on a route that signs with the
+    machine's cloud login is left out.
+    """
+    notes: list[str] = []
+    llm = data.get("llm")
+    if not isinstance(llm, dict):
+        return notes
+    models = llm.get("model_list")
+    if not isinstance(models, list):
+        return notes
+    kept: list[Any] = []
+    for entry in models:
+        params = entry.get("litellm_params") if isinstance(entry, dict) else None
+        if not isinstance(params, dict):
+            kept.append(entry)
+            continue
+        model = str(params.get("model") or "")
+        route = _route_of(model)
+        if not _custom_address(route, params.get("api_base")):
+            kept.append(entry)
+            continue
+        if route in _AMBIENT_LOGIN_ROUTES:
+            notes.append(
+                f"Warning: ./markitai.json in this folder: model {model} at its own "
+                "address would sign with this machine's cloud login, so it is left "
+                "out; keep it in your own config file or pass it with -c"
+            )
+            continue
+        key = params.get("api_key")
+        if isinstance(key, str) and key.strip().startswith("env:"):
+            notes.append(
+                f"Warning: ./markitai.json in this folder: model {model} names its "
+                f"own address, so its key reference {key.strip()} is not read from "
+                "the environment; write the key in the entry, or keep this "
+                "configuration in your own config file or pass it with -c"
+            )
+            params["api_key"] = KEYLESS_PLACEHOLDER
+        elif not (isinstance(key, str) and key.strip()):
+            params["api_key"] = KEYLESS_PLACEHOLDER
+        kept.append(entry)
+    llm["model_list"] = kept
+    return notes
+
+
+_shown_notes: set[str] = set()
+
+
+def _warn_once(message: str) -> None:
+    import sys
+
+    if message not in _shown_notes:
+        _shown_notes.add(message)
+        print(message, file=sys.stderr)
+
+
 class ConfigManager:
     """Configuration manager for loading and merging configs."""
 
@@ -982,6 +1093,9 @@ class ConfigManager:
         self._config_path: Path | None = None
         self._raw_data: dict[str, Any] = {}  # Preserve original JSON structure
         self._modified_keys: set[str] = set()  # Track modified key paths
+        # Whether the loaded file is ./markitai.json found in the working
+        # directory (not named with -c / MARKITAI_CONFIG, not the user's own)
+        self._found_in_folder = False
 
     @property
     def config(self) -> MarkitaiConfig:
@@ -994,6 +1108,12 @@ class ConfigManager:
     def config_path(self) -> Path | None:
         """Get the path of the loaded configuration file."""
         return self._config_path
+
+    @property
+    def found_in_folder(self) -> bool:
+        """Whether the loaded file is ``./markitai.json`` found in the working
+        directory: its models at their own address use no environment key."""
+        return self._found_in_folder
 
     def restore(self, config: MarkitaiConfig) -> None:
         """Replace the in-memory configuration (e.g. to roll back a bad set())."""
@@ -1032,6 +1152,13 @@ class ConfigManager:
         # (deliberately WITHOUT the ephemeral overrides)
         self._raw_data = config_data.copy()
         self._modified_keys.clear()
+        if self._found_in_folder and config_data:
+            # On a copy: a save must never write the sealed values back
+            import copy
+
+            config_data = copy.deepcopy(config_data)
+            for note in seal_project_models(config_data):
+                _warn_once(note)
 
         if overrides:
             config_data = _deep_merge(config_data, overrides)
@@ -1059,6 +1186,7 @@ class ConfigManager:
         env_override: bool,
     ) -> Path | None:
         """Resolve configuration file path based on priority."""
+        self._found_in_folder = False
         # 1. Explicit path
         if config_path:
             explicit_path = Path(config_path)
@@ -1083,6 +1211,7 @@ class ConfigManager:
         # 3. Current directory
         cwd_config = Path.cwd() / self.CONFIG_FILENAME
         if cwd_config.exists():
+            self._found_in_folder = True
             return cwd_config
 
         # 4. User directory

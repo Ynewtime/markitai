@@ -125,6 +125,7 @@ source_modules = [
     "markitai.fetch_http",
     "markitai.fetch_page_check",
     "markitai.fetch_playwright",
+    "markitai.env_files",
     "markitai.fetch_policy",
     "markitai.fetch_screenshot",
     "markitai.fetch_session",
@@ -215,6 +216,7 @@ source_modules = [
     "markitai.fetch_consent",
     "markitai.fetch_http",
     "markitai.fetch_page_check",
+    "markitai.env_files",
     "markitai.fetch_policy",
     "markitai.fetch_screenshot",
     "markitai.fetch_shortlinks",
@@ -246,6 +248,9 @@ forbidden_modules = [
     "markitai.webextract",
     "markitai.workflow",
 ]
+# config reads the documented provider endpoints (a stdlib-only table) to
+# tell a project config's own addresses from them, lazily at load time
+ignore_imports = ["markitai.config -> markitai.providers.connectable"]
 
 [[tool.importlinter.contracts]]
 name = "domain subsystems know no orchestration"

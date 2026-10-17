@@ -1331,7 +1331,10 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
 
     # Config source (which config file was actually loaded)
     if manager.config_path is not None:
-        ui.info(t("doctor.config_source", path=str(manager.config_path)))
+        shown = str(manager.config_path)
+        if manager.found_in_folder:
+            shown = t("doctor.config_found_here", path=shown)
+        ui.info(t("doctor.config_source", path=shown))
     else:
         ui.info(t("doctor.config_source", path=t("doctor.config_defaults")))
 

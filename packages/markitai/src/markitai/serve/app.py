@@ -1624,9 +1624,19 @@ def _replace_config_file(
 
 
 def _apply_config_models(state: ServeState, document: dict[str, Any]) -> None:
-    """Run with the model list and connections of a saved configuration."""
-    from markitai.config import MarkitaiConfig
+    """Run with the model list and connections of a saved configuration.
 
+    A ``./markitai.json`` found in the working directory keeps its models at
+    their own address off the environment's keys, as when it was loaded.
+    """
+    from markitai.config import MarkitaiConfig, seal_project_models
+
+    if state.config_origin == "project":
+        import copy
+
+        document = copy.deepcopy(document)
+        for note in seal_project_models(document):
+            logger.warning("[Serve] {}", note)
     llm = MarkitaiConfig.model_validate(document).llm
     models = list(llm.model_list)
     providers = list(llm.providers)
@@ -3232,10 +3242,9 @@ def create_app(
 
         prepare_litellm_import()
 
-        from dotenv import load_dotenv
+        from markitai.env_files import load_env_files
 
-        load_dotenv(Path.cwd() / ".env")
-        load_dotenv(Path.home() / ".markitai" / ".env")
+        load_env_files()
 
         from markitai import fetch
 
