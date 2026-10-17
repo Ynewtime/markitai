@@ -118,6 +118,7 @@
 
 ### Fixed
 
+- A real Gemini Flash run on `scanned-sample-p1-3.pdf` (one request, no notices) puts every page's text under its own `<!-- Page number: N -->` marker, where the first live run had each page's text one marker too high.
 - Workbench: the embedded-images, Word picture-record and hidden-worksheet notices are worded in Chinese and Japanese too, and the embedded-images notice says "turn on Page Screenshots" instead of naming the CLI flag and is left out for a document already told it is scanned; on a phone the header's New conversion and "⋯" buttons are one compact 32 px size, and the Edit config JSON problem takes its own row above the buttons instead of a three-line column.
 - `markitai doctor` in Chinese now words every check message and remedy in Chinese (the JSON values stay English), and the macOS browser line says `Installed browser app found (version check only)`.
 - `markitai doctor`'s closing line no longer lists Local OCR as not available while its models only need the download the first OCR does: it reads "Set up on first use: Local OCR", apart from the optional features that really are unavailable, and the check carries the info mark instead of a warning.
