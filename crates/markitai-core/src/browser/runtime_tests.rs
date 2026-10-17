@@ -85,6 +85,7 @@ struct Request {
     authorization: String,
     language: String,
     agent: String,
+    account: String,
 }
 #[derive(Default)]
 struct State {
@@ -133,6 +134,7 @@ fn request(stream: &mut TcpStream) -> Option<Request> {
         authorization: header("Authorization"),
         language: header("Accept-Language"),
         agent: header("User-Agent"),
+        account: header("X-Account"),
     })
 }
 impl Site {
@@ -185,6 +187,11 @@ impl Site {
                         // 500 blocks of 100 CSS pixels: 50 000 pixels.
                         let blocks:String=(1..=500).map(|n|format!("<section style='height:100px;margin:0'><h2 style='margin:0'>Block {n}</h2></section>")).collect();
                         format!("<html><head><title> An invented   tall page </title></head><body style='margin:0'>{blocks}</body></html>").into_bytes()
+                    }else if request.path.starts_with("/remote") {
+                        let remote=request.path.split("to=").nth(1).unwrap_or("");
+                        format!("<html><body><p>Remote image page.</p><img src='/same-asset'><img src='{remote}'></body></html>").into_bytes()
+                    }else if request.path=="/same-asset"||request.path=="/asset" {
+                        mime="image/gif";b"GIF87a".to_vec()
                     }else if request.path=="/hang" {
                         b"<html><script>while(true){}</script></html>".to_vec()
                     }else if request.path=="/language" {
@@ -748,6 +755,41 @@ fn a_failed_navigation_says_why_without_naming_the_address() {
     for private in [port.to_string(), "private-path".into(), "secret".into()] {
         assert!(!error.contains(&private), "{error}");
     }
+}
+
+#[test]
+#[ignore = "requires installed Chromium; private process and loopback only"]
+fn the_callers_headers_reach_the_initial_origin_only() {
+    if isolated("the_callers_headers_reach_the_initial_origin_only") {
+        return;
+    }
+    assert!(available());
+    let site = Site::new();
+    let other = Site::new();
+    let runtime = BrowserRuntime::new(1).unwrap();
+    let mut cfg = config(false);
+    cfg["fetch"]["playwright"]["extra_http_headers"] = json!({"X-Account":"private-token"});
+    // The page loads a same-origin image and one from the other origin.
+    let path = format!("/remote?to={}/asset", other.base);
+    html(&site, &path, &cfg, &runtime);
+    site.wait("/same-asset");
+    other.wait("/asset");
+    let account = |site: &Site, path: &str| {
+        site.state
+            .0
+            .lock()
+            .unwrap()
+            .requests
+            .iter()
+            .find(|request| request.path == path)
+            .map(|request| request.account.clone())
+            .unwrap()
+    };
+    // The document and its same-origin subresource carry the header.
+    assert_eq!(account(&site, &path), "private-token");
+    assert_eq!(account(&site, "/same-asset"), "private-token");
+    // The other origin never sees it.
+    assert_eq!(account(&other, "/asset"), "");
 }
 
 #[cfg(test)]

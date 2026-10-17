@@ -14,7 +14,12 @@ pub(super) struct Options {
     pub selector: Option<String>,
     pub skip_scroll: bool,
     pub cookies: Vec<Value>,
+    /// Headers the caller added (`extra_http_headers`), bound to the
+    /// initial [`origin`](Self::origin) so a secret among them never reaches
+    /// another host through a subresource or a redirect.
     pub headers: Map<String, Value>,
+    /// The initial URL's origin, ASCII-serialized, for [`headers`](Self::headers).
+    pub origin: String,
     pub user_agent: Option<String>,
     /// The site turns away a browser that names itself `HeadlessChrome`: the
     /// browser's own user agent is used without that word (a configured
@@ -179,6 +184,7 @@ impl Options {
             skip_scroll: true,
             cookies: Vec::new(),
             headers: Map::new(),
+            origin: String::new(),
             user_agent: None,
             regular_user_agent: false,
             english: false,
@@ -307,6 +313,7 @@ impl Options {
                 .unwrap_or(false),
             cookies: cookies(settings.get("cookies").unwrap_or(&Value::Null), url)?,
             headers,
+            origin: url.origin().ascii_serialization(),
             user_agent: settings
                 .get("user_agent")
                 .and_then(Value::as_str)
