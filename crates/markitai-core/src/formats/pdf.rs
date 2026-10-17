@@ -791,6 +791,9 @@ impl PdfPages {
                 .insert("ocr_layer_pages".into(), layer_pages.into());
         }
         let mut appended_images = false;
+        // A scanned page's pictures dropped for its screenshot, and the
+        // pictures other pages still show.
+        let (mut dropped, mut shown) = (BTreeSet::new(), BTreeSet::new());
         let total = pages.len();
         // The pages whose native text was not recovered, with their reason,
         // and where the warning for the first of them stands.
@@ -798,6 +801,12 @@ impl PdfPages {
         let mut unrecovered_index = None;
         for (mut page, readable) in pages.into_iter().zip(readable) {
             readable_pages += usize::from(readable);
+            // A scanned page: OCR read it, no reader recovered its text, or
+            // its text is the OCR layer over its scan. Its pictures are the
+            // page itself, not pictures placed among its text.
+            let scan = page.ocr_completed || page.ocr_layer.is_some() || !readable;
+            // With its screenshot written, the scan would show the page twice.
+            let drop_scan = scan && page.screenshot_name.is_some();
             let mut warning = Vec::new();
             // A page whose text all continued the previous page's table
             // keeps only its marker.
@@ -820,6 +829,11 @@ impl PdfPages {
             let mut inserts: Vec<(usize, String)> = Vec::new();
             let text_end = section.len();
             for name in page.asset_names {
+                if drop_scan {
+                    dropped.insert(name);
+                    continue;
+                }
+                shown.insert(name.clone());
                 let mut image =
                     format!("![Image on page {}](.markitai/assets/{name})", page.number);
                 if let Some(text) = page
@@ -842,7 +856,7 @@ impl PdfPages {
                     Some(placement::Place::End) => Some(text_end),
                     _ => None,
                 };
-                appended_images |= at.is_none();
+                appended_images |= at.is_none() && !scan;
                 inserts.push((at.unwrap_or(text_end), image));
             }
             // Later offsets first, so earlier ones stay valid; images at one
@@ -875,9 +889,19 @@ impl PdfPages {
                 section.push_str(&leading);
                 section.push_str(&body);
             }
+            // The page's screenshot opens the page, right after its marker.
             if let Some(name) = page.screenshot_name {
-                section.push_str("\n\n");
+                let marker = marker_len(&section);
+                let body = section[marker..].trim_start_matches('\n').to_owned();
+                section.truncate(marker);
+                if marker > 0 {
+                    section.push_str("\n\n");
+                }
                 section.push_str(&screenshot_reference(page.number, &name));
+                if !body.is_empty() {
+                    section.push_str("\n\n");
+                    section.push_str(&body);
+                }
             }
             if let Some(comments) = comments.remove(&page.number) {
                 section.push_str("\n\n");
@@ -929,6 +953,9 @@ impl PdfPages {
         if let Some(serde_json::Value::String(title)) = document.metadata.get_mut("title") {
             radicals::fold_in_place(title);
         }
+        document
+            .assets
+            .retain(|asset| !dropped.contains(&asset.name) || shown.contains(&asset.name));
         // Chart crops already occupy their original text band.
         if appended_images {
             document

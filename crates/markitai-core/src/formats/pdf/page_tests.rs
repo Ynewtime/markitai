@@ -117,7 +117,14 @@ fn typed_pages_keep_body_metadata_asset_deduplication_and_default_markers() {
         2
     );
     assert_eq!(document.assets.len(), 1);
-    assert_eq!(document.warnings.last().unwrap(), LIMITATION);
+    // The pictures of pages without text are their scans: nothing is placed
+    // after a text of theirs, so the placement notice is not given.
+    assert!(
+        !document
+            .warnings
+            .iter()
+            .any(|warning| warning == LIMITATION)
+    );
     // One warning for the pages of one reason, as ranges, out of the
     // document's pages.
     assert_eq!(
@@ -247,9 +254,22 @@ fn only_a_pdf_with_extracted_images_warns_about_their_placement() {
         "{:?}",
         document.warnings
     );
+    // A scanned page's picture is the page, not a picture after its text.
     let (bytes, _) = fixture(&[text(NATIVE), "/Im Do".into()], false);
     let document = extract(&bytes).unwrap();
     assert!(!document.assets.is_empty());
+    assert!(
+        !document
+            .warnings
+            .iter()
+            .any(|warning| warning == LIMITATION),
+        "{:?}",
+        document.warnings
+    );
+    // A picture of a page of text that no position places follows the text.
+    let mut pages = extract_pages(&bytes).unwrap();
+    pages.pages[0].asset_names = std::mem::take(&mut pages.pages[1].asset_names);
+    let document = pages.finish().unwrap();
     assert!(
         document
             .warnings
@@ -371,21 +391,50 @@ fn visibility_routing_uses_inspected_graphics_state_even_when_native_text_surviv
     assert!(document.markdown.contains(NATIVE));
 }
 
+/// A page's screenshot opens the page, right after its marker, for a page of
+/// text and a scanned page alike, under its final published name; a scanned
+/// page's picture, which the screenshot shows again, is left out.
 #[test]
-fn screenshot_comments_follow_their_page_assets_and_keep_the_final_published_name() {
-    let (bytes, name) = fixture(&[text(NATIVE), "/Im Do".into()], false);
+fn screenshot_comments_open_their_page_and_replace_a_scans_picture() {
+    let pictured = format!("{}\n/Im Do", text(NATIVE));
+    let (bytes, name) = fixture(&[pictured.clone(), "/Im Do".into()], false);
     let mut pages = extract_pages(&bytes).unwrap();
     pages.pages[0].screenshot_name = Some("page-1.v2.jpg".into());
     pages.pages[1].screenshot_name = Some("page-2.jpg".into());
-    pages.pages[1]
+    pages.pages[0]
         .asset_ocr
         .insert(name.clone(), "Embedded image text.".into());
     let document = pages.finish_with_media().unwrap();
-    assert!(document.markdown.contains(
-        "<!-- ![Page 1](.markitai/screenshots/page-1.v2.jpg) -->\n\n<!-- Page number: 2 -->"
+    let native = document.markdown.find(NATIVE).unwrap();
+    assert!(document.markdown.starts_with(
+        "<!-- Page number: 1 -->\n\n<!-- ![Page 1](.markitai/screenshots/page-1.v2.jpg) -->\n\n"
     ));
-    assert!(document.markdown.ends_with(&format!("![Image on page 2](.markitai/assets/{name})\n\nEmbedded image text.\n\n<!-- ![Page 2](.markitai/screenshots/page-2.jpg) -->")));
+    let picture = document
+        .markdown
+        .find(&format!(
+            "![Image on page 1](.markitai/assets/{name})\n\nEmbedded image text."
+        ))
+        .unwrap();
+    assert!(native < picture, "{}", document.markdown);
+    assert!(document.markdown.ends_with(
+        "<!-- Page number: 2 -->\n\n<!-- ![Page 2](.markitai/screenshots/page-2.jpg) -->"
+    ));
     assert_eq!(document.markdown.matches("<!-- ![Page ").count(), 2);
+    assert!(!document.markdown.contains("Image on page 2"));
+    // The picture page 1 still shows is kept; one only a scan showed goes.
+    assert_eq!(document.assets.len(), 1);
+    let (bytes, _) = fixture(&[text(NATIVE), "/Im Do".into()], false);
+    let mut pages = extract_pages(&bytes).unwrap();
+    pages.pages[1].screenshot_name = Some("page-2.jpg".into());
+    let document = pages.finish_with_media().unwrap();
+    assert!(document.assets.is_empty());
+    assert!(!document.markdown.contains(".markitai/assets/"));
+    // Without its screenshot the scan is the page's only picture, and stays.
+    let (bytes, name) = fixture(&[text(NATIVE), "/Im Do".into()], false);
+    let document = extract_pages(&bytes).unwrap().finish_with_media().unwrap();
+    assert!(document.markdown.ends_with(&format!(
+        "<!-- Page number: 2 -->\n\n![Image on page 2](.markitai/assets/{name})"
+    )));
 }
 
 #[test]

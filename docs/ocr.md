@@ -149,8 +149,14 @@ is composited on white. OCR uses the original image, independently of output
 preview compression or size settings. PDF, TIFF and Office workflows also have
 their own page and document budgets.
 
-The reader groups lines and columns and retains page order; it is not a full
-layout reconstruction engine. Small text, handwriting, vertical writing,
+The reader groups lines and columns and retains page order, and writes them as
+Markdown: a row that stops short of the text's right edge ends its paragraph
+(rows that run to the edge wrap on), a short row much taller than the page's
+text is a heading, rows of cells in columns or divided by drawn rules (read as
+`|`) are a table, and letter-spaced Latin (`M a r k i t a i`, Latin set in
+full-width cells) is closed up. It is not a full layout reconstruction engine:
+heading levels are judged per page, and a cell read together with its
+neighbour stays in one cell. Small text, handwriting, vertical writing,
 complex tables and marginal notes can be incomplete or misordered. Vision
 recognition has no hard wall-clock cancellation deadline. A resource limit is
 not a peak-RSS or accuracy guarantee.
@@ -338,7 +344,14 @@ still receives the ordinary no-text warning.
   done. Results are the same as on one
   thread; detections take turns two at a time, so a multi-page scan holds at
   most two pages' detection memory at once (about 300 bytes per page pixel
-  each). On Linux the CLI keeps glibc to four malloc arenas (unless
+  each). A free turn goes to the waiting page with the lowest number in its
+  document (an image counts as a first page): in a batch, a one-page scan
+  waits for the detections running, not for a long scan's later pages.
+  `markitai serve` loads the engine at start when its models are installed
+  (once OCR has been used, or after `doctor --fix`), with the detector
+  prepared for A4 and Letter pages, so its first OCR job does not wait for
+  that (about 0.3 s on Linux arm64); the models then stay in memory, some
+  150 MB. Without installed models it loads nothing and never downloads. On Linux the CLI keeps glibc to four malloc arenas (unless
   `MALLOC_ARENA_MAX` is set): with one per thread, the buffers OCR's threads
   free stayed reserved, and a 40-page scan peaked at 1.3 GB instead of 0.7 GB.
 - `MARKITAI_OCR_TRACE=1` (any value but empty, `0`, `false` or `no`) writes

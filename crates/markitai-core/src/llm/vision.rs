@@ -424,7 +424,7 @@ fn unread_rule(pages: &[usize]) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     format!(
-        "Frames {list} are scanned pages: no reader recovered their text, so the extracted text holds only their pictures and is clearly incomplete. A picture token on such a page is the scan of the page, not its content. Supplement the missing content from the page image: its text, headings, lists and tables, in the original language and wording (do not translate, rewrite or summarize), formatted like the text already extracted. Keep the token once (the application hides it), and write each page's supplemented content directly after that page's own tokens (its page marker, picture and page screenshot comment) and before the next page's tokens: never move a page's text across a page marker, so that the content after page marker N is page N's."
+        "Frames {list} are scanned pages: no reader recovered their text, so the extracted text holds only their page tokens and is clearly incomplete. A picture token on such a page, if any, is the scan of the page, not its content. Supplement the missing content from the page image: its text, headings, lists and tables, in the original language and wording (do not translate, rewrite or summarize), formatted like the text already extracted. Keep the token once (the application hides it), and write each page's supplemented content directly after that page's own tokens (its page marker, page screenshot comment and any picture) and before the next page's tokens: never move a page's text across a page marker, so that the content after page marker N is page N's."
     )
 }
 

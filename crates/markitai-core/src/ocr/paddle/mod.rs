@@ -308,26 +308,52 @@ const DETECTIONS_AT_ONCE: usize = 2;
 /// One of the [`DETECTIONS_AT_ONCE`] turns, given back when dropped.
 struct DetectionTurn;
 
-static DETECTING: (Mutex<usize>, std::sync::Condvar) = (Mutex::new(0), std::sync::Condvar::new());
+/// The detections running, and those waiting by page number (an image is a
+/// first page) and then arrival.
+struct Turns {
+    running: usize,
+    waiting: std::collections::BTreeSet<(usize, u64)>,
+    arrivals: u64,
+}
+
+static DETECTING: (Mutex<Turns>, std::sync::Condvar) = (
+    Mutex::new(Turns {
+        running: 0,
+        waiting: std::collections::BTreeSet::new(),
+        arrivals: 0,
+    }),
+    std::sync::Condvar::new(),
+);
 
 impl DetectionTurn {
+    /// The next free turn goes to the waiting page with the lowest number in
+    /// its document, then to the first to come: a page of a short document
+    /// (the one page of a scan in a batch) waits for the detections running,
+    /// not for a long document's later pages queued before it.
     fn take() -> DetectionTurn {
-        let (count, freed) = &DETECTING;
-        let mut running = count.lock().unwrap_or_else(|e| e.into_inner());
-        while *running >= DETECTIONS_AT_ONCE {
-            running = freed.wait(running).unwrap_or_else(|e| e.into_inner());
+        let page = super::trace::page().unwrap_or(1);
+        let (turns, freed) = &DETECTING;
+        let mut state = turns.lock().unwrap_or_else(|e| e.into_inner());
+        let me = (page, state.arrivals);
+        state.arrivals += 1;
+        state.waiting.insert(me);
+        while state.running >= DETECTIONS_AT_ONCE || state.waiting.first() != Some(&me) {
+            state = freed.wait(state).unwrap_or_else(|e| e.into_inner());
         }
-        *running += 1;
+        state.waiting.remove(&me);
+        state.running += 1;
+        // The next waiter may fit too.
+        freed.notify_all();
         DetectionTurn
     }
 }
 
 impl Drop for DetectionTurn {
     fn drop(&mut self) {
-        let (count, freed) = &DETECTING;
-        let mut running = count.lock().unwrap_or_else(|e| e.into_inner());
-        *running = running.saturating_sub(1);
-        freed.notify_one();
+        let (turns, freed) = &DETECTING;
+        let mut state = turns.lock().unwrap_or_else(|e| e.into_inner());
+        state.running = state.running.saturating_sub(1);
+        freed.notify_all();
     }
 }
 
@@ -1365,6 +1391,40 @@ pub(crate) fn engine_name() -> &'static str {
     qpp::planned()
 }
 
+/// Load what reading `spelling` takes before the first image needs it: the
+/// verified models, and the detector's plans for images of `sizes` (pages
+/// rendered for OCR). A long-running process (`markitai serve`) then does
+/// not make its first OCR job wait for them. Never downloads: a model that
+/// is not installed is an error, before anything loads. qppocr is not
+/// loaded.
+pub(super) fn warm(spelling: &str, sizes: &[(u32, u32)]) -> Result<()> {
+    let choice = choice(spelling)?;
+    for model in needed(spelling)? {
+        if models::observation(model).0 != crate::ocr::LocalOcrModelState::Ready {
+            return Err(failure(&format!(
+                "the model {} is not installed",
+                model.name
+            )));
+        }
+    }
+    let engine = engine()?;
+    classifier()?;
+    match choice {
+        Choice::Default => {
+            recognizer(MULTILINGUAL)?;
+            optional_recognizer(KOREAN);
+        }
+        Choice::Model(name) => {
+            recognizer(name)?;
+        }
+    }
+    for &(width, height) in sizes {
+        let layout = detect::Layout::of(width, height);
+        engine.detector.plan(layout.width, layout.height)?;
+    }
+    Ok(())
+}
+
 /// The models the configured language needs, for `doctor`: the default set
 /// for the default language, else the detector, the classifier and the
 /// language's recognizer.
@@ -1390,6 +1450,62 @@ pub(crate) fn needed(spelling: &str) -> Result<Vec<&'static models::Model>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// With every turn taken, the next free one goes to the waiting page with
+    /// the lowest number, not to the first to wait: a short document's first
+    /// page goes before a long document's fifth.
+    #[test]
+    fn a_free_detection_turn_goes_to_the_earliest_page_waiting() {
+        let waiting = || {
+            DETECTING
+                .0
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .waiting
+                .len()
+        };
+        let wait_for = |count: usize| {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            while waiting() < count {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "waiters did not queue"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+        };
+        // Other tests may detect meanwhile: count the waiters already there.
+        let mut held: Vec<DetectionTurn> = (0..DETECTIONS_AT_ONCE)
+            .map(|_| DetectionTurn::take())
+            .collect();
+        let before = waiting();
+        let (order, turns) = std::sync::mpsc::channel();
+        let (release, released) = std::sync::mpsc::channel::<()>();
+        let released = Arc::new(Mutex::new(released));
+        let waiter = |page: usize| {
+            let order = order.clone();
+            let released = released.clone();
+            std::thread::spawn(move || {
+                super::super::trace::set_page(page);
+                let _turn = DetectionTurn::take();
+                order.send(page).unwrap();
+                let _ = released.lock().unwrap().recv();
+            })
+        };
+        let fifth = waiter(5);
+        wait_for(before + 1);
+        let first = waiter(1);
+        wait_for(before + 2);
+        // One turn frees: the first page takes it, though it came second.
+        held.pop();
+        assert_eq!(turns.recv().unwrap(), 1);
+        held.clear();
+        assert_eq!(turns.recv().unwrap(), 5);
+        release.send(()).unwrap();
+        release.send(()).unwrap();
+        fifth.join().unwrap();
+        first.join().unwrap();
+    }
 
     #[test]
     fn languages_map_reference_and_vision_spellings_to_recognizers() {
