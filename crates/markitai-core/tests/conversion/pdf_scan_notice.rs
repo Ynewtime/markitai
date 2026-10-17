@@ -28,9 +28,10 @@ fn model(cfg: &mut Value, base: &str) {
 }
 
 #[test]
-fn pdf_vision_reads_scanned_pages_and_drops_the_ocr_notice() {
+fn pdf_vision_is_told_to_read_scanned_pages_and_the_notice_stays_for_a_page_it_left_blank() {
     let dir = tempfile::tempdir().unwrap();
     let path = source(dir.path());
+    // The answer has text only after page 3's own tokens: page 2 was skipped.
     let (base, server) = llm_server(
         200,
         r##"{"choices":[{"message":{"content":"# Verified pages\n\nAll pages reviewed."}}]}"##,
@@ -43,14 +44,19 @@ fn pdf_vision_reads_scanned_pages_and_drops_the_ocr_notice() {
     let request = server.join().unwrap();
     let system = request["messages"][0]["content"].as_str().unwrap();
     assert!(system.contains("Frames 2, 3 are scanned pages"), "{system}");
+    // Page 2 has no text of its own in the answer, so it is still unread.
     assert!(
-        !result
+        result
             .warnings
             .iter()
-            .any(|w| w.contains("native text was not recovered") || w.contains("--ocr")),
+            .any(|w| w.contains("native text was not recovered") && w.contains("--ocr")),
         "{:?}",
         result.warnings
     );
+    let markdown = result.llm_markdown.as_deref().unwrap_or(&result.markdown);
+    // Its scan stays visible; page 3's text is there.
+    assert!(markdown.contains("![Image on page 2]"), "{markdown}");
+    assert!(markdown.contains("All pages reviewed."), "{markdown}");
 }
 
 #[test]

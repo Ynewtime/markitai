@@ -921,16 +921,32 @@ fn convert_inner(
                 });
                 if send_pdf_images && !screenshots.is_empty() {
                     let enhanced = result.llm_markdown.as_mut().expect("enhanced body is set");
+                    // A page whose screenshot comment the answer lacks cannot be
+                    // placed in it: the answer's text, if it has any, stands for it.
+                    let had_text = has_prose(enhanced);
+                    let mut unplaced = Vec::new();
                     let references = screenshots
                         .iter()
                         .enumerate()
-                        .map(|(index, screenshot)| match office_kind {
-                            Some(kind) => {
-                                office_media::reference(kind, index + 1, &screenshot.name)
-                            }
-                            None => formats::pdf_screenshot_reference(index + 1, &screenshot.name),
+                        .map(|(index, screenshot)| {
+                            let reference = match office_kind {
+                                Some(kind) => {
+                                    office_media::reference(kind, index + 1, &screenshot.name)
+                                }
+                                None => {
+                                    formats::pdf_screenshot_reference(index + 1, &screenshot.name)
+                                }
+                            };
+                            (index + 1, reference)
                         })
-                        .filter(|reference| !enhanced.contains(reference.as_str()))
+                        .filter(|(page, reference)| {
+                            let missing = !enhanced.contains(reference.as_str());
+                            if missing && had_text {
+                                unplaced.push(*page);
+                            }
+                            missing
+                        })
+                        .map(|(_, reference)| reference)
                         .collect::<Vec<_>>();
                     if !references.is_empty() {
                         enhanced.push_str("\n\n<!-- Page images for reference -->\n");
@@ -939,7 +955,9 @@ fn convert_inner(
                     // The model read the scanned pages: "run with --ocr" would
                     // now be wrong, so it goes, unless it skipped a page: then
                     // the notice stays, as that page is still unread.
-                    if !unread_pages.is_empty() && unread_pages_written(enhanced, &unread_pages) {
+                    if !unread_pages.is_empty()
+                        && unread_pages_written(enhanced, &unread_pages, &unplaced)
+                    {
                         result
                             .warnings
                             .retain(|warning| !formats::is_unrecovered_warning(warning));
@@ -1274,7 +1292,7 @@ fn unread_pdf_pages(doc: &Document) -> Vec<usize> {
 /// Whether the answer has text for every one of the `unread` pages: after
 /// each page's screenshot comment (`<!-- ![Page N](…) -->`), up to the next
 /// comment or picture, there is text of its own.
-fn unread_pages_written(markdown: &str, unread: &[usize]) -> bool {
+fn unread_pages_written(markdown: &str, unread: &[usize], unplaced: &[usize]) -> bool {
     let mut written = std::collections::HashSet::new();
     let mut open = None;
     for line in markdown.lines().map(str::trim) {
@@ -1292,7 +1310,19 @@ fn unread_pages_written(markdown: &str, unread: &[usize]) -> bool {
             written.insert(page);
         }
     }
-    unread.iter().all(|page| written.contains(page))
+    unread
+        .iter()
+        .all(|page| written.contains(page) || unplaced.contains(page))
+}
+
+/// Whether Markdown has text of its own, beyond comments and picture
+/// references.
+fn has_prose(markdown: &str) -> bool {
+    markdown
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.starts_with("<!--") && !line.starts_with("!["))
+        .any(|line| line.chars().any(char::is_alphanumeric))
 }
 
 #[cfg(test)]
@@ -1302,11 +1332,13 @@ mod json_output_tests {
     #[test]
     fn the_scan_notice_stays_while_an_unread_page_has_no_text_of_its_own() {
         let both = "<!-- ![Page 1](a.jpg) -->\n\nText of one.\n\n<!-- Page number: 2 -->\n\n<!-- ![Image on page 2](x.jpg) -->\n\n<!-- ![Page 2](b.jpg) -->\n\nText of two.\n";
-        assert!(unread_pages_written(both, &[1, 2]));
+        assert!(unread_pages_written(both, &[1, 2], &[]));
         let skipped = "<!-- ![Page 1](a.jpg) -->\n\nText of one.\n\n<!-- ![Page 2](b.jpg) -->\n\n<!-- Page images for reference -->\n";
-        assert!(unread_pages_written(skipped, &[1]));
-        assert!(!unread_pages_written(skipped, &[1, 2]));
-        assert!(!unread_pages_written("", &[1]));
+        assert!(unread_pages_written(skipped, &[1], &[]));
+        assert!(!unread_pages_written(skipped, &[1, 2], &[]));
+        // A page whose comment the answer lacked stands for the answer's text.
+        assert!(unread_pages_written(skipped, &[1, 2], &[2]));
+        assert!(!unread_pages_written("", &[1], &[]));
     }
 
     #[test]
