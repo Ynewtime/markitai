@@ -445,8 +445,8 @@ export function OptionsPanel({
                     </div>
                   </div>
                   {reason && a.strategy !== "cloudflare" && a.backend !== "cloudflare" && <div class="opt-row">
-                    <span class="opt-label">Cloudflare</span>
-                    <div class="opt-controls"><p class="opt-note">{t.cloudflareReason(reason)}</p><details><summary>{t.helpLabel}</summary><p class="opt-note">{t.cloudflareSetup}</p></details></div>
+                    <RowLabel id={`${id}-cloudflare`} text="Cloudflare" hint={t.cloudflareSetup} items={[]} helpLabel={t.helpLabel} />
+                    <div class="opt-controls"><p class="opt-note">{t.cloudflareReason(reason)}</p></div>
                   </div>}
                   <div class="opt-row" role="group" aria-labelledby={`${id}-other`}>
                     <RowLabel
