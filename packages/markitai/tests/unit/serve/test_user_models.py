@@ -116,6 +116,11 @@ def test_the_rules_refuse_the_servers_credentials_and_machine() -> None:
     assert _reason("openai", USER_A_KEY, "ftp://models.example") == (
         "invalid_settings_request"
     )
+    # An address httpx cannot name escapes the public-address rule (yarl,
+    # which aiohttp reads it with, maps it to evil.example)
+    assert _reason("openai", USER_A_KEY, "http://\u24d4vil.example/v1") == (
+        "invalid_settings_request"
+    )
 
 
 def test_a_bare_model_name_is_judged_by_where_litellm_sends_it() -> None:

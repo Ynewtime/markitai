@@ -342,6 +342,13 @@ def check_address(provider: str, base: str | None) -> None:
             valid = parts.scheme.lower() in ("http", "https") and bool(parts.hostname)
         except ValueError:
             valid = False
+        if valid:
+            from markitai.public_connect import host_of
+
+            # The host the public-address rule holds (markitai.public_connect)
+            # is httpx's: an address it cannot name would go unchecked by a
+            # client that reads it differently (yarl maps 'ⓔvil.example')
+            valid = host_of(base) is not None
         if not valid:
             raise ApiError(
                 422,
