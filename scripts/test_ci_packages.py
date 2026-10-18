@@ -15,9 +15,10 @@ import subprocess
 import tarfile
 import tempfile
 import unittest
+import pathlib
 import zipfile
 
-from ci_packages import (npm_command, source_snapshot, stage_node_licenses, supplement_wheel_licenses,
+from ci_packages import (apply_path_remap, _sbom_without_local_paths, npm_command, source_snapshot, stage_node_licenses, supplement_wheel_licenses,
                          verify_node_licenses, write_cli_zip, extract_cli_zip, doctor_probe, mcp_probe, identity, package_attribution,
                          write_single_binary_tar, extract_single_binary_tar, windows_cli_build, main)
 from cli_documentation import DOCUMENTATION_PATHS
@@ -60,6 +61,43 @@ class PackageValidationTests(unittest.TestCase):
                     self.assertNotIn("--bins", command)
                     self.assertEqual(command[command.index("--bin") + 1], "markitai")
                     self.assertEqual(command[command.index("-p") + 1], "markitai-cli")
+
+    def test_path_remap_appends_to_flags_and_covers_the_build_tree(self):
+        root = self.root / "checkout"
+        environ = {
+            "CARGO_HOME": str(self.root / "cargo"),
+            "RUSTUP_HOME": str(self.root / "rustup"),
+            "CARGO_ENCODED_RUSTFLAGS": "-Clink-arg=-fuse-ld=lld",
+        }
+        result = apply_path_remap(dict(environ), root)
+        flags = result["CARGO_ENCODED_RUSTFLAGS"].split("\x1f")
+        # The existing (config-derived) flag is kept, remap rules appended.
+        self.assertEqual(flags[0], "-Clink-arg=-fuse-ld=lld")
+        self.assertNotIn("RUSTFLAGS", result)
+        self.assertTrue(any(f"--remap-path-prefix={root}/=" == f for f in flags))
+        self.assertTrue(any(f.endswith("/registry/=registry/") for f in flags))
+        self.assertTrue(any(f.endswith("/=rustup/") for f in flags))
+
+    def test_sbom_loses_every_local_path(self):
+        root = pathlib.Path("/build/home/checkout")
+        import os
+        home = os.path.expanduser("~")
+        data = (
+            '{"components":[{"bom-ref":"path+file:///build/home/checkout/crates/x#1"},'
+            '{"purl":"path+file:///build/home/checkout/vendor/lopdf#2"},'
+            f'{{"a":"path+file://{home}/.cargo/registry/src/idx/dep-1.0"}},'
+            '{"keep":"pkg:cargo/serde@1.0"}]}'
+        )
+        os.environ["CARGO_HOME"] = home + "/.cargo"
+        cleaned = _sbom_without_local_paths(data, root)
+        import json as _json
+        _json.loads(cleaned)
+        self.assertNotIn("/build/home/checkout", cleaned)
+        self.assertNotIn(home, cleaned)
+        self.assertIn("path+file://./crates/x#1", cleaned)
+        self.assertIn("path+file://./vendor/lopdf#2", cleaned)
+        self.assertIn("path+file://./registry/src/idx/dep-1.0", cleaned)
+        self.assertIn("pkg:cargo/serde@1.0", cleaned)
 
     def test_windows_cli_target_directory_keeps_custom_cache_separate(self):
         for cache in ["relative cache", str(self.root / "absolute cache")]:

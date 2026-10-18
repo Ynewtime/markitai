@@ -176,6 +176,17 @@ fn local_image(source: &str, target: &str, allow_symlinks: bool) -> Result<Vec<u
         target.split(['?', '#']).next().unwrap_or("").as_bytes(),
     )?)
     .map_err(|_| failure("image path is not UTF-8"))?;
+    // Decoded, a target may name a root, a drive or a UNC share (`%5C%5Chost`):
+    // refused before the file system is asked, which on Windows would contact
+    // that host.
+    if Path::new(&text).components().any(|part| {
+        matches!(
+            part,
+            std::path::Component::Prefix(_) | std::path::Component::RootDir
+        )
+    }) {
+        return Err(failure("unsupported or absolute local image target"));
+    }
     let root = Path::new(source)
         .parent()
         .filter(|path| !path.as_os_str().is_empty())
@@ -191,8 +202,22 @@ fn local_image(source: &str, target: &str, allow_symlinks: bool) -> Result<Vec<u
     if !meta.is_file() || meta.len() > MAX_IMAGE as u64 {
         return Err(failure("local image is not a file within the 64 MiB limit"));
     }
-    crate::platform::read_limited(std::fs::File::open(path)?, MAX_IMAGE as u64)?
-        .ok_or_else(|| failure("local image grew beyond 64 MiB"))
+    let bytes = crate::platform::read_limited(std::fs::File::open(&path)?, MAX_IMAGE as u64)?
+        .ok_or_else(|| failure("local image grew beyond 64 MiB"))?;
+    // Only a picture: a document's `![](.ssh/id_rsa)` must not copy that file
+    // into the output's assets.
+    let named = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            crate::images::is_image_extension(extension)
+                || extension.eq_ignore_ascii_case("emf")
+                || extension.eq_ignore_ascii_case("wmf")
+        });
+    if !named && image::guess_format(&bytes).is_err() {
+        return Err(failure("local file is not an image"));
+    }
+    Ok(bytes)
 }
 fn private_origin(url: &Url) -> bool {
     match url.host() {
@@ -327,19 +352,50 @@ mod tests {
     fn unresolved_cid_cannot_read_an_existing_same_named_local_file() {
         let dir = tempfile::tempdir().unwrap();
         let source = dir.path().join("message.eml");
-        std::fs::write(
-            dir.path().join("cid:photo"),
-            b"must not become the missing MIME image",
-        )
-        .unwrap();
+        let picture = png();
+        std::fs::write(dir.path().join("cid:photo"), &picture).unwrap();
         assert!(local_image(source.to_str().unwrap(), "cid:photo", false).is_err());
         assert!(local_image(source.to_str().unwrap(), "CID:photo", false).is_err());
         assert!(local_image(source.to_str().unwrap(), "file:photo", false).is_err());
         // An explicitly encoded colon is a local filename, not a URI scheme.
         assert_eq!(
             local_image(source.to_str().unwrap(), "cid%3Aphoto", false).unwrap(),
-            b"must not become the missing MIME image"
+            picture
         );
+    }
+
+    fn png() -> Vec<u8> {
+        let mut bytes = Vec::new();
+        image::DynamicImage::new_rgb8(2, 2)
+            .write_to(
+                &mut std::io::Cursor::new(&mut bytes),
+                image::ImageFormat::Png,
+            )
+            .unwrap();
+        bytes
+    }
+
+    #[test]
+    fn a_local_target_must_be_a_picture_inside_the_source_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("doc.md");
+        let source = source.to_str().unwrap();
+        std::fs::create_dir(dir.path().join(".ssh")).unwrap();
+        std::fs::write(dir.path().join(".ssh/id_rsa"), b"not a picture").unwrap();
+        std::fs::write(dir.path().join("notes.txt"), b"not a picture either").unwrap();
+        std::fs::write(dir.path().join("plain"), png()).unwrap();
+        std::fs::write(dir.path().join("named.svg"), b"<svg/>").unwrap();
+        // Neither named nor encoded as a picture: refused.
+        for target in [".ssh/id_rsa", "notes.txt", ".ssh%2Fid_rsa"] {
+            assert!(local_image(source, target, false).is_err(), "{target}");
+        }
+        // A picture by its bytes, or by its name (an SVG is text).
+        assert_eq!(local_image(source, "plain", false).unwrap(), png());
+        assert_eq!(local_image(source, "named.svg", false).unwrap(), b"<svg/>");
+        // A root (or a drive or share on Windows) only appears once decoded.
+        for target in ["%2Fetc%2Fhostname", "%2F%2Fhost%2Fshare%2Fa.png"] {
+            assert!(local_image(source, target, false).is_err(), "{target}");
+        }
     }
 
     #[test]

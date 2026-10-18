@@ -215,7 +215,7 @@ impl JobOptions {
             return Err(ApiError::new(
                 403,
                 "remote_processing_forbidden",
-                "Cloudflare processing requires a trusted authenticated request",
+                "Cloudflare processing bills the server's account and requires the admin token",
             ));
         }
         if self.remote_processing.as_deref() != Some("cloudflare") {

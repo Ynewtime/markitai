@@ -6,9 +6,18 @@ use super::*;
 const ADMIN: &str = "admin-test-token-0001";
 
 fn start(root: &Path) -> Server {
+    // A user token's URL job reaches public addresses only; this debug build
+    // lets the tests treat the loopback origin as public so a held job can
+    // reach it. a_user_url_job_cannot_reach_this_machine covers the default.
     Server::start_with(
         root,
-        &[("MARKITAI_SERVE_TOKEN", std::ffi::OsStr::new(ADMIN))],
+        &[
+            ("MARKITAI_SERVE_TOKEN", std::ffi::OsStr::new(ADMIN)),
+            (
+                "MARKITAI_TEST_PUBLIC_NET_ALLOW",
+                std::ffi::OsStr::new("127.0.0.1"),
+            ),
+        ],
     )
 }
 fn bearer(token: &str) -> String {
@@ -887,4 +896,81 @@ fn a_crlf_config_file_round_trips_byte_for_byte() {
     );
     assert_eq!(std::fs::read_to_string(&path).unwrap(), marked);
     server.stop();
+}
+
+#[test]
+fn cloudflare_processing_billed_to_the_server_is_the_admins_alone() {
+    let temp = tempfile::tempdir().unwrap();
+    configure(temp.path());
+    let path = temp.path().join("config.json");
+    let mut cfg: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    cfg["fetch"]["remote_consent"] = json!("ask");
+    cfg["fetch"]["cloudflare"] = json!({"api_token":"synthetic-token","account_id":"synthetic-account","convert_enabled":true});
+    std::fs::write(&path, cfg.to_string()).unwrap();
+    let server = start(temp.path());
+    let created = call(
+        &server,
+        "POST",
+        "/api/access-tokens",
+        ADMIN,
+        Some(json!({"label":"guest"})),
+    );
+    let user = created.json()["token"].as_str().unwrap().to_owned();
+    let cloudflare = |token: &str| {
+        call(&server, "GET", "/api/capabilities", token, None).json()["remote_services"]
+            ["cloudflare"]
+            .clone()
+    };
+    assert_eq!(cloudflare(ADMIN)["available"], true);
+    assert_eq!(cloudflare(&user)["available"], false);
+    assert_eq!(cloudflare(&user)["reason"], "client_not_trusted");
+    let confirmed = json!({"backend":"cloudflare","remote_processing":"cloudflare"});
+    let (content, body) = multipart(&[("no.txt", b"local")], json!([]), confirmed);
+    let authorization = bearer(&user);
+    let refused = server.request(
+        "POST",
+        "/api/jobs",
+        &[
+            ("Content-Type", content.as_str()),
+            ("Authorization", authorization.as_str()),
+        ],
+        &body,
+    );
+    assert_eq!(refused.status, 403, "{}", refused.text());
+    assert_eq!(refused.json()["reason"], "remote_processing_forbidden");
+    server.stop();
+}
+
+#[test]
+fn a_user_url_job_cannot_reach_this_machine() {
+    // No MARKITAI_TEST_PUBLIC_NET_ALLOW: the loopback origin is private, as a
+    // real one is. A user token's URL job is held to public addresses, so it
+    // never reaches the server's own machine; the admin's unchanged.
+    let origin = Origin::start();
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::start_with(
+        temp.path(),
+        &[("MARKITAI_SERVE_TOKEN", std::ffi::OsStr::new(ADMIN))],
+    );
+    let created = call(
+        &server,
+        "POST",
+        "/api/access-tokens",
+        ADMIN,
+        Some(json!({"label": "Reader"})),
+    );
+    assert_eq!(created.status, 201, "{}", created.text());
+    let user = created.json()["token"].as_str().unwrap().to_owned();
+
+    // The user's URL item fails without reaching the origin.
+    let mine = submit_as(&server, &user, &[], json!([origin.url("/page")]));
+    let item = done_as(&server, &user, &mine)["items"][0].clone();
+    assert_eq!(item["status"], "error", "{item}");
+    assert_eq!(origin.entered.load(Ordering::SeqCst), 0);
+
+    // The admin reaches the same loopback URL (not a user job).
+    let theirs = submit_as(&server, ADMIN, &[], json!([origin.url("/page")]));
+    let admin_item = done_as(&server, ADMIN, &theirs)["items"][0].clone();
+    assert_eq!(admin_item["status"], "done", "{admin_item}");
+    assert!(origin.entered.load(Ordering::SeqCst) >= 1);
 }

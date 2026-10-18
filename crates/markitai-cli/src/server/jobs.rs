@@ -341,6 +341,8 @@ async fn convert_one(
     let kept_id = super::snapshots::names(&item.item_id)
         .filter(|_| item.kind == "url")
         .map(|_| item.item_id.clone());
+    // Read before the job moves into the blocking task.
+    let public_only = job.owner.is_some();
     let result = crate::task::blocking(move || {
         let _permit = permit;
         let options = markitai_core::ConvertOptions {
@@ -354,6 +356,9 @@ async fn convert_one(
             browser_runtime: Some(&browser_runtime),
             // Jobs always publish into their own folder.
             stdout_assets: None,
+            // A user token's URL job reaches public addresses only, so its URL
+            // and the pictures it links to never reach the server's network.
+            public_only,
         };
         match kept_id.filter(|_| create_private_dir(&snapshots).is_ok()) {
             Some(item_id) => {

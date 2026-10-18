@@ -106,6 +106,9 @@ pub(super) async fn retry(
         ));
     }
     let trusted = request.extensions().get::<Trusted>().is_some_and(|v| v.0);
+    // Cloudflare processing bills the server's account: the admin's alone.
+    let admin = request.extensions().get::<super::security::Principal>()
+        == Some(&super::security::Principal::Admin);
     let bytes = axum::body::to_bytes(request.into_body(), 1024 * 1024)
         .await
         .map_err(|_| ApiError::new(413, "request_too_large", "retry body exceeds limit"))?;
@@ -144,7 +147,7 @@ pub(super) async fn retry(
         // Older histories may contain a previous confirmation; never reuse it.
         if !explicit_options { opts.remote_processing=None; }
         let configuration=state.conversion_config(job.owner.as_deref());
-        let mut cfg=opts.config_for_request(&configuration,trusted)?;
+        let mut cfg=opts.config_for_request(&configuration,trusted&&admin)?;
         // Options inherited from the item are the caller's earlier choice and keep the
         // core's failure policy; a request that names model processing now needs a model now.
         if explicit_options&&body.operation==Operation::Retry{opts.require_model(&configuration,&cfg)?;}
@@ -254,6 +257,8 @@ async fn run(state: Arc<State>, job: Arc<Job>, work: Work) {
         work.operation,
         work.prior_options.clone(),
     );
+    // Read before the job moves into the blocking task.
+    let public_only = job.owner.is_some();
     let result = crate::task::blocking(move || {
         let _permit = permit;
         let started = Instant::now();
@@ -284,6 +289,8 @@ async fn run(state: Arc<State>, job: Arc<Job>, work: Work) {
                 browser_runtime: Some(&browser_runtime),
                 // A rerun publishes into its job folder.
                 stdout_assets: None,
+                // A user token's URL rerun stays on public addresses too.
+                public_only,
             };
             // A URL's newly kept page, its screenshots' blocks and compare
             // screenshots replace the old ones with the result, when the

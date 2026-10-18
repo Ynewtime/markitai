@@ -146,8 +146,11 @@ executable receives argument-array parameters, never a shell command. Each expor
 owns a private temporary directory containing an input copy, fresh LibreOffice
 profile, and output directory. The profile is passed as
 `-env:UserInstallation=<file URL>` on every platform, so no export reads or
-writes the user's LibreOffice profile; macros and automatic link updates are
-disabled in it. Model credentials and other process environment values are not
+writes the user's LibreOffice profile; macros are disabled in it, and so is
+content a document only links to (`BlockUntrustedRefererLinks`,
+`DisableActiveContent`): a linked picture, a `file:` path on this computer or an
+http(s) address, is not loaded into the export. The EMF/WMF picture export uses
+the same profile. Model credentials and other process environment values are not
 inherited; PATH (and SystemRoot on Windows) is retained, TMPDIR/TMP/TEMP point
 into the private directory everywhere, XDG_CACHE_HOME too on Unix (for caches
 of libraries such as fontconfig), and HOME is never reassigned. The exported PDF

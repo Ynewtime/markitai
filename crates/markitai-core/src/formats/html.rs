@@ -9,6 +9,7 @@ mod furniture;
 mod github;
 mod hacker_news;
 mod mail;
+pub(crate) mod parse;
 mod raw_math;
 mod sites;
 mod social;
@@ -4301,7 +4302,7 @@ fn render_cleaned(write: &dyn Fn(&mut Out) -> Result<()>) -> Result<String> {
         None => {
             let mut output = Out::markup();
             write(&mut output)?;
-            Html::parse_document(&output.into_markup())
+            parse::document(&output.into_markup())
         }
     };
     hoist_edge_breaks(&mut document);
@@ -4913,7 +4914,7 @@ fn structured_announcement(
             let nodes = bbcode_tree(text)?;
             let mut html = String::new();
             bbcode_html(&nodes, base, &mut html);
-            let tree = Html::parse_fragment(&html);
+            let tree = parse::fragment(&html);
             let markdown = render_clean(tree.root_element(), base)?;
             if markdown.is_empty() {
                 continue;
@@ -4998,7 +4999,7 @@ fn substack_note(
         escaped(&image, &mut html);
         html.push_str("\">");
     }
-    let tree = Html::parse_fragment(&html);
+    let tree = parse::fragment(&html);
     let markdown = render_clean(tree.root_element(), base)?;
     if markdown.is_empty() {
         return Ok(None);
@@ -5049,7 +5050,7 @@ fn substack_note_image<'a>(note: ElementRef<'a>) -> Option<String> {
 }
 
 pub(super) fn fragment(source: &str) -> Result<String> {
-    let document = Html::parse_fragment(source);
+    let document = parse::fragment(source);
     render_clean(document.root_element(), None)
 }
 
@@ -5262,7 +5263,7 @@ fn without_repeated_blocks(markdown: String) -> String {
 pub fn extract_html(source: &str, base_url: Option<&str>) -> Result<Document> {
     FLATTENED.with(|flattened| flattened.set(false));
     let source = flatten_shadow_roots(source);
-    let mut document = Html::parse_document(&source);
+    let mut document = parse::document(&source);
     stream::restore(&mut document)?;
     fallbacks::recover(&mut document);
     let base = base_url.and_then(|value| Url::parse(value).ok());

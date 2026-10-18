@@ -128,9 +128,12 @@ visual-only.
 
 The browser applies cookies, additional HTTP headers, custom user agent,
 `load`/`domcontentloaded`/`networkidle`, a visible CSS selector wait, extra wait,
-and bounded automatic scrolling. Additional HTTP headers apply to page-context
-requests, including subresources, matching the reference context scope; they are
-not restricted to the initial navigation origin. Final source metadata redacts
+and bounded automatic scrolling. A caller's `extra_http_headers` are sent only
+to the initial navigation origin (its scheme, host and effective port), like
+`http_credentials`, so a secret among them never reaches a subresource host or
+a redirect target; a same-origin subresource still receives them. The automatic
+`Accept-Language` for X (not a caller header) still applies to every request.
+Final source metadata redacts
 userinfo and the values of secret query and fragment parameters (`token`, `key`,
 `sig`, `code`, `auth`, `session`, `access_token` and similar names) while link
 resolution uses the actual final URL.

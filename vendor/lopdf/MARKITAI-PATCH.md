@@ -149,6 +149,35 @@ benchmarks), prepared as above in copies of the unmodified and the patched
 files: 295 and 296 passed (the added test), the same 31 failed by name (all
 read the `assets` directory), 3 ignored.
 
+A further change, also marked `markitai`, adds `src/budget.rs` and touches
+`src/lib.rs`, `src/object.rs` (`decode_filters`) and `src/reader.rs`
+(`load_objects_raw`):
+
+- `with_decompress_budget(limit, work)` runs `work` with every stream decoded
+  on this thread drawing from one budget of `limit` bytes (a call inside a
+  budget in force keeps that one). `decode_filters`, which every decoding
+  method uses, caps each filter at what remains (with the caller's own limit
+  when lower), takes the output from the budget, and fails a stream that would
+  pass it with `MemoryLimitExceeded` naming the budget. Without a budget
+  nothing changes. `current_decompress_budget` and
+  `with_current_decompress_budget` hand a budget to work moved to another
+  thread; the loader's rayon workers receive the calling thread's this way.
+  `DecompressBudget` (`limit`, `remaining`) is public; nothing else is.
+- A limit per stream (`LoadOptions::max_decompressed_size`) does not bound a
+  document: a file of a few kilobytes can hold many streams each inflating to
+  it, or nested filters that multiply. Markitai runs each PDF under a budget
+  of 64 times the file and at least 1 GiB (`crates/markitai-core/src/pdf_budget.rs`).
+- `budget::tests::a_budget_is_shared_nested_and_restored` covers sharing,
+  nesting, another thread and restoring; markitai's tests check that a 5 MiB
+  budget decodes two of eight 2 MiB content streams and that the loader's
+  workers draw from it (an object stream of about 9 MiB loses its object under
+  4 MiB, keeps it by default, and keeps it under 4 MiB when the workers are not
+  handed the budget).
+
+The library and integration tests (`--lib --tests`), prepared as above in
+copies of the unmodified and the patched files: 302 and 303 passed (the added
+test), the same 31 failed by name, 3 ignored.
+
 Local example paths are replaced with `input.pdf` and `output.pdf` placeholders
 to avoid distributing developer home paths. `UPSTREAM.json` retains the original
 archive and upstream-file checksums; they describe the unmodified source, not

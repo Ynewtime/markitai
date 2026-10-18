@@ -26,7 +26,7 @@ import tempfile
 
 from ci_packages import (cli_attribution, doctor_probe, extract_cli_zip, extract_single_binary_tar,
                          identity, mcp_probe, package_attribution, source_snapshot, write_cli_zip,
-                         write_single_binary_tar, windows_cli_build)
+                         write_single_binary_tar, windows_cli_build, apply_path_remap)
 from ci_process import run_logged
 from cli_documentation import cli_documentation
 from executable_identity import (MACHO, ELF, WINDOWS_TARGETS, executable_arch,
@@ -116,6 +116,8 @@ def main(argv=None):
                        MARKITAI_LANG="en", TMPDIR=str(work / "tmp"), TMP=str(work / "tmp"), TEMP=str(work / "tmp"))
     environment.setdefault("CARGO_HOME", str(Path.home() / ".cargo"))
     environment.setdefault("RUSTUP_HOME", str(Path.home() / ".rustup"))
+    # The target CLI build carries no local build path (see ci_packages).
+    apply_path_remap(environment, root)
     environment.pop("CARGO_BUILD_TARGET", None)
     if args.target.endswith("-apple-darwin"):
         environment.setdefault("MACOSX_DEPLOYMENT_TARGET", "11.0")

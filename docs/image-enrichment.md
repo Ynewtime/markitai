@@ -114,7 +114,11 @@ provider credentials are read from document content.
 A conversion admits at most 1,024 distinct image references for localization,
 64 MiB per resource and 100 MiB of newly localized bytes in total. Local paths
 must resolve inside the source directory and obey `output.allow_symlinks`.
-Absolute local image targets are rejected. A failed localization preserves the
+Absolute local image targets are rejected, also when only percent-decoding makes
+them absolute (a root, a drive or a Windows share). A local file is used only when
+its name has an image extension (EMF and WMF included) or its bytes are an image,
+so a reference to another kind of file is not copied into the assets. A failed
+localization preserves the
 original reference and emits a warning.
 
 HTTP image downloads use direct transport, five redirects, a 30-second request

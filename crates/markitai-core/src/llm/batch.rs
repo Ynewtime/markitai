@@ -379,6 +379,7 @@ impl Plan {
             id: format!("{}/{}", self.endpoint.provider, self.endpoint.model),
             explicit_id: None,
             hidden_endpoint: false,
+            public_only: false,
             group: "default".into(),
             model: self.endpoint.model.clone(),
             provider: self.endpoint.provider.clone(),

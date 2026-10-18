@@ -917,7 +917,26 @@ impl Stream {
     /// Shared decoder for [`Stream::decompressed_content`] and its bounded
     /// variants. `limit` is `None` to decode without a size limit, or
     /// `Some(max)` to cap the decoded output at `max` bytes per filter layer.
+    ///
+    /// markitai: inside a [`crate::with_decompress_budget`], every filter is
+    /// also capped at what remains of the budget, the output is taken from it,
+    /// and a stream that would pass it fails naming the budget.
     fn decode_filters(&self, limit: Option<usize>) -> Result<Vec<u8>> {
+        let Some(budget) = crate::budget::current_decompress_budget() else {
+            return self.decode_filters_bounded(limit);
+        };
+        let remaining = budget.remaining();
+        let by_budget = limit.is_none_or(|max| remaining < max);
+        let exhausted = || Error::from(DecompressError::MemoryLimitExceeded { limit: budget.limit() });
+        match self.decode_filters_bounded(Some(limit.map_or(remaining, |max| max.min(remaining)))) {
+            Ok(output) if budget.charge(output.len()) => Ok(output),
+            Ok(_) => Err(exhausted()),
+            Err(Error::Decompress(DecompressError::MemoryLimitExceeded { .. })) if by_budget => Err(exhausted()),
+            other => other,
+        }
+    }
+
+    fn decode_filters_bounded(&self, limit: Option<usize>) -> Result<Vec<u8>> {
         let params = self.dict.get(b"DecodeParms").and_then(Object::as_dict).ok();
         let filters = match self.filters() {
             Ok(f) => f,

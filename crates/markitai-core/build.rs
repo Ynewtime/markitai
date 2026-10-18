@@ -208,6 +208,8 @@ fn build_metadata() {
     let checkout = git_checkout();
     let git = |args: &[&str]| {
         let output = Command::new("git")
+            // Never start the found checkout's fsmonitor daemon; only read.
+            .args(["-c", "core.fsmonitor=false"])
             .arg("-C")
             .arg(checkout.as_ref()?.0.as_path())
             .args(args)
@@ -264,6 +266,17 @@ fn git_checkout() -> Option<(PathBuf, PathBuf)> {
     let mut directory = PathBuf::from(env::var("CARGO_MANIFEST_DIR").ok()?);
     for _ in 0..4 {
         let dot = directory.join(".git");
+        // Only this workspace's own checkout, so an unpacked source archive
+        // built inside an unrelated git repository does not take that repo's
+        // commit (or run its hooks). The worktree root holds the workspace
+        // Cargo.toml; a package directory on the way up does not.
+        let is_workspace = fs::read_to_string(directory.join("Cargo.toml")).is_ok_and(|manifest| {
+            manifest.contains("[workspace]") && manifest.contains("\"crates/*\"")
+        });
+        if !is_workspace {
+            directory = directory.parent()?.to_path_buf();
+            continue;
+        }
         if dot.is_dir() {
             return Some((directory.clone(), dot));
         }

@@ -870,6 +870,12 @@ fn home_relative(path: &Path) -> CliResult<PathBuf> {
 }
 
 fn conversion_config(cli: &Cli, overrides: Option<Value>) -> CliResult<Value> {
+    if cli.verbose
+        && !cli.quiet
+        && let Some((path, project)) = config::selected_source(cli.config.as_deref())
+    {
+        eprintln!("{}", config_line(crate::app::i18n::lang(), &path, project));
+    }
     let raw = config::raw(cli.config.as_deref(), overrides).map_err(runtime)?;
     let mut cfg = config::normalize(&raw).map_err(runtime)?;
     // Defaults are not choices: the default `remote_consent: always` is not an
@@ -1278,6 +1284,7 @@ fn execute_conversion(
         llm_runtime: llm_runtime.as_ref(),
         browser_runtime: Some(&browser_runtime),
         stdout_assets: None,
+        public_only: false,
     };
     if !batch {
         let mut task = tasks.remove(0);
@@ -2599,6 +2606,22 @@ fn parse_urls(path: &Path, output: &Path) -> CliResult<Vec<Task>> {
     Ok(tasks)
 }
 
+/// `Config: <path>`, marking a `./markitai.json` found in the working
+/// directory, whose models at their own address use no environment key.
+pub(crate) fn config_line(lang: crate::app::i18n::Lang, path: &Path, project: bool) -> String {
+    let path = path.display();
+    match (project, lang) {
+        (false, crate::app::i18n::Lang::En) => format!("Config: {path}"),
+        (false, _) => format!("配置文件：{path}"),
+        (true, crate::app::i18n::Lang::En) => format!(
+            "Config: {path} (found in this folder: its models at their own address use no key from the environment)"
+        ),
+        (true, _) => format!(
+            "配置文件：{path}（在当前文件夹找到：其中自带地址的模型不使用环境变量中的密钥）"
+        ),
+    }
+}
+
 fn selected_config(cli: &Cli) -> Option<PathBuf> {
     config::selected_path(cli.config.as_deref())
 }
@@ -2783,7 +2806,14 @@ fn subcommand(cli: &Cli, command: &Command, overrides: Option<Value>) -> CliResu
                 ));
             }
             let cfg = config::load(cli.config.as_deref(), overrides).map_err(runtime)?;
-            return doctor::run(&cfg, selected_config(cli).as_deref(), *as_json, *fix);
+            let source = config::selected_source(cli.config.as_deref());
+            return doctor::run(
+                &cfg,
+                source.as_ref().map(|(path, _)| path.as_path()),
+                source.as_ref().is_some_and(|(_, project)| *project),
+                *as_json,
+                *fix,
+            );
         }
         Command::Cache { command } => {
             let cfg = config::load(cli.config.as_deref(), overrides).map_err(runtime)?;

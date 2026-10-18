@@ -1067,12 +1067,15 @@ impl Reader<'_> {
 
         #[cfg(feature = "rayon")]
         {
+            // markitai: the workers decode for this thread, so they draw from
+            // its decompression budget.
+            let budget = crate::budget::current_decompress_budget();
             self.document.objects = self
                 .document
                 .reference_table
                 .entries
                 .par_iter()
-                .map(entries_filter_map)
+                .map(|entry| crate::budget::with_current_decompress_budget(budget.clone(), || entries_filter_map(entry)))
                 .filter_map(Result::transpose)
                 .collect::<Result<BTreeMap<_, _>>>()?;
         }

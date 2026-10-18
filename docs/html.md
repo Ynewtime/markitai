@@ -236,7 +236,11 @@ documented article heuristic; ordinary hidden descendants remain hidden.
   are excluded (see forms and footers above). A hidden ancestor also disqualifies
   an article candidate. Content nested deeper than 256 levels (unclosed legacy
   tags such as `<font>` reach that depth), a code block among it included, is
-  kept as plain text without its formatting, with a warning.
+  kept as plain text without its formatting, with a warning. While a page is
+  parsed, start tags beyond 512 open elements are dropped with their end tags
+  (their text stays, in the element at that depth), as Chromium attaches them
+  at its depth limit, so very deep nesting costs time in proportion to its size
+  rather than to its depth squared.
 
 Inline visibility uses parsed CSS declarations rather than substring matching.
 Only the actual `display` and `visibility` property names affect this check;

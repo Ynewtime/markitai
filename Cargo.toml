@@ -9,6 +9,9 @@ version = "1.3.0-dev"
 edition = "2024"
 rust-version = "1.92"
 license = "MIT"
+# Distributed as the PyPI wheel (Python bindings) and prebuilt binaries, not on
+# crates.io; `cargo publish` is refused so a crate is never pushed by accident.
+publish = false
 
 [workspace.dependencies]
 markitai-core = { path = "crates/markitai-core" }

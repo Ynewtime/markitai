@@ -111,6 +111,10 @@ fn page_box(pdf: &lopdf::Document, id: lopdf::ObjectId) -> Result<Option<(f64, f
 }
 /// Empty plans preserve the original PDF bytes, including in occupied-neighbor cases.
 pub(super) fn inspect(bytes: &[u8], expected_pages: usize, deadline: Instant) -> Result<Plan> {
+    crate::pdf_budget::within(bytes, || inspect_within(bytes, expected_pages, deadline))
+}
+
+fn inspect_within(bytes: &[u8], expected_pages: usize, deadline: Instant) -> Result<Plan> {
     check_deadline(deadline)?;
     let pdf = lopdf::Document::load_mem(bytes)
         .map_err(|_| failure("invalid workbook PDF for overflow measurement"))?;

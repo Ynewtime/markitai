@@ -240,8 +240,10 @@ failed retry; deleting the item deletes them.
 network request and returns no credentials, account ID or endpoint. It does not
 verify cloud permissions, quota or service availability. `reason` is null when
 ready, otherwise `not_configured`, `invalid_configuration`, `disabled_by_policy`
-or `client_not_trusted`. An untrusted caller gets a fixed unavailable response
-without resolving credentials.
+or `client_not_trusted`. Cloudflare bills the server's account, so only the
+admin (the server token, or a loopback client of a `--no-auth` server) may use
+it: a user token or an untrusted caller gets a fixed `client_not_trusted`
+response without resolving credentials.
 
 A trusted request must select `strategy: "cloudflare"` or
 `backend: "cloudflare"` and explicitly include `remote_processing: "cloudflare"`
@@ -268,8 +270,8 @@ there is no terminal prompt and no implicit authorization of remote fallback in
 `auto`. Remote fallback of `auto` (defuddle.md, Jina Reader, and Cloudflare when
 configured) runs only when the server's configuration file or `--config-json`
 writes `fetch.remote_consent: always`, as in the CLI ([consent](fetch.md#consent));
-the default leaves `auto` local. The server returns 403 `remote_processing_forbidden` for an untrusted
-caller, 422 `remote_processing_confirmation_required` without current consent,
+the default leaves `auto` local. The server returns 403 `remote_processing_forbidden` for any caller
+other than the admin (a user token included), 422 `remote_processing_confirmation_required` without current consent,
 422 `remote_processing_disabled` when policy forbids it, and 422
 `cloudflare_unavailable` when local prerequisites are missing. Unknown enum
 values, or consent without a Cloudflare selection, return 422 `invalid_options`.
@@ -652,6 +654,16 @@ history archive list only its own jobs. Admins see every job; a revoked user's
 jobs stay, for admins. The job's owner is saved in its `meta.json` and never
 sent by the API.
 
+A URL a user token converts (and any retry of it) reaches public addresses
+only: its host, every redirect, `<meta>` refresh and browser navigation it
+follows, and the pictures its document links to are resolved when the
+connection is made and refused if the address is not on the public internet
+(loopback, private ranges, link-local such as cloud metadata, unique-local), so
+a URL cannot read the server's own loopback API, its network or a cloud
+metadata service. A user's fetch uses no proxy. The admin's own URL jobs are
+unchanged, except that a public page may no longer redirect or navigate into a
+private address (see [fetching](fetch.md)).
+
 Only each user token's SHA-256 is kept, in `MARKITAI_HOME/serve/access.json`
 (`{"version": 1, "tokens": [{"id", "label", "sha256", "hint", "created_at"}]}`,
 owner-only, replaced atomically), so user tokens survive restarts and admin-token
@@ -675,7 +687,13 @@ a provider that signs in with the server's own account or cloud login
 (subscriptions, Vertex AI, watsonx, GigaChat, Bedrock without a key) is 422
 `server_credentials`; an address on the server's machine (`localhost`, loopback,
 `0.0.0.0`, `::`, also a provider's documented local address, so Ollama or LM
-Studio need another address) is 422 `server_address`. A user's models never use
+Studio need another address) is 422 `server_address`. Beyond that check, every request
+made for a user's own model (its conversions, model discovery and tests)
+reaches public addresses only: the name is resolved when the connection is
+made and an address outside the public internet (loopback, private, link-local
+such as cloud metadata, unique-local) is refused, so a name that points at the
+server's machine or network fails too; such requests use no proxy and follow
+no redirect. Models the admin shares are not restricted. A user's models never use
 the server's environment keys or detected models, and name only the user's own
 connections.
 

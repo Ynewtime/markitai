@@ -122,7 +122,7 @@ pub fn page_quality(url: &str, html: &str) -> CaptureQuality {
 
 /// The visible text and the title of markup shown without scripts.
 fn framed_text(html: &str) -> (String, String) {
-    let tree = scraper::Html::parse_document(html);
+    let tree = crate::formats::parse_html(html);
     let mut text = String::new();
     let mut title = None;
     collect(&tree, &mut text, &mut title, true);
@@ -156,7 +156,7 @@ fn collect(tree: &scraper::Html, text: &mut String, title: &mut Option<String>, 
             continue;
         }
         if noscript && nested {
-            let fragment = scraper::Html::parse_fragment(value);
+            let fragment = crate::formats::parse_html_fragment(value);
             collect(&fragment, text, &mut Some(String::new()), false);
         } else {
             text.push_str(value);
@@ -174,7 +174,7 @@ fn collect(tree: &scraper::Html, text: &mut String, title: &mut Option<String>, 
 /// `visibility: hidden` on it or an ancestor, a `width` or `height` of 0 or
 /// 1 on it, as tracking pixels have).
 fn shows_media(markup: &str) -> bool {
-    let tree = scraper::Html::parse_document(markup);
+    let tree = crate::formats::parse_html(markup);
     tree.tree
         .nodes()
         .filter_map(scraper::ElementRef::wrap)

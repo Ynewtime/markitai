@@ -79,7 +79,7 @@ fn plaintext(bytes: &[u8]) -> Result<Vec<u8>> {
     if memchr::memmem::find(bytes, b"/Encrypt").is_none() {
         return Ok(bytes.to_vec());
     }
-    match lopdf::Document::load_mem(bytes) {
+    match crate::pdf_budget::within(bytes, || lopdf::Document::load_mem(bytes)) {
         Ok(document) if document.is_encrypted() => Err(locked()),
         Ok(mut document) if document.was_encrypted() => {
             let mut decrypted = Vec::new();

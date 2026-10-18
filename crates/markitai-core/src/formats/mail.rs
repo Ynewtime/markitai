@@ -116,14 +116,7 @@ pub(super) fn html_with_content_ids(
     let mut mapped = HashMap::new();
     let mut placeholders = HashMap::new();
     let references = output_profiles::html_image_references(html);
-    let mut nonce = 0usize;
-    let prefix = loop {
-        let prefix = format!(".markitai-mail-unresolved-{nonce}-");
-        if !html.contains(&prefix) && !references.iter().any(|uri| uri.contains(&prefix)) {
-            break prefix;
-        }
-        nonce += 1;
-    };
+    let prefix = unused_prefix(html, &references);
     for target in references {
         if !target
             .get(..4)
@@ -148,9 +141,46 @@ pub(super) fn html_with_content_ids(
     ))
 }
 
+/// The first `.markitai-mail-unresolved-<n>-` prefix that neither the body
+/// nor its image references contain, found in one pass over each (a body
+/// naming many prefixes would otherwise be searched again for each).
+fn unused_prefix(html: &str, references: &[String]) -> String {
+    const STEM: &str = ".markitai-mail-unresolved-";
+    let mut used = std::collections::HashSet::new();
+    for text in std::iter::once(html).chain(references.iter().map(String::as_str)) {
+        for (at, _) in text.match_indices(STEM) {
+            let rest = &text[at + STEM.len()..];
+            let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+            if rest.as_bytes().get(digits) == Some(&b'-')
+                && let Ok(nonce) = rest[..digits].parse::<usize>()
+            {
+                used.insert(nonce);
+            }
+        }
+    }
+    let nonce = (0..)
+        .find(|nonce| !used.contains(nonce))
+        .unwrap_or_default();
+    format!("{STEM}{nonce}-")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_placeholder_prefix_avoids_every_one_the_body_names_in_one_pass() {
+        let stem = ".markitai-mail-unresolved-";
+        assert_eq!(unused_prefix("<p>plain</p>", &[]), format!("{stem}0-"));
+        let named = format!("<p>{stem}0-a {stem}1-</p>");
+        let references = vec![format!("cid:{stem}2-x"), format!("{stem}04-")];
+        assert_eq!(unused_prefix(&named, &references), format!("{stem}3-"));
+        // Many named prefixes cost one scan, not one per prefix.
+        let crowded: String = (0..20_000)
+            .map(|nonce| format!("{stem}{nonce}- "))
+            .collect();
+        assert_eq!(unused_prefix(&crowded, &[]), format!("{stem}20000-"));
+    }
 
     #[test]
     fn link_text_escapes_backslashes_brackets_angles_and_controls() {

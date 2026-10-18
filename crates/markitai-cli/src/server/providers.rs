@@ -108,16 +108,26 @@ pub(super) async fn network(mut request: Value, is_probe: bool) -> ApiResult<Val
         .and_then(|request| request.remove("use_environment_credentials"))
         .and_then(|value| value.as_bool())
         == Some(true);
+    // Also the resolver's: a user token's requests reach public addresses only.
+    let public_only = request
+        .as_object_mut()
+        .and_then(|request| request.remove("public_only"))
+        .and_then(|value| value.as_bool())
+        == Some(true);
     let task = crate::task::blocking(move || {
         let _permit = permit;
         if is_probe {
             if use_environment {
                 markitai_core::provider_management::probe(&request)
+            } else if public_only {
+                markitai_core::provider_management::probe_public(&request)
             } else {
                 markitai_core::provider_management::probe_explicit(&request)
             }
         } else if use_environment {
             markitai_core::provider_management::discover(&request)
+        } else if public_only {
+            markitai_core::provider_management::discover_public(&request)
         } else {
             markitai_core::provider_management::discover_explicit(&request)
         }

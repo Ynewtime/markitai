@@ -249,8 +249,24 @@ impl Cache {
         let value = serde_json::to_string(answer).map_err(|_| unavailable())?;
         let size = i64::try_from(value.len()).map_err(|_| unavailable())?;
         if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent).map_err(|_| unavailable())?;
+            crate::platform::private_directory()
+                .recursive(true)
+                .create(parent)
+                .map_err(|_| unavailable())?;
         }
+        // The store holds document text and model answers: created owner-only
+        // before SQLite opens it (its side files copy that mode), and a store
+        // an earlier version left shared is narrowed, as the fetch cache does.
+        match crate::platform::private_file(
+            std::fs::OpenOptions::new().write(true).create_new(true),
+        )
+        .open(&self.path)
+        {
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(_) => return Err(unavailable()),
+        }
+        private(&self.path)?;
         let mut connection = initialize_writer(&self.path)?;
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -292,6 +308,38 @@ impl Cache {
 // WAL migration upgrades a read lock and can return BUSY without invoking
 // SQLite's busy handler. Retrying a fresh connection releases that read lock;
 // retrying the insertion transaction would have a different correctness scope.
+/// Narrow the store and the SQLite side files present to their owner; a link
+/// or other non-file in their place is refused rather than written through.
+fn private(path: &Path) -> Result<()> {
+    for suffix in ["", "-journal", "-wal", "-shm"] {
+        let mut name = path.as_os_str().to_owned();
+        name.push(suffix);
+        let file = PathBuf::from(name);
+        match std::fs::symlink_metadata(&file) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Ok(metadata) if metadata.is_file() => {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let mode = metadata.permissions().mode();
+                    if mode & 0o077 != 0 {
+                        crate::platform::open_no_follow(
+                            std::fs::OpenOptions::new().read(true),
+                            &file,
+                        )
+                        .and_then(|opened| {
+                            opened.set_permissions(std::fs::Permissions::from_mode(mode & 0o700))
+                        })
+                        .map_err(|_| unavailable())?;
+                    }
+                }
+            }
+            Ok(_) | Err(_) => return Err(unavailable()),
+        }
+    }
+    Ok(())
+}
+
 fn initialize_writer(path: &Path) -> Result<Connection> {
     initialize_writer_with_wait(path, Duration::from_secs(30), &mut std::thread::sleep)
 }
@@ -532,6 +580,41 @@ mod tests {
         fn set(&self, key: &str, model: &str, answer: &str) -> Result<()> {
             self.set_json(key, model, &Value::String(answer.to_owned()))
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_store_is_private_and_a_shared_one_is_narrowed() {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        let root = tempfile::tempdir().unwrap();
+        let directory = root.path().join("state");
+        let cache = Cache::configured(&configuration(&directory, 10_000), "").unwrap();
+        cache.set("k", "pool", "document text").unwrap();
+        assert_eq!(mode(&directory), 0o700);
+        assert_eq!(mode(&cache.path), 0o600);
+        // A store an earlier version left readable is narrowed, with the side
+        // files SQLite made from its mode, on the next write.
+        std::fs::set_permissions(&cache.path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        cache.set("k", "pool", "newer text").unwrap();
+        for suffix in ["", "-wal", "-shm"] {
+            let mut name = cache.path.as_os_str().to_owned();
+            name.push(suffix);
+            let path = PathBuf::from(name);
+            if path.exists() {
+                assert_eq!(mode(&path), 0o600, "{}", path.display());
+            }
+        }
+        assert_eq!(cache.get("k").unwrap().as_deref(), Some("newer text"));
+        // A linked store is refused rather than written through.
+        let linked = root.path().join("linked");
+        let target = root.path().join("elsewhere.db");
+        std::fs::write(&target, b"").unwrap();
+        std::fs::create_dir_all(&linked).unwrap();
+        std::os::unix::fs::symlink(&target, linked.join("cache.db")).unwrap();
+        let cache = Cache::configured(&configuration(&linked, 10_000), "").unwrap();
+        assert!(cache.set("k", "pool", "text").is_err());
+        assert_eq!(std::fs::read(&target).unwrap(), b"");
     }
 
     #[test]

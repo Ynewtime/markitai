@@ -63,8 +63,10 @@ pub(super) async fn capabilities(
         Some(user) => super::settings::user_capabilities(&state.conversion_config(Some(user))),
         None => json!(markitai_core::llm_capabilities(&cfg)),
     };
-    // Do not even resolve credentials for an untrusted caller.
-    let cloudflare = if trusted {
+    // Do not even resolve credentials for a caller that may not use them:
+    // Cloudflare bills the server's account, so only the admin may.
+    let admin = request.extensions().get::<Principal>() == Some(&Principal::Admin);
+    let cloudflare = if trusted && admin {
         markitai_core::cloudflare_capabilities(&cfg)
     } else {
         json!({"configured":false,"available":false,"reason":"client_not_trusted",
@@ -210,6 +212,8 @@ pub(super) async fn create(
         ));
     }
     let trusted = request.extensions().get::<Trusted>().is_some_and(|v| v.0);
+    // Cloudflare processing bills the server's account: the admin's alone.
+    let admin = request.extensions().get::<Principal>() == Some(&Principal::Admin);
     let owner = request
         .extensions()
         .get::<Principal>()
@@ -409,7 +413,7 @@ pub(super) async fn create(
     };
     // A user's conversions route to its own and the shared models only.
     let configuration = state.conversion_config(owner.as_deref());
-    let cfg = options.config_for_request(&configuration, trusted)?;
+    let cfg = options.config_for_request(&configuration, trusted && admin)?;
     // Without a routable model every item would fail with the same error, so a
     // request for model processing is refused before anything is stored.
     options.require_model(&configuration, &cfg)?;

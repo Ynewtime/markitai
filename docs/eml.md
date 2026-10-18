@@ -144,7 +144,10 @@ remain opt-in and use the shared document budget. See
 
 Input is rejected above 100 MiB before MIME parsing. Parsed messages are limited to
 4,096 total parts, 64 levels of multipart/nested-message structure and 128 MiB of
-decoded MIME content. These checks bound admitted documents; they do not claim a
+decoded MIME content. The nesting of messages is counted before the full parse,
+including messages inside base64 or quoted-printable parts, so a message nested too
+deeply is refused instead of exhausting the stack. These checks bound admitted
+documents; they do not claim a
 streaming parser or a measured peak-memory ceiling. Image decoding has its own
 pixel and payload limits downstream. Nested messages are quoted one level and
 remain downloadable `.eml` attachments.

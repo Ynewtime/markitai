@@ -216,6 +216,13 @@ pub(super) struct Browser {
     pub deadline: Instant,
     blocked: Vec<regex::Regex>,
     auth: super::auth::State,
+    // The caller's extra headers and the one origin they are sent to.
+    origin_headers: serde_json::Map<String, Value>,
+    origin: String,
+    // Public addresses only: every request host must resolve entirely public.
+    restrict_public: bool,
+    // Hosts already judged, so a page's many requests resolve each name once.
+    host_public: std::collections::HashMap<String, bool>,
     in_flight: HashSet<String>,
     pub last_network_change: Instant,
     pub main_frame: Option<String>,
@@ -275,6 +282,10 @@ impl Browser {
             deadline: Instant::now() + Duration::from_millis(options.timeout),
             blocked: options.blocked.clone(),
             auth: super::auth::State::new(options.credentials.clone()),
+            origin_headers: options.headers.clone(),
+            origin: options.origin.clone(),
+            restrict_public: options.restrict_public,
+            host_public: std::collections::HashMap::new(),
             in_flight: HashSet::new(),
             last_network_change: Instant::now(),
             main_frame: None,
@@ -295,6 +306,10 @@ impl Browser {
         self.deadline = Instant::now() + Duration::from_millis(options.timeout);
         self.blocked = options.blocked.clone();
         self.auth = super::auth::State::new(options.credentials.clone());
+        self.origin_headers = options.headers.clone();
+        self.origin = options.origin.clone();
+        self.restrict_public = options.restrict_public;
+        self.host_public.clear();
         self.in_flight.clear();
         self.last_network_change = Instant::now();
         self.main_frame = None;
@@ -355,13 +370,16 @@ impl Browser {
                 .headers
                 .keys()
                 .any(|name| name.eq_ignore_ascii_case("accept-language"));
-        let mut headers = options.headers.clone();
         if english {
+            // The rendering language is not a secret and applies to every
+            // request; the caller's own headers bind to the initial origin
+            // (added per request in `event`), so a secret among them never
+            // reaches a subresource host or a redirect target.
             self.call("Emulation.setLocaleOverride", json!({"locale":"en-US"}))?;
-            headers.insert("Accept-Language".into(), json!(ACCEPT_LANGUAGE));
-        }
-        if !headers.is_empty() {
-            self.call("Network.setExtraHTTPHeaders", json!({"headers":headers}))?;
+            self.call(
+                "Network.setExtraHTTPHeaders",
+                json!({"headers":{"Accept-Language":ACCEPT_LANGUAGE}}),
+            )?;
         }
         let agent = match &options.user_agent {
             Some(agent) => Some(agent.clone()),
@@ -438,6 +456,10 @@ impl Browser {
         }
         self.session.clear();
         self.auth = super::auth::State::new(None);
+        self.origin_headers.clear();
+        self.origin.clear();
+        self.restrict_public = false;
+        self.host_public.clear();
         self.blocked.clear();
         self.in_flight.clear();
         self.main_frame = None;
@@ -483,6 +505,60 @@ impl Browser {
             .map_err(|_| failure("Chromium protocol write failed"))?;
         Ok(id)
     }
+    /// Whether a host connects only to public addresses, each name resolved
+    /// once and remembered for the page's other requests to it.
+    fn host_is_public(&mut self, url: &Url) -> bool {
+        let key = url.host_str().unwrap_or_default().to_ascii_lowercase();
+        if let Some(&known) = self.host_public.get(&key) {
+            return known;
+        }
+        let public = crate::public_net::host_all_public(url);
+        self.host_public.insert(key, public);
+        public
+    }
+
+    /// The header list for a paused request when the caller's own headers
+    /// apply to it: the request's own headers, with the caller's added (same
+    /// name overwritten), as `Fetch.continueRequest` replaces the whole set.
+    /// `None` leaves the request untouched. The caller's headers are sent only
+    /// at the Request stage and only to the initial origin, so a secret among
+    /// them never reaches a subresource host or a redirect target. An opaque
+    /// origin (`data:`, `blob:`, `about:`) serializes to "null" and matches
+    /// nothing.
+    fn request_headers(&self, url: &str, params: &Value) -> Option<Vec<Value>> {
+        if self.origin_headers.is_empty() || params.get("responseStatusCode").is_some() {
+            return None;
+        }
+        let origin = Url::parse(url).ok()?.origin().ascii_serialization();
+        if origin != self.origin {
+            return None;
+        }
+        let mut merged: Vec<(String, String)> = Vec::new();
+        if let Some(existing) = params
+            .pointer("/request/headers")
+            .and_then(Value::as_object)
+        {
+            for (name, value) in existing {
+                if let Some(value) = value.as_str() {
+                    merged.push((name.clone(), value.to_owned()));
+                }
+            }
+        }
+        for (name, value) in &self.origin_headers {
+            let Some(value) = value.as_str() else {
+                continue;
+            };
+            merged.retain(|(existing, _)| !existing.eq_ignore_ascii_case(name));
+            merged.push((name.clone(), value.to_owned()));
+        }
+        Some(
+            merged
+                .into_iter()
+                .map(|(name, value)| json!({"name":name,"value":value}))
+                .collect(),
+        )
+    }
+
     fn event(&mut self, message: &Value) -> Result<()> {
         if self.navigation_id.is_some() && message["id"].as_u64() == self.navigation_id {
             self.navigation_reply = Some(message.clone());
@@ -505,10 +581,19 @@ impl Browser {
                     .pointer("/request/url")
                     .and_then(Value::as_str)
                     .unwrap_or("");
-                let safe = Url::parse(url).is_ok_and(|url| {
+                let parsed = Url::parse(url).ok();
+                let safe = parsed.as_ref().is_some_and(|url| {
                     ["http", "https", "data", "blob", "about"].contains(&url.scheme())
                 });
-                if !safe || self.blocked.iter().any(|pattern| pattern.is_match(url)) {
+                // A restricted fetch reaches public addresses only: a navigation,
+                // redirect or subresource to a host that resolves to any
+                // non-public address (this machine, its network, cloud metadata)
+                // is refused, each host judged once.
+                let private = self.restrict_public
+                    && parsed.as_ref().is_some_and(|url| {
+                        matches!(url.scheme(), "http" | "https") && !self.host_is_public(url)
+                    });
+                if !safe || private || self.blocked.iter().any(|pattern| pattern.is_match(url)) {
                     self.send(
                         "Fetch.failRequest",
                         json!({"requestId":id,"errorReason":"BlockedByClient"}),
@@ -532,7 +617,13 @@ impl Browser {
                             }
                         }
                     }
-                    self.send("Fetch.continueRequest", json!({"requestId":id}))?;
+                    match self.request_headers(url, params) {
+                        Some(headers) => self.send(
+                            "Fetch.continueRequest",
+                            json!({"requestId":id,"headers":headers}),
+                        )?,
+                        None => self.send("Fetch.continueRequest", json!({"requestId":id}))?,
+                    };
                 }
             }
             "Network.requestWillBeSent" => {
@@ -827,6 +918,10 @@ mod tests {
                 next_id: 1,
                 deadline: Instant::now() + Duration::from_secs(3),
                 auth: super::super::auth::State::new(None),
+                origin_headers: serde_json::Map::new(),
+                origin: String::new(),
+                restrict_public: false,
+                host_public: std::collections::HashMap::new(),
                 blocked: vec![regex::Regex::new(r"^https://example\.test/ads/").unwrap()],
                 in_flight: HashSet::new(),
                 last_network_change: Instant::now(),

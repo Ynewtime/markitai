@@ -122,11 +122,17 @@ const SECTIONS: [(&str, &str, &[&str]); 3] = [
     ),
 ];
 
-pub(super) fn run(cfg: &Value, path: Option<&Path>, json: bool, fix: bool) -> CliResult<i32> {
+pub(super) fn run(
+    cfg: &Value,
+    path: Option<&Path>,
+    project: bool,
+    json: bool,
+    fix: bool,
+) -> CliResult<i32> {
     let lang = lang();
     let style = Style::stdout();
     if !json {
-        for line in heading(path, lang, style) {
+        for line in heading(path, project, lang, style) {
             println!("{line}");
         }
     }
@@ -209,8 +215,9 @@ pub(super) fn run(cfg: &Value, path: Option<&Path>, json: bool, fix: bool) -> Cl
 }
 
 /// The title, then the version and configuration lines.
-fn heading(path: Option<&Path>, lang: Lang, style: Style) -> [String; 3] {
+fn heading(path: Option<&Path>, project: bool, lang: Lang, style: Style) -> [String; 3] {
     let version = markitai_core::VERSION;
+    let configured = path.map(|path| super::config_line(lang, path, project));
     let source = match path {
         Some(path) => path.display().to_string(),
         None => {
@@ -230,7 +237,7 @@ fn heading(path: Option<&Path>, lang: Lang, style: Style) -> [String; 3] {
         ),
         style.item(
             Mark::Info,
-            &text!(lang => "Config: {source}", "配置文件：{source}"),
+            &configured.unwrap_or_else(|| text!(lang => "Config: {source}", "配置文件：{source}")),
         ),
     ]
 }
@@ -1521,7 +1528,8 @@ mod tests {
             bright: false,
         };
         let lines = |style| {
-            let mut lines = heading(Some(Path::new("/cfg/config.json")), Lang::En, style).to_vec();
+            let mut lines =
+                heading(Some(Path::new("/cfg/config.json")), false, Lang::En, style).to_vec();
             lines.extend(report(&sample(), &[], Lang::En, style));
             lines.join("\n")
         };

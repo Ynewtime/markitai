@@ -24,6 +24,7 @@ pub mod output;
 pub mod output_name;
 mod output_profiles;
 pub mod page_capture;
+mod pdf_budget;
 mod pdf_media;
 mod pdf_raster;
 #[doc(hidden)]
@@ -34,6 +35,7 @@ mod pricing;
 mod private_install;
 mod process_groups;
 mod proxy;
+mod public_net;
 #[doc(hidden)]
 pub mod sort;
 mod titles;
@@ -499,6 +501,7 @@ fn convert_inner(
             context.explicit_fetch_strategy,
             output_dir.is_some(),
             context.browser_runtime,
+            context.public_only,
         )?;
         fetch_cache_hit = fetched.cache_hit;
         screenshots = fetched.screenshots;

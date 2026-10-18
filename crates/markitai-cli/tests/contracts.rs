@@ -464,8 +464,14 @@ fn config_set_rejects_transient_overrides_before_creating_file() {
 fn config_display_hides_url_credentials_and_header_values_but_keeps_environment_references() {
     let dir = fixture();
     let cfg = json!({"llm":{"model_list":[{"model_name":"default","litellm_params":{"model":"test","api_key":"env:CONFIG_TEST_KEY","api_base":"https://user:fake-pass@example.com:443/private?token=fake-token#hidden","max_tokens":777}}]},"fetch":{"playwright":{"extra_http_headers":{"X-Access":"env:INLINE_SECRET"}}}});
-    std::fs::write(dir.path().join("markitai.json"), cfg.to_string()).unwrap();
-    let output = invoke(dir.path(), &["config", "list", "--format", "json"]);
+    // An explicitly named config (not a folder's markitai.json) so this tests
+    // display masking alone, without the project-config sealing that would
+    // turn the env: key into the markitai-no-key placeholder.
+    std::fs::write(dir.path().join("explicit.json"), cfg.to_string()).unwrap();
+    let output = invoke(
+        dir.path(),
+        &["-c", "explicit.json", "config", "list", "--format", "json"],
+    );
     assert!(
         output.status.success(),
         "{}",
@@ -483,6 +489,8 @@ fn config_display_hides_url_credentials_and_header_values_but_keeps_environment_
     let output = invoke(
         dir.path(),
         &[
+            "-c",
+            "explicit.json",
             "config",
             "get",
             "fetch.playwright.extra_http_headers.X-Access",
@@ -495,7 +503,7 @@ fn config_display_hides_url_credentials_and_header_values_but_keeps_environment_
     );
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "[REDACTED]");
     assert_eq!(
-        serde_json::from_slice::<Value>(&std::fs::read(dir.path().join("markitai.json")).unwrap())
+        serde_json::from_slice::<Value>(&std::fs::read(dir.path().join("explicit.json")).unwrap())
             .unwrap(),
         cfg
     );

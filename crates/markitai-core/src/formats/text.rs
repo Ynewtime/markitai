@@ -564,12 +564,29 @@ fn code_span(code: &str) -> String {
     format!("{ticks}{pad}{code}{pad}{ticks}")
 }
 
+/// Empty cells a table adds to rows shorter than its widest, at least: past
+/// this and four per cell the table holds, short rows are left short.
+const PADDING_FLOOR: usize = 1 << 20;
+
+/// Output, at least, a document re-indented as its outline may take: past
+/// this and eight times the input, it nests too deeply for its size.
+const OUTPUT_FLOOR: usize = 64 << 20;
+
+fn output_limit(input: usize) -> usize {
+    input.saturating_mul(8).max(OUTPUT_FLOOR)
+}
+
 pub(super) fn table(rows: &[Vec<String>], header: bool) -> String {
     let width = rows.iter().map(Vec::len).max().unwrap_or(0);
     if width == 0 {
         return String::new();
     }
-    let row_text = |row: &[String]| {
+    // Short rows are padded to the widest unless one wide row over many short
+    // ones would multiply the table; Markdown fills a short row itself.
+    let cells: usize = rows.iter().map(Vec::len).sum();
+    let padding = rows.len().saturating_mul(width) - cells;
+    let pad = padding <= cells.saturating_mul(4).max(PADDING_FLOOR);
+    let row_text = |row: &[String], width: usize| {
         format!(
             "| {} |\n",
             (0..width)
@@ -584,10 +601,10 @@ pub(super) fn table(rows: &[Vec<String>], header: bool) -> String {
     } else {
         (vec![String::new(); width], rows)
     };
-    output.push_str(&row_text(&first));
-    output.push_str(&row_text(&vec!["---".into(); width]));
+    output.push_str(&row_text(&first, width));
+    output.push_str(&row_text(&vec!["---".into(); width], width));
     for row in rest {
-        output.push_str(&row_text(row));
+        output.push_str(&row_text(row, if pad { width } else { row.len().max(1) }));
     }
     output
 }
@@ -655,18 +672,56 @@ pub(super) fn notebook(source: &str) -> Result<Document> {
 }
 
 pub(super) fn json(source: &str) -> Result<Document> {
+    json_within(source, output_limit(source.len()))
+}
+
+/// JSON re-indented, unless indenting it would pass `limit` bytes: deep
+/// nesting indents every line by its depth.
+fn json_within(source: &str, limit: usize) -> Result<Document> {
+    struct Limited(Vec<u8>, usize);
+    impl std::io::Write for Limited {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            if self.0.len() + bytes.len() > self.1 {
+                return Err(std::io::Error::other("output limit"));
+            }
+            self.0.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
     let value: Value = serde_json::from_str(source)?;
+    let mut pretty = Limited(Vec::new(), limit);
+    let mut warnings = Vec::new();
+    let text = if serde_json::to_writer_pretty(&mut pretty, &value).is_ok() {
+        String::from_utf8(pretty.0).map_err(|e| Error::Conversion(e.to_string()))?
+    } else {
+        warnings.push(format!(
+            "JSON nested this deeply would pass {} MiB when indented; it is shown without indentation.",
+            limit >> 20
+        ));
+        serde_json::to_string(&value)?
+    };
     Ok(Document {
-        markdown: fence(&serde_json::to_string_pretty(&value)?, "json"),
+        markdown: fence(&text, "json"),
+        warnings,
         ..Document::default()
     })
 }
 
 pub(super) fn xml(source: &str) -> Result<Document> {
+    xml_within(source, output_limit(source.len()))
+}
+
+/// The outline of an XML document, unless its indentation would pass
+/// `limit` bytes: each element below the sixth level is indented by its depth.
+fn xml_within(source: &str, limit: usize) -> Result<Document> {
     use quick_xml::events::Event;
     let mut reader = quick_xml::Reader::from_str(source);
     let mut depth = 0usize;
     let mut roots = 0usize;
+    let mut indentation = 0usize;
     let mut blocks = Vec::new();
     let mut pending = String::new();
     let malformed =
@@ -702,6 +757,13 @@ pub(super) fn xml(source: &str) -> Result<Document> {
                 if level <= 6 {
                     blocks.push(format!("{} {name}", "#".repeat(level)));
                 } else {
+                    indentation += 2 * (level - 7);
+                    if indentation > limit {
+                        return Err(Error::Conversion(format!(
+                            "XML nests too deeply for its size: its outline would pass {} MiB of indentation",
+                            limit >> 20
+                        )));
+                    }
                     blocks.push(format!("{}- **{name}**", "  ".repeat(level - 7)));
                 }
                 for attr in element.attributes() {
@@ -899,6 +961,39 @@ mod tests {
         );
         assert!(delimited("", b',').unwrap().markdown.is_empty());
     }
+    #[test]
+    fn one_wide_row_over_many_short_ones_does_not_multiply_the_table() {
+        let source = format!("{}\n{}", "h,".repeat(2_000), "x\n".repeat(2_000));
+        let doc = delimited(&source, b',').unwrap();
+        let mut lines = doc.markdown.lines();
+        assert_eq!(lines.next().unwrap().matches(" | ").count(), 2_000);
+        assert_eq!(lines.next().unwrap().matches("---").count(), 2_001);
+        assert!(lines.all(|line| line == "| x |"));
+        // Without the bound the rows were padded to 2,001 cells each, about
+        // 12 MB; now the table stays the size of its input.
+        assert!(doc.markdown.len() < 64 * 1024, "{}", doc.markdown.len());
+        // A ragged table of ordinary size is still padded.
+        assert_eq!(
+            delimited("a,b,c\n1\n", b',').unwrap().markdown,
+            "| a | b | c |\n| --- | --- | --- |\n| 1 |  |  |"
+        );
+    }
+
+    #[test]
+    fn deep_json_and_xml_are_not_indented_past_their_output_limit() {
+        let deep = format!("{}1{}", "[1,".repeat(100), "]".repeat(100));
+        let shallow = json_within(&deep, 1 << 20).unwrap();
+        assert!(shallow.warnings.is_empty());
+        assert!(shallow.markdown.contains("\n        1,"));
+        let flat = json_within(&deep, 4 * 1024).unwrap();
+        assert_eq!(flat.warnings.len(), 1, "{:?}", flat.warnings);
+        assert!(flat.markdown.contains("[1,[1,[1,"), "{}", flat.markdown);
+        let nested = format!("{}{}", "<a><b/>".repeat(100), "</a>".repeat(100));
+        assert!(xml_within(&nested, 1 << 20).is_ok());
+        let error = xml_within(&nested, 4 * 1024).unwrap_err().to_string();
+        assert!(error.contains("nests too deeply for its size"), "{error}");
+    }
+
     #[test]
     fn a_field_over_several_lines_is_one_row_with_one_br_per_break() {
         let doc = delimited(

@@ -43,6 +43,34 @@ fn a_deployment_debug_view_never_shows_its_key() {
 }
 
 #[test]
+fn a_project_config_never_sends_an_environment_key_to_its_own_address() {
+    let env = vars(&[("OPENAI_API_KEY", "sk-from-environment")]);
+    let mut value = json!({"llm":{"model_list":[
+        {"model_name":"default","litellm_params":{"model":"openai/gpt-x","api_base":"https://capture.example/v1"}},
+        {"model_name":"default","litellm_params":{"model":"openai/gpt-x","api_base":"https://capture.example/v1","api_key":"env:OPENAI_API_KEY"}},
+        {"model_name":"default","litellm_params":{"model":"openai/gpt-x"}}
+    ]}});
+    // Before sealing, both custom-address entries would carry the key.
+    let before = deployments(&config::normalize(&value).unwrap(), &env).unwrap();
+    assert!(
+        before
+            .iter()
+            .all(|d| d.key.as_deref() == Some("sk-from-environment"))
+    );
+    config::seal_project_models(&mut value);
+    let after = deployments(&config::normalize(&value).unwrap(), &env).unwrap();
+    let keys: Vec<_> = after.iter().map(|d| d.key.as_deref()).collect();
+    assert_eq!(
+        keys,
+        [
+            None,
+            Some(crate::provider_management::NO_KEY),
+            Some("sk-from-environment")
+        ]
+    );
+}
+
+#[test]
 fn openai_compatible_prefixes_use_their_documented_endpoints_and_key_variables() {
     let groq = resolved(
         json!({"model":"groq/llama-test"}),
@@ -292,6 +320,7 @@ fn entry(provider: &str, endpoint: &str) -> Deployment {
         id: format!("{provider}/model"),
         explicit_id: None,
         hidden_endpoint: false,
+        public_only: false,
         group: "default".into(),
         model: "model".into(),
         provider: provider.into(),

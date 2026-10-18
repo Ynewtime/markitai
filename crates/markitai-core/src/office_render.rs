@@ -204,6 +204,22 @@ pub(crate) fn metafile_png(bytes: &[u8], extension: &str) -> Result<Option<Vec<u
     .map(Some)
 }
 
+/// The isolated profile's settings: document macros off, and no content the
+/// document only points to. Without `BlockUntrustedRefererLinks` and
+/// `DisableActiveContent`, a document's linked pictures (`file:` paths of this
+/// machine, or http(s) addresses) were loaded into the export, which becomes
+/// screenshots and model input.
+const PROFILE_SETTINGS: &[u8] = br#"<?xml version="1.0"?><oor:items xmlns:oor="http://openoffice.org/2001/registry"><item oor:path="/org.openoffice.Office.Common/Security/Scripting"><prop oor:name="MacroSecurityLevel" oor:op="fuse"><value>3</value></prop></item><item oor:path="/org.openoffice.Office.Common/Security/Scripting"><prop oor:name="BlockUntrustedRefererLinks" oor:op="fuse"><value>true</value></prop></item><item oor:path="/org.openoffice.Office.Common/Security/Scripting"><prop oor:name="DisableActiveContent" oor:op="fuse"><value>true</value></prop></item></oor:items>"#;
+
+/// Writes [`PROFILE_SETTINGS`] into the empty private `profile`.
+fn write_profile(profile: &Path) -> std::io::Result<()> {
+    fs::create_dir(profile.join("user"))?;
+    fs::write(
+        profile.join("user/registrymodifications.xcu"),
+        PROFILE_SETTINGS,
+    )
+}
+
 fn metafile_png_with(
     program: &Path,
     bytes: &[u8],
@@ -221,6 +237,7 @@ fn metafile_png_with(
         workspace.path().join("out"),
     );
     fs::create_dir(&profile)?;
+    write_profile(&profile)?;
     fs::create_dir(&output)?;
     let input = workspace.path().join(format!("picture.{extension}"));
     fs::write(&input, bytes)?;
@@ -306,9 +323,7 @@ fn export_with(
     for directory in [&source_dir, &output_dir, &profile] {
         fs::create_dir(directory)?;
     }
-    fs::create_dir(profile.join("user"))?;
-    // Isolated configuration disables document macros and automatic linked-document updates.
-    fs::write(profile.join("user/registrymodifications.xcu"), br#"<?xml version="1.0"?><oor:items xmlns:oor="http://openoffice.org/2001/registry"><item oor:path="/org.openoffice.Office.Common/Security/Scripting"><prop oor:name="MacroSecurityLevel" oor:op="fuse"><value>3</value></prop></item><item oor:path="/org.openoffice.Office.Common/Load"><prop oor:name="UpdateLink" oor:op="fuse"><value>2</value></prop></item></oor:items>"#)?;
+    write_profile(&profile)?;
     let source = source_dir.join(format!("document.{name_extension}"));
     fs::write(&source, &bytes)?;
     let mut expected = match requested_kind {
@@ -497,7 +512,8 @@ fn validate_pdf(bytes: &[u8], expected: Option<usize>) -> Result<usize> {
     if !bytes.starts_with(b"%PDF-") {
         return Err(failure("export is not a PDF document"));
     }
-    let pdf = lopdf::Document::load_mem(bytes).map_err(|_| failure("exported PDF is invalid"))?;
+    let pdf = crate::pdf_budget::within(bytes, || lopdf::Document::load_mem(bytes))
+        .map_err(|_| failure("exported PDF is invalid"))?;
     if pdf.is_encrypted() {
         return Err(failure("exported PDF is encrypted"));
     }

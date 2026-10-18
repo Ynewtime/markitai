@@ -469,6 +469,15 @@ edges per geometry pass, 64 graphics-state levels, 32 tables, 32 columns and
 budgets remain. Positioned-item limits are checked after the dependency returns;
 they are not a claim of a hard allocation limit inside that dependency.
 
+Everything the PDF readers decompress for one document (its object streams while
+it loads, then every content, font and image stream they read) draws from one
+budget: 64 times the file and at least 1 GiB, or `MARKITAI_PDF_DECOMPRESS_MIB`
+mebibytes when that variable is set. Each decoder stops at what remains, so a
+small file of many inflating streams cannot exhaust memory; a stream past the
+budget is read as undecodable, as a damaged stream is. A limit per stream alone
+bounds no document, and would refuse a large object stream that holds the
+document's metadata.
+
 Operators may be separated by any PDF white-space character, NUL and form feed
 included (iText separates those of a page it modified with NUL); only the byte
 after an inline image's `ID` is read as before, as its data follows.

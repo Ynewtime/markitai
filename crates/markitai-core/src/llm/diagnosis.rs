@@ -613,6 +613,7 @@ mod tests {
             id: "openai/gpt-test".into(),
             explicit_id: None,
             hidden_endpoint: false,
+            public_only: false,
             group: "default".into(),
             model: "gpt-test".into(),
             provider: "openai".into(),
@@ -635,6 +636,7 @@ mod tests {
         );
         let hidden = Deployment {
             hidden_endpoint: true,
+            public_only: false,
             ..entry("k")
         };
         assert_eq!(deployment(&hidden), "deployment openai/gpt-test");

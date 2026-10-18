@@ -36,6 +36,21 @@ fn grouped(entry: &Value) -> Value {
     entry
 }
 
+/// The pool's id of a user's connection and of an admin's: two namespaces,
+/// so that a connection a user names after the admin's can never stand in
+/// for it (and send a shared model's key to the user's address).
+fn pooled_id(namespace: &str, id: &str) -> Value {
+    json!(format!("{namespace}:{id}"))
+}
+
+/// `entry` linked to its connection's pool id, when it links to one.
+fn relinked(mut entry: Value, namespace: &str) -> Value {
+    if let Some(id) = model::linked(&entry).map(str::to_owned) {
+        entry["model_info"]["provider_id"] = pooled_id(namespace, &id);
+    }
+    entry
+}
+
 /// `base` (the admin's runtime configuration) routing to `own` models that
 /// are on, then the admin's shared ones with the connections they link to,
 /// and nothing else. An empty pool turns model processing off and holds only
@@ -46,6 +61,9 @@ pub(super) fn build(base: &Value, own: &users::Lists, admin: &Data) -> Result<Va
     for connection in &own.providers {
         let mut connection = connection.clone();
         connection["use_environment_credentials"] = json!(false);
+        if let Some(id) = connection["id"].as_str().map(str::to_owned) {
+            connection["id"] = pooled_id("user", &id);
+        }
         providers.push(connection);
     }
     for entry in &own.models {
@@ -54,8 +72,15 @@ pub(super) fn build(base: &Value, own: &users::Lists, admin: &Data) -> Result<Va
         if weight(entry) == 0 || users::check_entry(entry, &own.providers).is_err() {
             continue;
         }
-        let mut entry = grouped(entry);
+        let mut entry = relinked(grouped(entry), "user");
         entry["litellm_params"]["use_environment_credentials"] = json!(false);
+        // The user's own models reach public addresses only, checked when
+        // each request connects (a name resolving to this machine or its
+        // network fails); the admin's shared models are the admin's choice.
+        if !entry["model_info"].is_object() {
+            entry["model_info"] = json!({});
+        }
+        entry["model_info"]["public_only"] = json!(true);
         models.push(entry);
     }
     for (index, saved) in shared(admin) {
@@ -77,12 +102,14 @@ pub(super) fn build(base: &Value, own: &users::Lists, admin: &Data) -> Result<Va
             entry["model_info"] = json!({});
         }
         entry["model_info"]["hidden_endpoint"] = json!(true);
-        models.push(entry);
+        models.push(relinked(entry, "admin"));
         if let Some(id) = model::linked(saved)
-            && !providers.iter().any(|p| p["id"] == id)
+            && !providers.iter().any(|p| p["id"] == pooled_id("admin", id))
             && let Some(connection) = admin.providers.iter().find(|p| p["id"] == id)
         {
-            providers.push(connection.clone());
+            let mut connection = connection.clone();
+            connection["id"] = pooled_id("admin", id);
+            providers.push(connection);
         }
     }
     if models.is_empty() {
@@ -205,13 +232,19 @@ mod tests {
         assert_eq!(list[1]["litellm_params"]["weight"], 3);
         assert_eq!(list[1]["model_info"]["hidden_endpoint"], true);
         assert!(list[0]["model_info"].get("hidden_endpoint").is_none());
+        // The user's own model reaches public addresses only; the admin's
+        // shared one is the admin's choice.
+        assert_eq!(list[0]["model_info"]["public_only"], true);
+        assert!(list[1]["model_info"].get("public_only").is_none());
         let ids: Vec<_> = pool["llm"]["providers"]
             .as_array()
             .unwrap()
             .iter()
             .map(|p| p["id"].as_str().unwrap())
             .collect();
-        assert_eq!(ids, ["p-own", "p-admin"]);
+        assert_eq!(ids, ["user:p-own", "admin:p-admin"]);
+        assert_eq!(list[0]["model_info"]["provider_id"], "user:p-own");
+        assert_eq!(list[1]["model_info"]["provider_id"], "admin:p-admin");
         assert_eq!(
             pool["llm"]["providers"][0]["use_environment_credentials"],
             false
@@ -226,6 +259,55 @@ mod tests {
         broken.models[0]["litellm_params"]["model"] = json!("claude-agent/sonnet");
         let pool = build(&base(), &broken, &admin(vec![], vec![])).unwrap();
         assert!(models(&pool).is_empty());
+    }
+
+    #[test]
+    fn a_user_connection_named_after_the_admins_never_stands_in_for_it() {
+        // The shared model carries the admin's key; its address comes from
+        // the admin's connection. A user connection with the same id, at the
+        // user's address, must not supply that address (nor its key).
+        let data = admin(
+            vec![
+                json!({"model_name":"fast","litellm_params":{"model":"openai/shared","api_key":"admin-fixture-key"},
+                "model_info":{"id":"s1","share":"shared","provider_id":"p-admin"}}),
+            ],
+            vec![
+                json!({"id":"p-admin","provider":"openai","api_base":"https://models.admin.example/v1"}),
+            ],
+        );
+        let own = users::Lists {
+            models: vec![
+                json!({"model_name":"mine","litellm_params":{"model":"openai/own"},
+                "model_info":{"id":"m1","provider_id":"p-admin"}}),
+            ],
+            providers: vec![
+                json!({"id":"p-admin","provider":"openai","api_key":"user-a-fixture-key",
+                "api_base":"https://capture.user.example/v1"}),
+            ],
+            ..Default::default()
+        };
+        let pool = build(&base(), &own, &data).unwrap();
+        let connection = |entry: &Value| -> Value {
+            let id = &entry["model_info"]["provider_id"];
+            let found: Vec<_> = pool["llm"]["providers"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|p| p["id"] == *id)
+                .collect();
+            assert_eq!(found.len(), 1, "{id}");
+            found[0].clone()
+        };
+        let list = pool["llm"]["model_list"].as_array().unwrap();
+        assert_eq!(models(&pool), ["openai/own", "openai/shared"]);
+        assert_eq!(
+            connection(&list[0])["api_base"],
+            "https://capture.user.example/v1"
+        );
+        assert_eq!(
+            connection(&list[1])["api_base"],
+            "https://models.admin.example/v1"
+        );
     }
 
     #[test]

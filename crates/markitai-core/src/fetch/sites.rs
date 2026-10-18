@@ -511,7 +511,7 @@ impl<'a> Shown<'a> {
         // Vendor names in an article, literal code examples or a plain-text
         // document are not challenge evidence: only visible, non-code text
         // and the markup's own attributes are read.
-        let tree = scraper::Html::parse_document(html);
+        let tree = crate::formats::parse_html(html);
         let mut text = String::new();
         // Preformatted and code text, kept only while it can be a JSON refusal.
         let mut code = String::new();

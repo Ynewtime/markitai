@@ -343,7 +343,7 @@ fn an_explicit_always_falls_back_in_order_with_the_configured_options_and_disclo
     services.vars = vars(&[("TEST_JINA_KEY", "jina-secret-0123456789")]);
     let source = page.url("/article?id=7");
 
-    let outcome = fetch_with_services(&source, &cfg, None, true, None, &services).unwrap();
+    let outcome = fetch_with_services(&source, &cfg, None, true, None, false, &services).unwrap();
     assert_eq!(markdown(&outcome), "# Remote text\n\nRead through Jina.");
     assert_eq!(outcome.document().metadata["fetch_strategy"], "jina");
     assert_eq!(outcome.document().metadata["title"], "Remote title");
@@ -380,7 +380,15 @@ fn an_explicit_always_falls_back_in_order_with_the_configured_options_and_disclo
     assert_eq!(terminal.asked.load(Ordering::SeqCst), 0);
 
     // A second page in the same process: no second notice.
-    let second = fetch_with_services(&page.url("/other"), &cfg, None, true, None, &services);
+    let second = fetch_with_services(
+        &page.url("/other"),
+        &cfg,
+        None,
+        true,
+        None,
+        false,
+        &services,
+    );
     assert_eq!(markdown(&second.unwrap()), "# Second\n\nAgain.");
     assert_eq!(terminal.notices.lock().unwrap().len(), 1);
     assert_eq!(page.requests().len(), 2);
@@ -403,7 +411,7 @@ fn the_default_always_and_never_keep_auto_local_with_the_same_failure() {
         let fixture = Fixture::new(gate(&terminal, consent == Some("never"), Some(true), None));
         let services = fixture.services(&service.origin);
         let Err(Error::Fetch(message)) =
-            fetch_with_services(&page.url("/a"), &cfg, None, true, None, &services)
+            fetch_with_services(&page.url("/a"), &cfg, None, true, None, false, &services)
         else {
             panic!("a refusal stays a failure");
         };
@@ -428,7 +436,7 @@ fn ask_asks_once_per_process_and_a_no_keeps_every_later_page_local() {
     let fixture = Fixture::new(gate(&terminal, false, Some(false), None));
     let services = fixture.services(&service.origin);
     for path in ["/one?token=x", "/two"] {
-        let error = fetch_with_services(&page.url(path), &cfg, None, true, None, &services);
+        let error = fetch_with_services(&page.url(path), &cfg, None, true, None, false, &services);
         assert!(error.is_err());
     }
     // The first page carries a token, so it never reaches the question.
@@ -453,11 +461,13 @@ fn ask_asks_once_per_process_and_a_no_keeps_every_later_page_local() {
     let terminal = Arc::new(Terminal::default());
     let fixture = Fixture::new(gate(&terminal, false, Some(true), None));
     let services = fixture.services(&service.origin);
-    let first = fetch_with_services(&page.url("/a"), &cfg, None, true, None, &services).unwrap();
+    let first =
+        fetch_with_services(&page.url("/a"), &cfg, None, true, None, false, &services).unwrap();
     assert_eq!(markdown(&first), "# Body\n\nDefuddle text.");
     assert_eq!(first.document().metadata["title"], "From defuddle");
     assert_eq!(first.document().metadata["fetch_strategy"], "defuddle");
-    let second = fetch_with_services(&page.url("/b"), &cfg, None, true, None, &services).unwrap();
+    let second =
+        fetch_with_services(&page.url("/b"), &cfg, None, true, None, false, &services).unwrap();
     assert_eq!(markdown(&second), "# Again\n\nMore defuddle text.");
     assert_eq!(terminal.asked.load(Ordering::SeqCst), 1);
     assert!(terminal.notices.lock().unwrap().is_empty());
@@ -477,7 +487,7 @@ fn ask_without_a_terminal_skips_remote_services_with_one_hint() {
     let services = fixture.services(&service.origin);
     for path in ["/a", "/b"] {
         let Err(Error::Fetch(message)) =
-            fetch_with_services(&page.url(path), &cfg, None, true, None, &services)
+            fetch_with_services(&page.url(path), &cfg, None, true, None, false, &services)
         else {
             panic!("no consent, no remote reading");
         };
@@ -498,7 +508,7 @@ fn a_missing_page_local_only_patterns_and_private_names_never_reach_a_service() 
     let page = PageServer::new(vec![Reply::text("gone").status(404)]);
     let services = fixture.services(&service.origin);
     let Err(Error::Fetch(message)) =
-        fetch_with_services(&page.url("/gone"), &cfg, None, true, None, &services)
+        fetch_with_services(&page.url("/gone"), &cfg, None, true, None, false, &services)
     else {
         panic!("a missing page fails");
     };
@@ -506,7 +516,9 @@ fn a_missing_page_local_only_patterns_and_private_names_never_reach_a_service() 
 
     cfg["fetch"]["policy"]["local_only_patterns"] = json!(["127.0.0.1"]);
     let page = PageServer::new(vec![Reply::text("no").status(403)]);
-    assert!(fetch_with_services(&page.url("/a"), &cfg, None, true, None, &services).is_err());
+    assert!(
+        fetch_with_services(&page.url("/a"), &cfg, None, true, None, false, &services).is_err()
+    );
 
     cfg["fetch"]["policy"]["local_only_patterns"] = json!([]);
     let services = Services {
@@ -514,14 +526,18 @@ fn a_missing_page_local_only_patterns_and_private_names_never_reach_a_service() 
         ..fixture.services(&service.origin)
     };
     let page = PageServer::new(vec![Reply::text("no").status(403)]);
-    assert!(fetch_with_services(&page.url("/a"), &cfg, None, true, None, &services).is_err());
+    assert!(
+        fetch_with_services(&page.url("/a"), &cfg, None, true, None, false, &services).is_err()
+    );
 
     let services = Services {
         private_name: policy::private_name,
         ..fixture.services(&service.origin)
     };
     let page = PageServer::new(vec![Reply::text("no").status(403)]);
-    assert!(fetch_with_services(&page.url("/a"), &cfg, None, true, None, &services).is_err());
+    assert!(
+        fetch_with_services(&page.url("/a"), &cfg, None, true, None, false, &services).is_err()
+    );
 
     // A host that resolves to a private address is refused at the first
     // remote step, and the failure says so.
@@ -535,7 +551,7 @@ fn a_missing_page_local_only_patterns_and_private_names_never_reach_a_service() 
     };
     let page = PageServer::new(vec![Reply::text("no").status(403)]);
     let Err(Error::Fetch(message)) =
-        fetch_with_services(&page.url("/a"), &cfg, None, true, None, &services)
+        fetch_with_services(&page.url("/a"), &cfg, None, true, None, false, &services)
     else {
         panic!("a private target fails");
     };
@@ -558,16 +574,18 @@ fn priorities_and_hops_decide_which_strategies_run() {
         Answer::text(503, "down"),
     ]);
     let services = fixture.services(&service.origin);
-    let outcome = fetch_with_services(&page.url("/a"), &cfg, None, true, None, &services).unwrap();
+    let outcome =
+        fetch_with_services(&page.url("/a"), &cfg, None, true, None, false, &services).unwrap();
     assert_eq!(markdown(&outcome), "# First\n\nJina first.");
     assert!(page.requests().is_empty());
     // The service fails: static is next.
-    let outcome = fetch_with_services(&page.url("/a"), &cfg, None, true, None, &services).unwrap();
+    let outcome =
+        fetch_with_services(&page.url("/a"), &cfg, None, true, None, false, &services).unwrap();
     assert_eq!(markdown(&outcome), "static page");
     assert_eq!(page.requests().len(), 1);
     // One hop: only the first strategy runs.
     cfg["fetch"]["policy"]["max_strategy_hops"] = json!(1);
-    let error = fetch_with_services(&page.url("/a"), &cfg, None, true, None, &services);
+    let error = fetch_with_services(&page.url("/a"), &cfg, None, true, None, false, &services);
     let Err(Error::Fetch(message)) = error else {
         panic!("the one strategy failed");
     };
@@ -597,9 +615,10 @@ fn a_script_rendered_shell_without_a_browser_is_read_remotely_or_kept() {
     ]);
     let services = fixture.services(&service.origin);
     let outcome =
-        fetch_with_services(&page.url("/app"), &cfg, None, true, None, &services).unwrap();
+        fetch_with_services(&page.url("/app"), &cfg, None, true, None, false, &services).unwrap();
     assert_eq!(markdown(&outcome), "# The app\n\nRendered elsewhere.");
-    let kept = fetch_with_services(&page.url("/app"), &cfg, None, true, None, &services).unwrap();
+    let kept =
+        fetch_with_services(&page.url("/app"), &cfg, None, true, None, false, &services).unwrap();
     assert!(markdown(&kept).contains("App to Read"));
     let warnings = &kept.document().warnings;
     assert_eq!(warnings[0], JS_SHELL);
@@ -636,7 +655,7 @@ fn remote_failures_follow_the_local_one_without_tokens_or_account_ids() {
         ("TEST_CF_ACCOUNT", account),
     ]);
     let Err(Error::Fetch(message)) =
-        fetch_with_services(&page.url("/a"), &cfg, None, true, None, &services)
+        fetch_with_services(&page.url("/a"), &cfg, None, true, None, false, &services)
     else {
         panic!("every strategy failed");
     };
@@ -681,10 +700,12 @@ fn a_selected_strategy_follows_consent_and_local_only_patterns() {
     let services = fixture.services(&service.origin);
     let source = "https://example.com/post";
     // `-s jina` for this run is the answer to `ask`.
-    let chosen = fetch_with_services(source, &cfg, Some("jina"), true, None, &services).unwrap();
+    let chosen =
+        fetch_with_services(source, &cfg, Some("jina"), true, None, false, &services).unwrap();
     assert_eq!(markdown(&chosen), "# Chosen\n\nJina.");
     // From the configuration, with nobody to ask: refused.
-    let Err(Error::Fetch(message)) = fetch_with_services(source, &cfg, None, true, None, &services)
+    let Err(Error::Fetch(message)) =
+        fetch_with_services(source, &cfg, None, true, None, false, &services)
     else {
         panic!("ask without an answer refuses");
     };
@@ -693,13 +714,14 @@ fn a_selected_strategy_follows_consent_and_local_only_patterns() {
     let terminal = Arc::new(Terminal::default());
     let fixture = Fixture::new(gate(&terminal, false, Some(true), None));
     let services = fixture.services(&service.origin);
-    let asked = fetch_with_services(source, &cfg, None, true, None, &services).unwrap();
+    let asked = fetch_with_services(source, &cfg, None, true, None, false, &services).unwrap();
     assert_eq!(markdown(&asked), "# Asked\n\nJina.");
     assert_eq!(terminal.requests.lock().unwrap()[0].services, ["jina"]);
     // A local-only pattern keeps a configured strategy away; `-s` overrides it.
     cfg["fetch"]["remote_consent"] = json!("always");
     cfg["fetch"]["policy"]["local_only_patterns"] = json!(["example.com"]);
-    let Err(Error::Fetch(message)) = fetch_with_services(source, &cfg, None, true, None, &services)
+    let Err(Error::Fetch(message)) =
+        fetch_with_services(source, &cfg, None, true, None, false, &services)
     else {
         panic!("local-only refuses a configured remote strategy");
     };
@@ -712,6 +734,7 @@ fn a_selected_strategy_follows_consent_and_local_only_patterns() {
         Some("jina"),
         true,
         None,
+        false,
         &services,
     ) else {
         panic!("credentials never leave");
@@ -725,7 +748,7 @@ fn a_selected_strategy_follows_consent_and_local_only_patterns() {
         ..fixture.services(&service.origin)
     };
     let Err(Error::Fetch(message)) =
-        fetch_with_services(source, &cfg, Some("jina"), true, None, &off)
+        fetch_with_services(source, &cfg, Some("jina"), true, None, false, &off)
     else {
         panic!("the hard opt-out refuses");
     };
@@ -753,6 +776,7 @@ fn a_selected_strategy_announces_its_service_once_and_only_when_a_url_leaves() {
             Some("jina"),
             true,
             None,
+            false,
             &services,
         )
         .is_err()
@@ -761,7 +785,7 @@ fn a_selected_strategy_announces_its_service_once_and_only_when_a_url_leaves() {
     assert!(!home.path().join("remote-strategy-jina").exists());
     // Two pages through the strategy: one notice, recorded for the home.
     for page in ["https://example.com/a", "https://example.com/b"] {
-        fetch_with_services(page, &cfg, None, true, None, &services).unwrap();
+        fetch_with_services(page, &cfg, None, true, None, false, &services).unwrap();
     }
     assert_eq!(
         *terminal.notices.lock().unwrap(),
@@ -788,9 +812,16 @@ fn defuddle_requests_are_paced_by_their_rpm() {
     let services = fixture.services(&service.origin);
     let started = std::time::Instant::now();
     for expected in ["# One\n\nFirst.", "# Two\n\nSecond."] {
-        let outcome =
-            fetch_with_services("https://example.com/p", &cfg, None, true, None, &services)
-                .unwrap();
+        let outcome = fetch_with_services(
+            "https://example.com/p",
+            &cfg,
+            None,
+            true,
+            None,
+            false,
+            &services,
+        )
+        .unwrap();
         assert_eq!(markdown(&outcome), expected);
     }
     assert!(
@@ -824,7 +855,7 @@ fn services_receive_the_url_that_was_checked_not_the_typed_text() {
             ("TEST_CF_TOKEN", "cf-test-token-0123"),
             ("TEST_SITE_PASSWORD", "site-password"),
         ]);
-        fetch_with_services(source, &cfg, Some(strategy), true, None, &services).unwrap();
+        fetch_with_services(source, &cfg, Some(strategy), true, None, false, &services).unwrap();
         let request = &service.requests()[0];
         match strategy {
             "defuddle" => assert_eq!(
@@ -887,8 +918,16 @@ fn cloudflare_renders_with_its_options_and_repeats_a_429() {
         ("TEST_SITE_PASSWORD", "site-password"),
     ]);
     let source = "https://example.com/article";
-    let outcome =
-        fetch_with_services(source, &cfg, Some("cloudflare"), true, None, &services).unwrap();
+    let outcome = fetch_with_services(
+        source,
+        &cfg,
+        Some("cloudflare"),
+        true,
+        None,
+        false,
+        &services,
+    )
+    .unwrap();
     assert!(markdown(&outcome).contains("Text that Cloudflare's browser rendered"));
     let metadata = &outcome.document().metadata;
     assert_eq!(metadata["fetch_strategy"], "cloudflare");
@@ -934,9 +973,15 @@ fn cloudflare_failures_say_what_to_do_and_never_show_the_account() {
     let mut cfg = cloudflare_cfg();
     cfg["fetch"]["cloudflare"]["api_token"] = Value::Null;
     let services = fixture.services(&service.origin);
-    let Err(Error::Config(message)) =
-        fetch_with_services(source, &cfg, Some("cloudflare"), true, None, &services)
-    else {
+    let Err(Error::Config(message)) = fetch_with_services(
+        source,
+        &cfg,
+        Some("cloudflare"),
+        true,
+        None,
+        false,
+        &services,
+    ) else {
         panic!("missing credentials are a configuration error");
     };
     assert!(
@@ -945,9 +990,15 @@ fn cloudflare_failures_say_what_to_do_and_never_show_the_account() {
     );
     // An env: reference to a variable that is not set names the variable.
     let cfg = cloudflare_cfg();
-    let Err(Error::Config(message)) =
-        fetch_with_services(source, &cfg, Some("cloudflare"), true, None, &services)
-    else {
+    let Err(Error::Config(message)) = fetch_with_services(
+        source,
+        &cfg,
+        Some("cloudflare"),
+        true,
+        None,
+        false,
+        &services,
+    ) else {
         panic!("a missing variable is a configuration error");
     };
     assert_eq!(message, "Environment variable not found: TEST_CF_TOKEN");
@@ -968,18 +1019,30 @@ fn cloudflare_failures_say_what_to_do_and_never_show_the_account() {
         ("TEST_CF_TOKEN", "cf-test-token-0123"),
         ("TEST_SITE_PASSWORD", "pw"),
     ]);
-    let Err(Error::Fetch(message)) =
-        fetch_with_services(source, &cfg, Some("cloudflare"), true, None, &services)
-    else {
+    let Err(Error::Fetch(message)) = fetch_with_services(
+        source,
+        &cfg,
+        Some("cloudflare"),
+        true,
+        None,
+        false,
+        &services,
+    ) else {
         panic!("rate limited");
     };
     assert_eq!(
         message,
         "HTTP 429 from the cloudflare service: rate limited; try again later"
     );
-    let Err(Error::Fetch(message)) =
-        fetch_with_services(source, &cfg, Some("cloudflare"), true, None, &services)
-    else {
+    let Err(Error::Fetch(message)) = fetch_with_services(
+        source,
+        &cfg,
+        Some("cloudflare"),
+        true,
+        None,
+        false,
+        &services,
+    ) else {
         panic!("an unsuccessful envelope fails");
     };
     assert_eq!(
@@ -991,9 +1054,15 @@ fn cloudflare_failures_say_what_to_do_and_never_show_the_account() {
     // An account id that is not one is refused before any request.
     let mut cfg = cloudflare_cfg();
     cfg["fetch"]["cloudflare"]["account_id"] = json!("acc/../../other?x=1");
-    let Err(Error::Config(message)) =
-        fetch_with_services(source, &cfg, Some("cloudflare"), true, None, &services)
-    else {
+    let Err(Error::Config(message)) = fetch_with_services(
+        source,
+        &cfg,
+        Some("cloudflare"),
+        true,
+        None,
+        false,
+        &services,
+    ) else {
         panic!("a malformed account id is refused");
     };
     assert!(!message.contains("other"), "{message}");
@@ -1018,6 +1087,7 @@ fn a_verification_page_cloudflare_rendered_is_a_failure() {
         Some("cloudflare"),
         true,
         None,
+        false,
         &services,
     ) else {
         panic!("a challenge is not content");
@@ -1253,12 +1323,13 @@ fn a_remote_reading_that_is_a_refusal_page_goes_on_to_the_next_service() {
     let fixture = Fixture::new(gate(&terminal, true, None, None));
     let services = fixture.services(&service.origin);
     // A page with the same words among its own content is read.
-    let outcome = fetch_with_services(ZHIHU_QUESTION, &cfg, None, true, None, &services).unwrap();
+    let outcome =
+        fetch_with_services(ZHIHU_QUESTION, &cfg, None, true, None, false, &services).unwrap();
     assert!(markdown(&outcome).starts_with("# 问题\n\n这个问题有很多回答。"));
     assert_eq!(outcome.document().metadata["fetch_strategy"], "jina");
     // Every service turned away: the site's refusal leads, then each service.
     let Err(Error::Fetch(message)) =
-        fetch_with_services(ZHIHU_QUESTION, &cfg, None, true, None, &services)
+        fetch_with_services(ZHIHU_QUESTION, &cfg, None, true, None, false, &services)
     else {
         panic!("no service read the page");
     };
@@ -1291,9 +1362,15 @@ fn a_selected_service_shown_a_refusal_says_so_and_what_works() {
     let terminal = Arc::new(Terminal::default());
     let fixture = Fixture::new(gate(&terminal, false, None, None));
     let services = fixture.services(&service.origin);
-    let Err(Error::Fetch(message)) =
-        fetch_with_services(ZHIHU_QUESTION, &cfg, Some("jina"), true, None, &services)
-    else {
+    let Err(Error::Fetch(message)) = fetch_with_services(
+        ZHIHU_QUESTION,
+        &cfg,
+        Some("jina"),
+        true,
+        None,
+        false,
+        &services,
+    ) else {
         panic!("a login page is not the page");
     };
     assert!(
@@ -1307,6 +1384,7 @@ fn a_selected_service_shown_a_refusal_says_so_and_what_works() {
         Some("jina"),
         true,
         None,
+        false,
         &services,
     ) else {
         panic!("a challenge is not the page");
@@ -1322,6 +1400,7 @@ fn a_selected_service_shown_a_refusal_says_so_and_what_works() {
         Some("jina"),
         true,
         None,
+        false,
         &services,
     )
     .unwrap();
@@ -1455,7 +1534,7 @@ fn remote_services_alone_turned_away_by_zhihu_lead_with_the_site_and_write_nothi
     let url = Url::parse(ZHIHU_QUESTION).unwrap();
     for cloudflare in [CLOUDFLARE_JSON, CLOUDFLARE_403] {
         let Err(Error::Fetch(message)) =
-            fetch_with_services(ZHIHU_QUESTION, &cfg, None, true, None, &services)
+            fetch_with_services(ZHIHU_QUESTION, &cfg, None, true, None, false, &services)
         else {
             panic!("no service read the page");
         };
@@ -1499,8 +1578,16 @@ fn a_page_with_a_json_error_example_and_the_origins_other_statuses_read_as_befor
     services.vars = vars(&[("TEST_CF_TOKEN", "cf-test-token-0123")]);
     let source = "https://example.com/errors";
     for _ in 0..2 {
-        let outcome =
-            fetch_with_services(source, &cfg, Some("cloudflare"), true, None, &services).unwrap();
+        let outcome = fetch_with_services(
+            source,
+            &cfg,
+            Some("cloudflare"),
+            true,
+            None,
+            false,
+            &services,
+        )
+        .unwrap();
         assert!(
             markdown(&outcome).contains("40362")
                 && markdown(&outcome).contains("Handling refusals"),
@@ -1513,16 +1600,23 @@ fn a_page_with_a_json_error_example_and_the_origins_other_statuses_read_as_befor
         "The cloudflare service received HTTP 404 from the site: the page may have been removed or is not public",
         "The cloudflare service received HTTP 503 from the site: the site had a server error",
     ] {
-        let Err(Error::Fetch(message)) =
-            fetch_with_services(source, &cfg, Some("cloudflare"), true, None, &services)
-        else {
+        let Err(Error::Fetch(message)) = fetch_with_services(
+            source,
+            &cfg,
+            Some("cloudflare"),
+            true,
+            None,
+            false,
+            &services,
+        ) else {
             panic!("the origin's failure is the page's");
         };
         assert_eq!(message, expected);
     }
     let mut jina = cfg.clone();
     jina["fetch"]["strategy"] = json!("jina");
-    let outcome = fetch_with_services(source, &jina, Some("jina"), true, None, &services).unwrap();
+    let outcome =
+        fetch_with_services(source, &jina, Some("jina"), true, None, false, &services).unwrap();
     assert!(markdown(&outcome).contains("```json\n{\"error\""));
     assert_eq!(service.requests().len(), 5);
 }
@@ -1550,7 +1644,7 @@ fn jina_warnings_are_kept_and_a_bypassed_cache_asks_jina_for_a_fresh_reading() {
     let services = fixture.services(&service.origin);
     let source = "https://example.com/";
     let read = |cfg: &Value| {
-        fetch_with_services(source, cfg, Some("jina"), true, None, &services)
+        fetch_with_services(source, cfg, Some("jina"), true, None, false, &services)
             .unwrap()
             .document()
             .warnings
@@ -1630,6 +1724,7 @@ fn jina_text_answers_header_lines_and_page_statuses_are_read() {
             Some("jina"),
             true,
             None,
+            false,
             &services,
         )
     };
@@ -1813,8 +1908,16 @@ fn a_verification_page_is_read_by_a_remote_reader_with_a_notice_or_named_with_ho
         Some(directory.path().join("notices")),
     ));
     let services = fixture.services(&service.origin);
-    let outcome =
-        fetch_with_services(&page.url("/opus/1"), &cfg, None, true, None, &services).unwrap();
+    let outcome = fetch_with_services(
+        &page.url("/opus/1"),
+        &cfg,
+        None,
+        true,
+        None,
+        false,
+        &services,
+    )
+    .unwrap();
     assert_eq!(
         markdown(&outcome),
         "# Desk lamp notes\n\nThe post's own words."
@@ -1834,9 +1937,15 @@ fn a_verification_page_is_read_by_a_remote_reader_with_a_notice_or_named_with_ho
     let service = Mock::new(Vec::new());
     let fixture = Fixture::new(gate(&terminal, false, None, None));
     let services = fixture.services(&service.origin);
-    let Err(Error::Fetch(message)) =
-        fetch_with_services(&page.url("/opus/1"), &cfg, None, true, None, &services)
-    else {
+    let Err(Error::Fetch(message)) = fetch_with_services(
+        &page.url("/opus/1"),
+        &cfg,
+        None,
+        true,
+        None,
+        false,
+        &services,
+    ) else {
         panic!("not a fetch failure");
     };
     assert!(message.contains(sites::REMOTE_READERS), "{message}");
@@ -1947,8 +2056,16 @@ fn installed_chromium_captcha_capture_keeps_no_screenshot_and_reads_the_text_rem
     ));
     let mut services = fixture.services(&service.origin);
     services.browser_ready = browser::available;
-    let outcome =
-        fetch_with_services(&page.url("/opus/1"), &cfg, None, true, None, &services).unwrap();
+    let outcome = fetch_with_services(
+        &page.url("/opus/1"),
+        &cfg,
+        None,
+        true,
+        None,
+        false,
+        &services,
+    )
+    .unwrap();
     assert_eq!(
         markdown(&outcome),
         "# Desk lamp notes\n\nThe post's own words."

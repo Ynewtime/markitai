@@ -66,7 +66,13 @@ impl Store {
         let cfg = if read_only {
             base
         } else {
-            runtime(&base, &models, &providers, &detected)?
+            runtime(
+                &base,
+                &models,
+                &providers,
+                &detected,
+                source.origin == PROJECT,
+            )?
         };
         let revision = identity::revision(&models, &providers);
         Ok(Self {
@@ -205,7 +211,14 @@ impl Store {
         } else {
             Vec::new()
         };
-        let next = build(&data.cfg, &models, &providers, &detected).map_err(refused)?;
+        let next = build(
+            &data.cfg,
+            &models,
+            &providers,
+            &detected,
+            self.source.origin == PROJECT,
+        )
+        .map_err(refused)?;
         let bytes = saved.into_bytes();
         let durable = save_bytes(&self.source.path, &bytes, original.as_deref())?;
         data.cfg = Arc::new(next);
@@ -235,7 +248,13 @@ impl Store {
         let mut models = list(&raw, "model_list").unwrap_or_else(|| data.models.clone());
         let mut providers = list(&raw, "providers").unwrap_or_else(|| data.providers.clone());
         apply(&mut models, &mut providers, command)?;
-        let next = runtime(&data.cfg, &models, &providers, &data.detected)?;
+        let next = runtime(
+            &data.cfg,
+            &models,
+            &providers,
+            &data.detected,
+            self.source.origin == PROJECT,
+        )?;
         if !raw["llm"].is_object() {
             raw["llm"] = json!({});
         }
@@ -678,6 +697,11 @@ pub(in crate::server) fn load_written(source: &SettingsSource) -> ApiResult<Valu
 pub(in crate::server) fn load_base(source: &SettingsSource) -> ApiResult<Value> {
     let bytes = read(&source.path)?;
     let mut value = parse(bytes.as_deref())?;
+    if source.origin == PROJECT {
+        for note in markitai_core::config::seal_project_models(&mut value) {
+            eprintln!("{note}");
+        }
+    }
     if let Some(overrides) = source.overrides.clone() {
         markitai_core::config::merge(&mut value, overrides);
     }
@@ -686,21 +710,28 @@ pub(in crate::server) fn load_base(source: &SettingsSource) -> ApiResult<Value> 
 fn list(value: &Value, key: &str) -> Option<Vec<Value>> {
     value.get("llm")?.get(key)?.as_array().cloned()
 }
+/// The origin of a `./markitai.json` found in the working directory.
+const PROJECT: &str = "project";
+
 fn runtime(
     base: &Value,
     models: &[Value],
     providers: &[Value],
     detected: &[Value],
+    project: bool,
 ) -> ApiResult<Value> {
-    build(base, models, providers, detected)
+    build(base, models, providers, detected, project)
         .map_err(|_| invalid("invalid model/provider configuration"))
 }
-/// `base` with these models and providers in effect; else why not.
+/// `base` with these models and providers in effect; else why not. A
+/// `project` configuration (found in the working directory) keeps its models
+/// at their own address off the environment's keys.
 fn build(
     base: &Value,
     models: &[Value],
     providers: &[Value],
     detected: &[Value],
+    project: bool,
 ) -> Result<Value, String> {
     let mut cfg = base.clone();
     let mut seen = std::collections::HashSet::new();
@@ -717,6 +748,9 @@ fn build(
     }
     cfg["llm"]["model_list"] = json!(effective);
     cfg["llm"]["providers"] = json!(providers);
+    if project {
+        markitai_core::config::seal_project_models(&mut cfg);
+    }
     markitai_core::config::normalize(&cfg).map_err(|error| error.to_string())
 }
 fn connection(data: &Data, id: &str, deployment: Option<&str>) -> ApiResult<Value> {

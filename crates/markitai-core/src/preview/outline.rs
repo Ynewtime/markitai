@@ -43,10 +43,10 @@ pub struct PdfOutline {
 /// opens the page of the next entry that has one; when none follows, it is
 /// left out.
 pub fn pdf_outline(bytes: &[u8]) -> PdfOutline {
-    match Document::load_mem(bytes) {
+    crate::pdf_budget::within(bytes, || match Document::load_mem(bytes) {
         Ok(document) => outline_of(&document),
         Err(_) => PdfOutline::default(),
-    }
+    })
 }
 
 fn outline_of(document: &Document) -> PdfOutline {

@@ -256,3 +256,24 @@ fn a_refusing_proxy_is_named_without_its_credentials_and_the_provider_is_not_bla
     let error = direct.get("http://127.0.0.1:9/").send().unwrap_err();
     assert_eq!(diagnosis::cause(error, None).unwrap(), "connection refused");
 }
+
+#[test]
+fn a_user_model_never_reaches_this_machine() {
+    // Never accepted: a user model's request must not connect here.
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let port = listener.local_addr().unwrap().port();
+    for base in [
+        format!("http://localhost:{port}/v1"),
+        format!("http://127.0.0.1:{port}/v1"),
+    ] {
+        let mut cfg = cfg("openai/gpt-test", &base);
+        cfg["llm"]["model_list"][0]["model_info"] = json!({"public_only": true});
+        cfg["llm"]["router_settings"]["num_retries"] = json!(2);
+        let error = run(&plain(), &cfg, &HashMap::new(), &mut |_| {})
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("not on the public internet"), "{error}");
+    }
+    assert!(listener.accept().is_err(), "a request reached loopback");
+}

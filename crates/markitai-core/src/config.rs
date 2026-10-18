@@ -105,13 +105,24 @@ fn choose_path(
 
 /// The selected file, including an explicitly requested path that is missing.
 pub fn selected_path(explicit: Option<&Path>) -> Option<PathBuf> {
+    selected_source(explicit).map(|(path, _)| path)
+}
+
+/// The selected file, and whether it is `./markitai.json` found in the
+/// working directory rather than named (`-c`, `MARKITAI_CONFIG`) or the
+/// user's own `config.json`: a folder may come with one its user did not write.
+pub fn selected_source(explicit: Option<&Path>) -> Option<(PathBuf, bool)> {
     let environment = environment();
     let env_path = environment
         .get("MARKITAI_CONFIG")
         .filter(|s| !s.is_empty())
         .map(Path::new);
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    choose_path(explicit, env_path, &cwd, &home()).map(|path| expand_home(&path))
+    let project = explicit.is_none() && env_path.is_none();
+    choose_path(explicit, env_path, &cwd, &home()).map(|path| {
+        let found_here = project && path == cwd.join("markitai.json");
+        (expand_home(&path), found_here)
+    })
 }
 
 /// An opt-in environment switch such as `MARKITAI_PURE`: `1`, `true`, `yes`
@@ -271,9 +282,9 @@ pub fn load(explicit: Option<&Path>, overrides: Option<Value>) -> Result<Value> 
 /// value as a default (such as `fetch.remote_consent`) reads it here and
 /// normalizes the result itself; [`load`] is `normalize(&raw(..))`.
 pub fn raw(explicit: Option<&Path>, overrides: Option<Value>) -> Result<Value> {
-    let selected = selected_path(explicit);
+    let selected = selected_source(explicit);
     let mut value = json!({});
-    if let Some(path) = selected {
+    if let Some((path, project)) = selected {
         match read_file(&path) {
             Ok(Some(bytes)) => {
                 value = serde_json::from_slice(&bytes).map_err(|error| {
@@ -281,6 +292,11 @@ pub fn raw(explicit: Option<&Path>, overrides: Option<Value>) -> Result<Value> {
                 })?;
                 if !value.is_object() {
                     return Err(invalid("", "must be a JSON object"));
+                }
+                if project {
+                    for note in seal_project_models(&mut value) {
+                        warn_once(note);
+                    }
                 }
             }
             Ok(None) => {
@@ -721,6 +737,13 @@ fn normalize_node(value: &Value, node: &Value, path: &str) -> Result<Value> {
                 {
                     result.insert("hidden_endpoint".into(), value.clone());
                 }
+                // Internal: a service's user model reaches public addresses
+                // only (see `public_net`); dropped unless a boolean.
+                if path.ends_with(".model_info")
+                    && let Some(value) = values.get("public_only").filter(|v| v.is_boolean())
+                {
+                    result.insert("public_only".into(), value.clone());
+                }
                 if path == "output" {
                     // Internal write targets are never emitted as public defaults.
                     for key in ["filename", "reserved_stem"] {
@@ -932,17 +955,228 @@ pub fn resolve_optional(
     }
 }
 
-/// Read dotenv as data without changing the host process environment.
+/// Read dotenv as data without changing the host process environment: the
+/// working directory's `.env`, then `~/.markitai/.env`; the process
+/// environment wins over both. A working directory may come with a `.env`
+/// its user did not write, so names that choose programs, paths, endpoints,
+/// proxies or credential files are not taken from it (one warning lists them).
 pub fn environment() -> HashMap<String, String> {
-    let mut vars: HashMap<String, String> = std::env::vars().collect();
-    for path in [PathBuf::from(".env"), home().join(".env")] {
-        if let Ok(iter) = dotenvy::from_path_iter(path) {
-            for (key, value) in iter.flatten() {
-                vars.entry(key).or_insert(value);
+    let project = PathBuf::from(".env");
+    let own = home().join(".env");
+    let trusted_here = matches!(
+        (project.canonicalize(), own.canonicalize()),
+        (Ok(here), Ok(home)) if here == home
+    );
+    let (vars, ignored) = environment_from(
+        std::env::vars(),
+        dotenvy::from_path_iter(&project)
+            .ok()
+            .map(|iter| iter.flatten().collect())
+            .unwrap_or_default(),
+        trusted_here,
+        dotenvy::from_path_iter(&own)
+            .ok()
+            .map(|iter| iter.flatten().collect())
+            .unwrap_or_default(),
+    );
+    if !ignored.is_empty() {
+        warn_once(format!(
+            "Warning: Ignored {} from ./.env: a folder's .env may not set programs, paths, endpoints, proxies, home folders or credential files; set them in your environment or in {}",
+            ignored.join(", "),
+            own.display()
+        ));
+    }
+    vars
+}
+
+/// `process` over the working directory's `project` pairs (without the
+/// names [`project_may_not_set`] refuses, unless `trusted_here`) over the
+/// user's `own` pairs; and the refused names, sorted.
+fn environment_from(
+    process: impl Iterator<Item = (String, String)>,
+    project: Vec<(String, String)>,
+    trusted_here: bool,
+    own: Vec<(String, String)>,
+) -> (HashMap<String, String>, Vec<String>) {
+    let mut vars: HashMap<String, String> = process.collect();
+    let mut ignored = std::collections::BTreeSet::new();
+    for (key, value) in project {
+        if !trusted_here && project_may_not_set(&key) {
+            ignored.insert(key);
+            continue;
+        }
+        vars.entry(key).or_insert(value);
+    }
+    for (key, value) in own {
+        vars.entry(key).or_insert(value);
+    }
+    (vars, ignored.into_iter().collect())
+}
+
+/// A name a working directory's `.env` may not set: programs and search
+/// paths (`*_PATH`, `*_EXECUTABLE`, `PATH`, `LD_*`, `DYLD_*`, interpreter and
+/// shell hooks), endpoints (`*_API_BASE`, `*_BASE_URL`, `*_ENDPOINT`),
+/// proxies, home, configuration and temporary folders, credential files
+/// (`AWS_*_FILE`, `GOOGLE_APPLICATION_CREDENTIALS`) and certificate bundles.
+pub fn project_may_not_set(name: &str) -> bool {
+    let name = name.trim().to_ascii_uppercase();
+    const EXACT: &[&str] = &[
+        "PATH",
+        "PATHEXT",
+        "HOME",
+        "USERPROFILE",
+        "HOMEDRIVE",
+        "HOMEPATH",
+        "TMPDIR",
+        "TMP",
+        "TEMP",
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "NO_PROXY",
+        "GOOGLE_APPLICATION_CREDENTIALS",
+        "CLOUDSDK_CONFIG",
+        "MARKITAI_CONFIG",
+        "MARKITAI_HOME",
+        "MARKITAI_LOG_DIR",
+        "NODE_OPTIONS",
+        "BASH_ENV",
+        "ENV",
+        "SSL_CERT_FILE",
+        "SSL_CERT_DIR",
+        "REQUESTS_CA_BUNDLE",
+        "CURL_CA_BUNDLE",
+        "AWS_CA_BUNDLE",
+    ];
+    EXACT.contains(&name.as_str())
+        || ["LD_", "DYLD_", "XDG_", "PYTHON"]
+            .iter()
+            .any(|prefix| name.starts_with(prefix))
+        || [
+            "_PATH",
+            "_EXECUTABLE",
+            "_API_BASE",
+            "_BASE_URL",
+            "_ENDPOINT",
+            "_HOME",
+            "_CONFIG_DIR",
+        ]
+        .iter()
+        .any(|suffix| name.ends_with(suffix))
+        || (name.starts_with("AWS_") && name.ends_with("_FILE"))
+}
+
+/// Print `message` on stderr once per process.
+fn warn_once(message: String) {
+    static SHOWN: OnceLock<std::sync::Mutex<HashSet<String>>> = OnceLock::new();
+    let shown = SHOWN.get_or_init(Default::default);
+    if shown
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .insert(message.clone())
+    {
+        eprintln!("{message}");
+    }
+}
+
+/// A configuration found in the working directory may come with a folder its
+/// user did not write: its models and connections whose address is not their
+/// provider's documented one never use a key from the environment (neither
+/// the provider's variable nor an `env:` reference, which becomes the
+/// `markitai-no-key` placeholder). The returned warnings name each change.
+pub fn seal_project_models(value: &mut Value) -> Vec<String> {
+    let mut notes = Vec::new();
+    let connections: Vec<Value> = value
+        .pointer("/llm/providers")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    if let Some(list) = value
+        .pointer_mut("/llm/providers")
+        .and_then(Value::as_array_mut)
+    {
+        for connection in list.iter_mut().filter(|c| c.is_object()) {
+            let provider = connection["provider"].as_str().unwrap_or("").to_owned();
+            if custom_address(&provider, connection.get("api_base")) {
+                let label = format!(
+                    "connection {}",
+                    connection["id"].as_str().unwrap_or("(unnamed)")
+                );
+                seal(connection, &label, &mut notes);
             }
         }
     }
-    vars
+    if let Some(list) = value
+        .pointer_mut("/llm/model_list")
+        .and_then(Value::as_array_mut)
+    {
+        for entry in list.iter_mut() {
+            let linked = entry
+                .pointer("/model_info/provider_id")
+                .and_then(Value::as_str)
+                .and_then(|id| connections.iter().find(|c| c["id"].as_str() == Some(id)));
+            let Some(params) = entry.get_mut("litellm_params").filter(|p| p.is_object()) else {
+                continue;
+            };
+            let model = params["model"].as_str().unwrap_or("").to_owned();
+            let provider = linked
+                .and_then(|c| c["provider"].as_str())
+                .map(str::to_owned)
+                .unwrap_or_else(|| {
+                    model
+                        .split_once('/')
+                        .map_or("openai", |(prefix, _)| prefix)
+                        .to_owned()
+                });
+            let base = params
+                .get("api_base")
+                .filter(|base| base.as_str().is_some_and(|b| !b.trim().is_empty()))
+                .or_else(|| linked.and_then(|c| c.get("api_base")))
+                .cloned();
+            if custom_address(&provider, base.as_ref()) {
+                seal(params, &format!("model {model}"), &mut notes);
+            }
+        }
+    }
+    notes
+}
+
+/// Whether `base` names an address that is not `provider`'s documented one
+/// (an `env:` reference is not a documented address).
+fn custom_address(provider: &str, base: Option<&Value>) -> bool {
+    let Some(base) = base
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|base| !base.is_empty())
+    else {
+        return false;
+    };
+    let origin = |text: &str| {
+        url::Url::parse(text).ok().and_then(|url| {
+            Some((
+                url.scheme().to_owned(),
+                url.host_str()?.to_ascii_lowercase(),
+                url.port_or_known_default()?,
+            ))
+        })
+    };
+    let documented = crate::provider_management::provider_default_base(provider).and_then(origin);
+    documented.is_none() || documented != origin(base)
+}
+
+/// Keep `params` (a model's or a connection's) off the environment's keys.
+fn seal(params: &mut Value, label: &str, notes: &mut Vec<String>) {
+    params["use_environment_credentials"] = json!(false);
+    if let Some(reference) = params["api_key"]
+        .as_str()
+        .filter(|key| key.trim_start().starts_with("env:"))
+        .map(str::to_owned)
+    {
+        params["api_key"] = json!(crate::provider_management::NO_KEY);
+        notes.push(format!(
+            "Warning: ./markitai.json in this folder: {label} names its own address, so its key reference {reference} is not read from the environment; write the key in the entry, or keep this configuration in your own config file or pass it with -c"
+        ));
+    }
 }
 
 /// Whether this build can route an `llm.model_list` model whose
@@ -1366,6 +1600,129 @@ mod tests {
             serde_json::from_str(include_str!("../tests/fixtures/config_defaults.json")).unwrap();
         assert_eq!(defaults(), expected);
         assert_eq!(normalize(&defaults()).unwrap(), defaults());
+    }
+
+    #[test]
+    fn a_folders_env_may_not_choose_programs_paths_endpoints_or_credential_files() {
+        for name in [
+            "COPILOT_CLI_PATH",
+            "claude_cli_path",
+            "MARKITAI_BROWSER_EXECUTABLE",
+            "PLAYWRIGHT_BROWSERS_PATH",
+            "PATH",
+            "LD_PRELOAD",
+            "DYLD_INSERT_LIBRARIES",
+            "AWS_CONFIG_FILE",
+            "AWS_SHARED_CREDENTIALS_FILE",
+            "AWS_WEB_IDENTITY_TOKEN_FILE",
+            "AWS_BEDROCK_RUNTIME_ENDPOINT",
+            "GOOGLE_APPLICATION_CREDENTIALS",
+            "OPENAI_API_BASE",
+            "OPENAI_BASE_URL",
+            "https_proxy",
+            "NO_PROXY",
+            "HOME",
+            "CODEX_HOME",
+            "CLAUDE_CONFIG_DIR",
+            "XDG_CONFIG_HOME",
+            "MARKITAI_CONFIG",
+            "NODE_OPTIONS",
+            "PYTHONPATH",
+            "SSL_CERT_FILE",
+        ] {
+            assert!(project_may_not_set(name), "{name}");
+        }
+        for name in [
+            "OPENAI_API_KEY",
+            "DEEPSEEK_API_KEY",
+            "MODEL",
+            "MARKITAI_LANG",
+            "AWS_REGION",
+            "AWS_PROFILE",
+        ] {
+            assert!(!project_may_not_set(name), "{name}");
+        }
+    }
+
+    #[test]
+    fn the_process_wins_and_a_folders_env_loses_the_refused_names() {
+        let pairs = |list: &[(&str, &str)]| -> Vec<(String, String)> {
+            list.iter()
+                .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                .collect()
+        };
+        let project = pairs(&[
+            ("OPENAI_API_KEY", "from-folder"),
+            ("COPILOT_CLI_PATH", "/folder/fake-cli"),
+            ("OPENAI_API_BASE", "https://folder.example/v1"),
+            ("MODEL", "folder-model"),
+        ]);
+        let own = pairs(&[
+            ("COPILOT_CLI_PATH", "/own/copilot"),
+            ("DEEPSEEK_API_KEY", "own-key"),
+            ("MODEL", "own-model"),
+        ]);
+        let (vars, ignored) = environment_from(
+            pairs(&[("MODEL", "process-model")]).into_iter(),
+            project.clone(),
+            false,
+            own.clone(),
+        );
+        assert_eq!(vars["MODEL"], "process-model");
+        assert_eq!(vars["OPENAI_API_KEY"], "from-folder");
+        assert_eq!(vars["COPILOT_CLI_PATH"], "/own/copilot");
+        assert_eq!(vars["DEEPSEEK_API_KEY"], "own-key");
+        assert!(!vars.contains_key("OPENAI_API_BASE"));
+        assert_eq!(ignored, ["COPILOT_CLI_PATH", "OPENAI_API_BASE"]);
+        // Run from ~/.markitai itself, the folder's .env is the user's own.
+        let (vars, ignored) = environment_from(std::iter::empty(), project, true, Vec::new());
+        assert_eq!(vars["COPILOT_CLI_PATH"], "/folder/fake-cli");
+        assert!(ignored.is_empty());
+    }
+
+    #[test]
+    fn a_project_config_keeps_environment_keys_at_documented_endpoints_only() {
+        let mut value = json!({"llm":{
+        "providers":[
+            {"id":"lan","provider":"custom","api_base":"http://model.example:8080/v1"},
+            {"id":"official","provider":"deepseek"}
+        ],
+        "model_list":[
+            {"model_name":"a","litellm_params":{"model":"openai/gpt-x","api_base":"https://capture.example/v1"}},
+            {"model_name":"b","litellm_params":{"model":"openai/gpt-x","api_base":"https://capture.example/v1","api_key":"env:OPENAI_API_KEY"}},
+            {"model_name":"c","litellm_params":{"model":"deepseek/deepseek-chat","api_base":"https://api.deepseek.com","api_key":"env:DEEPSEEK_API_KEY"}},
+            {"model_name":"d","litellm_params":{"model":"openai/gpt-x"}},
+            {"model_name":"e","litellm_params":{"model":"openai/local"},"model_info":{"provider_id":"lan"}},
+            {"model_name":"f","litellm_params":{"model":"openai/literal","api_base":"https://capture.example/v1","api_key":"sk-written-here"}},
+            {"model_name":"g","litellm_params":{"model":"openai/gpt-x","api_base":"env:SOME_BASE"}}
+        ]}});
+        let notes = seal_project_models(&mut value);
+        let params = |index: usize| value["llm"]["model_list"][index]["litellm_params"].clone();
+        assert_eq!(params(0)["use_environment_credentials"], false);
+        assert!(params(0).get("api_key").is_none());
+        assert_eq!(params(1)["api_key"], crate::provider_management::NO_KEY);
+        assert_eq!(params(1)["use_environment_credentials"], false);
+        // The provider's own endpoint, and no address at all, keep the environment.
+        assert_eq!(params(2)["api_key"], "env:DEEPSEEK_API_KEY");
+        assert!(params(2).get("use_environment_credentials").is_none());
+        assert!(params(3).get("use_environment_credentials").is_none());
+        // A model at a connection's custom address, and the connection itself.
+        assert_eq!(params(4)["use_environment_credentials"], false);
+        assert_eq!(
+            value["llm"]["providers"][0]["use_environment_credentials"],
+            false
+        );
+        assert!(
+            value["llm"]["providers"][1]
+                .get("use_environment_credentials")
+                .is_none()
+        );
+        // A key written in the entry stays; an env: address counts as custom.
+        assert_eq!(params(5)["api_key"], "sk-written-here");
+        assert_eq!(params(6)["use_environment_credentials"], false);
+        assert_eq!(notes.len(), 1);
+        assert!(notes[0].contains("env:OPENAI_API_KEY"), "{}", notes[0]);
+        assert!(normalize(&value).is_ok());
     }
 
     #[test]

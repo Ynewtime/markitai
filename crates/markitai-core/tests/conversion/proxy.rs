@@ -1,5 +1,6 @@
 //! Static fetch through one environment proxy, using authored loopback servers.
-//! The isolated child reads its proxy from a private `.env`, so no process-wide
+//! The isolated child reads its proxy from its own `MARKITAI_HOME/.env` (a
+//! working folder's `.env` may not set proxies), so no process-wide
 //! environment is mutated and no operating-system proxy setting is consulted.
 use markitai_core::{ConvertOptions, convert};
 use serde_json::json;
@@ -108,8 +109,9 @@ fn static_fetch_uses_the_single_environment_proxy_with_reference_bypass() {
     let (origin, direct) = server(|_| html("Direct origin"));
     // HTTPS_PROXY is blank: the first nonempty variable is HTTP_PROXY, and it is
     // used for HTTPS as well. no_proxy is ignored because NO_PROXY is nonempty.
+    std::fs::create_dir_all("state").unwrap();
     std::fs::write(
-        ".env",
+        "state/.env",
         format!(
             "HTTPS_PROXY=\"  \"\nHTTP_PROXY=http://127.0.0.1:{proxy}\nNO_PROXY=bypass.test\nno_proxy=proxied.test\n"
         ),

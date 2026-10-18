@@ -189,6 +189,19 @@ to speak for. Nothing is kept of the first response's validators, because they d
 not describe the page finally read; the entry expires by TTL. JavaScript
 redirects are not followed.
 
+### Public addresses
+
+A fetch whose requested host is on the public internet stays there: once the
+first host resolves to a public address, every later hop (an HTTP redirect, a
+`<meta>` refresh, a browser navigation or a subresource) is resolved when the
+connection is made and refused if it is not public (loopback, private ranges,
+link-local such as cloud metadata, unique-local, with an IP literal in a URL
+checked directly), so a public page cannot send the fetch into this machine or
+its network. A deliberately local URL (a loopback or LAN host requested
+directly) is not restricted. A `serve` URL job a user token owns, or an
+untrusted caller submits, is held to public addresses from its first host too,
+and uses no proxy (see [serve](serve.md)).
+
 ## Pages that need JavaScript
 
 Static extraction recognizes three kinds of page that scripts fill in. Their

@@ -1109,3 +1109,39 @@ fn discovery_sends_no_key_for_the_keyless_placeholder() {
         }
     }
 }
+
+#[test]
+fn a_users_discovery_and_test_never_reach_this_machine() {
+    let server = Mock::new(|_| reply(200, r#"{"data":[{"id":"local-model"}]}"#));
+    let named = server.base.replace("127.0.0.1", "localhost");
+    for base in [server.base.clone(), named] {
+        let found =
+            discover_public(&json!({"provider":"custom","api_base":base,"api_key":"k"})).unwrap();
+        assert_eq!(found["status"], "unavailable", "{found}");
+        assert!(
+            found["detail"]
+                .as_str()
+                .unwrap()
+                .contains("not on the public internet"),
+            "{found}"
+        );
+        let tested = probe_public(
+            &json!({"model":"openai/x","api_base":format!("{base}/v1"),"api_key":"k"}),
+        )
+        .unwrap();
+        assert_eq!(tested["ok"], false, "{tested}");
+        assert!(
+            tested["detail"]
+                .as_str()
+                .unwrap()
+                .contains("not on the public internet"),
+            "{tested}"
+        );
+    }
+    assert!(server.requests().is_empty());
+    // The admin's own discovery of the same address still reaches it.
+    let found =
+        discover_explicit(&json!({"provider":"custom","api_base":server.base,"api_key":"k"}))
+            .unwrap();
+    assert!(found.to_string().contains("local-model"), "{found}");
+}

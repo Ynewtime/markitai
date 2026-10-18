@@ -34,6 +34,39 @@ from executable_identity import WINDOWS_TARGETS, verify_target_executable, verif
 from cli_documentation import cli_documentation, validate_documentation
 
 
+def apply_path_remap(environment, root):
+    """Add `--remap-path-prefix` so a shipped binary or wheel carries no build
+    path: the checkout becomes relative (vendored crates stay `vendor/...`),
+    the registry becomes `registry/...`, the toolchain `rustup/...`, and any
+    remaining home path is stripped. Appended to the existing rustflags, never
+    replacing them, so a config-level linker flag a build already uses is kept
+    (`CARGO_ENCODED_RUSTFLAGS` wins over config only for flags Cargo reads from
+    the environment, and this merges rather than clearing it). Later rules win
+    in rustc, so the most specific prefix is last.
+    """
+    cargo_home = Path(environment.get("CARGO_HOME", Path.home() / ".cargo"))
+    rustup_home = Path(environment.get("RUSTUP_HOME", Path.home() / ".rustup"))
+    # Most general first; rustc applies the last matching rule.
+    prefixes = [
+        (str(Path.home()), ""),
+        (str(root), ""),
+        (str(rustup_home), "rustup"),
+        (str(cargo_home / "registry"), "registry"),
+    ]
+    remap = []
+    for source, replacement in prefixes:
+        source = source.rstrip("/") + "/"
+        remap.append(f"--remap-path-prefix={source}={replacement}{'/' if replacement else ''}")
+    if "CARGO_ENCODED_RUSTFLAGS" in environment:
+        existing = environment["CARGO_ENCODED_RUSTFLAGS"]
+        flags = existing.split("\x1f") if existing else []
+    else:
+        flags = environment.get("RUSTFLAGS", "").split()
+    environment.pop("RUSTFLAGS", None)
+    environment["CARGO_ENCODED_RUSTFLAGS"] = "\x1f".join([*flags, *remap])
+    return environment
+
+
 def windows_cli_build(root, target, environment):
     """Isolate the static CRT to CLI target artifacts, never binding/host builds.
 
@@ -311,7 +344,39 @@ def stage_node_licenses(directory, licenses):
     return sorted(parent.relative_to(directory).as_posix() for parent in overrides)
 
 
-def supplement_wheel_licenses(source, destination, licenses):
+def _sbom_without_local_paths(data, root):
+    """A CycloneDX SBOM (maturin generates one through cargo-cyclonedx) with the
+    `path+file://` locators of path dependencies made relative: the checkout
+    becomes `.` (vendored crates stay `./vendor/...`), the registry and
+    toolchain keep their crate-relative tail, and any other home path is
+    stripped, so the wheel's SBOM names no build machine. maturin 1.9-1.15 has
+    no option to disable or configure this SBOM, so it is rewritten here."""
+    import re
+
+    cargo_home = str(Path(os.environ.get("CARGO_HOME", Path.home() / ".cargo")))
+    rustup_home = str(Path(os.environ.get("RUSTUP_HOME", Path.home() / ".rustup")))
+    home = os.path.expanduser("~")
+
+    def shorten(match):
+        path = match.group(1)
+        root_prefix = str(root).rstrip("/") + "/"
+        if (path + "/").startswith(root_prefix) or path == str(root):
+            tail = path[len(str(root)):].lstrip("/")
+            return "path+file://." + ("/" + tail if tail else "")
+        for base, name in (
+            (cargo_home + "/registry/", "registry/"),
+            (rustup_home + "/", "rustup/"),
+        ):
+            if path.startswith(base):
+                return "path+file://./" + name + path[len(base):]
+        if path.startswith(home + "/"):
+            return "path+file://./" + path[len(home) + 1:]
+        return match.group(0)
+
+    return re.sub(r"path\+file://(/[^\"#\s]*)", shorten, data)
+
+
+def supplement_wheel_licenses(source, destination, licenses, root=None):
     """Keep the original wheel and record a separate, explicitly supplemented wheel.
 
     Native and Python bytes remain unchanged. This adds files to dist-info and
@@ -337,13 +402,22 @@ def supplement_wheel_licenses(source, destination, licenses):
                 if info.filename in additions:
                     if original.read(info.filename) != additions.pop(info.filename):
                         raise RuntimeError(f"Wheel already has conflicting {info.filename}")
-                digest = hashlib.sha256()
-                size = 0
-                with original.open(info) as incoming, result.open(info, "w") as outgoing:
-                    for block in iter(lambda: incoming.read(1024 * 1024), b""):
-                        outgoing.write(block)
-                        digest.update(block)
-                        size += len(block)
+                is_sbom = root is not None and "/sboms/" in info.filename and info.filename.endswith(".json")
+                if is_sbom:
+                    cleaned = _sbom_without_local_paths(
+                        original.read(info.filename).decode("utf-8"), root
+                    ).encode("utf-8")
+                    result.writestr(info, cleaned)
+                    digest = hashlib.sha256(cleaned)
+                    size = len(cleaned)
+                else:
+                    digest = hashlib.sha256()
+                    size = 0
+                    with original.open(info) as incoming, result.open(info, "w") as outgoing:
+                        for block in iter(lambda: incoming.read(1024 * 1024), b""):
+                            outgoing.write(block)
+                            digest.update(block)
+                            size += len(block)
                 encoded = base64.urlsafe_b64encode(digest.digest()).rstrip(b"=").decode("ascii")
                 rows.append([info.filename, f"sha256={encoded}", str(size)])
             for name, value in additions.items():
@@ -522,6 +596,9 @@ def main():
                        npm_config_userconfig=str(npm_config), npm_config_update_notifier="false")
     environment.setdefault("CARGO_HOME", str(Path.home() / ".cargo"))
     environment.setdefault("RUSTUP_HOME", str(Path.home() / ".rustup"))
+    # Every cargo build below (workspace, the static-CRT CLI, maturin's wheel)
+    # inherits this, so none ships local build paths.
+    apply_path_remap(environment, root)
     for key in ["PYTHONPATH", "PYTHONHOME", "NODE_PATH", "NODE_OPTIONS"]:
         environment.pop(key, None)
     environment["MARKITAI_TEST_NUMBERS_FIXTURES"] = str(root / "crates/markitai-core/src/formats/numbers/fixtures")
@@ -767,7 +844,7 @@ def main():
             raise RuntimeError("Expected exactly one native wheel")
         artifact(built[0])
         wheel = wheels / built[0].name
-        record["wheel_supplement"] = supplement_wheel_licenses(built[0], wheel, licenses)
+        record["wheel_supplement"] = supplement_wheel_licenses(built[0], wheel, licenses, root)
         artifact(wheel)
         venv = work / "python-env"
         run("python-environment", [sys.executable, "-m", "venv", venv])
