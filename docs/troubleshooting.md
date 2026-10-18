@@ -178,7 +178,9 @@ listens there (a local server that is not running, or a wrong port in
 handshake failed` a proxy or server certificate the system does not trust (a handshake the other end cut off says a proxy or network problem is likely: set `HTTPS_PROXY` or turn on the system proxy), or
 `https://` to a plain HTTP port; `connection closed without a response` a proxy
 or server that dropped the request. `LLM request timed out: no response within
-120 s` names `router_settings.timeout`. See [LLM](llm.md#request-failures).
+120 s` names `router_settings.timeout`; such a request was sent once more before
+the error stands, and the cost is reported as incomplete because the provider
+may have billed the first one. See [LLM](llm.md#request-failures).
 
 **`LLM provider withheld the answer (finish reason: content_filter: RECITATION): it resembles existing published text, …`.**
 Gemini filters answers that would reproduce published text; a scan of a widely

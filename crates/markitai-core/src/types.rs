@@ -210,8 +210,13 @@ impl ConversionUsage {
                 continue;
             }
             let count = |key: &str| row.get(key).and_then(Value::as_u64).unwrap_or(0);
-            let unreported = count("incomplete_request_observations");
+            // A timed-out request is an incomplete observation of its own cause.
+            let timed_out = count("timed_out_requests");
+            let unreported = count("incomplete_request_observations").saturating_sub(timed_out);
             let unpriced = count("unpriced_requests");
+            if timed_out > 0 {
+                rows.push((model.clone(), timed_out, UnpricedReason::TimedOut));
+            }
             if unreported > 0 {
                 rows.push((model.clone(), unreported, UnpricedReason::NoCounts));
             }
@@ -222,7 +227,7 @@ impl ConversionUsage {
                     .map(str::to_owned);
                 rows.push((model.clone(), unpriced, UnpricedReason::NoTariff(why)));
             }
-            if unreported == 0 && unpriced == 0 {
+            if timed_out == 0 && unreported == 0 && unpriced == 0 {
                 // Observations without counts, without a quote and without a
                 // status still name a model the reader has to know about.
                 rows.push((
@@ -268,6 +273,7 @@ impl ConversionUsage {
                     UnpricedReason::NoCounts => {
                         format!("{count} to {model} reported no usage counts")
                     }
+                    UnpricedReason::TimedOut => format!("{count} to {model} timed out"),
                 }
             })
             .collect();
@@ -284,6 +290,9 @@ impl ConversionUsage {
             let hint = match reason {
                 UnpricedReason::NoCounts => {
                     "The provider or its proxy did not return token counts, so nothing can be priced."
+                }
+                UnpricedReason::TimedOut => {
+                    "A request that timed out is sent once more; the provider may still have completed and billed it without reporting its usage."
                 }
                 UnpricedReason::NoTariff(Some(why)) if why.starts_with("endpoint ") => {
                     "Prices are known only for the provider's own API address: remove a custom api_base (a proxy or relay) to have the cost counted."
@@ -319,6 +328,9 @@ pub enum UnpricedReason {
     NoTariff(Option<String>),
     /// The provider reported no usage counts for the request.
     NoCounts,
+    /// The request reached the provider but no answer arrived within the
+    /// timeout: it may have been completed and billed without a usage report.
+    TimedOut,
 }
 
 /// Usage rows of official subscription runtimes are keyed by these prefixes.

@@ -167,10 +167,13 @@ pub(super) fn merge(target: &mut ConversionUsage, source: &ConversionUsage) {
             "cached_input_tokens",
             "cache_creation_input_tokens",
             "incomplete_request_observations",
+            "timed_out_requests",
         ] {
             if matches!(
                 name,
-                "cache_creation_input_tokens" | "incomplete_request_observations"
+                "cache_creation_input_tokens"
+                    | "incomplete_request_observations"
+                    | "timed_out_requests"
             ) && entry.get(name).is_none()
                 && values.get(name).is_none()
             {
@@ -214,10 +217,13 @@ pub(super) fn difference(after: &ConversionUsage, before: &ConversionUsage) -> C
                 "cached_input_tokens",
                 "cache_creation_input_tokens",
                 "incomplete_request_observations",
+                "timed_out_requests",
             ] {
                 if matches!(
                     name,
-                    "cache_creation_input_tokens" | "incomplete_request_observations"
+                    "cache_creation_input_tokens"
+                        | "incomplete_request_observations"
+                        | "timed_out_requests"
                 ) && entry.get(name).is_none()
                     && old.get(name).is_none()
                 {

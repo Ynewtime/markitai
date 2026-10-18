@@ -605,6 +605,9 @@ fn usage_difference(after: &ConversionUsage, before: &ConversionUsage) -> Conver
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum FailureKind {
     Transport,
+    /// No answer arrived within the request timeout after the request
+    /// reached the provider, which may have completed and billed it.
+    Timeout,
     /// A deployment's credential or subscription account was refused.
     Authentication,
     Validation,
@@ -1385,6 +1388,8 @@ fn run_mode(
     };
     let mut attempts = 0u64;
     let mut slept = 0u64;
+    // A timed-out request is sent again once per request, never more.
+    let mut timeout_resent = false;
     let mut usage = ConversionUsage::default();
     let mut last_error = VisionFailure::blocked(Error::Conversion(
         "No enabled LLM model can process this request".into(),
@@ -1651,7 +1656,8 @@ fn run_mode(
                         }
                         break;
                     }
-                    if !failure.retryable || attempt == retries {
+                    let timed_out = failure.kind == FailureKind::Timeout;
+                    if !failure.retryable || attempt == retries || timed_out && timeout_resent {
                         break;
                     }
                     if budget > 0 && attempts >= budget || document_exhausted() {
@@ -1669,10 +1675,18 @@ fn run_mode(
                         return Err(last_error);
                     }
                     slept += backoff;
-                    note_document_warning(format!(
-                        "LLM request to {} failed ({cause}) and was sent again",
-                        entries[selected].id
-                    ));
+                    note_document_warning(if timed_out {
+                        timeout_resent = true;
+                        format!(
+                            "LLM request to {} timed out ({cause}) and was sent again once; the provider may have billed the first request, so the cost is incomplete",
+                            entries[selected].id
+                        )
+                    } else {
+                        format!(
+                            "LLM request to {} failed ({cause}) and was sent again",
+                            entries[selected].id
+                        )
+                    });
                     sleep(Duration::from_secs(backoff));
                     attempt += 1;
                 }
@@ -1878,12 +1892,22 @@ fn request_with_mode(
         {
             *observation = routing::Observation::Timeout;
         }
-        // Only a request that never reached the provider is safe to send
-        // again. After a timeout the provider may have completed and billed
-        // it, and that usage is never reported.
-        let retryable = error.is_connect();
+        // A request that never reached the provider is safe to send again. One
+        // that timed out after it was sent may have been completed and billed
+        // by the provider without a usage report: it is sent again once (the
+        // routing loop allows one timeout resend), and the cost is marked
+        // incomplete.
+        let timed_out = error.is_timeout() && !error.is_connect();
+        if timed_out {
+            record_timeout(usage, entry);
+        }
+        let retryable = error.is_connect() || timed_out;
         Failure {
-            kind: FailureKind::Transport,
+            kind: if timed_out {
+                FailureKind::Timeout
+            } else {
+                FailureKind::Transport
+            },
             error: Error::Conversion(diagnosis::transport(
                 error,
                 timeout,
@@ -1928,12 +1952,23 @@ fn request_with_mode(
             if timed_out && let Some(observation) = observation.as_deref_mut() {
                 *observation = routing::Observation::Timeout;
             }
+            // A successful status means the provider completed and billed the
+            // request. A body cut off is not sent again (that would pay twice
+            // for the same failure); a body that timed out is sent again once
+            // like any timeout, its first usage unknown and the cost marked
+            // incomplete.
+            let billed_timeout = timed_out && status < 300;
+            if billed_timeout {
+                record_timeout(usage, entry);
+            }
             Failure {
-                kind: FailureKind::Transport,
+                kind: if billed_timeout {
+                    FailureKind::Timeout
+                } else {
+                    FailureKind::Transport
+                },
                 error: Error::Conversion(diagnosis::unreadable(&error, timed_out, timeout)),
-                // A successful status means the provider completed and billed
-                // the request; sending it again would pay twice.
-                retryable: status >= 300,
+                retryable: status >= 300 || billed_timeout,
                 fatal: false,
                 document_fatal: false,
                 retry_after: None,
@@ -2247,6 +2282,29 @@ fn metric_tokens(entry: &Deployment, data: &Value) -> (Option<u64>, Option<u64>)
         .and_then(Value::as_u64)
         .or_else(|| input.zip(output).and_then(|(a, b)| a.checked_add(b)));
     (total, output)
+}
+
+/// A request that timed out after it was sent: the provider may have
+/// completed and billed it, and no usage was reported. The deployment's row
+/// counts it as an incomplete observation and a timed-out request, so the
+/// document's cost reads as incomplete, and a dollar budget stops admitting
+/// requests as it does for any response it cannot price.
+fn record_timeout(usage: &mut ConversionUsage, entry: &Deployment) {
+    let mut delta = ConversionUsage::default();
+    delta.by_model.insert(
+        entry.id.clone(),
+        json!({"requests":0,"input_tokens":0,"output_tokens":0,"cost_usd":0.0,"priced_requests":0,"unpriced_requests":0,"cost_status":"unknown","incomplete_request_observations":1,"timed_out_requests":1}),
+    );
+    DOCUMENT_ACCOUNTING.with(|slot| {
+        if let Some(state) = slot.borrow().as_ref() {
+            let mut state = state.lock().unwrap_or_else(|e| e.into_inner());
+            state
+                .dollars
+                .observe(pricing::Quote::Unknown(pricing::UnknownPrice::MissingUsage));
+            merge_usage(&mut state.usage, &delta);
+        }
+    });
+    merge_usage(usage, &delta);
 }
 
 fn record_usage(usage: &mut ConversionUsage, entry: &Deployment, data: &Value) {
@@ -3001,36 +3059,55 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_request_the_provider_may_have_billed_is_not_sent_again() {
-        // One answer stalls past the timeout; the other has a successful status
-        // but its connection closes partway through the body.
-        for (cut_off, message) in [
-            (false, "LLM request timed out"),
-            (true, "Cannot read LLM response"),
-        ] {
-            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-            let base = format!("http://{}/v1", listener.local_addr().unwrap());
-            let server = thread::spawn(move || {
+    /// A loopback provider that takes one connection per entry: `None` stalls
+    /// past a one-second client timeout, `Some(body)` answers with it.
+    fn stalling(answers: Vec<Option<Value>>) -> (String, thread::JoinHandle<usize>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}/v1", listener.local_addr().unwrap());
+        let server = thread::spawn(move || {
+            let mut served = 0;
+            for answer in answers {
                 let (mut stream, _) = listener.accept().unwrap();
                 read_request(&mut stream);
-                if cut_off {
-                    write!(stream, "HTTP/1.1 200 Mock\r\nContent-Type: application/json\r\nContent-Length: 500\r\nConnection: close\r\n\r\n{{\"choices\"").unwrap();
-                } else {
-                    thread::sleep(Duration::from_secs(2));
+                served += 1;
+                match answer {
+                    Some(body) => {
+                        let body = body.to_string();
+                        write!(stream, "HTTP/1.1 200 Mock\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+                    }
+                    None => thread::sleep(Duration::from_millis(1500)),
                 }
-            });
-            let mut cfg = cfg("openai/test", &base);
-            cfg["llm"]["router_settings"]["timeout"] = json!(1);
-            let mut pauses = Vec::new();
-            let error = run(&plain(), &cfg, &HashMap::new(), &mut |pause| {
-                pauses.push(pause)
-            })
-            .unwrap_err();
-            assert!(error.to_string().contains(message), "{error}");
-            assert!(pauses.is_empty(), "{message}: {pauses:?}");
-            server.join().unwrap();
-        }
+            }
+            served
+        });
+        (base, server)
+    }
+
+    #[test]
+    fn a_cut_off_answer_is_not_sent_again() {
+        // A successful status whose connection closes partway through the
+        // body: the provider completed and billed it, and the same request
+        // would be paid twice.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}/v1", listener.local_addr().unwrap());
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            read_request(&mut stream);
+            write!(stream, "HTTP/1.1 200 Mock\r\nContent-Type: application/json\r\nContent-Length: 500\r\nConnection: close\r\n\r\n{{\"choices\"").unwrap();
+        });
+        let mut cfg = cfg("openai/test", &base);
+        cfg["llm"]["router_settings"]["timeout"] = json!(1);
+        let mut pauses = Vec::new();
+        let error = run(&plain(), &cfg, &HashMap::new(), &mut |pause| {
+            pauses.push(pause)
+        })
+        .unwrap_err();
+        assert!(
+            error.to_string().contains("Cannot read LLM response"),
+            "{error}"
+        );
+        assert!(pauses.is_empty(), "{pauses:?}");
+        server.join().unwrap();
         // A connection that was never established is still retried.
         let closed = TcpListener::bind("127.0.0.1:0").unwrap();
         let base = format!("http://{}/v1", closed.local_addr().unwrap());
@@ -3038,13 +3115,92 @@ mod tests {
         let mut pauses = Vec::new();
         let error = run(
             &plain(),
-            &cfg("openai/test", &base),
+            &self::cfg("openai/test", &base),
             &HashMap::new(),
             &mut |pause| pauses.push(pause),
         )
         .unwrap_err();
         assert!(error.to_string().contains("LLM request failed"), "{error}");
         assert_eq!(pauses, [Duration::from_secs(1), Duration::from_secs(2)]);
+    }
+
+    #[test]
+    fn a_timed_out_request_is_sent_again_once_and_the_cost_is_incomplete() {
+        // Both requests stall: the second timeout is final although two
+        // retries are configured, and both count as unknown spend.
+        let (base, server) = stalling(vec![None, None]);
+        let mut cfg = cfg("openai/test", &base);
+        cfg["llm"]["router_settings"]["timeout"] = json!(1);
+        let scope = DocumentScope::new(&cfg);
+        let mut pauses = Vec::new();
+        let error = run(&plain(), &cfg, &HashMap::new(), &mut |pause| {
+            pauses.push(pause)
+        })
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .starts_with("LLM request timed out: no response within 1 s"),
+            "{error}"
+        );
+        assert_eq!(pauses, [Duration::from_secs(1)]);
+        assert_eq!(server.join().unwrap(), 2);
+        let usage = scope.usage();
+        let row = &usage.by_model["openai/test"];
+        assert_eq!(row["incomplete_request_observations"], 2);
+        assert_eq!(row["timed_out_requests"], 2);
+        assert_eq!(row["cost_status"], "unknown");
+        assert!(!usage.cost_complete());
+        assert_eq!(
+            usage.unpriced_warning().as_deref(),
+            Some(
+                "Cost is incomplete: 2 requests to openai/test timed out. cost_usd is the known priced subtotal; the complete cost is unknown. A request that timed out is sent once more; the provider may still have completed and billed it without reporting its usage."
+            )
+        );
+        assert_eq!(
+            scope.take_warnings(),
+            [
+                "LLM request to openai/test timed out (LLM request timed out: no response within 1 s) and was sent again once; the provider may have billed the first request, so the cost is incomplete"
+            ]
+        );
+
+        // Without retries the timeout stands at once.
+        let (base, server) = stalling(vec![None]);
+        let mut cfg = self::cfg("openai/test", &base);
+        cfg["llm"]["router_settings"]["timeout"] = json!(1);
+        cfg["llm"]["router_settings"]["num_retries"] = json!(0);
+        run(&plain(), &cfg, &HashMap::new(), &mut |_| {
+            panic!("num_retries 0 sends nothing again")
+        })
+        .unwrap_err();
+        assert_eq!(server.join().unwrap(), 1);
+    }
+
+    #[test]
+    fn an_answer_after_a_timeout_is_used_and_its_cost_stays_incomplete() {
+        let (base, server) = stalling(vec![None, Some(success("second"))]);
+        let mut cfg = cfg("openai/test", &base);
+        cfg["llm"]["router_settings"]["timeout"] = json!(1);
+        let scope = DocumentScope::new(&cfg);
+        let (text, usage) = run(&plain(), &cfg, &HashMap::new(), &mut |_| {}).unwrap();
+        assert_eq!(text, "second");
+        assert_eq!(server.join().unwrap(), 2);
+        // The answer's own tokens are kept; the timed-out request is unknown.
+        assert_eq!(
+            (usage.requests, usage.input_tokens, usage.output_tokens),
+            (1, 11, 7)
+        );
+        assert_eq!(usage.by_model["openai/test"]["timed_out_requests"], 1);
+        assert!(!usage.cost_complete());
+        let document = scope.usage();
+        assert_eq!(document.by_model["openai/test"]["timed_out_requests"], 1);
+        assert!(
+            document
+                .unpriced_warning()
+                .is_some_and(|warning| warning.contains("1 request to openai/test timed out")),
+            "{:?}",
+            document.unpriced_warning()
+        );
     }
 
     #[test]

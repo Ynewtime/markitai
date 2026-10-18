@@ -246,7 +246,7 @@
 - `MARKITAI_HOME/serve/jobs` 下单个损坏的任务文件夹不再导致 `markitai serve` 无法启动，也不再让历史记录、单项重试和单项删除失败：该文件夹会被跳过，在标准错误输出一次警告，并原样保留。对已知任务重试或删除单项时，也不再重新扫描全部已保存任务。
 - `markitai serve` 的历史记录按实际时间从新到旧排列，不再比较时间戳文本：CLI 历史记录本地时间及偏移（`+08:00`），服务端任务记录 UTC（`Z`），在非 UTC 时区两者会交错乱序。历史 ZIP 同样按创建先后排列任务，`(2)` 等文件夹后缀随创建顺序编号。
 - 大批量任务不再出现全部转换完成后、最终压缩恢复状态时失败（退出码 1、无报告）的情况。状态基文件改为紧凑 JSON，上限与日志文件相同，为 64 MiB，条目带 LLM 用量时也能达到 100,000 条的上限；若完成后的状态仍放不下，批处理会在任何转换开始前停止，并提示 `Recovery state projected base bytes limit exceeded`。
-- 超时的 LLM 请求，或成功响应在读取中途被切断的请求，不再重新发送：提供商可能已完成并计费，而首次请求的用量无法记录。响应指明模型不存在、不可用或受地区限制时不再退避重试；与认证被拒相同，请求立即转到同组的其他部署，本次运行跳过该部署并提示 `LLM deployment … is unavailable and is skipped for this run`。连接失败、临时 HTTP 错误和限流仍会重试。
+- 成功响应在读取中途被切断的 LLM 请求不再重新发送：提供商已完成并计费。发出后超时的请求（HTTP API 部署没有响应，或成功响应中途停止传输）会在 `num_retries` 范围内重新发送一次，不会更多，与 Python markitai 重发超时请求一致；由于提供商可能已为第一次请求计费而未报告用量，该部署的用量行将其计入 `incomplete_request_observations` 和新增的 `timed_out_requests`，费用标为不完整（`Cost is incomplete: 1 request to … timed out.`），设置了正数 `llm.max_cost_per_document_usd` 时不再放行后续请求，文档附带警告 `LLM request to … timed out (…) and was sent again once; the provider may have billed the first request, so the cost is incomplete`。响应指明模型不存在、不可用或受地区限制时不再退避重试；与认证被拒相同，请求立即转到同组的其他部署，本次运行跳过该部署并提示 `LLM deployment … is unavailable and is skipped for this run`。连接失败、临时 HTTP 错误和限流仍会重试。
 - LibreOffice 导出在 Linux 与 macOS 上不再遗留进程：启动器退出后，其进程组中残留的进程会在读取输出、删除私有工作目录之前被结束，与 Windows 的行为一致。
 - XLSB 工作簿的转换结果与 XLSX、XLS 一致：单个工作表以其名称作标题，各工作表的表格紧跟标题；Markdown 中省略的隐藏工作表会给出同样的警告，不再静默消失。
 - 无法统计批注的 ODT（例如 `content.xml` 超过 16 MiB 元数据上限）现在会像 Word 文档一样给出「批注无法恢复」的警告，不再被当作没有批注。

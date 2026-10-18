@@ -554,10 +554,21 @@ limits may retry. A request is never sent again unchanged after the provider
 answered it: a response without any text (the error names its finish reason)
 moves only to a deployment of the group not yet tried, without backoff, and an
 answer rejected by validation is followed by a request whose system prompt names
-the rejection. A request that timed out, or whose
-successful response was cut off while being read, is not sent again: the
-provider may already have completed and billed it, and that usage cannot be
-recorded. A configured fallback group can still run.
+the rejection. A request that timed out after it was sent (no response, or a
+successful response that stopped arriving) is sent again once, after the usual
+backoff and within `num_retries`, never more than once per request: the
+provider may already have completed and billed the first one without a usage
+report, so its deployment's usage row counts it in
+`incomplete_request_observations` and `timed_out_requests`, the cost is
+incomplete (`Cost is incomplete: 1 request to … timed out.`), a positive
+`llm.max_cost_per_document_usd` stops admitting further requests, and the
+document gets the warning `LLM request to … timed out (…) and was sent again
+once; the provider may have billed the first request, so the cost is
+incomplete`. A connection that could not be opened in time never reached the
+provider and retries like any connection failure. A successful response cut off
+while being read for another reason is not sent again: the provider completed
+and billed it. This applies to HTTP API deployments; a subscription runtime's
+timeout is not resent. A configured fallback group can still run.
 Billing/payment/insufficient-quota failures stop the entire operation. A 429 is
 a rate limit, retried even when its message mentions billing or payment, unless
 it carries the `insufficient_quota` code; an HTTP 402 always stops. Truncated

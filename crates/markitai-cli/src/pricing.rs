@@ -200,10 +200,13 @@ pub(crate) fn merge_models(
             "cached_input_tokens",
             "cache_creation_input_tokens",
             "incomplete_request_observations",
+            "timed_out_requests",
         ] {
             if matches!(
                 key,
-                "cache_creation_input_tokens" | "incomplete_request_observations"
+                "cache_creation_input_tokens"
+                    | "incomplete_request_observations"
+                    | "timed_out_requests"
             ) && merged.get(key).is_none()
                 && incoming.get(key).is_none()
             {
@@ -339,6 +342,16 @@ mod tests {
         assert_eq!(merged["subscription"]["requests"], 0);
         assert_eq!(merged["subscription"]["input_tokens"], 60);
         assert_eq!(merged["subscription"]["incomplete_request_observations"], 2);
+        assert!(merged["subscription"].get("timed_out_requests").is_none());
+        // A timed-out request's marker sums like the observation it explains.
+        let timed_out = json!({"timeout":{"requests":0,"input_tokens":0,"output_tokens":0,"cost_usd":0.0,
+            "priced_requests":0,"unpriced_requests":0,"cost_status":"unknown",
+            "incomplete_request_observations":1,"timed_out_requests":1}});
+        let mut timeouts = Map::new();
+        merge_models(&mut timeouts, timed_out.as_object().unwrap()).unwrap();
+        merge_models(&mut timeouts, timed_out.as_object().unwrap()).unwrap();
+        assert_eq!(timeouts["timeout"]["timed_out_requests"], 2);
+        assert_eq!(timeouts["timeout"]["cost_status"], "unknown");
         let mut total = usage(Value::Object(merged));
         total.input_tokens = 60;
         total.output_tokens = 14;

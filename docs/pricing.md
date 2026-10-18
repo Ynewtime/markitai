@@ -177,9 +177,12 @@ Per-model usage keeps its existing requests/input/output/cost fields and adds:
 }
 ```
 
-Rows can also carry `cached_input_tokens`, `cache_creation_input_tokens` and
+Rows can also carry `cached_input_tokens`, `cache_creation_input_tokens`,
 `incomplete_request_observations` (subscription runtimes that report tokens but
-not a request count); `pricing_snapshot` appears only on priced rows; OpenRouter's reported charges
+not a request count, and requests that timed out after they were sent) and
+`timed_out_requests` (how many of those observations are timeouts, which the
+provider may have billed without a usage report; see
+[LLM](llm.md#retries-budgets-and-usage)); `pricing_snapshot` appears only on priced rows; OpenRouter's reported charges
 carry `openrouter-reported-cost`.
 `complete` means every observed request in that row was priced; `partial` means
 both priced and unpriced requests; `unknown` means none was priced. An explicit
@@ -212,7 +215,7 @@ known priced subtotal; the complete cost is unknown.` The model is the one the
 provider reports, the same key the cost breakdown uses. Up to three models are
 named and the rest are counted (`and 2 more models`). A row whose provider
 reported no token counts says so instead (`reported no usage counts`), because
-that is a different root cause. Documents served by a
+that is a different root cause, and a request that timed out says `timed out`. Documents served by a
 [subscription runtime](subscriptions.md) carry its own notice instead; requests
 through one never carry a dollar quote.
 
