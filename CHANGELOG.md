@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.2.1]
+## [1.2.1] - 2026-10-18
 
 ### Added
 
@@ -197,7 +197,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Cloudflare processing is the admin's alone.** Remote processing through `fetch.cloudflare` bills the server's Cloudflare account, but any trusted caller could request it, user tokens included, although user tokens are otherwise kept off the admin's credentials. `GET /api/capabilities` now reports Cloudflare as `client_not_trusted` to anyone but the admin, and a job or retry that asks for it is 403 `remote_processing_forbidden`.
 - `serve`: a user token's own models reach public addresses only. The check against an address on the server's machine looked at the written host, so a name resolving to loopback, the server's network or cloud metadata passed for that user's conversions, model discovery and tests. Those connections are now resolved when they are made and refused unless the address is on the public internet; no redirect is followed, and a request an environment proxy would carry is refused. Models the admin shares are unchanged.
 - `serve`/fetch: Playwright `extra_http_headers` are sent to the initial navigation origin only, not to every request the browser context makes. A secret among them (an API token) no longer reaches a cross-origin subresource host, a favicon host or a redirect target; a same-origin subresource still receives them. The public-network guard carries them the same way.
-- Packaging and `serve` hardening. The sdist no longer ships `tests/` or `benchmarks/` (the test suite held third-party web captures, including other people's e-mail addresses, and was large): it drops from about 12 MB to 2.3 MB. A job's download archive never follows a symlink out of the job's output tree (only real files whose resolved path stays inside it are added). The build backend (`hatchling`) is pinned to an exact version.
+- Packaging and `serve` hardening. The sdist no longer ships `tests/` or `benchmarks/` (the test suite held third-party web captures, including other people's e-mail addresses, and was large): it is 2.3 MB, down from 4.1 MB for 1.2.0. The package metadata names its author without an e-mail address. A job's download archive never follows a symlink out of the job's output tree (only real files whose resolved path stays inside it are added). The build backend (`hatchling`) is pinned to an exact version.
 
 ## [1.2.0] - 2026-09-28
 
