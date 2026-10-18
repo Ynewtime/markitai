@@ -1,0 +1,52 @@
+{
+  "fixtures": [
+    {
+      "file": "nul-separated.pdf",
+      "bytes": 8014,
+      "sha256": "e6a083e853195fc25ad642aa911d99fec57a5a1bea8085bf4d4614279728ef78",
+      "provenance": "Authored minimal PDF operators and invented text; no external or personal input."
+    },
+    {
+      "file": "segmented-header-table.pdf",
+      "bytes": 11672,
+      "sha256": "b61d4b7b8c9acdffea15870435ab1d033bb59e9717c43e220dbebb2c7c00e1e5",
+      "provenance": "Authored minimal PDF operators and invented text; no external or personal input."
+    },
+    {
+      "file": "form-grid.pdf",
+      "bytes": 10043,
+      "sha256": "024b559dcf076e877aeaf1e59d76684f12e305243f79b734fb84a668f3ec58da",
+      "provenance": "Authored minimal PDF operators and invented text; no external or personal input."
+    },
+    {
+      "file": "long-sentences.pdf",
+      "bytes": 11100,
+      "sha256": "fa6bb0e9482d7d2e9a8ab33058f36a6f51b562391655f703922b3b0e36dc3aa8",
+      "provenance": "Authored minimal PDF operators and invented text; no external or personal input."
+    },
+    {
+      "file": "fixed-pitch-cjk.pdf",
+      "bytes": 11188,
+      "sha256": "e7669363d0a52b1fbd05ffda336bfe6a7db468f9a9a39e72dc90ef37cdf32881",
+      "provenance": "Authored minimal PDF operators and invented text; no external or personal input."
+    },
+    {
+      "file": "notdef-ffff.pdf",
+      "bytes": 7522,
+      "sha256": "99825f3200b53eb425bf60171dd9128a0b5bde585351810dfc44de9c0a8b3326",
+      "provenance": "Authored minimal PDF operators and invented text; no external or personal input."
+    },
+    {
+      "file": "cjk-enumerators.pdf",
+      "bytes": 7378,
+      "sha256": "073ecd78e81959ccbbb50413694fb87cc2c3043a11a31f89b5b01e9a137f6c25",
+      "provenance": "Authored minimal PDF operators and invented text; no external or personal input."
+    },
+    {
+      "file": "double-spaced.pdf",
+      "bytes": 6470,
+      "sha256": "f9680b8064ab44120dc0e87682189956ef7faf0aae3b34ff8e41595d230bf911",
+      "provenance": "Authored minimal PDF operators and invented text; no external or personal input."
+    }
+  ]
+}

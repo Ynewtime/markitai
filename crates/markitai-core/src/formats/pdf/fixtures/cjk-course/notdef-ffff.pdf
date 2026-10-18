@@ -1,0 +1,228 @@
+%PDF-1.4
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Count 1 /Kids [3 0 R] /MediaBox [0 0 595 842] >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /Contents 17 0 R /Resources << /Font << /F20 4 0 R /F21 8 0 R /F15 12 0 R >> /XObject << /Xi1 16 0 R >> >> >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type0 /BaseFont /MicrosoftYaHei /Encoding /Identity-H /DescendantFonts [5 0 R] /ToUnicode 7 0 R >>
+endobj
+5 0 obj
+<< /Type /Font /Subtype /CIDFontType2 /BaseFont /MicrosoftYaHei /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /DW 0 /W [1 [1000] 2 [1000] 3 [1000] 4 [1000] 5 [1000] 6 [1000] 7 [1000] 8 [1000] 9 [1000] 10 [1000] 11 [1000] 12 [1000] 13 [1000] 14 [1000] 15 [1000] 16 [1000] 17 [1000] 18 [1000] 19 [1000] 20 [1000] 21 [1000] 22 [1000] 23 [1000] 24 [1000] 25 [1000] 26 [1000] 27 [1000] 28 [1000] 29 [1000] 30 [1000] 31 [1000] 32 [1000] 33 [1000] 34 [1000] 35 [1000] 36 [1000] 37 [1000] 38 [1000] 39 [1000] 40 [1000] 41 [1000] 42 [1000] 43 [1000] 44 [1000] 45 [1000] 46 [1000] 47 [1000] 48 [1000] 49 [1000] 50 [1000] 51 [1000] 52 [1000] 53 [1000] 54 [1000] 55 [1000] 56 [1000] 57 [1000] 58 [1000] 59 [1000] 60 [1000] 61 [1000] 62 [1000] 63 [1000] 64 [1000] 65 [1000] 66 [1000] 67 [1000] 68 [1000] 69 [1000] 70 [1000] 71 [1000] 72 [1000] 73 [1000] 74 [1000] 75 [1000] 76 [1000] 77 [1000] 78 [1000] 79 [1000] 80 [1000] 81 [1000] 82 [1000] 83 [1000] 84 [1000] 85 [1000]] /CIDToGIDMap /Identity /FontDescriptor 6 0 R >>
+endobj
+6 0 obj
+<< /Type /FontDescriptor /FontName /MicrosoftYaHei /Flags 33 /FontBBox [-150 -250 1300 1050] /ItalicAngle 0 /Ascent 1036 /Descent -255 /CapHeight 756 /StemV 80 >>
+endobj
+7 0 obj
+<< /Length 1515 >>
+stream
+/CIDInit /ProcSet findresource begin 12 dict begin begincmap
+/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def
+/CMapName /Adobe-Identity-UCS def /CMapType 2 def
+1 begincodespacerange <0000> <FFFF> endcodespacerange
+85 beginbfchar
+<0001> <672C>
+<0002> <62A5>
+<0003> <540D>
+<0004> <5355>
+<0005> <7531>
+<0006> <8BFE>
+<0007> <7A0B>
+<0008> <7B80>
+<0009> <7AE0>
+<000A> <3001>
+<000B> <8868>
+<000C> <7F34>
+<000D> <8D39>
+<000E> <51ED>
+<000F> <8BC1>
+<0010> <5B89>
+<0011> <6392>
+<0012> <548C>
+<0013> <5176>
+<0014> <4ED6>
+<0015> <4E66>
+<0016> <9762>
+<0017> <7EA6>
+<0018> <5B9A>
+<0019> <6784>
+<001A> <6210>
+<001B> <FF0C>
+<001C> <5404>
+<001D> <65B9>
+<001E> <5E94>
+<001F> <5F53>
+<0020> <9075>
+<0021> <5B88>
+<0022> <3002>
+<0023> <5B66>
+<0024> <5458>
+<0025> <5728>
+<0026> <671F>
+<0027> <95F4>
+<0028> <5185>
+<0029> <56E0>
+<002A> <6545>
+<002B> <7F3A>
+<002C> <6216>
+<002D> <9700>
+<002E> <8981>
+<002F> <8C03>
+<0030> <7684>
+<0031> <4E60>
+<0032> <4E2D>
+<0033> <5FC3>
+<0034> <6309>
+<0035> <7167>
+<0036> <76F8>
+<0037> <8865>
+<0038> <65F6>
+<0039> <4EBA>
+<003A> <4EA4>
+<003B> <7EB3>
+<003C> <7528>
+<003D> <672A>
+<003E> <53EF>
+<003F> <4EE5>
+<0040> <6682>
+<0041> <505C>
+<0042> <4E3A>
+<0043> <4E00>
+<0044> <5E74>
+<0045> <81EA>
+<0046> <5F00>
+<0047> <59CB>
+<0048> <4E4B>
+<0049> <65E5>
+<004A> <96F6>
+<004B> <8D77>
+<004C> <81F3>
+<004D> <7ED3>
+<004E> <4E1A>
+<004F> <4E8C>
+<0050> <5341>
+<0051> <56DB>
+<0052> <6B62>
+<0053> <7EED>
+<0054> <53E6>
+<0055> <884C>
+endbfchar
+endcmap CMapName currentdict /CMap defineresource pop end end
+
+endstream
+endobj
+8 0 obj
+<< /Type /Font /Subtype /Type0 /BaseFont /MicrosoftYaHeiUI-Bold /Encoding /Identity-H /DescendantFonts [9 0 R] /ToUnicode 11 0 R >>
+endobj
+9 0 obj
+<< /Type /Font /Subtype /CIDFontType2 /BaseFont /MicrosoftYaHeiUI-Bold /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /DW 0 /W [1 [1000] 2 [1000] 3 [1000] 4 [1000] 5 [1000] 6 [1000] 7 [1000] 8 [1000] 9 [1000] 10 [1000] 11 [1000] 12 [1000] 13 [1000] 14 [1000] 15 [1000] 16 [560] 17 [610] 18 [586] 19 [297] 20 [436]] /CIDToGIDMap /Identity /FontDescriptor 10 0 R >>
+endobj
+10 0 obj
+<< /Type /FontDescriptor /FontName /MicrosoftYaHeiUI-Bold /Flags 33 /FontBBox [-150 -250 1300 1050] /ItalicAngle 0 /Ascent 1036 /Descent -255 /CapHeight 756 /StemV 80 >>
+endobj
+11 0 obj
+<< /Length 605 >>
+stream
+/CIDInit /ProcSet findresource begin 12 dict begin begincmap
+/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def
+/CMapName /Adobe-Identity-UCS def /CMapType 2 def
+1 begincodespacerange <0000> <FFFF> endcodespacerange
+20 beginbfchar
+<0001> <7535>
+<0002> <5B50>
+<0003> <62A5>
+<0004> <540D>
+<0005> <5355>
+<0006> <91D1>
+<0007> <989D>
+<0008> <4F4D>
+<0009> <FF1A>
+<000A> <4EBA>
+<000B> <6C11>
+<000C> <5E01>
+<000D> <5143>
+<000E> <7F16>
+<000F> <53F7>
+<0010> <0032>
+<0011> <0030>
+<0012> <0036>
+<0013> <0031>
+<0014> <0045>
+endbfchar
+endcmap CMapName currentdict /CMap defineresource pop end end
+
+endstream
+endobj
+12 0 obj
+<< /Type /Font /Subtype /Type0 /BaseFont /SimSun /Encoding /Identity-H /DescendantFonts [13 0 R] /ToUnicode 15 0 R >>
+endobj
+13 0 obj
+<< /Type /Font /Subtype /CIDFontType2 /BaseFont /SimSun /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /DW 1000 /W [] /CIDToGIDMap /Identity /FontDescriptor 14 0 R >>
+endobj
+14 0 obj
+<< /Type /FontDescriptor /FontName /SimSun /Flags 32 /FontBBox [-150 -250 1300 1050] /ItalicAngle 0 /Ascent 1036 /Descent -255 /CapHeight 756 /StemV 80 >>
+endobj
+15 0 obj
+<< /Length 338 >>
+stream
+/CIDInit /ProcSet findresource begin 12 dict begin begincmap
+/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def
+/CMapName /Adobe-Identity-UCS def /CMapType 2 def
+1 begincodespacerange <0000> <FFFF> endcodespacerange
+1 beginbfchar
+<0000> <ffff>
+endbfchar
+endcmap CMapName currentdict /CMap defineresource pop end end
+
+endstream
+endobj
+16 0 obj
+<< /Length 193 /Type /XObject /Subtype /Form /BBox [0 0 595 842] /Resources << /Font << /F20 4 0 R /F21 8 0 R /F15 12 0 R >> >> >>
+stream
+q 54 600 441 36 re W n BT /F15 10 Tf 1 0 0 1 56 620 Tm <00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000> Tj ET Q
+endstream
+endobj
+17 0 obj
+<< /Length 1148 >>
+stream
+q /Xi1 Do Q
+BT /F21 20 Tf 1 0 0 1 461.00 790.00 Tm <00010002000300040005> Tj ET
+q 1 0.8588 0.7922 rg 34 757 527 17 re f Q
+BT /F21 10 Tf 1 0 0 1 36.00 761.00 Tm <00060007000500080009000A000B000C000D> Tj ET
+BT /F21 10 Tf 1 0 0 1 418.00 761.00 Tm <00030004000E000F000900100011001000120011001100110011001300130014> Tj ET
+BT /F20 10 Tf 1 0 0 1 45.00 730.00 Tm <000100020003000400050006000700080009000A00020003000B000A000C000D000E000F000A000600070010001100120013001400150016001700180019001A001B001C001D001E001F00200021001700180022> Tj ET
+BT /F20 10 Tf 1 0 0 1 45.00 716.00 Tm <002300240025000600070026002700280029002A002B0006002C002D002E002F00060030001B0023003100320033003400350008000900170018001000110036001E003000370006000600380022> Tj ET
+BT /F20 10 Tf 1 0 0 1 45.00 702.00 Tm <000200030039001E001F003400350008000900170018003A003B00060007000D003C001B003D003400170018003A003B0030001B0023003100320033003E003F004000410036001E0030000600070022> Tj ET
+BT /F20 10 Tf 1 0 0 1 45.00 688.00 Tm <00010006000700300023003100260027004200430044001B0045000600070046004700480049004A0038004B004C004D004E00480049004F0050005100380052001B0053000200540055001700180022> Tj ET
+endstream
+endobj
+xref
+0 18
+0000000000 65535 f 
+0000000015 00000 n 
+0000000064 00000 n 
+0000000145 00000 n 
+0000000299 00000 n 
+0000000438 00000 n 
+0000001491 00000 n 
+0000001669 00000 n 
+0000003236 00000 n 
+0000003383 00000 n 
+0000003789 00000 n 
+0000003975 00000 n 
+0000004632 00000 n 
+0000004766 00000 n 
+0000004976 00000 n 
+0000005147 00000 n 
+0000005537 00000 n 
+0000005895 00000 n 
+trailer
+<< /Size 18 /Root 1 0 R >>
+startxref
+7096
+%%EOF
