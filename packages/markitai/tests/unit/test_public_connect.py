@@ -97,6 +97,19 @@ async def test_the_async_client_is_held_to_the_same_rule(
 def test_a_proxy_that_would_carry_the_request_is_refused(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Start from no proxy settings at all: the shell running the tests may set
+    # its own (lower-case variants win on some platforms).
+    for name in (
+        "HTTPS_PROXY",
+        "https_proxy",
+        "HTTP_PROXY",
+        "http_proxy",
+        "ALL_PROXY",
+        "all_proxy",
+        "NO_PROXY",
+        "no_proxy",
+    ):
+        monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("HTTPS_PROXY", "http://proxy.example:8080")
     with (
         pytest.raises(PermissionError, match="proxy"),
