@@ -2,7 +2,7 @@
 
 Python compiles a module the first time it is imported and keeps the
 bytecode beside it. Left to the first run, that compiling is what made the
-first ``markitai doctor`` after an install take minutes on the Windows machine
+first ``markitai doctor`` after an install take minutes on a test machine
 (Windows 11 on Arm, x64 Python under emulation, every new file scanned by
 Defender). Compiling everything at install time (``UV_COMPILE_BYTECODE``)
 moved the cost into setup instead: about 13,400 files, most of which

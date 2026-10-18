@@ -1201,6 +1201,8 @@ class _Conversion:
     routable: bool
     user: bool = False
     hidden_hosts: tuple[str, ...] = ()
+    #: The user's own model hosts: reached at public IPs only
+    own_hosts: tuple[str, ...] = ()
 
 
 def _require_model(conversion: _Conversion, opts: JobOptions) -> None:
@@ -1266,8 +1268,9 @@ def _check_remote_processing(
     """Cloudflare runs only with this request's own, informed consent.
 
     A Cloudflare strategy or backend in the request needs
-    ``remote_processing: "cloudflare"`` beside it, a trusted caller (it bills
-    the server's account) and a configured, allowed Cloudflare. The consent
+    ``remote_processing: "cloudflare"`` beside it, the admin as a trusted
+    caller (it bills the server's account; user tokens may not) and a
+    configured, allowed Cloudflare. The consent
     is never stored, so a saved selection cannot convey it again.
     """
     selected = opts.strategy == "cloudflare" or opts.backend == "cloudflare"
@@ -1284,7 +1287,8 @@ def _check_remote_processing(
         raise ApiError(
             403,
             "remote_processing_forbidden",
-            "Cloudflare processing requires a trusted authenticated request",
+            "Cloudflare processing bills the server's account and requires the "
+            "admin token",
         )
     if opts.remote_processing != "cloudflare":
         raise ApiError(
@@ -1624,9 +1628,19 @@ def _replace_config_file(
 
 
 def _apply_config_models(state: ServeState, document: dict[str, Any]) -> None:
-    """Run with the model list and connections of a saved configuration."""
-    from markitai.config import MarkitaiConfig
+    """Run with the model list and connections of a saved configuration.
 
+    A ``./markitai.json`` found in the working directory keeps its models at
+    their own address off the environment's keys, as when it was loaded.
+    """
+    from markitai.config import MarkitaiConfig, seal_project_models
+
+    if state.config_origin == "project":
+        import copy
+
+        document = copy.deepcopy(document)
+        for note in seal_project_models(document):
+            logger.warning("[Serve] {}", note)
     llm = MarkitaiConfig.model_validate(document).llm
     models = list(llm.model_list)
     providers = list(llm.providers)
@@ -2915,6 +2929,10 @@ def _add_job_outputs_to_zip(
             file.name.startswith(".") and file.name.endswith(".tmp")
         ):
             continue
+        # Never follow a symlink out of the job tree into the rest of the disk:
+        # archive only real files whose resolved path stays under out_dir.
+        if file.is_symlink() or not file.resolve().is_relative_to(out_dir):
+            continue
         relative = file.relative_to(out_dir)
         try:
             archive.write(file, relative if prefix is None else prefix / relative)
@@ -3232,10 +3250,9 @@ def create_app(
 
         prepare_litellm_import()
 
-        from dotenv import load_dotenv
+        from markitai.env_files import load_env_files
 
-        load_dotenv(Path.cwd() / ".env")
-        load_dotenv(Path.home() / ".markitai" / ".env")
+        load_env_files()
 
         from markitai import fetch
 
@@ -3531,6 +3548,7 @@ def create_app(
             any(_is_deployment_routable(model) for model in pool.models),
             user=True,
             hidden_hosts=pool.hidden_hosts,
+            own_hosts=pool.own_hosts,
         )
 
     async def conversion_of(state: ServeState, owner: str | None) -> _Conversion:
@@ -3626,8 +3644,10 @@ def create_app(
                 else {"role": "user", "label": caller.label}
             ),
             "remote_services": {
+                # Cloudflare bills the server's account: the admin's alone
                 "cloudflare": _cloudflare_capability(
-                    state.config, trusted=_is_trusted_request(request)
+                    state.config,
+                    trusted=_is_trusted_request(request) and caller.role == "admin",
                 )
             },
         }
@@ -3943,15 +3963,32 @@ def create_app(
                         "reason": "no_key",
                     }
                 raw_key = NO_KEY
-            return user_models.answer(
-                await discover_models(
-                    body.provider,
-                    api_key=raw_key,
-                    api_base=raw_base,
-                    refresh=body.refresh,
-                    key_variable=None,
-                )
-            )
+            from markitai.public_connect import host_of, restricted_hosts
+
+            # A user's discovery reaches public addresses only, checked when
+            # it connects; never answered from another caller's cached list
+            try:
+                with restricted_hosts([host_of(raw_base)]):
+                    found = await discover_models(
+                        body.provider,
+                        api_key=raw_key,
+                        api_base=raw_base,
+                        refresh=True,
+                        key_variable=None,
+                    )
+            except PermissionError as error:
+                return {
+                    "provider": provider,
+                    "status": "unavailable",
+                    "source": "live_api",
+                    "authoritative": False,
+                    "cached": False,
+                    "stale": False,
+                    "models": [],
+                    "detail": f"Model discovery request refused: {error}",
+                    "reason": "network",
+                }
+            return user_models.answer(found)
         api_key = resolve_env_value(raw_key, strict=False) if raw_key else None
         api_base = resolve_env_value(raw_base, strict=False) if raw_base else None
         key_variable = (
@@ -5370,12 +5407,25 @@ def create_app(
                 # key, and the provider's 401 reads like a wrong key
                 failure = model_test.missing_key_failure(lacking).answer()
                 return user_models.answer(failure) if user else failure
+        from markitai.public_connect import REFUSED, host_of, refused, restricted_hosts
+
         try:
-            detail = await asyncio.wait_for(
-                _probe_llm(body), timeout=_LLM_TEST_BACKSTOP_S
-            )
-        except Exception as e:  # must never 500: ok flags the result
-            failure = _probe_failure(e, body)
+            # A user's test reaches public addresses only, checked when it
+            # connects (markitai.public_connect)
+            with restricted_hosts([host_of(body.api_base)] if user else []):
+                detail = await asyncio.wait_for(
+                    _probe_llm(body), timeout=_LLM_TEST_BACKSTOP_S
+                )
+        except Exception as e:
+            if not (isinstance(e, PermissionError) or (user and refused(e))):
+                failure = _probe_failure(e, body)
+                return user_models.answer(failure) if user else failure
+            reason = str(e) if isinstance(e, PermissionError) else REFUSED
+            failure = {
+                "ok": False,
+                "detail": f"Model connection request refused: {reason}",
+                "reason": "network",
+            }
             return user_models.answer(failure) if user else failure
         return {"ok": True, "detail": detail}
 
@@ -5437,7 +5487,9 @@ def create_app(
         await _guard_fetch_targets(request, [url for url, _ in url_entries])
         _check_preset(state, opts)
         trusted = _is_trusted_request(request)
-        _check_remote_processing(state, opts, trusted=trusted)
+        _check_remote_processing(
+            state, opts, trusted=trusted and _caller(request).role == "admin"
+        )
         # Without a routable model every item would fail or silently skip the
         # model the user asked for: refuse before anything is stored. A
         # user's conversions route over its own pool (contract v1.15).
@@ -5450,7 +5502,11 @@ def create_app(
             options=_saved_options(opts), cfg=cfg, owner=owner
         )
         job.hidden_hosts = conversion.hidden_hosts
-        job.public_network_only = not trusted
+        job.restricted_hosts = conversion.own_hosts
+        # A user token's job fetches public addresses only: on the server's
+        # own network (its loopback API included, where a tokenless request
+        # is the admin) the user would act with the server's authority.
+        job.public_network_only = not trusted or owner is not None
         job.label = job_label
         cfg.output.dir = str(job.out_dir)
 
@@ -5653,7 +5709,9 @@ def create_app(
             raise ApiError(409, "no_source", "item has no supported original source")
 
         trusted = _is_trusted_request(request)
-        _check_remote_processing(state, opts, trusted=trusted)
+        _check_remote_processing(
+            state, opts, trusted=trusted and _caller(request).role == "admin"
+        )
         # A user's job reruns over that user's pool, whoever asks (a revoked
         # user's: the shared models only)
         conversion = await conversion_of(state, job.owner)
@@ -5684,9 +5742,14 @@ def create_app(
                     "llm_unavailable",
                     "LLM enhancement is unavailable; enable a routable LLM first",
                 )
-            job.public_network_only = job.public_network_only or not trusted
+            job.public_network_only = (
+                job.public_network_only or not trusted or job.owner is not None
+            )
             job.hidden_hosts = tuple(
                 dict.fromkeys((*job.hidden_hosts, *conversion.hidden_hosts))
+            )
+            job.restricted_hosts = tuple(
+                dict.fromkeys((*job.restricted_hosts, *conversion.own_hosts))
             )
             cfg.output.dir = str(job.out_dir)
             # The rerun reuses the job's out_dir, so it would otherwise hit

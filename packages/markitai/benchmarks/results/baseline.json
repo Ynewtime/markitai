@@ -1055,7 +1055,7 @@
   },
   "local_fixture_count": 2,
   "local_fixtures": {
-    "blog--jekyll.ynewtime.com-japanese-learning": {
+    "blog--jekyll-language-notes": {
       "score": 100.0,
       "match_score": 100.0,
       "order_score": 100.0

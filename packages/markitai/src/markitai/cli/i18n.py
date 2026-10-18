@@ -94,6 +94,10 @@ TEXTS: dict[str, dict[str, str]] = {
         "zh": "请手动安装此能力：",
     },
     "doctor.config_source": {"en": "Config: {path}", "zh": "配置文件：{path}"},
+    "doctor.config_found_here": {
+        "en": "{path} (found in this folder: its models at their own address use no key from the environment)",
+        "zh": "{path}（在当前文件夹找到：其中自带地址的模型不使用环境变量中的密钥）",
+    },
     "doctor.config_defaults": {
         "en": "defaults (no config file found; create one with 'markitai init' at ~/.markitai/config.json or ./markitai.json)",
         "zh": "默认配置（未找到配置文件；可运行 'markitai init' 在 ~/.markitai/config.json 或 ./markitai.json 创建）",

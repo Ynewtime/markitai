@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import stat
 import sys
 from pathlib import Path
 from unittest.mock import patch
@@ -900,3 +901,37 @@ class TestFilenameSecurityEdgeCases:
         except OSError:
             # Might fail on some systems
             pass
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX modes")
+class TestPrivateCaches:
+    """The caches hold document text, model answers and credential-fetched
+    pages: their stores are readable by their owner only."""
+
+    @staticmethod
+    def _mode(path: Path) -> int:
+        return stat.S_IMODE(path.stat().st_mode)
+
+    def test_new_stores_are_owner_only(self, tmp_path: Path) -> None:
+        from markitai.fetch_cache import FetchCache
+        from markitai.llm.cache import SQLiteCache
+
+        llm = tmp_path / "state" / "cache.db"
+        SQLiteCache(llm).set("prompt", "content", "answer", model="m")
+        fetched = tmp_path / "fetch" / "fetch_cache.db"
+        FetchCache(fetched)
+        for store in (llm, fetched):
+            assert self._mode(store.parent) == 0o700, store
+            assert self._mode(store) == 0o600, store
+            for side in store.parent.glob(store.name + "-*"):
+                assert self._mode(side) == 0o600, side
+
+    def test_a_store_left_readable_is_narrowed(self, tmp_path: Path) -> None:
+        from markitai.llm.cache import SQLiteCache
+
+        store = tmp_path / "cache.db"
+        SQLiteCache(store).set("prompt", "content", "answer", model="m")
+        store.chmod(0o644)
+        cache = SQLiteCache(store)
+        assert self._mode(store) == 0o600
+        assert cache.get("prompt", "content", model="m") == "answer"

@@ -1,6 +1,6 @@
 """How long `markitai doctor` and `markitai --version` take.
 
-On the Windows machine (Windows 11 on Arm, x64 Python under emulation) the first
+On Windows 11 on Arm (x64 Python under emulation) the first
 `markitai doctor` after an install took minutes and a warm one 5.9 s,
 `--version` 1.9 s. Doctor imported all of LiteLLM (about 2,400 modules) to
 ask whether a configured model reads images, launched Chromium on every run

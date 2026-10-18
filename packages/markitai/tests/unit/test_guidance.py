@@ -193,7 +193,7 @@ class TestExtraInstallKeepsTheInstall:
     def _an_x64_machine(self, monkeypatch) -> None:
         """The hints below are a machine's whose x64 Python needs no pin.
 
-        Run on Windows on Arm with an x64 Python (the Windows machine) they rightly
+        Run on Windows on Arm with an x64 Python they rightly
         gained --python cpython-3.13-windows-x86_64; the test that wants it
         says ARM64 itself.
         """

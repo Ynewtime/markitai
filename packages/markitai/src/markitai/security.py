@@ -127,6 +127,35 @@ def _apply_mode(tmp_path: str, path: Path, private: bool) -> None:
     os.chmod(tmp_path, _final_file_mode(path, private))
 
 
+def prepare_private_sqlite(path: Path) -> None:
+    """Keep an SQLite store at *path* readable by its owner only.
+
+    The caches hold document text, model answers, URLs with their query
+    tokens and pages fetched with credentials. The folder is created 0700
+    when new and the store 0600 before SQLite opens it (its -wal and -shm
+    files copy that mode); a store and side files an earlier version left
+    readable to others are narrowed. Windows files take their folder's ACL.
+    """
+    if os.name == "nt":
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    except FileExistsError:
+        pass
+    else:
+        os.close(fd)
+    for suffix in ("", "-journal", "-wal", "-shm"):
+        side = path.with_name(path.name + suffix)
+        try:
+            info = os.lstat(side)
+        except FileNotFoundError:
+            continue
+        if stat.S_ISREG(info.st_mode) and info.st_mode & 0o077:
+            os.chmod(side, stat.S_IMODE(info.st_mode) & 0o700)
+
+
 def atomic_write_text(
     path: Path,
     content: str,

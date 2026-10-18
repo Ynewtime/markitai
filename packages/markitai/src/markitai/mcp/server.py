@@ -637,12 +637,13 @@ def _load_dotenv_files() -> None:
     home) and variables already in the environment — e.g. the ``env`` block
     of an mcpServers entry — beat both. ``markitai init`` points users at
     ``~/.markitai/.env`` for their keys, so without this ``markitai-mcp``
-    would miss keys ``markitai mcp`` finds.
+    would miss keys ``markitai mcp`` finds. A folder's ``.env`` may not set
+    programs, paths, endpoints, proxies or credential files
+    (:mod:`markitai.env_files`).
     """
-    from dotenv import load_dotenv
+    from markitai.env_files import load_env_files
 
-    load_dotenv(Path.cwd() / ".env", override=False)
-    load_dotenv(Path.home() / ".markitai" / ".env", override=False)
+    load_env_files()
 
 
 def main() -> None:

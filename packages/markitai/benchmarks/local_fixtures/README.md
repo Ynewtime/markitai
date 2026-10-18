@@ -30,7 +30,7 @@ baseline generations.
   elements stripped (verified output-identical to the raw capture). Guards
   the `github_repo` extractor: README-only content, no file-tree/About/
   star-count chrome.
-- `blog--jekyll.ynewtime.com-japanese-learning` — Jekyll blog post.
+- `blog--jekyll-language-notes` — Jekyll blog post (synthetic text in a real theme's markup).
   Captured 2026-07-04. Guards bilibili iframe → link conversion,
   `og:site_name` via `name=` attribute, `<time datetime>` published date,
   and homepage-canonical suppression.

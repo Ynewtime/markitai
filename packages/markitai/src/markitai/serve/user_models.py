@@ -417,8 +417,15 @@ def check(lists: Lists) -> None:
     for entry in lists.models:
         params = entry.setdefault("litellm_params", {})
         params["use_environment_credentials"] = False
+        # Without a key of its own (or of its connection) LiteLLM would take
+        # the server's key variable for the provider and send it to the
+        # entry's address: the placeholder stands in, as the routes store it
+        if not real_key(_params(entry, lists.providers).get("api_key")):
+            params["api_key"] = _no_key()
     for connection in lists.providers:
         connection["use_environment_credentials"] = False
+        if not real_key(connection.get("api_key")):
+            connection["api_key"] = _no_key()
 
 
 def precheck(
@@ -801,6 +808,9 @@ class Pool:
     #: Hosts of the shared models' addresses: a failure a user sees never
     #: names where the admin serves a model
     hidden_hosts: tuple[str, ...] = ()
+    #: Hosts of the user's own models' addresses: connections to them reach
+    #: public IPs only (:mod:`markitai.public_connect`)
+    own_hosts: tuple[str, ...] = ()
 
 
 def _host_forms(base: str | None) -> list[str]:
@@ -848,10 +858,19 @@ def build_pool(
             model = ModelConfig.model_validate(entry)
         except (ApiError, ValidationError):
             continue
+        # The key and address it is sent with: its own, else its
+        # connection's, never the server's key variable (a file saved before
+        # the placeholder was stored may lack both)
+        merged = _params(entry, own.providers)
+        model.litellm_params.api_key = (
+            merged["api_key"] if real_key(merged.get("api_key")) else _no_key()
+        )
+        model.litellm_params.api_base = merged.get("api_base")
         if model.litellm_params.weight <= 0:
             continue
         model.model_name = "default"
         models.append(model)
+    own_count = len(models)
     for index, saved in shared_models(admin_models):
         weight = own.shared_weights.get(
             shared_id(saved, index), saved.litellm_params.weight
@@ -888,10 +907,18 @@ def build_pool(
         return Pool(config=cfg, models=[])
     cfg.llm.model_list = models
     cfg.llm.providers = providers
+    from markitai.public_connect import host_of
+
+    own_hosts = {
+        host
+        for model in models[:own_count]
+        if (host := host_of(model.litellm_params.api_base)) is not None
+    }
     return Pool(
         config=cfg,
         models=list(models),
         hidden_hosts=tuple(sorted(set(hidden), key=len, reverse=True)),
+        own_hosts=tuple(sorted(own_hosts)),
     )
 
 

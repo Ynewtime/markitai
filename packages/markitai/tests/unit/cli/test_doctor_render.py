@@ -437,7 +437,7 @@ class TestUnusedKeys:
 
 
 class TestWindowsDoctor:
-    """the Windows machine, right after setup.ps1 (item 16)."""
+    """Windows 11 on Arm, right after setup.ps1 (item 16)."""
 
     def test_slow_first_launch_gets_one_retry(self) -> None:
         """Defender scanning a fresh chrome.exe made the first launch time out."""
@@ -517,7 +517,7 @@ class TestWindowsDoctor:
         )
 
     def test_hint_uses_the_tool_python_never_a_bare_python(self) -> None:
-        """`python` on the Windows machine is only the Microsoft Store alias."""
+        """`python` on a fresh Windows is only the Microsoft Store alias."""
         exe = r"C:\Users\runner\AppData\Roaming\uv\tools\markitai\Scripts\python.exe"
         with (
             patch.object(sys, "platform", "win32"),

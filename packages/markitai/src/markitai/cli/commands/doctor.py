@@ -223,7 +223,7 @@ def _playwright_package_install_hint() -> str:
 
 
 # A first launch right after installing can take long: on Windows,
-# Defender scans the new chrome.exe (the Windows machine: over 30 s, then 0.7 s on
+# Defender scans the new chrome.exe (Windows 11 on Arm: over 30 s, then 0.7 s on
 # every later launch). One retry after the first timeout catches that.
 _SMOKE_TIMEOUTS_S = (60, 30)
 # Detail returned when every attempt timed out: slow, not broken
@@ -1188,7 +1188,7 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
             return True
 
         # LiteLLM's model table, read without importing LiteLLM (8 s on
-        # the Windows machine): the same answer as llm.get_model_info_cached
+        # Windows on Arm): the same answer as llm.get_model_info_cached
         from markitai.model_catalog import supports_vision
 
         return supports_vision(model_config.litellm_params.model)
@@ -1331,7 +1331,10 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
 
     # Config source (which config file was actually loaded)
     if manager.config_path is not None:
-        ui.info(t("doctor.config_source", path=str(manager.config_path)))
+        shown = str(manager.config_path)
+        if manager.found_in_folder:
+            shown = t("doctor.config_found_here", path=shown)
+        ui.info(t("doctor.config_source", path=shown))
     else:
         ui.info(t("doctor.config_source", path=t("doctor.config_defaults")))
 

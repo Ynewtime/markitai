@@ -17,7 +17,7 @@ markitai reads the first config file it finds:
 
 1. The path given with `--config` (it must exist; `config set` and `config edit` create it)
 2. `MARKITAI_CONFIG`
-3. `./markitai.json` in the current directory
+3. `./markitai.json` in the current directory. Found there (not named with `--config` or `MARKITAI_CONFIG`), a model whose `api_base` is not its provider's documented address uses only a key written in the entry: no provider key variable, and an `env:` key reference becomes the placeholder `markitai-no-key` (with a warning); a Vertex AI, watsonx or GigaChat model at its own address is left out, since it would sign with this machine's cloud login. `markitai doctor` and `--verbose` say when the file was found in the folder
 4. `~/.markitai/config.json`
 
 ### Initialize Configuration
@@ -248,6 +248,8 @@ LiteLLM also takes Gemini's key from `GOOGLE_API_KEY` (ahead of `GEMINI_API_KEY`
 ### `.env` File Loading
 
 markitai loads `./.env` first and `~/.markitai/.env` second. Values from the first file win, so a project can override global settings.
+
+A folder you converted in may come with a `.env` you did not write (a download, a cloned repository), so `./.env` may set keys and options but not programs, paths, endpoints, proxies, home folders or credential files: `*_PATH` (also `*_CLI_PATH` and `PATH`), `*_EXECUTABLE`, `LD_*`, `DYLD_*`, `NODE_OPTIONS`, `PYTHON*`, `*_API_BASE`, `*_BASE_URL`, `*_ENDPOINT`, `HTTP(S)_PROXY`, `ALL_PROXY`, `NO_PROXY` (any case), `HOME`, `*_HOME`, `*_CONFIG_DIR`, `XDG_*`, `TMPDIR`/`TMP`/`TEMP`, `AWS_*_FILE`, `GOOGLE_APPLICATION_CREDENTIALS`, `CLOUDSDK_CONFIG`, `MARKITAI_CONFIG`/`MARKITAI_HOME`/`MARKITAI_LOG_DIR` and the certificate bundle variables. One warning lists what was ignored; set those in your environment or in `~/.markitai/.env`.
 
 ## LLM Configuration
 
@@ -537,7 +539,7 @@ The X/Twitter enrichment path (FxTwitter, Twitter oEmbed) follows the same conse
 | `wait_for_selector` | `null` | CSS selector to wait for |
 | `cookies` | `null` | `[{name, value, domain, path}]` |
 | `reject_resource_patterns` | `null` | Block matching requests, e.g. `["**/*.css"]` |
-| `extra_http_headers` | `null` | `{"Accept-Language": "zh-CN"}` |
+| `extra_http_headers` | `null` | `{"Accept-Language": "zh-CN"}`; sent to the initial origin only, so a secret header never reaches a cross-origin subresource or redirect target |
 | `user_agent` | `null` | Custom User-Agent |
 | `http_credentials` | `null` | `{username, password}` for HTTP auth |
 

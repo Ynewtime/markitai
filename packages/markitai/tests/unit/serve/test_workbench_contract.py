@@ -2140,7 +2140,7 @@ class TestReviewFixes:
                 workers.run(time.sleep, 30)
             assert time.monotonic() - started < 10
             # The next call starts a fresh pool, whose worker is spawned and
-            # imports markitai first: on the Windows machine (x64 Python emulated on
+            # imports markitai first: on a Windows test machine (x64 Python emulated on
             # Arm) that alone took longer than the 0.5 s that bounds the
             # runaway. Serve's own budget is 20 s.
             workers.timeout = 60

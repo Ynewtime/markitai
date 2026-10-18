@@ -793,7 +793,7 @@ def test_json_envelope_always_has_warnings() -> None:
 class TestWindowsPathLength:
     """Windows opens a path over MAX_PATH only with long paths enabled (off by
     default); a long URL's 200-character name under a deep folder lost its
-    screenshot there (the Windows machine)."""
+    screenshot there (a Windows test machine)."""
 
     LONG = "example.com_" + "a-long-article-slug_" * 10 + "q1f0c6a2e.full.jpg"
 
@@ -810,7 +810,7 @@ class TestWindowsPathLength:
         from markitai.fetch_screenshot import screenshot_path_for
 
         # A folder of a known length on every machine (the drive or root plus
-        # 150 characters): the temp folder's own depth varies (the Windows machine's
+        # 150 characters): the temp folder's own depth varies (a Windows test machine's
         # left room for 26 characters of the name)
         deep = Path(tmp_path.anchor) / ("d" * 150)
         other = self.LONG.replace("example.com", "example.org")

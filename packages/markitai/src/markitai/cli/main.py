@@ -18,7 +18,6 @@ from markitai.utils.litellm_import import prepare_litellm_import  # noqa: E402
 prepare_litellm_import()
 
 import rich_click as click
-from dotenv import load_dotenv
 
 from markitai.utils import term as _term
 
@@ -115,10 +114,12 @@ click.rich_click.OPTION_GROUPS = {
     ]
 }
 
-# Load .env: cwd first (project-level), then ~/.markitai/ (global fallback).
-# override=False (default) means first-loaded values win → cwd takes priority.
-load_dotenv(Path.cwd() / ".env")
-load_dotenv(Path.home() / ".markitai" / ".env")
+from markitai.env_files import load_env_files  # noqa: E402
+
+# Load .env: cwd first (project-level), then ~/.markitai/ (global fallback);
+# values already set win. A folder's .env may not set programs, paths,
+# endpoints, proxies or credential files (markitai.env_files).
+load_env_files()
 
 from typing import NoReturn, get_args
 
@@ -785,6 +786,13 @@ def app(
     import markitai.config as config_module
 
     config_module.config_manager = config_manager
+    if verbose and not quiet and config_manager.config_path is not None:
+        from markitai.cli.i18n import t as _t
+
+        shown = str(config_manager.config_path)
+        if config_manager.found_in_folder:
+            shown = _t("doctor.config_found_here", path=shown)
+        stderr_console.print(_t("doctor.config_source", path=shown), markup=False)
 
     # Determine if we're in single file/URL mode (not batch)
     # Single file/URL mode: quiet console unless --verbose is specified

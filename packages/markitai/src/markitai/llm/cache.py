@@ -80,7 +80,9 @@ class SQLiteCache:
 
         # Ensure parent directory exists (once) before creating connection
         if not self._dir_ensured:
-            self._db_path.parent.mkdir(parents=True, exist_ok=True)
+            from markitai.security import prepare_private_sqlite
+
+            prepare_private_sqlite(self._db_path)
             self._dir_ensured = True
 
         conn = sqlite3.connect(str(self._db_path), timeout=DEFAULT_SQLITE_TIMEOUT)

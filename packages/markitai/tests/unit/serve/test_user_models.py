@@ -993,3 +993,216 @@ async def test_revoking_deletes_the_users_models_and_regenerating_keeps_them(
     )
     assert not orphan.exists()
     assert [row["model"] for row in b_view["deployments"]] == ["openai/b"]
+
+
+# ----------------------------------------------- the server's key variables
+
+
+def test_a_keyless_entry_is_sealed_with_the_placeholder() -> None:
+    """Saved without a key of its own or of its connection, a user's model
+    (from Edit config as much as from the routes) stores the placeholder:
+    LiteLLM would otherwise send the server's OPENAI_API_KEY to its address."""
+    linked = {"id": "p-own", "provider": "openai", "api_key": USER_A_KEY}
+    lists = Lists(
+        models=[
+            {"litellm_params": {"model": "openai/a", "api_base": USER_BASE}},
+            {
+                "litellm_params": {"model": "openai/b"},
+                "model_info": {"provider_id": "p-own"},
+            },
+        ],
+        providers=[
+            linked,
+            {"id": "p-bare", "provider": "custom", "api_base": USER_BASE},
+        ],
+    )
+    user_models.check(lists)
+    assert lists.models[0]["litellm_params"]["api_key"] == NO_KEY
+    assert "api_key" not in lists.models[1]["litellm_params"]
+    assert lists.providers[0]["api_key"] == USER_A_KEY
+    assert lists.providers[1]["api_key"] == NO_KEY
+
+
+def test_the_pool_never_leaves_a_user_model_to_the_environment_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A file saved before the placeholder was stored still routes with the
+    entry's own key, its connection's, or the placeholder."""
+    monkeypatch.setenv("OPENAI_API_KEY", SENTINEL_KEY)
+    own = Lists(
+        models=[
+            {
+                "model_name": "default",
+                "litellm_params": {"model": "openai/a", "api_base": USER_BASE},
+            },
+            {
+                "model_name": "default",
+                "litellm_params": {"model": "openai/b"},
+                "model_info": {"provider_id": "p-own"},
+            },
+        ],
+        providers=[
+            {
+                "id": "p-own",
+                "provider": "openai",
+                "api_key": USER_A_KEY,
+                "api_base": USER_BASE,
+            }
+        ],
+    )
+    pool = user_models.build_pool(_base(), own, [], [])
+    sent = [(m.litellm_params.api_key, m.litellm_params.api_base) for m in pool.models]
+    assert sent == [(NO_KEY, USER_BASE), (USER_A_KEY, USER_BASE)]
+
+
+async def test_edit_config_cannot_save_a_model_that_borrows_the_server_key(
+    tmp_path: Path,
+) -> None:
+    async with _server(_app(tmp_path)) as client:
+        user_id, headers = await _user(client, "Laptop A")
+        view = (await client.get("/api/me/config", headers=headers)).json()
+        text = json.dumps(
+            {
+                "models": [
+                    {
+                        "model_name": "default",
+                        "litellm_params": {
+                            "model": "openai/gpt-4o-mini",
+                            "api_base": USER_BASE,
+                        },
+                    }
+                ],
+                "providers": [],
+                "shared": [],
+            }
+        )
+        saved = await client.put(
+            "/api/me/config",
+            json={"expected_revision": view["revision"], "text": text},
+            headers=headers,
+        )
+        listed = (await client.get("/api/me/models", headers=headers)).json()
+    assert saved.status_code == 200, saved.text
+    stored = json.loads((tmp_path / "user-models" / f"{user_id}.json").read_text())
+    assert [m["litellm_params"]["api_key"] for m in stored["models"]] == [NO_KEY]
+    assert [row["api_key_configured"] for row in listed["deployments"]] == [False]
+
+
+# ------------------------------------------------- Cloudflare processing
+
+
+async def test_cloudflare_processing_billed_to_the_server_is_the_admins_alone(
+    tmp_path: Path,
+) -> None:
+    config = {
+        "fetch": {
+            "remote_consent": "ask",
+            "cloudflare": {
+                "api_token": "synthetic-token",
+                "account_id": "0123456789abcdef0123456789abcdef",
+                "convert_enabled": True,
+            },
+        }
+    }
+    async with _server(_app(tmp_path, config)) as client:
+        _, user = await _user(client, "guest")
+        admin_caps = (await client.get("/api/capabilities", headers=ADMIN)).json()
+        user_caps = (await client.get("/api/capabilities", headers=user)).json()
+        refused = await client.post(
+            "/api/jobs",
+            files=[
+                ("files", ("no.txt", b"local", "text/plain")),
+                (
+                    "options",
+                    (
+                        None,
+                        json.dumps(
+                            {"backend": "cloudflare", "remote_processing": "cloudflare"}
+                        ),
+                    ),
+                ),
+            ],
+            headers=user,
+        )
+    assert admin_caps["remote_services"]["cloudflare"]["reason"] != "client_not_trusted"
+    assert user_caps["remote_services"]["cloudflare"]["available"] is False
+    assert user_caps["remote_services"]["cloudflare"]["reason"] == "client_not_trusted"
+    assert _why(refused) == (403, "remote_processing_forbidden")
+
+
+# ------------------------------------------- the server's machine and network
+
+
+def test_the_pool_restricts_only_the_users_own_model_hosts() -> None:
+    own = Lists(
+        models=[
+            {
+                "model_name": "default",
+                "litellm_params": {
+                    "model": "openai/a",
+                    "api_base": "http://model.test:8000/v1",
+                    "api_key": USER_A_KEY,
+                },
+            }
+        ]
+    )
+    pool = user_models.build_pool(_base(), own, [], [])
+    assert pool.own_hosts == ("model.test",)
+
+
+async def test_a_users_model_test_never_reaches_this_machine(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import socket
+    import threading
+
+    seen: list[bytes] = []
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen()
+    listener.settimeout(0.2)
+    port = listener.getsockname()[1]
+    stop = threading.Event()
+
+    def accept() -> None:
+        while not stop.is_set():
+            try:
+                conn, _ = listener.accept()
+            except OSError:
+                continue
+            with conn:
+                seen.append(conn.recv(4096))
+
+    thread = threading.Thread(target=accept, daemon=True)
+    thread.start()
+    real = socket.getaddrinfo
+
+    def resolve(host: Any, *args: Any, **kwargs: Any) -> Any:
+        # A name that (re)binds to this machine
+        if host == "model.test":
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", port))]
+        return real(host, *args, **kwargs)
+
+    monkeypatch.setattr(socket, "getaddrinfo", resolve)
+    for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy"):
+        monkeypatch.delenv(name, raising=False)
+    try:
+        async with _server(_app(tmp_path)) as client:
+            _, user = await _user(client, "guest")
+            tested = await client.post(
+                "/api/me/models/test",
+                json={
+                    "model": "openai/gpt-x",
+                    "api_base": f"http://model.test:{port}/v1",
+                    "api_key": USER_A_KEY,
+                },
+                headers=user,
+            )
+    finally:
+        stop.set()
+        thread.join(timeout=2)
+        listener.close()
+    answer = tested.json()
+    assert seen == []
+    assert answer["ok"] is False, answer
+    assert "not on the public internet" in answer["detail"], answer

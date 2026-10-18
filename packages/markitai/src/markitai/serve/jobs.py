@@ -285,6 +285,9 @@ class Job:
     # Hosts the admin serves the shared models of a user's job at (contract
     # v1.15): never named in what the job reports. In memory only.
     hidden_hosts: tuple[str, ...] = ()
+    # Hosts of the user's own models: its connections there reach public
+    # IPs only (markitai.public_connect). In memory only.
+    restricted_hosts: tuple[str, ...] = ()
     # POST .../cancel: original items still waiting for a slot never start
     stop_requested: bool = False
     # Tasks of the initial run's items still waiting for a conversion slot;
@@ -1355,18 +1358,20 @@ async def run_job(
                         stop(item)
                         return
                     from markitai.fetch_policy import public_network_only
+                    from markitai.public_connect import restricted_hosts
 
                     token = public_network_only.set(job.public_network_only)
                     try:
-                        await _run_item(
-                            registry,
-                            job,
-                            item,
-                            run_cfg,
-                            shared_processor,
-                            url_ctx,
-                            require_llm=require_llm,
-                        )
+                        with restricted_hosts(job.restricted_hosts):
+                            await _run_item(
+                                registry,
+                                job,
+                                item,
+                                run_cfg,
+                                shared_processor,
+                                url_ctx,
+                                require_llm=require_llm,
+                            )
                     finally:
                         public_network_only.reset(token)
             except asyncio.CancelledError:

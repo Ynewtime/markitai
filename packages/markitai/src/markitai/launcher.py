@@ -2,7 +2,7 @@
 
 It answers ``markitai --version`` before the CLI loads: the CLI imports about
 430 modules (click, Rich, pydantic, the config models), which on Windows
-costs about 2 ms each, and more under x64 emulation on Arm (the Windows machine:
+costs about 2 ms each, and more under x64 emulation on Arm (Windows 11:
 1.9 s for ``--version``). Everything else goes to ``markitai.cli.main``.
 
 ``MARKITAI_TIMINGS=1`` prints where a run's time went to stderr when it

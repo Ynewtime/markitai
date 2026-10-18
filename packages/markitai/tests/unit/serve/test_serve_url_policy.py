@@ -280,3 +280,70 @@ class TestLoopbackPeerUrlPolicy:
                 assert resp.status_code == 201, resp.text
                 await _drain(client, resp.json()["job_id"])
         resolver.assert_not_awaited()
+
+
+class TestUserTokenUrlPolicy:
+    """A user token's URLs are fetched from the public network only.
+
+    On the server's own network the fetch would carry the server's
+    authority: a tokenless loopback request is the admin, so a user's URL job
+    aimed at ``http://127.0.0.1:<port>/api/history?include=items`` read every
+    job of the admin and of other users.
+    """
+
+    @staticmethod
+    def _tokened_app(tmp_path: Path) -> FastAPI:
+        cfg = MarkitaiConfig()
+        cfg.cache.enabled = False
+        cfg.cache.global_dir = str(tmp_path / "cache")
+        return create_app(
+            static_dir=tmp_path / "no-static",
+            jobs_root=tmp_path / "jobs",
+            config=cfg,
+            configure_logging=False,
+            config_path=tmp_path / "config.json",
+            token="admin-token",  # nosec B106 - a test token
+        )
+
+    async def test_user_jobs_and_their_retries_are_public_only(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from markitai.fetch_policy import public_network_only
+
+        seen: list[tuple[str, bool]] = []
+        fake = _fake_url_converter()
+
+        async def recording(url: str, *args: Any, **kwargs: Any):
+            seen.append((url, public_network_only.get()))
+            return await fake(url, *args, **kwargs)
+
+        monkeypatch.setattr("markitai.serve.jobs.process_url_item", recording)
+        admin = {"Authorization": "Bearer admin-token"}
+        loopback_api = "http://127.0.0.1:3600/api/history?include=items"
+        app = self._tokened_app(tmp_path)
+        async with _lifespan(app), _client_for(app, None) as client:
+            created = await client.post(
+                "/api/access-tokens", json={"label": "guest"}, headers=admin
+            )
+            assert created.status_code == 201, created.text
+            user = {"Authorization": f"Bearer {created.json()['token']}"}
+            own = await client.post(
+                "/api/jobs", files=_url_job([PRIVATE_URL]), headers=admin
+            )
+            theirs = await client.post(
+                "/api/jobs", files=_url_job([loopback_api]), headers=user
+            )
+            assert own.status_code == theirs.status_code == 201, theirs.text
+            await _drain(client, own.json()["job_id"])
+            job_id = theirs.json()["job_id"]
+            job = await _drain(client, job_id)
+            retried = await client.post(
+                f"/api/jobs/{job_id}/items/{job['items'][0]['item_id']}/retry",
+                json={},
+                headers=admin,
+            )
+            assert retried.status_code == 202, retried.text
+            await _drain(client, job_id)
+        assert sorted(seen) == sorted(
+            [(PRIVATE_URL, False), (loopback_api, True), (loopback_api, True)]
+        )

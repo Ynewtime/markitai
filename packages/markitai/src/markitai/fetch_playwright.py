@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import re
 import time
+import weakref
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from importlib.util import find_spec
@@ -942,17 +943,80 @@ class CachedContext:
     session_key: str
 
 
-async def _guard_public_context(context: Any, timeout: int, proxy: str | None) -> None:
+#: Contexts that already carry the origin-bound header route (no stacking on a
+#: reused domain-persistent context).
+_HEADER_ROUTED: weakref.WeakSet[Any] = weakref.WeakSet()
+
+
+def _same_origin(a: str, b: str) -> bool:
+    """Whether two URLs share scheme, host and effective port."""
+    from urllib.parse import urlsplit
+
+    def origin(url: str) -> tuple[str, str, int | None]:
+        parts = urlsplit(url)
+        port = parts.port
+        if port is None:
+            port = {"http": 80, "https": 443}.get(parts.scheme)
+        return (parts.scheme.lower(), (parts.hostname or "").lower(), port)
+
+    return origin(a) == origin(b)
+
+
+async def _bind_headers_to_origin(
+    context: Any, origin_url: str, headers: dict[str, str]
+) -> None:
+    """Send the caller's ``extra_http_headers`` only to ``origin_url``'s origin,
+    so a secret among them never reaches a cross-origin subresource, favicon
+    host or redirect target (a same-origin subresource still receives them).
+    Installed once per context; bound to the first fetch's origin, which for a
+    domain-persistent context is its own domain."""
+    if context in _HEADER_ROUTED:
+        return
+    _HEADER_ROUTED.add(context)
+    lowered = {name.lower(): value for name, value in headers.items()}
+
+    async def header_route(route: Any) -> None:
+        request = route.request
+        try:
+            if _same_origin(request.url, origin_url):
+                merged = {**await request.all_headers(), **lowered}
+                await route.continue_(headers=merged)
+            else:
+                await route.continue_()
+        except Exception as exc:  # pragma: no cover - continue on any route error
+            logger.debug("[Fetch] header route error: {}", exc)
+            try:
+                await route.continue_()
+            except Exception:
+                pass
+
+    await context.route("**/*", header_route)
+
+
+async def _guard_public_context(
+    context: Any,
+    timeout: int,
+    proxy: str | None,
+    origin_url: str | None = None,
+    origin_headers: dict[str, str] | None = None,
+) -> None:
     """Route anonymous browser HTTP traffic through DNS-pinned requests."""
     from markitai.fetch_http import public_http_request
 
     async def public_route(route: Any) -> None:
         request = route.request
         try:
+            headers = await request.all_headers()
+            # The caller's own headers reach the initial origin only.
+            if origin_headers and origin_url and _same_origin(request.url, origin_url):
+                headers = {
+                    **headers,
+                    **{name.lower(): value for name, value in origin_headers.items()},
+                }
             response = await public_http_request(
                 request.url,
                 method=request.method,
-                headers=await request.all_headers(),
+                headers=headers,
                 content=request.post_data_buffer,
                 timeout=timeout / 1000,
                 proxy=proxy,
@@ -1282,8 +1346,8 @@ class PlaywrightRenderer:
                 "width": screenshot_config.viewport_width,
                 "height": screenshot_config.viewport_height,
             }
-        if extra_http_headers:
-            ctx_options["extra_http_headers"] = extra_http_headers
+        # extra_http_headers are bound to the initial origin below, not set on
+        # the context (which would send them to every origin, a secret leak).
         if user_agent:
             ctx_options["user_agent"] = user_agent
         if http_credentials:
@@ -1316,7 +1380,11 @@ class PlaywrightRenderer:
         timed_out = False
         try:
             if restricted:
-                await _guard_public_context(context, timeout, self.proxy)
+                await _guard_public_context(
+                    context, timeout, self.proxy, url, extra_http_headers
+                )
+            elif extra_http_headers:
+                await _bind_headers_to_origin(context, url, extra_http_headers)
 
             # Inject cookies before navigation
             if cookies:
