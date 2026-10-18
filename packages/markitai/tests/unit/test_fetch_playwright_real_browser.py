@@ -331,6 +331,62 @@ def _redirecting_server(
 
 
 @pytest.mark.slow
+async def test_extra_http_headers_follow_same_origin_redirects_only() -> None:
+    """The browser follows a redirect without asking the route again, so
+    headers handed to it would go wherever a redirect points. A same-origin
+    redirect keeps them; a redirect to another origin is reached without
+    them."""
+    _skip_if_no_playwright_browser()
+    from markitai.fetch_playwright import PlaywrightRenderer
+
+    main_seen: list[tuple[str, str]] = []
+    other_seen: list[tuple[str, str]] = []
+    other = _redirecting_server("127.0.0.1", other_seen, {})
+    other_port = other.server_address[1]
+    main = _redirecting_server(
+        "127.0.0.1",
+        main_seen,
+        {
+            "/away": f"http://127.0.0.1:{other_port}/landing",
+            "/hop": "/doc/",
+        },
+    )
+    main_port = main.server_address[1]
+    try:
+        async with PlaywrightRenderer() as renderer:
+            away = await renderer.fetch(
+                f"http://127.0.0.1:{main_port}/away",
+                timeout=15000,
+                extra_wait_ms=300,
+                skip_auto_scroll=True,
+                extra_http_headers={"X-Account": "private-token"},
+            )
+        async with PlaywrightRenderer() as renderer:
+            hop = await renderer.fetch(
+                f"http://127.0.0.1:{main_port}/hop",
+                timeout=15000,
+                extra_wait_ms=300,
+                skip_auto_scroll=True,
+                extra_http_headers={"X-Account": "private-token"},
+            )
+    finally:
+        for server in (main, other):
+            server.shutdown()
+            server.server_close()
+
+    assert ("/away", "private-token") in main_seen
+    assert any(path == "/landing" for path, _ in other_seen), other_seen
+    assert all(account == "" for _, account in other_seen), other_seen
+    assert away.final_url == f"http://127.0.0.1:{other_port}/landing"
+    # The same-origin hop and the page's resources still carry the header,
+    # and relative links resolve against where the page came from.
+    assert ("/doc/", "private-token") in main_seen
+    assert ("/doc/pic.gif", "private-token") in main_seen
+    assert hop.final_url == f"http://127.0.0.1:{main_port}/doc/"
+    assert "The page a redirect led to" in hop.content
+
+
+@pytest.mark.slow
 async def test_a_public_page_cannot_redirect_the_restricted_browser_inward() -> None:
     """With public_network_only on, every redirect target is checked before
     it is asked. A "public" server (127.0.0.2, treated as a global address

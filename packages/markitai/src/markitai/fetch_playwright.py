@@ -1014,26 +1014,86 @@ async def _bind_headers_to_origin(
     so a secret among them never reaches a cross-origin subresource, favicon
     host or redirect target (a same-origin subresource still receives them).
     Installed once per context; bound to the first fetch's origin, which for a
-    domain-persistent context is its own domain."""
+    domain-persistent context is its own domain.
+
+    Headers given to ``route.continue_`` go with every redirect the request
+    starts, whatever its target, and the browser follows a redirect without
+    asking the route again. So a same-origin request is sent here, its
+    redirects followed while they stay on the origin (the headers with them),
+    and a redirect to another origin handed to the browser, which follows it
+    without the headers.
+
+    Cross-origin requests are sent here too, without the headers: Chromium
+    treats a document the route fulfilled as coming from an unknown address
+    space and refuses its requests to private and loopback addresses (Local
+    Network Access), so an intranet page's resources on another of its hosts
+    would otherwise never load."""
     if context in _HEADER_ROUTED:
         return
     _HEADER_ROUTED.add(context)
     lowered = {name.lower(): value for name, value in headers.items()}
 
+    async def send(route: Any) -> tuple[Any, str] | None:
+        """The answer to *route*'s request and the URL it came from, or None
+        when the browser should send it itself."""
+        from urllib.parse import urljoin
+
+        request = route.request
+        if not _same_origin(request.url, origin_url):
+            # Its redirects are followed here, never toward the headers
+            response = await route.fetch()
+            return response, response.url
+        merged = {**await request.all_headers(), **lowered}
+        response = await route.fetch(headers=merged, max_redirects=0)
+        current, method = request.url, request.method
+        data = request.post_data_buffer
+        for _ in range(10):
+            location = response.headers.get("location")
+            if response.status not in _REDIRECT_STATUSES or not location:
+                break
+            target = urljoin(current, location)
+            if not _same_origin(target, origin_url):
+                break  # the browser follows it, without the headers
+            if (response.status == 303 and method != "HEAD") or (
+                response.status in (301, 302) and method == "POST"
+            ):
+                method, data = "GET", None
+                for name in ("content-length", "content-type"):
+                    merged.pop(name, None)
+            if "cookie" not in lowered:
+                merged.pop("cookie", None)  # the context's jar, as it now is
+            response = await context.request.fetch(
+                target, method=method, headers=merged, data=data, max_redirects=0
+            )
+            current = target
+        return response, current
+
     async def header_route(route: Any) -> None:
         request = route.request
         try:
-            if _same_origin(request.url, origin_url):
-                merged = {**await request.all_headers(), **lowered}
-                await route.continue_(headers=merged)
-            else:
+            sent = await send(route)
+        except Exception as exc:
+            # The browser sends it, without the headers
+            logger.debug("[Fetch] header route fetch failed: {}", exc)
+            sent = None
+        try:
+            if sent is None:
                 await route.continue_()
-        except Exception as exc:  # pragma: no cover - continue on any route error
+                return
+            response, final_url = sent
+            if final_url == request.url or response.status in _REDIRECT_STATUSES:
+                # Unfollowed, or a redirect off the origin for the browser
+                await route.fulfill(response=response)
+                return
+            _note_followed(context, request, final_url)
+            body = _followed_body(
+                await response.body(),
+                response.headers.get("content-type", ""),
+                final_url,
+            )
+            await route.fulfill(response=response, body=body)
+        except Exception as exc:  # pragma: no cover - page already gone
             logger.debug("[Fetch] header route error: {}", exc)
-            try:
-                await route.continue_()
-            except Exception:
-                pass
 
     await context.route("**/*", header_route)
 
