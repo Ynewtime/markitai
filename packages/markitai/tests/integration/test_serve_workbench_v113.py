@@ -4,6 +4,8 @@ An admin and a user token share one server: real Markdown, text and web-page
 conversions (the page fetched from a local site with the static fetcher),
 each caller's history, batch deletion across both, the framed page's policy,
 an Edit config round trip whose masked key stays on disk, and revocation.
+The local site is on loopback: the admin's job fetches it, while a user
+token's job, which reaches public addresses only, is refused.
 """
 
 from __future__ import annotations
@@ -106,6 +108,7 @@ async def _convert(
     headers: dict[str, str],
     files: Sequence[tuple[str, bytes]] = (),
     urls: Sequence[str] = (),
+    status: str = "done",
 ) -> dict[str, Any]:
     parts: list[tuple[str, Any]] = [
         ("files", (name, content, "application/octet-stream"))
@@ -121,7 +124,7 @@ async def _convert(
     for _ in range(3000):
         job = (await client.get(f"/api/jobs/{job_id}", headers=headers)).json()
         if job["status"] != "running":
-            assert all(item["status"] == "done" for item in job["items"]), job
+            assert all(item["status"] == status for item in job["items"]), job
             return job
         await asyncio.sleep(0.02)
     pytest.fail(f"job {job_id} did not finish")
@@ -144,7 +147,12 @@ async def test_two_callers_one_server(tmp_path: Path, site: str) -> None:
                 ("summary.md", b"# Summary\n\nAll gauges agree.\n"),
             ],
         )
-        page = await _convert(client, user, urls=[site])
+        # The page is on this machine: a user token's job reaches public
+        # addresses only, so the user's fetch is refused; the admin's is not
+        page = await _convert(client, user, urls=[site], status="error")
+        assert page["items"][0]["error_code"] == "fetch_error", page
+        assert "private_or_local_host" in page["items"][0]["error"], page
+        framed = await _convert(client, ADMIN, urls=[site])
 
         # Each caller's list
         listed = (await client.get("/api/history", headers=user)).json()
@@ -154,6 +162,7 @@ async def test_two_callers_one_server(tmp_path: Path, site: str) -> None:
             admins["job_id"],
             mine["job_id"],
             page["job_id"],
+            framed["job_id"],
         }
         hidden = await client.get(
             f"/api/jobs/{admins['job_id']}/items/i1/result", headers=user
@@ -166,7 +175,7 @@ async def test_two_callers_one_server(tmp_path: Path, site: str) -> None:
 
         # The fetched page, framed under the script-less same-origin policy
         view = await client.get(
-            f"/api/jobs/{page['job_id']}/items/i1/original/view", headers=user
+            f"/api/jobs/{framed['job_id']}/items/i1/original/view", headers=ADMIN
         )
         assert view.headers["content-security-policy"] == VIEW_POLICY
         assert "<script>document.title='ran'</script>" in view.text

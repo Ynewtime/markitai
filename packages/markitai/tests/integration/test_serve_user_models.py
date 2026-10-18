@@ -6,7 +6,9 @@ enhancement reach local OpenAI-compatible model servers that record the
 ``Authorization`` each request carried. The admin's model (key
 ``admin-fixture-key``) is on loopback; user A's own model (key
 ``user-a-fixture-key``) on this machine's non-loopback address (a user may
-not aim a model at the server's own machine). The server's environment holds
+not aim a model at the server's own machine). A user's model reaches public
+addresses only, so that address is first refused, then stands in for a public
+model server for the rest of the test. The server's environment holds
 ``OPENAI_API_KEY`` and an OpenAI base pointing at a sentinel server: neither
 may ever serve a user. Everything is invented and nothing leaves the machine.
 """
@@ -334,7 +336,7 @@ async def _share(client: httpx.AsyncClient, value: str) -> dict[str, Any]:
 
 
 async def test_shared_and_own_models_serve_users_and_never_the_environment(
-    tmp_path: Path, endpoints: dict[str, Any]
+    tmp_path: Path, endpoints: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     sentinel, admin_model = endpoints["sentinel"], endpoints["admin"]
     own_model, lan = endpoints["own"], endpoints["lan"]
@@ -411,6 +413,25 @@ async def test_shared_and_own_models_serve_users_and_never_the_environment(
             )
             assert added.status_code == 200, added.text
             own_id = added.json()["deployments"][0]["deployment_id"]
+            from markitai import public_connect
+
+            strict = public_connect._public
+            if not strict(lan):
+                # A LAN address is not on the public internet: the user's
+                # model is refused before any request reaches it
+                refused_test = await client.post(
+                    "/api/me/models/test", json={"deployment_id": own_id}, headers=a
+                )
+                assert refused_test.json()["ok"] is False, refused_test.text
+                assert refused_test.json()["reason"] == "network", refused_test.text
+                assert own_model.received() == []
+            # From here on the test stands that one address in for a public
+            # model server; every other non-public address stays refused
+            monkeypatch.setattr(
+                public_connect,
+                "_public",
+                lambda address: address.split("%", 1)[0] == lan or strict(address),
+            )
             tested = await client.post(
                 "/api/me/models/test", json={"deployment_id": own_id}, headers=a
             )
