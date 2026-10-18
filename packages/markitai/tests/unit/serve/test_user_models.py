@@ -1211,3 +1211,51 @@ async def test_a_users_model_test_never_reaches_this_machine(
     assert seen == []
     assert answer["ok"] is False, answer
     assert "not on the public internet" in answer["detail"], answer
+
+
+async def test_a_proxy_that_would_carry_a_users_model_fails_only_its_model_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Behind a proxy a user's own model host cannot be held to public
+    addresses: a run that would call it fails with that reason (it once
+    crashed as an internal error), and a run without the LLM converts."""
+    import asyncio
+
+    for name in ("HTTP_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.delenv("NO_PROXY", raising=False)
+    monkeypatch.delenv("no_proxy", raising=False)
+    async with _server(_app(tmp_path)) as client:
+        _, user = await _user(client, "guest")
+        added = await _add(
+            client,
+            user,
+            {"model": "openai/gpt-x", "api_key": USER_A_KEY, "api_base": USER_BASE},
+        )
+        assert added.status_code == 200, added.text
+        monkeypatch.setenv("HTTPS_PROXY", "http://proxy.invalid:3128")
+
+        async def finished(llm: bool) -> dict[str, Any]:
+            created = await client.post(
+                "/api/jobs",
+                files=[
+                    ("files", ("notes.md", b"# Notes\n\nText.\n", "text/markdown")),
+                    ("options", (None, json.dumps({"llm": llm}))),
+                ],
+                headers=user,
+            )
+            assert created.status_code in (200, 201, 202), created.text
+            job_id = created.json()["job_id"]
+            for _ in range(500):
+                job = (await client.get(f"/api/jobs/{job_id}", headers=user)).json()
+                if job["status"] not in ("queued", "running"):
+                    return job["items"][0]
+                await asyncio.sleep(0.02)
+            pytest.fail(f"job {job_id} did not finish")
+
+        plain = await finished(False)
+        enhanced = await finished(True)
+    assert plain["status"] == "done", plain
+    assert enhanced["status"] == "error", enhanced
+    assert enhanced["error_code"] == "enhancement_failed", enhanced
+    assert "proxy" in enhanced["error"], enhanced

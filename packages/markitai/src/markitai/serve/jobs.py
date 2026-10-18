@@ -15,6 +15,7 @@ in the import-linter contracts and must not import ``markitai.cli``.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import shutil
 import time
@@ -1261,6 +1262,27 @@ async def _run_item(
     registry.publish_job(job)
 
 
+def _refuse_item(
+    registry: JobRegistry, job: Job, item: JobItem, error: PermissionError
+) -> None:
+    """End *item* before it starts: its model connections cannot be held to
+    public addresses (:mod:`markitai.public_connect`)."""
+    from markitai.batch import ProcessResult
+
+    _apply_result(
+        job,
+        item,
+        ProcessResult(
+            success=False,
+            error=f"LLM enhancement refused: {error}",
+            error_code="enhancement_failed",
+        ),
+    )
+    item.finished_at = now_iso()
+    registry.publish_item(job, item)
+    registry.publish_job(job)
+
+
 async def run_job(
     registry: JobRegistry,
     job: Job,
@@ -1362,7 +1384,21 @@ async def run_job(
 
                     token = public_network_only.set(job.public_network_only)
                     try:
-                        with restricted_hosts(job.restricted_hosts):
+                        with contextlib.ExitStack() as scope:
+                            # Only a run that may call a model is held to the
+                            # user's model hosts; one that cannot check them
+                            # (a proxy would carry it) fails as such
+                            try:
+                                scope.enter_context(
+                                    restricted_hosts(
+                                        job.restricted_hosts
+                                        if run_cfg.llm.enabled
+                                        else ()
+                                    )
+                                )
+                            except PermissionError as error:
+                                _refuse_item(registry, job, item, error)
+                                return
                             await _run_item(
                                 registry,
                                 job,
