@@ -13,6 +13,16 @@ from unittest.mock import patch
 from package_cli_target import executable_arch, macho_minimum, main, workspace_version, validate_target
 
 
+def expected_remap(home, root):
+    """The `--remap-path-prefix` rules `apply_path_remap` appends for a build
+    whose home (and so CARGO_HOME and RUSTUP_HOME) is `home`."""
+    prefix = lambda path: str(path).rstrip("/") + "/"
+    return [f"--remap-path-prefix={prefix(home)}=",
+            f"--remap-path-prefix={prefix(root)}=",
+            f"--remap-path-prefix={prefix(home / '.rustup')}=rustup/",
+            f"--remap-path-prefix={prefix(home / '.cargo' / 'registry')}=registry/"]
+
+
 class TargetPackagingTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
@@ -123,8 +133,12 @@ class TargetPackagingTests(unittest.TestCase):
         self.assertNotIn("--bins", command)
         self.assertEqual(command[command.index("--bin") + 1], "markitai")
         self.assertEqual(command[command.index("--target") + 1], host)
-        self.assertEqual(child["CARGO_ENCODED_RUSTFLAGS"], "-Cdebuginfo=1\x1f-Ctarget-feature=+crt-static")
-        self.assertEqual(calls[0][1]["CARGO_ENCODED_RUSTFLAGS"], "-Cdebuginfo=1")
+        # The original flags, the rules that keep build paths out of the
+        # binary, then the static CRT for the CLI build alone.
+        remap = expected_remap(self.root, root)
+        self.assertEqual(child["CARGO_ENCODED_RUSTFLAGS"].split("\x1f"),
+                         ["-Cdebuginfo=1", *remap, "-Ctarget-feature=+crt-static"])
+        self.assertEqual(calls[0][1]["CARGO_ENCODED_RUSTFLAGS"].split("\x1f"), ["-Cdebuginfo=1", *remap])
         release = root / "target with spaces/cli-static-crt" / host / "release"
         verify.assert_called_once_with(release / "markitai.exe", host)
         record = json.loads((output / "record.json").read_text())

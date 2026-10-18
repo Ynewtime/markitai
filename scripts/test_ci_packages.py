@@ -24,6 +24,16 @@ from ci_packages import (apply_path_remap, _sbom_without_local_paths, npm_comman
 from cli_documentation import DOCUMENTATION_PATHS
 
 
+def expected_remap(home, root):
+    """The `--remap-path-prefix` rules `apply_path_remap` appends for a build
+    whose home (and so CARGO_HOME and RUSTUP_HOME) is `home`."""
+    prefix = lambda path: str(path).rstrip("/") + "/"
+    return [f"--remap-path-prefix={prefix(home)}=",
+            f"--remap-path-prefix={prefix(root)}=",
+            f"--remap-path-prefix={prefix(home / '.rustup')}=rustup/",
+            f"--remap-path-prefix={prefix(home / '.cargo' / 'registry')}=registry/"]
+
+
 class PackageValidationTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
@@ -79,20 +89,19 @@ class PackageValidationTests(unittest.TestCase):
         self.assertTrue(any(f.endswith("/=rustup/") for f in flags))
 
     def test_sbom_loses_every_local_path(self):
-        root = pathlib.Path("/build/home/checkout")
-        import os
+        # A synthetic build user the repository privacy check accepts.
+        root = pathlib.Path("/home/ci/checkout")
         home = os.path.expanduser("~")
         data = (
-            '{"components":[{"bom-ref":"path+file:///build/home/checkout/crates/x#1"},'
-            '{"purl":"path+file:///build/home/checkout/vendor/lopdf#2"},'
+            '{"components":[{"bom-ref":"path+file:///home/ci/checkout/crates/x#1"},'
+            '{"purl":"path+file:///home/ci/checkout/vendor/lopdf#2"},'
             f'{{"a":"path+file://{home}/.cargo/registry/src/idx/dep-1.0"}},'
             '{"keep":"pkg:cargo/serde@1.0"}]}'
         )
-        os.environ["CARGO_HOME"] = home + "/.cargo"
-        cleaned = _sbom_without_local_paths(data, root)
-        import json as _json
-        _json.loads(cleaned)
-        self.assertNotIn("/build/home/checkout", cleaned)
+        with patch.dict(os.environ, {"CARGO_HOME": home + "/.cargo"}):
+            cleaned = _sbom_without_local_paths(data, root)
+        json.loads(cleaned)
+        self.assertNotIn("/home/ci/checkout", cleaned)
         self.assertNotIn(home, cleaned)
         self.assertIn("path+file://./crates/x#1", cleaned)
         self.assertIn("path+file://./vendor/lopdf#2", cleaned)
@@ -144,12 +153,17 @@ class PackageValidationTests(unittest.TestCase):
         self.assertEqual(len(builds), 2)
         binding_command, binding_environment = builds[0]
         self.assertEqual(binding_command[-4:], ["--exclude", "markitai-python", "--exclude", "markitai-cli"])
-        self.assertEqual(binding_environment["RUSTFLAGS"], "-Cdebuginfo=1")
-        self.assertNotIn("CARGO_ENCODED_RUSTFLAGS", binding_environment)
+        # The original flags come first, then the rules that keep build paths
+        # out of shipped files; RUSTFLAGS moves into the encoded form.
+        remap = expected_remap(self.root, root)
+        self.assertNotIn("RUSTFLAGS", binding_environment)
+        self.assertEqual(binding_environment["CARGO_ENCODED_RUSTFLAGS"].split("\x1f"),
+                         ["-Cdebuginfo=1", *remap])
         cli_command, cli_environment = builds[1]
         self.assertEqual(cli_command[cli_command.index("--target") + 1], host)
-        self.assertEqual(cli_environment["CARGO_ENCODED_RUSTFLAGS"],
-                         "-Cdebuginfo=1\x1f-Ctarget-feature=+crt-static")
+        self.assertNotIn("RUSTFLAGS", cli_environment)
+        self.assertEqual(cli_environment["CARGO_ENCODED_RUSTFLAGS"].split("\x1f"),
+                         ["-Cdebuginfo=1", *remap, "-Ctarget-feature=+crt-static"])
         verify.assert_called_once_with(root / "target/cli-static-crt" / host / "release/markitai.exe", host)
         self.assertEqual(json.loads((output / "evidence.json").read_text())["error"], "stop before execution")
 
