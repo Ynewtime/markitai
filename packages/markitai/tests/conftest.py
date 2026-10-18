@@ -96,11 +96,37 @@ def pytest_configure(config: pytest.Config) -> None:
     from markitai.utils.litellm_import import prepare_litellm_import
 
     prepare_litellm_import()
+    # That import brought loguru in, whose default sink keeps the sys.stderr
+    # of the moment: here the process's own, as capture is suspended between
+    # loading conftests and collecting. Its INFO/DEBUG lines then reached
+    # file descriptor 2, so capfd saw them. Dropped here, the sink is added
+    # again during collection (below), where it writes to pytest's capture
+    # as it did when the first import happened while collecting.
+    from loguru import logger
+
+    logger.remove()
     if sys.platform == "win32":
         page = _console_code_page()
         if page not in (0, 65001):
             _ORIGINAL_CODE_PAGE = page
             _console_code_page(65001)
+
+
+_loguru_sink_added = False
+
+
+@pytest.hookimpl(wrapper=True, trylast=True)
+def pytest_make_collect_report(collector: pytest.Collector) -> Iterator[Any]:
+    """Give loguru its stderr sink back inside the capture that collecting a
+    file runs under (trylast: inside the capture plugin's own wrapper, which
+    resumes capture for files only)."""
+    global _loguru_sink_added
+    if not _loguru_sink_added and isinstance(collector, pytest.File):
+        _loguru_sink_added = True
+        from loguru import logger
+
+        logger.add(sys.stderr)
+    return (yield)
 
 
 @pytest.fixture(autouse=True)
