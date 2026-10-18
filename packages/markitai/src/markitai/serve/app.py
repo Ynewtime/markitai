@@ -1627,21 +1627,44 @@ def _replace_config_file(
     return saved, old, document
 
 
+def _sealed_for_folder(state: ServeState, document: dict[str, Any]) -> dict[str, Any]:
+    """*document*, or for a ``./markitai.json`` found in the working
+    directory a copy whose models at their own address use no environment
+    key (:func:`markitai.config.seal_project_models`), as when it was loaded.
+    Never written back: the file keeps what its author wrote."""
+    if state.config_origin != "project":
+        return document
+    import copy
+
+    from markitai.config import seal_project_models
+
+    document = copy.deepcopy(document)
+    for note in seal_project_models(document):
+        logger.warning("[Serve] {}", note)
+    return document
+
+
+def _sealed_models(state: ServeState, models: list[ModelConfig]) -> list[ModelConfig]:
+    """*models* as :func:`_sealed_for_folder` runs them."""
+    if state.config_origin != "project":
+        return models
+    from markitai.config import ModelConfig
+
+    document = {"llm": {"model_list": [_model_to_raw(model) for model in models]}}
+    sealed = _sealed_for_folder(state, document)["llm"]["model_list"]
+    return [ModelConfig.model_validate(entry) for entry in sealed]
+
+
 def _apply_config_models(state: ServeState, document: dict[str, Any]) -> None:
     """Run with the model list and connections of a saved configuration.
 
     A ``./markitai.json`` found in the working directory keeps its models at
-    their own address off the environment's keys, as when it was loaded.
+    their own address off the environment's keys, as when it was loaded; the
+    settings revision stays the file's own.
     """
-    from markitai.config import MarkitaiConfig, seal_project_models
+    from markitai.config import MarkitaiConfig
 
-    if state.config_origin == "project":
-        import copy
-
-        document = copy.deepcopy(document)
-        for note in seal_project_models(document):
-            logger.warning("[Serve] {}", note)
-    llm = MarkitaiConfig.model_validate(document).llm
+    llm = MarkitaiConfig.model_validate(_sealed_for_folder(state, document)).llm
     models = list(llm.model_list)
     providers = list(llm.providers)
     state.configured_models = models
@@ -4087,6 +4110,8 @@ def create_app(
                     "settings_io_failed",
                     f"failed to update config file: {type(e).__name__}",
                 )
+            # A folder's markitai.json stays sealed after a settings write
+            merged = _sealed_models(state, merged)
             state.configured_models = merged
             state.configured_providers = merged_providers
             state.settings_revision = revision
