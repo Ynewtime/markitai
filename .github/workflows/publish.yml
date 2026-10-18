@@ -165,7 +165,14 @@ jobs:
             f {print}
           ' CHANGELOG.md > "$notes_file"
           if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release $TAG already exists — skipping creation."
+            # A release drafted in the web UI creates the tag first; give it
+            # the CHANGELOG notes instead of whatever was typed there.
+            if [ -s "$notes_file" ]; then
+              echo "Release $TAG already exists — setting its notes from the CHANGELOG."
+              gh release edit "$TAG" --notes-file "$notes_file"
+            else
+              echo "Release $TAG already exists — skipping creation."
+            fi
           elif [ -s "$notes_file" ]; then
             gh release create "$TAG" --title "$TAG" --notes-file "$notes_file"
           else
