@@ -1,14 +1,17 @@
-"""Real-Chromium checks for the Playwright renderer (screenshot order, hangs).
+"""Real-Chromium checks for the Playwright renderer (screenshot order, hangs,
+where headers and redirects may go).
 
-These load ``data:`` URLs, so they need no network, but they DO need
-Playwright and Chromium. Marked ``slow`` (deselected by default), like
+These load ``data:`` URLs or local servers, so they need no network, but
+they DO need Playwright and Chromium. Marked ``slow`` (deselected by default), like
 test_fetch_playwright_dom_normalize.py.
 """
 
 from __future__ import annotations
 
+import threading
 import time
 from pathlib import Path
+from typing import Any
 from urllib.parse import quote
 
 import pytest
@@ -143,7 +146,6 @@ async def test_content_from_a_late_request_is_still_waited_for() -> None:
     another 700 ms: both inside the quiet window and the in-flight check.
     """
     _skip_if_no_playwright_browser()
-    import threading
     from http.server import BaseHTTPRequestHandler
 
     from markitai.fetch_playwright import PlaywrightRenderer
@@ -218,7 +220,6 @@ async def test_extra_http_headers_reach_the_initial_origin_only() -> None:
     """A secret in extra_http_headers reaches the page's own origin and its
     same-origin subresources, never a cross-origin subresource."""
     _skip_if_no_playwright_browser()
-    import threading
     from http.server import BaseHTTPRequestHandler
 
     from markitai.fetch_playwright import PlaywrightRenderer
@@ -282,3 +283,130 @@ async def test_extra_http_headers_reach_the_initial_origin_only() -> None:
     # The other origin was reached but never saw the header.
     assert any(path == "/other.gif" for path, _ in other_seen), other_seen
     assert all(account == "" for _, account in other_seen), other_seen
+
+
+def _redirecting_server(
+    host: str, seen: list[tuple[str, str]], redirects: dict[str, str]
+) -> Any:
+    """A local server that logs (path, X-Account) and answers *redirects*
+    (path -> Location) with 302, anything else with a small page or image."""
+    from http.server import BaseHTTPRequestHandler
+
+    from tests.local_http import LocalHTTPServer
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802 (http.server API)
+            seen.append((self.path, self.headers.get("X-Account", "")))
+            location = redirects.get(self.path)
+            if location is not None:
+                self.send_response(302)
+                self.send_header("Location", location)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            if self.path.endswith(".gif"):
+                body, mime = b"GIF87a", "image/gif"
+            else:
+                body = (
+                    b"<!doctype html><html><head><title>Landed</title></head>"
+                    b"<body><main><p>The page a redirect led to, with enough"
+                    b" words to count as its content.</p><img src='pic.gif'>"
+                    b"</main></body></html>"
+                )
+                mime = "text/html; charset=utf-8"
+            self.send_response(200)
+            self.send_header("Content-Type", mime)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_args: object) -> None:
+            pass
+
+    server = LocalHTTPServer((host, 0), Handler)
+    threading.Thread(
+        target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True
+    ).start()
+    return server
+
+
+@pytest.mark.slow
+async def test_a_public_page_cannot_redirect_the_restricted_browser_inward() -> None:
+    """With public_network_only on, every redirect target is checked before
+    it is asked. A "public" server (127.0.0.2, treated as a global address
+    for this test) redirects to one on 127.0.0.1, which must never be
+    reached; a redirect within the public site still works."""
+    _skip_if_no_playwright_browser()
+    import ipaddress
+    from unittest.mock import patch
+
+    import markitai.fetch_policy as fetch_policy
+    from markitai.fetch_playwright import PlaywrightRenderer
+
+    internal_seen: list[tuple[str, str]] = []
+    public_seen: list[tuple[str, str]] = []
+    internal = _redirecting_server("127.0.0.1", internal_seen, {})
+    secret = f"http://127.0.0.1:{internal.server_address[1]}/secret"
+    try:
+        public = _redirecting_server(
+            "127.0.0.2", public_seen, {"/start": secret, "/hop": "/doc/"}
+        )
+    except OSError:  # macOS has only 127.0.0.1 on lo0 by default
+        internal.shutdown()
+        internal.server_close()
+        pytest.skip("127.0.0.2 is not available here")
+    port = public.server_address[1]
+
+    real_assess = fetch_policy.assess_url_for_remote
+    real_resolve = fetch_policy.resolve_hostname_addresses
+    real_is_global = ipaddress.IPv4Address.is_global
+
+    async def assess(url: str, **kwargs: Any) -> Any:
+        if "public.example" in url:
+            return fetch_policy.RemoteURLAssessment(True)
+        return await real_assess(url, **kwargs)
+
+    async def resolve(host: str) -> Any:
+        if host == "public.example":
+            return ("127.0.0.2",)
+        return await real_resolve(host)
+
+    is_global = property(
+        lambda self: str(self) == "127.0.0.2" or real_is_global.fget(self)  # type: ignore[attr-defined]
+    )
+    errors: list[str] = []
+    token = fetch_policy.public_network_only.set(True)
+    try:
+        with (
+            patch.object(fetch_policy, "assess_url_for_remote", assess),
+            patch.object(fetch_policy, "resolve_hostname_addresses", resolve),
+            patch.object(ipaddress.IPv4Address, "is_global", is_global),
+        ):
+            async with PlaywrightRenderer() as renderer:
+                try:
+                    await renderer.fetch(
+                        f"http://public.example:{port}/start",
+                        timeout=15000,
+                        extra_wait_ms=300,
+                        skip_auto_scroll=True,
+                    )
+                except Exception as exc:
+                    errors.append(str(exc))
+                hop = await renderer.fetch(
+                    f"http://public.example:{port}/hop",
+                    timeout=15000,
+                    extra_wait_ms=300,
+                    skip_auto_scroll=True,
+                )
+    finally:
+        fetch_policy.public_network_only.reset(token)
+        for server in (public, internal):
+            server.shutdown()
+            server.server_close()
+
+    assert internal_seen == []
+    assert errors, "the redirect inward should have failed the fetch"
+    assert any(path == "/start" for path, _ in public_seen)
+    assert hop.final_url == f"http://public.example:{port}/doc/"
+    assert ("/doc/pic.gif", "") in public_seen
+    assert "The page a redirect led to" in hop.content

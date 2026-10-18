@@ -962,6 +962,51 @@ def _same_origin(a: str, b: str) -> bool:
     return origin(a) == origin(b)
 
 
+#: What a context's routes followed for a page's own document: the URL it
+#: asked for -> the URL the answer came from (a redirect the route resolved
+#: itself, since the browser would follow it without asking the route).
+_ROUTED_FINAL_URLS: weakref.WeakKeyDictionary[Any, dict[str, str]] = (
+    weakref.WeakKeyDictionary()
+)
+
+_REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
+_BASE_TAG = re.compile(rb"<base[\s>]", re.IGNORECASE)
+_HEAD_TAG = re.compile(rb"<head(?:\s[^>]*)?>", re.IGNORECASE)
+
+
+def _followed_body(body: bytes, content_type: str, final_url: str) -> bytes:
+    """*body* of a redirect the route followed, served under the URL first
+    asked for: an HTML document gets ``<base href>`` of where it came from,
+    so its relative links and resources resolve as the browser's own follow
+    would have resolved them."""
+    if "html" not in content_type.lower() or _BASE_TAG.search(body):
+        return body
+    if body[:2] in (b"\xff\xfe", b"\xfe\xff"):  # UTF-16: leave it as is
+        return body
+    from html import escape
+
+    tag = f'<base href="{escape(final_url, quote=True)}">'.encode("ascii", "ignore")
+    head = _HEAD_TAG.search(body)
+    if head is None:
+        return tag + body
+    return body[: head.end()] + tag + body[head.end() :]
+
+
+def _note_followed(context: Any, request: Any, final_url: str) -> None:
+    """Remember where a page's own document came from (see fetch)."""
+    try:
+        if not request.is_navigation_request() or request.frame.parent_frame:
+            return
+    except Exception:  # pragma: no cover - frame already detached
+        return
+    _ROUTED_FINAL_URLS.setdefault(context, {})[request.url] = final_url
+
+
+def _routed_final_url(context: Any, url: str) -> str:
+    """The URL *url*'s document came from, when a route followed it."""
+    return _ROUTED_FINAL_URLS.get(context, {}).get(url, url)
+
+
 async def _bind_headers_to_origin(
     context: Any, origin_url: str, headers: dict[str, str]
 ) -> None:
@@ -1000,19 +1045,26 @@ async def _guard_public_context(
     origin_url: str | None = None,
     origin_headers: dict[str, str] | None = None,
 ) -> None:
-    """Route anonymous browser HTTP traffic through DNS-pinned requests."""
+    """Route anonymous browser HTTP traffic through DNS-pinned requests.
+
+    Redirects are followed here, each target checked before it is asked:
+    the browser follows a redirect answer without asking the route again, so
+    handing it one would let a public page send it to this machine, the LAN
+    or cloud metadata."""
+    import httpx
+
     from markitai.fetch_http import public_http_request
+
+    extra = {name.lower(): value for name, value in (origin_headers or {}).items()}
 
     async def public_route(route: Any) -> None:
         request = route.request
         try:
             headers = await request.all_headers()
             # The caller's own headers reach the initial origin only.
-            if origin_headers and origin_url and _same_origin(request.url, origin_url):
-                headers = {
-                    **headers,
-                    **{name.lower(): value for name, value in origin_headers.items()},
-                }
+            own = bool(extra and origin_url and _same_origin(request.url, origin_url))
+            if own:
+                headers = {**headers, **extra}
             response = await public_http_request(
                 request.url,
                 method=request.method,
@@ -1020,8 +1072,10 @@ async def _guard_public_context(
                 content=request.post_data_buffer,
                 timeout=timeout / 1000,
                 proxy=proxy,
-                follow_redirects=False,
+                origin_only=tuple(extra) if own else (),
             )
+            final_url = str(response.request.url)
+            followed = final_url != str(httpx.URL(request.url))
             headers = dict(response.headers)
             for name in (
                 "content-encoding",
@@ -1029,10 +1083,14 @@ async def _guard_public_context(
                 "transfer-encoding",
             ):
                 headers.pop(name, None)
+            body = response.content
+            if followed:
+                _note_followed(context, request, final_url)
+                body = _followed_body(body, headers.get("content-type", ""), final_url)
             await route.fulfill(
                 status=response.status_code,
                 headers=headers,
-                body=response.content,
+                body=body,
             )
         except Exception as exc:
             logger.debug("[Fetch] Blocked browser request: {}", exc)
@@ -1584,7 +1642,8 @@ class PlaywrightRenderer:
                 logger.debug(f"DOM cleanup failed (non-critical): {e}")
 
             title = await deadline.run(page.title(), "page.title()")
-            final_url = page.url
+            # Where the document came from when a route followed its redirects
+            final_url = _routed_final_url(context, page.url)
             html_content = await deadline.run(page.content(), "page.content()")
             metadata: dict[str, Any] = {"renderer": "playwright", "wait_for": wait_for}
             if screenshot_error is not None:

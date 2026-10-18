@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
@@ -132,12 +132,15 @@ async def public_http_request(
     timeout: float = 30.0,
     proxy: str | None = None,
     follow_redirects: bool = True,
+    origin_only: Sequence[str] = (),
 ) -> Any:
     """Fetch public destinations only, pinning each connection to checked DNS.
 
     The numeric connection URL prevents a second DNS lookup from rebinding
     the destination. Host and TLS SNI retain the original hostname. Every
-    redirect gets a fresh address check before a request can be sent.
+    redirect gets a fresh address check before a request can be sent. A
+    redirect to another origin drops the credentials, and the headers named
+    in *origin_only*. The final URL is ``response.request.url``.
     """
     import ipaddress
     from urllib.parse import urljoin
@@ -201,7 +204,12 @@ async def public_http_request(
                 or target.scheme != current.scheme
                 or target.port != current.port
             ):
-                for name in ("Authorization", "Cookie", "Proxy-Authorization"):
+                for name in (
+                    "Authorization",
+                    "Cookie",
+                    "Proxy-Authorization",
+                    *origin_only,
+                ):
                     request_headers.pop(name, None)
             if (response.status_code == 303 and method != "HEAD") or (
                 response.status_code in (301, 302) and method == "POST"

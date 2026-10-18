@@ -134,7 +134,13 @@ async def test_browser_subrequests_share_public_transport_and_block_sockets(
     from markitai.fetch_playwright import _guard_public_context
 
     context = SimpleNamespace(route=AsyncMock(), route_web_socket=AsyncMock())
-    transport = AsyncMock(return_value=httpx.Response(200, content=b"PUBLIC BODY"))
+    transport = AsyncMock(
+        return_value=httpx.Response(
+            200,
+            content=b"PUBLIC BODY",
+            request=httpx.Request("GET", "https://public.example/image"),
+        )
+    )
     monkeypatch.setattr("markitai.fetch_http.public_http_request", transport)
     await _guard_public_context(context, 30000, None)
     pattern, handler = context.route.await_args.args
@@ -149,10 +155,84 @@ async def test_browser_subrequests_share_public_transport_and_block_sockets(
     await handler(route)
     assert route.fulfill.await_args.kwargs["body"] == b"PUBLIC BODY"
     assert transport.await_args is not None
-    assert transport.await_args.kwargs["follow_redirects"] is False
+    # Redirects are followed (and each target checked) by the transport: a
+    # redirect handed to the browser would be followed without the route.
+    assert transport.await_args.kwargs.get("follow_redirects", True) is True
     transport.side_effect = PermissionError("non-public target")
     await handler(route)
     route.abort.assert_awaited_once_with("blockedbyclient")
     socket = SimpleNamespace(close=AsyncMock())
     await context.route_web_socket.await_args.args[1](socket)
     socket.close.assert_awaited_once()
+
+
+async def test_origin_only_headers_stay_on_the_origin_through_redirects(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requests = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if len(requests) == 1:
+            return httpx.Response(302, headers={"location": "/second"})
+        if len(requests) == 2:
+            return httpx.Response(
+                302, headers={"location": "https://elsewhere.example/third"}
+            )
+        return httpx.Response(200, text="DONE")
+
+    monkeypatch.setattr(
+        "markitai.fetch_http._public_http_client",
+        lambda _proxy, _timeout: httpx.AsyncClient(
+            transport=httpx.MockTransport(handle)
+        ),
+    )
+    monkeypatch.setattr(
+        "markitai.fetch_policy.resolve_hostname_addresses",
+        AsyncMock(return_value=["93.184.216.34"]),
+    )
+    response = await public_http_request(
+        "https://first.example/start",
+        headers={"X-Account": "private-token"},
+        origin_only=("x-account",),
+    )
+    assert str(response.request.url) == "https://elsewhere.example/third"
+    assert [r.headers.get("x-account") for r in requests] == [
+        "private-token",
+        "private-token",
+        None,
+    ]
+
+
+async def test_a_followed_document_gets_a_base_for_its_relative_links(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from markitai.fetch_playwright import _guard_public_context
+
+    context = SimpleNamespace(route=AsyncMock(), route_web_socket=AsyncMock())
+    transport = AsyncMock(
+        return_value=httpx.Response(
+            200,
+            headers={"content-type": "text/html; charset=utf-8"},
+            content=b"<html><head><title>t</title></head><body></body></html>",
+            request=httpx.Request("GET", "https://public.example/doc/"),
+        )
+    )
+    monkeypatch.setattr("markitai.fetch_http.public_http_request", transport)
+    await _guard_public_context(context, 30000, None)
+    _pattern, handler = context.route.await_args.args
+    request = SimpleNamespace(
+        url="https://public.example/hop",
+        method="GET",
+        all_headers=AsyncMock(return_value={}),
+        post_data_buffer=None,
+        is_navigation_request=lambda: False,
+    )
+    route = SimpleNamespace(request=request, fulfill=AsyncMock(), abort=AsyncMock())
+    await handler(route)
+    body = route.fulfill.await_args.kwargs["body"]
+    assert body.startswith(
+        b'<html><head><base href="https://public.example/doc/"><title>'
+    )
