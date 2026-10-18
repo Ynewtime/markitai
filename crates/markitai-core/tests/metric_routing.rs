@@ -326,6 +326,15 @@ fn usage_window() {
         thread::sleep(Duration::from_secs(60 - second));
     }
 }
+/// Requests the usage counts as timed out (possibly billed, unreported).
+fn timed_out(usage: &markitai_core::ConversionUsage) -> u64 {
+    usage
+        .by_model
+        .values()
+        .filter_map(|row| row.get("timed_out_requests")?.as_u64())
+        .sum()
+}
+
 fn metric_config(root: &Path, models: Vec<Value>, strategy: &str) -> Value {
     let mut cfg = config(root, models);
     cfg["llm"]["router_settings"]["routing_strategy"] = json!(strategy);
@@ -412,9 +421,14 @@ fn latency_timeout_penalty_changes_the_next_real_request_without_timing_assertio
             (&second, &first)
         };
         alternate.release();
-        // The provider may have billed a timed-out request, so it is not sent again.
-        assert!(worker.join().unwrap().is_err());
-        assert_eq!(alternate.requests().len(), 0);
+        // A timed-out request is sent again once, to the deployment not yet
+        // tried; the provider may have billed the first, so the cost is
+        // incomplete.
+        let resent = worker.join().unwrap().unwrap();
+        assert_eq!(alternate.requests().len(), 1);
+        assert_eq!(resent.usage.requests, 1);
+        assert_eq!(timed_out(&resent.usage), 1);
+        assert!(!resent.usage.cost_complete());
         let next = call(&path, cfg.clone(), &runtime).unwrap();
         assert_eq!(next.usage.requests, 1);
         assert!(
@@ -426,7 +440,7 @@ fn latency_timeout_penalty_changes_the_next_real_request_without_timing_assertio
         // would beat the alternate's positive latency.
         call(&path, cfg.clone(), &runtime).unwrap();
         assert_eq!(held.requests().len(), 1);
-        assert_eq!(alternate.requests().len(), 2);
+        assert_eq!(alternate.requests().len(), 3);
         held.release();
     });
 }
@@ -473,9 +487,13 @@ fn latency_body_timeout_after_flushed_headers_penalizes_the_stalled_deployment()
             (&second, &first)
         };
         alternate.release();
-        // A successful status means the provider billed it: no second request.
-        assert!(worker.join().unwrap().is_err());
-        assert_eq!(alternate.requests().len(), 0);
+        // A body that timed out after a successful status may be billed: it
+        // is sent again once, to the alternate, and the cost is incomplete.
+        let resent = worker.join().unwrap().unwrap();
+        assert_eq!(alternate.requests().len(), 1);
+        assert_eq!(resent.usage.requests, 1);
+        assert_eq!(timed_out(&resent.usage), 1);
+        assert!(!resent.usage.cost_complete());
         let next = call(&path, cfg.clone(), &runtime).unwrap();
         assert_eq!(next.usage.requests, 1);
         assert_eq!(next.usage.input_tokens, 7);
@@ -490,8 +508,8 @@ fn latency_body_timeout_after_flushed_headers_penalizes_the_stalled_deployment()
         call(&path, cfg.clone(), &runtime).unwrap();
         assert_eq!(stalled.requests().len(), 1);
         assert_eq!(stalled.body_started(), 1);
-        assert_eq!(alternate.requests().len(), 2);
-        assert_eq!(alternate.body_started(), 2);
+        assert_eq!(alternate.requests().len(), 3);
+        assert_eq!(alternate.body_started(), 3);
         stalled.release();
     });
 }
