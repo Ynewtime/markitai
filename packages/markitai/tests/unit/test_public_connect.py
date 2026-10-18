@@ -120,3 +120,69 @@ async def test_aiohttp_which_litellm_sends_through_is_held_too(
             with pytest.raises(aiohttp.ClientConnectorError, match=REFUSED):
                 await session.post(url, json={})
     assert seen == []
+
+
+async def test_a_trailing_dot_names_the_same_restricted_host(
+    loopback: tuple[int, list[bytes]],
+) -> None:
+    """``model.example.`` is ``model.example``: aiohttp resolves it without
+    the dot the restriction was given, which once let it through."""
+    import aiohttp
+    from aiohttp.abc import AbstractResolver
+
+    class ToThisMachine(AbstractResolver):
+        """A name that resolves (or rebinds) to loopback."""
+
+        async def resolve(
+            self, host: str, port: int = 0, family: int = socket.AF_INET
+        ) -> list[dict[str, object]]:
+            return [
+                {
+                    "hostname": host,
+                    "host": "127.0.0.1",
+                    "port": port,
+                    "family": socket.AF_INET,
+                    "proto": 0,
+                    "flags": 0,
+                }
+            ]
+
+        async def close(self) -> None:
+            pass
+
+    port, seen = loopback
+    for base, named in (
+        (f"http://rebind.example.:{port}/v1", None),
+        (f"http://rebind.example..:{port}/v1", None),
+        (f"http://rebind.example:{port}/v1", f"http://Rebind.Example.:{port}/v1"),
+    ):
+        with restricted_hosts([host_of(named or base)]):
+            connector = aiohttp.TCPConnector(resolver=ToThisMachine())
+            async with aiohttp.ClientSession(connector=connector) as session:
+                with pytest.raises(aiohttp.ClientConnectorError, match=REFUSED):
+                    await session.get(base)
+    assert seen == []
+
+
+def test_a_trailing_dot_is_held_by_httpcore_too(
+    loopback: tuple[int, list[bytes]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    port, seen = loopback
+    real = socket.getaddrinfo
+
+    def to_this_machine(host: str, *args: object, **kwargs: object) -> object:
+        if host.rstrip(".") == "rebind.example":
+            host = "127.0.0.1"
+        return real(host, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(socket, "getaddrinfo", to_this_machine)
+    for base, named in (
+        (f"http://rebind.example.:{port}/v1", f"http://rebind.example:{port}/v1"),
+        (f"http://rebind.example:{port}/v1", f"http://rebind.example.:{port}/v1"),
+    ):
+        with (
+            restricted_hosts([host_of(named)]),
+            pytest.raises(httpx.ConnectError, match=REFUSED),
+        ):
+            httpx.get(base, timeout=5)
+    assert seen == []

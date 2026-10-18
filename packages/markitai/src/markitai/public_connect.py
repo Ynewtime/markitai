@@ -44,6 +44,14 @@ def host_of(base: str | None) -> str | None:
     return raw.decode("ascii").lower() or None
 
 
+def _name(host: str) -> str:
+    """*host* as the restriction compares it: lowercase, without the trailing
+    dots of a fully qualified name. httpcore connects to ``model.example.``
+    as written, while aiohttp collapses ``model.example..`` to one dot: one
+    name with or without them is one host."""
+    return host.lower().rstrip(".")
+
+
 def refused(error: BaseException) -> bool:
     """Whether *error* (or one it was raised from) is this module's refusal."""
     seen: set[int] = set()
@@ -82,7 +90,7 @@ def _proxied(host: str) -> bool:
 @contextmanager
 def restricted_hosts(hosts: Iterable[str | None]) -> Iterator[None]:
     """Connections to *hosts* inside this block reach public IPs only."""
-    wanted = frozenset(h.lower() for h in hosts if h)
+    wanted = frozenset(_name(h) for h in hosts if h and _name(h))
     if not wanted:
         yield
         return
@@ -111,7 +119,7 @@ def install() -> None:
     original_sync = SyncBackend.connect_tcp
 
     async def connect_tcp_async(self: Any, host: str, port: int, **kwargs: Any) -> Any:
-        if host.lower() not in _restricted.get():
+        if _name(host) not in _restricted.get():
             return await original_async(self, host, port, **kwargs)
         import asyncio
 
@@ -131,7 +139,7 @@ def install() -> None:
         raise last or httpcore.ConnectError(REFUSED)
 
     def connect_tcp_sync(self: Any, host: str, port: int, **kwargs: Any) -> Any:
-        if host.lower() not in _restricted.get():
+        if _name(host) not in _restricted.get():
             return original_sync(self, host, port, **kwargs)
         try:
             addresses = _checked(
@@ -164,7 +172,7 @@ def _install_aiohttp() -> None:
 
     async def resolve_host(self: Any, host: str, port: int, traces: Any = None) -> Any:
         hosts = await original(self, host, port, traces=traces)
-        if host.lower().rstrip(".") not in _restricted.get():
+        if _name(host) not in _restricted.get():
             return hosts
         kept = [entry for entry in hosts if _public(str(entry["host"]))]
         if not kept:
