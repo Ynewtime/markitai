@@ -150,9 +150,8 @@ class TestScannedPdfAdvisory:
 
         monkeypatch.setattr(
             pdf_module,
-            "collect_page_advisories",
-            lambda _doc, _pages=None: pages,
-            raising=False,
+            "_scan_advisories",
+            lambda _path, _pages=None: pages,
         )
         captured: list[str] = []
         sink_id = logger.add(lambda message: captured.append(message), level="WARNING")

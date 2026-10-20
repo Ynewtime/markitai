@@ -221,6 +221,53 @@ def resolve_ocr_language(lang: str) -> tuple[str, bool]:
     )
 
 
+# The writing system each PP-OCRv5 recognizer reads beside Latin (``latin``
+# reads Latin only). The PP-OCRv6 recognizer reads Latin and CJK.
+_PPOCRV5_SCRIPTS = {
+    "korean": "Hangul",
+    "arabic": "Arabic",
+    "th": "Thai",
+    "cyrillic": "Cyrillic",
+    "eslav": "Cyrillic",
+    "el": "Greek",
+    "devanagari": "Devanagari",
+    "ta": "Tamil",
+    "te": "Telugu",
+}
+
+# The ocr.lang that reads a writing system (for a notice's advice).
+_SCRIPT_LANGS = {
+    "CJK": "zh",
+    "Hangul": "ko",
+    "Arabic": "ar",
+    "Thai": "th",
+    "Cyrillic": "cyrillic",
+    "Greek": "el",
+    "Devanagari": "devanagari",
+    "Tamil": "ta",
+    "Telugu": "te",
+}
+
+
+def ocr_readable_scripts(lang: str) -> frozenset[str]:
+    """The writing systems (``converter.pdf_text_trust.char_script`` names)
+    the recognizer for ``ocr.lang`` *lang* reads. An unknown language reads
+    as the default one: it fails on its own when OCR runs."""
+    try:
+        rec_lang, needs_v5 = resolve_ocr_language(lang)
+    except OCRLanguageError:
+        return frozenset({"Latin", "CJK"})
+    if not needs_v5:
+        return frozenset({"Latin", "CJK"})
+    script = _PPOCRV5_SCRIPTS.get(rec_lang)
+    return frozenset({"Latin", script} if script else {"Latin"})
+
+
+def ocr_lang_for_script(script: str) -> str | None:
+    """The ``ocr.lang`` value whose recognizer reads *script*, if any."""
+    return _SCRIPT_LANGS.get(script)
+
+
 class _EngineGate:
     """Shared/exclusive gate around the process-wide RapidOCR engine.
 

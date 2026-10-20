@@ -9,13 +9,14 @@ import tempfile
 from collections.abc import Callable, Iterable, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Generic, NamedTuple, Protocol, TypeVar, cast
 
 import pymupdf4llm
 from loguru import logger
 
 from markitai.constants import (
     ASSETS_REL_PATH,
+    DEFAULT_OCR_LANG,
     DEFAULT_RENDER_DPI,
     PAGE_MARKER_RE,
     SCREENSHOTS_REL_PATH,
@@ -38,6 +39,12 @@ from markitai.converter.pdf_parallel import (
     to_markdown_chunks,
 )
 from markitai.converter.pdf_tables import restore_flattened_tables
+from markitai.converter.pdf_text_trust import (
+    FAILED,
+    NO_TEXT_LAYER,
+    LayerVerdict,
+    judge_text,
+)
 from markitai.image import ImageProcessor
 from markitai.notices import user_notice
 from markitai.ocr import (
@@ -45,8 +52,9 @@ from markitai.ocr import (
     OCRBackendMissing,
     OCRError,
     OCRLanguageError,
-    is_likely_garbled,
     is_ocr_available,
+    ocr_lang_for_script,
+    ocr_readable_scripts,
 )
 from markitai.utils.cjk_radicals import fold_cjk_radicals
 from markitai.utils.errors import MissingDependencyError
@@ -91,15 +99,50 @@ def _page_image_coverage(page: Any) -> float:
     return min(total / page_area, 1.0)
 
 
+def collect_page_verdicts(
+    doc: Any, pages: Iterable[int] | None = None
+) -> dict[int, LayerVerdict]:
+    """Judge each page's text layer (``converter.pdf_text_trust``).
+
+    A page with less than ``_SCANNED_MAX_TEXT_CHARS`` of text has no text
+    layer to speak of: ``scanned`` when pictures cover half of it or more,
+    else ``empty``. Any other page gets the text-only checks of
+    :func:`~markitai.converter.pdf_text_trust.judge_text`. No rendering is
+    performed, so this is cheap even for large documents.
+
+    Args:
+        doc: An open pymupdf Document
+        pages: 0-based pages to check (all when None)
+
+    Returns:
+        1-based page number -> verdict
+    """
+    verdicts: dict[int, LayerVerdict] = {}
+    for i in range(doc.page_count) if pages is None else pages:
+        page = doc[i]
+        text = page.get_text().strip()
+        if len(text) < _SCANNED_MAX_TEXT_CHARS:
+            scanned = _page_image_coverage(page) >= _SCANNED_MIN_IMAGE_COVERAGE
+            verdicts[i + 1] = LayerVerdict(
+                "scanned" if scanned else "empty",
+                f"almost no text layer ({len(text)} characters)"
+                if text
+                else NO_TEXT_LAYER,
+            )
+        else:
+            verdicts[i + 1] = judge_text(text)
+    return verdicts
+
+
 def collect_page_advisories(
     doc: Any, pages: Iterable[int] | None = None
 ) -> tuple[list[int], list[int]]:
     """Compute cheap per-page scan/garbled signals for an open PDF document.
 
     A page with near-zero extracted text but significant image coverage
-    looks scanned; a page whose text fails the vowel-ratio check (see
-    :func:`markitai.ocr.is_likely_garbled`) is garbled. No rendering is
-    performed, so this is cheap even for large documents.
+    looks scanned; a page whose text layer fails the checks of
+    :func:`collect_page_verdicts` (a broken font map, mojibake, reversed
+    right-to-left text, consonant soup) is garbled.
 
     Args:
         doc: An open pymupdf Document
@@ -109,40 +152,53 @@ def collect_page_advisories(
         Tuple of (scanned-looking page numbers, garbled page numbers),
         both 1-based
     """
-    scanned: list[int] = []
-    garbled: list[int] = []
-    for i in range(doc.page_count) if pages is None else pages:
-        page = doc[i]
-        text = page.get_text().strip()
-        if len(text) < _SCANNED_MAX_TEXT_CHARS:
-            if _page_image_coverage(page) >= _SCANNED_MIN_IMAGE_COVERAGE:
-                scanned.append(i + 1)
-        elif is_likely_garbled(text):
-            garbled.append(i + 1)
-    return scanned, garbled
+    return _advisory_pages(collect_page_verdicts(doc, pages))
 
 
-def _collect_native_text_pages(doc: Any) -> dict[int, str]:
-    """Native text for pages that do not look scanned or garbled.
+def _advisory_pages(
+    verdicts: dict[int, LayerVerdict],
+) -> tuple[list[int], list[int]]:
+    """(scanned-looking pages, pages whose text layer failed), in order."""
+    pages = sorted(verdicts)
+    return (
+        [p for p in pages if verdicts[p].status == "scanned"],
+        [p for p in pages if verdicts[p].status == "failed"],
+    )
 
-    Mirrors the signals of :func:`collect_page_advisories`: a page
-    qualifies for native extraction when it carries a meaningful text
-    layer (>= ``_SCANNED_MAX_TEXT_CHARS``) that passes the garble check.
-    Everything else (near-textless / scanned / garbled pages) is left
-    for OCR.
+
+def _ocr_reads(verdict: LayerVerdict, readable: frozenset[str]) -> bool:
+    """Whether OCR can read a page whose text layer failed: the checks know
+    of no writing system for it, or the configured recognizer reads it."""
+    return verdict.script is None or verdict.script in readable
+
+
+def _collect_native_text_pages(
+    doc: Any, *, readable: frozenset[str]
+) -> tuple[list[int], dict[int, LayerVerdict]]:
+    """The pages whose text layer passes the checks, and every verdict.
+
+    Mirrors :func:`collect_page_verdicts`: a page qualifies for native
+    extraction when it carries a meaningful text layer that the checks
+    trust. Everything else (near-textless / scanned / failed pages) is left
+    for OCR, except a failed page in a writing system the recognizer does
+    not read (*readable*): OCR would only make it worse, so it keeps its
+    text layer.
 
     Args:
         doc: An open pymupdf Document
+        readable: The writing systems the configured OCR language reads
 
     Returns:
-        Mapping of 0-based page number -> stripped native page text
+        (0-based native pages in order, 1-based page number -> verdict)
     """
-    native: dict[int, str] = {}
-    for i, page in enumerate(doc):
-        text = page.get_text().strip()
-        if len(text) >= _SCANNED_MAX_TEXT_CHARS and not is_likely_garbled(text):
-            native[i] = text
-    return native
+    verdicts = collect_page_verdicts(doc)
+    native = [
+        number - 1
+        for number, verdict in sorted(verdicts.items())
+        if verdict.status == "trusted"
+        or (verdict.status == "failed" and not _ocr_reads(verdict, readable))
+    ]
+    return native, verdicts
 
 
 # Pages read at once in this process, at most: its engine already spreads
@@ -410,10 +466,24 @@ def _scan_hidden_text(
         return None
 
 
+class PageAdvisories(NamedTuple):
+    """The scanned/garbled advisory of a document (or a run of its pages).
+
+    Attributes:
+        scanned: 1-based pages that look scanned
+        garbled: 1-based pages whose text layer failed the checks
+        verdicts: 1-based page -> verdict on its text layer
+    """
+
+    scanned: list[int]
+    garbled: list[int]
+    verdicts: dict[int, LayerVerdict]
+
+
 def _scan_advisories(
     input_path: Path | str, pages: list[int] | None = None
-) -> tuple[list[int], list[int]] | None:
-    """``collect_page_advisories`` on *input_path*; None when it failed.
+) -> PageAdvisories | None:
+    """``collect_page_verdicts`` on *input_path*; None when it failed.
 
     Module-level so an extraction worker can run it on a run of pages.
     """
@@ -422,7 +492,8 @@ def _scan_advisories(
         import pymupdf
 
         with pymupdf.open(input_path) as doc:
-            return collect_page_advisories(doc, pages)
+            verdicts = collect_page_verdicts(doc, pages)
+        return PageAdvisories(*_advisory_pages(verdicts), verdicts)
     except Exception as e:
         logger.debug(
             "[PDF] Scan/garbled advisory check failed for {}: {}",
@@ -469,12 +540,14 @@ def _merge_hidden(parts: list[dict[int, list[str]]]) -> dict[int, list[str]]:
     return dict(sorted(merged.items()))
 
 
-def _merge_advisories(
-    parts: list[tuple[list[int], list[int]]],
-) -> tuple[list[int], list[int]]:
-    return (
-        sorted(p for scanned, _ in parts for p in scanned),
-        sorted(p for _, garbled in parts for p in garbled),
+def _merge_advisories(parts: list[PageAdvisories]) -> PageAdvisories:
+    verdicts: dict[int, LayerVerdict] = {}
+    for part in parts:
+        verdicts.update(part.verdicts)
+    return PageAdvisories(
+        sorted(p for part in parts for p in part.scanned),
+        sorted(p for part in parts for p in part.garbled),
+        dict(sorted(verdicts.items())),
     )
 
 
@@ -482,7 +555,7 @@ def _start_prescan(
     input_path: Path, *, hidden_text: bool
 ) -> tuple[
     _Pending[dict[int, list[str]] | None] | None,
-    _Pending[tuple[list[int], list[int]] | None],
+    _Pending[PageAdvisories | None],
 ]:
     """Start the hidden-text and scanned-page checks alongside the extraction.
 
@@ -1204,7 +1277,7 @@ class PdfConverter(BaseConverter):
         input_path: Path,
         *,
         total_pages: int,
-        prescanned: _Pending[tuple[list[int], list[int]] | None] | None = None,
+        prescanned: _Pending[PageAdvisories | None] | None = None,
         defer: bool = False,
     ) -> tuple[Any, ...] | None:
         """Emit one consolidated warning when pages look scanned or garbled:
@@ -1231,9 +1304,22 @@ class PdfConverter(BaseConverter):
         )
         if advisories is None:
             return None
-        scanned_pages, garbled_pages = advisories
+        scanned_pages, garbled_pages = advisories[0], advisories[1]
+        verdicts: dict[int, LayerVerdict] = advisories[2] if len(advisories) > 2 else {}
+        # A failed layer in a writing system the configured recognizer does
+        # not read (reversed Hebrew): --ocr would not help, so say what would
+        readable = ocr_readable_scripts(self._ocr_lang)
+        unreadable = [
+            p
+            for p in garbled_pages
+            if p in verdicts and not _ocr_reads(verdicts[p], readable)
+        ]
+        if unreadable:
+            self._notice_unread_layer(
+                input_path, total_pages, unreadable, verdicts, ocr_on=False
+            )
 
-        flagged = sorted(set(scanned_pages) | set(garbled_pages))
+        flagged = sorted(set(scanned_pages) | (set(garbled_pages) - set(unreadable)))
         if not flagged:
             return None
 
@@ -1262,6 +1348,49 @@ class PdfConverter(BaseConverter):
             return notice
         user_notice(*notice)
         return None
+
+    @property
+    def _ocr_lang(self) -> str:
+        return self.config.ocr.lang if self.config else DEFAULT_OCR_LANG
+
+    def _notice_unread_layer(
+        self,
+        input_path: Path,
+        total_pages: int,
+        pages: list[int],
+        verdicts: dict[int, LayerVerdict],
+        *,
+        ocr_on: bool,
+    ) -> None:
+        """Say that pages keep a text layer that failed the checks because
+        the configured OCR language does not read their writing system:
+        ``[PDF] a.pdf: the text layer of 2 of 9 pages reads wrong (pages
+        3–4): right-to-left text in reverse order; no OCR language reads
+        Hebrew, so it is kept as extracted``."""
+        verdict = verdicts[pages[0]]
+        script = verdict.script or "this script"
+        lang = ocr_lang_for_script(script)
+        if ocr_on:
+            advice = (
+                f"OCR with ocr.lang {self._ocr_lang} does not read {script}, "
+                "so the text layer is kept"
+            )
+            if lang:
+                advice += f"; set ocr.lang to {lang} to OCR it"
+        elif lang:
+            advice = f"consider re-running with --ocr and ocr.lang set to {lang}"
+        else:
+            advice = f"no OCR language reads {script}, so it is kept as extracted"
+        _count, listed = _pages_phrases(pages)
+        user_notice(
+            "[PDF] {}: the text layer of {} of {} pages reads wrong ({}): {}; {}",
+            input_path.name,
+            len(pages),
+            max(total_pages, pages[-1]),
+            listed,
+            verdict.reason.removeprefix(FAILED),
+            advice,
+        )
 
     def _render_pages_parallel(
         self,
@@ -1548,15 +1677,19 @@ class PdfConverter(BaseConverter):
         # that text; only scanned/garbled pages go through OCR.
         per_page_routing = ocr_config.per_page_routing if ocr_config else True
         native_pages: list[int] = []
+        verdicts: dict[int, LayerVerdict] = {}
+        readable = ocr_readable_scripts(self._ocr_lang)
         doc = pymupdf.open(input_path)
         try:
             total_pages = len(doc)
             if per_page_routing:
                 try:
-                    native_pages = sorted(_collect_native_text_pages(doc))
+                    native_pages, verdicts = _collect_native_text_pages(
+                        doc, readable=readable
+                    )
                 except Exception as e:
                     logger.debug("[PDF] OCR routing check failed: {}", e)
-                    native_pages = []
+                    native_pages, verdicts = [], {}
         finally:
             doc.close()
         if per_page_routing:
@@ -1565,6 +1698,15 @@ class PdfConverter(BaseConverter):
                 len(native_pages),
                 total_pages - len(native_pages),
             )
+            kept = [
+                i + 1
+                for i in native_pages
+                if verdicts.get(i + 1, LayerVerdict("trusted", "")).status == "failed"
+            ]
+            if kept:
+                self._notice_unread_layer(
+                    input_path, total_pages, kept, verdicts, ocr_on=True
+                )
 
         # Native pages: the standard path's pymupdf4llm extraction, so they
         # keep their structure and image refs instead of flat get_text().
