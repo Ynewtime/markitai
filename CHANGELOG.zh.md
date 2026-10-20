@@ -30,6 +30,7 @@
 - **目录批量转换跳过隐藏文件夹、`node_modules` 和 Office 锁文件。** 原本会扫描 `.git`、`.venv` 等所有点目录（虚拟环境里的 `.html` 或 `.md` 也会被转换），点文件和 `~$report.docx` 锁文件也一样。现在与 markitai-rust 一致，除非 glob 写出了这类名字（`-g '.notes/**'`），否则一律跳过；CLI 指南已写明。
 - **批量目录里的符号链接有自己的续跑记录。** 批量状态原本按解析后的真实路径记文档，`link.docx -> report.docx` 与目标共用一条记录：状态里只记下两份输出中的一份，`--resume` 把两份文档算成一份（失败后也只重做一份）。现在每个名字各有一条记录。
 - **用户令牌用浏览器抓取私有地址时说明拒绝原因。** 在 `markitai serve` 中，用户令牌提交私有或本机地址（`http://127.0.0.1:…`、局域网主机）的 URL 时，`playwright` 策略只报 Chromium 的 `net::ERR_BLOCKED_BY_CLIENT`（错误码为 `conversion_error`），而 `static` 会说 `Fetch target refused: private_or_local_host`。现在浏览器路径给出同样的原因，错误码为 `fetch_error`。
+- 自身选项写了 `"llm": false` 的增强请求仍被拒绝（409 `llm_unavailable`），但现在会直接说明这一点，不再提示"LLM enhancement is unavailable; enable a routable LLM first"，免得让人去找一个其实存在的模型。
 - **MCP `job_status` 的计数与 `markitai serve` 一致。** `done` 原本把失败的条目也算进去，三项中一项失败时显示 `done: 3, failed: 1`。现在 `done` 只计成功的条目（`done: 2, failed: 1`），新增的 `finished`（`done` + `failed`）给出 `done` 原来的数，可用于显示进度。MCP 指南已列出这些计数。
 - **包声明的依赖改为实际导入的 `xlrd`，不再声明并未导入的 `pandas`。** 原先以"保留 Excel 单元格格式"为由声明了 `pandas>=2.2,<4`，但 markitai 从不导入 pandas（表格用 openpyxl 和 xlrd 读取）；pandas 仍随 `markitdown[xlsx,xls]` 安装，供 MarkItDown 的后备读取器使用。XLS 读取器导入的 `xlrd` 原本只经由该 extra 带入，现在直接声明。
 - **提到"验证码"的简短中文页面不再被当成人机验证页。** 任何不足 1500 字且含"验证码"的页面（如带"获取验证码"的登录表单、讲短信验证码的帮助文章）都会被当作验证页：静态抓取的结果被丢弃、改用浏览器，浏览器得到的页面和截图也被当作验证码页丢掉。现在只有要求先输入验证码才能继续的页面（"请输入验证码以继续访问"、"此验证码用于确认……"）才算，"安全验证码"也不再匹配"安全验证"。

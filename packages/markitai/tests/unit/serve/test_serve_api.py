@@ -1759,6 +1759,9 @@ class TestRetry:
                 json={"operation": "enhance", "options": {"llm": False}},
             )
             assert refused.status_code == 409
+            # The model is there: the caller's options turned it off
+            assert "routable" not in refused.json()["detail"]
+            assert '"llm": false' in refused.json()["detail"]
             queued = await client.post(
                 f"/api/jobs/{job_id}/items/i1/retry", json={"operation": "enhance"}
             )

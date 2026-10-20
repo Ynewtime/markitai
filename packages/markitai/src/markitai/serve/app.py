@@ -5763,6 +5763,12 @@ def create_app(
             if explicit_options and operation == "retry":
                 _require_model(conversion, opts)
             cfg = job_config(conversion, opts)
+            if operation == "enhance" and explicit_options and opts.llm is False:
+                raise ApiError(
+                    409,
+                    "llm_unavailable",
+                    'LLM enhancement needs the LLM, which these options turn off ("llm": false)',
+                )
             if operation == "enhance" and (
                 not cfg.llm.enabled or not conversion.routable
             ):
