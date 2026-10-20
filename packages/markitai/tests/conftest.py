@@ -210,12 +210,20 @@ def pytest_unconfigure(config: pytest.Config) -> None:
 # pytest puts the running test's id in PYTEST_CURRENT_TEST; Windows refuses
 # an environment variable over 32,767 characters, and a 1 MiB id there failed
 # setup and teardown, then took 50 minutes to report. Parametrize long values
-# with ``ids=``.
+# with ``ids=``. An id is measured from the package folder, so the limit is
+# the same whether pytest runs in packages/markitai (CI) or at the repository
+# root (CONTRIBUTING's ``uv run pytest``), where every id gains a
+# ``packages/markitai/`` prefix.
 MAX_TEST_ID = 255
+_ROOT_PREFIX = "packages/markitai/"
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
-    long_ids = [item.nodeid for item in items if len(item.nodeid) > MAX_TEST_ID]
+    long_ids = [
+        item.nodeid
+        for item in items
+        if len(item.nodeid.removeprefix(_ROOT_PREFIX)) > MAX_TEST_ID
+    ]
     if long_ids:
         shown = "\n".join(f"  {nodeid[:120]}... ({len(nodeid)})" for nodeid in long_ids)
         raise pytest.UsageError(
