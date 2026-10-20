@@ -299,6 +299,8 @@ markitai ./docs -o ./output -g '!drafts/**'
 
 Use single quotes around `!` patterns in shells with history expansion.
 
+A directory batch never converts dot-files or anything in a dot-folder (`.git`, `.venv`, `.cache`), `node_modules`, or Office lock files (`~$report.docx`), with or without `-g`. A pattern that spells such a name out includes them: `-g '.notes/**/*.md'`, `-g '**/node_modules/**/*.md'`. Pointing markitai at such a folder itself (`markitai .notes -o out`) also works.
+
 ### `--max-depth <n>`
 
 How deep to scan a directory (default 5). `0` scans only the directory itself.

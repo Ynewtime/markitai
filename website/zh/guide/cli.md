@@ -299,6 +299,8 @@ markitai ./docs -o ./output -g '!drafts/**'
 
 在有历史扩展的 shell 里，`!` 模式要用单引号包起来。
 
+目录批量转换不会转换点文件和点目录（`.git`、`.venv`、`.cache`）中的任何文件、`node_modules`，以及 Office 锁文件（`~$report.docx`），无论是否给了 `-g`。写出这类名字的模式会把它们包括进来：`-g '.notes/**/*.md'`、`-g '**/node_modules/**/*.md'`。直接对这类文件夹本身运行（`markitai .notes -o out`）也可以。
+
 ### `--max-depth <n>`
 
 目录扫描深度（默认 5）。`0` 只扫描目录本身。

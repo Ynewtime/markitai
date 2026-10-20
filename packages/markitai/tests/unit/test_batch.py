@@ -637,6 +637,45 @@ class TestBatchProcessor:
         assert discover("*.docx", "!link*") == [report]
         assert discover("link*") == [link]
 
+    def test_discover_files_skips_hidden_dependency_and_lock_files(
+        self, tmp_path: Path
+    ) -> None:
+        """.git, .venv and every dot-folder were scanned, and Office lock
+        files (~$x.docx) were converted. As in markitai-rust, dot-files and
+        dot-folders, node_modules and ~$ files are left out unless a glob
+        spells them out."""
+        for name in (
+            "report.docx",
+            "docs/guide.docx",
+            ".git/objects/blob.docx",
+            ".venv/lib/readme.docx",
+            ".notes/plan.docx",
+            "node_modules/pkg/readme.docx",
+            "docs/~$guide.docx",
+            ".hidden.docx",
+        ):
+            path = tmp_path / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.touch()
+        processor = BatchProcessor(
+            BatchConfig(), tmp_path / "output", input_path=tmp_path
+        )
+
+        def discover(*patterns: str) -> list[str]:
+            found = processor.discover_files(
+                tmp_path, extensions={".docx"}, glob_patterns=list(patterns)
+            )
+            return [path.relative_to(tmp_path).as_posix() for path in found]
+
+        assert discover() == ["docs/guide.docx", "report.docx"]
+        assert discover(".notes/**") == [".notes/plan.docx"]
+        assert discover("**/node_modules/**") == ["node_modules/pkg/readme.docx"]
+        assert discover("!.notes/**") == ["docs/guide.docx", "report.docx"]
+        # The folder given itself may be a dot-folder
+        assert processor.discover_files(tmp_path / ".notes", {".docx"}) == [
+            tmp_path / ".notes" / "plan.docx"
+        ]
+
     def test_discover_files_with_relative_input_path_and_globs(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

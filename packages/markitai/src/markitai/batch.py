@@ -976,7 +976,12 @@ class BatchProcessor:
         Discover files to process.
 
         One pruned walk of the tree; extensions match case-insensitively
-        (``Report.Pdf`` is found, as in single-file mode). What markitai
+        (``Report.Pdf`` is found, as in single-file mode). As in
+        markitai-rust, dot-files and dot-folders (``.git``, ``.venv``),
+        ``node_modules`` and Office lock files (``~$report.docx``) are not
+        documents: they are left out unless a glob that is not an exclusion
+        spells such a name out (``.notes/**``, ``**/node_modules/**``). What
+        markitai
         writes itself is never fed back in: ``.markitai/`` metadata
         directories (assets, screenshots, states, reports) are always
         skipped, the output directory is skipped whole when it lies inside
@@ -1011,6 +1016,22 @@ class BatchProcessor:
         max_depth = max(0, self.config.scan_max_depth)
         max_files = max(1, self.config.scan_max_files)
         positive_globs, negative_globs = self._compile_glob_patterns(glob_patterns)
+        spelled = [
+            part
+            for pattern in glob_patterns or []
+            if not pattern.strip().startswith("!")
+            for part in pattern.strip().split("/")
+        ]
+        hidden_wanted = any(
+            part.startswith(".") and part not in (".", "..") for part in spelled
+        )
+        dependencies_wanted = "node_modules" in spelled
+
+        def is_skipped_name(name: str) -> bool:
+            if name.startswith((".", "~$")) and not hidden_wanted:
+                return True
+            return name == "node_modules" and not dependencies_wanted
+
         # Outputs mirror the input tree under output_dir, so the output tree
         # overlaps the input whenever one contains the other.
         output_inside_input = input_resolved in output_resolved.parents
@@ -1069,6 +1090,7 @@ class BatchProcessor:
                     name
                     for name in dirnames
                     if not is_markitai_output_dir(current / name, name, rel_dir)
+                    and not is_skipped_name(name)
                 ]
             else:
                 dirnames[:] = []
@@ -1076,6 +1098,7 @@ class BatchProcessor:
                 current / name
                 for name in filenames
                 if os.path.splitext(name)[1].lower() in wanted
+                and not is_skipped_name(name)
             )
 
         files: list[Path] = []
