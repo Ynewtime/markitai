@@ -1,3 +1,4 @@
+use crate::formats::link_destination as destination;
 use crate::{Asset, Document, Error, Result};
 use anydoc::model::{Block, CellSlot, ImageSource, Inline, LinkTarget};
 use std::collections::BTreeSet;
@@ -241,16 +242,6 @@ fn defines_link(line: &str) -> bool {
         }
     }
     false
-}
-
-fn destination(value: &str) -> String {
-    value
-        .replace(' ', "%20")
-        .replace('(', "%28")
-        .replace(')', "%29")
-        .replace('<', "%3C")
-        .replace('>', "%3E")
-        .replace(['\r', '\n'], "")
 }
 
 fn image_extension(mime: &str, origin: &str) -> String {
@@ -990,6 +981,15 @@ impl Renderer<'_> {
                         // Whether Markdown reads the marker as one (a number
                         // and a stop, or a bullet); a label such as `a)`,
                         // `(1)` or `一、` is only text at the head of a line.
+                        let digits = marker.bytes().take_while(u8::is_ascii_digit).count();
+                        let markdown_marker = matches!(marker.as_str(), "*" | "-" | "+")
+                            || ((1..=9).contains(&digits)
+                                && matches!(&marker[digits..], "." | ")"));
+                        // Text under a marker Markdown does not read is not
+                        // list content; indented four columns or more after a
+                        // blank line it would be a code block.
+                        let width = marker.chars().count() + 1;
+                        let indent = " ".repeat(if markdown_marker { width } else { width.min(3) });
                         // An item holding only a deeper list, as Impress
                         // writes a second-level point (`<text:list-item>`
                         // around a `<text:list>`), shows no marker of its
@@ -1001,15 +1001,6 @@ impl Renderer<'_> {
                                 item.blocks.iter().find(|block| has_content(block)),
                                 Some(Block::List(_))
                             );
-                        let digits = marker.bytes().take_while(u8::is_ascii_digit).count();
-                        let markdown_marker = matches!(marker.as_str(), "*" | "-" | "+")
-                            || ((1..=9).contains(&digits)
-                                && matches!(&marker[digits..], "." | ")"));
-                        // Text under a marker Markdown does not read is not
-                        // list content; indented four columns or more after a
-                        // blank line it would be a code block.
-                        let width = marker.chars().count() + 1;
-                        let indent = " ".repeat(if markdown_marker { width } else { width.min(3) });
                         let mut lines = content.lines();
                         let mut item_text = if only_a_list {
                             format!("{indent}{}", lines.next().unwrap_or(""))
@@ -1965,6 +1956,15 @@ mod tests {
                 ]
             )]),
             // A label Markdown does not read (`1-a)`) is text at the head of a
+            // line, which the hard break keeps from joining the line before.
+            "1. First\n2. Second  \n1-a) Composite"
+        );
+        assert_eq!(
+            renderer.blocks(&[list(MarkerKind::Bullet, vec![item("•", "Point")])]),
+            "* Point"
+        );
+    }
+
     #[test]
     fn an_item_holding_only_a_list_nests_it_under_the_item_before() {
         use anydoc::model::{List, ListItem, MarkerKind};
@@ -2021,15 +2021,6 @@ mod tests {
             ]
         );
         assert!(!markdown.contains("* *"));
-    }
-
-            // line, which the hard break keeps from joining the line before.
-            "1. First\n2. Second  \n1-a) Composite"
-        );
-        assert_eq!(
-            renderer.blocks(&[list(MarkerKind::Bullet, vec![item("•", "Point")])]),
-            "* Point"
-        );
     }
 
     #[test]

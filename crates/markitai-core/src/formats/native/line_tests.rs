@@ -579,3 +579,15 @@ fn underlines_preserve_ranges_links_and_punctuation_without_inventing_emphasis()
         r"<u>left \| right</u>"
     );
 }
+
+#[test]
+fn a_link_destination_is_read_whole() {
+    let link = |url: &str| Inline::Link {
+        content: vec![Inline::plain("x")],
+        target: LinkTarget::External(url.into()),
+    };
+    assert_eq!(
+        paragraph(vec![link("https://example.test/a\\_b c(d)\"e\"\r\n")]),
+        "[x](https://example.test/a\\\\_b%20c%28d%29%22e%22)"
+    );
+}

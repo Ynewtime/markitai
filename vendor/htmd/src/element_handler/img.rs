@@ -48,7 +48,12 @@ pub(super) fn img_handler(handlers: &dyn Handlers, element: Element) -> Option<H
         .map(process_alt_title)
         .filter(|title| !title.is_empty());
 
-    let link = link.map(|text| text.replace('(', "\\(").replace(')', "\\)"));
+    // markitai: a backslash is escaped first, or `a\_b` would read as `a_b`.
+    let link = link.map(|text| {
+        text.replace('\\', "\\\\")
+            .replace('(', "\\(")
+            .replace(')', "\\)")
+    });
 
     let has_spaces_in_link = link.as_ref().is_some_and(|link| link.contains(' '));
 

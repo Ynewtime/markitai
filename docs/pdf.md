@@ -510,7 +510,8 @@ A `/Link` annotation whose action is a `/URI` (also when the URI string is an
 indirect object, as Quartz writes it) becomes a Markdown link over the runs it
 covers in the layout pass: `[link text](https://…)`, or `<https://…>` when the
 text is the address. Only `http`, `https` and `mailto` targets are carried;
-spaces and angle brackets are percent-encoded and parentheses escaped. A link
+spaces, parentheses, angle brackets and double quotes are percent-encoded and
+a backslash is escaped, as the document converters write an address. A link
 with another target (`javascript:`, `file:`, a relative or in-document
 reference) keeps its text without a link. A run belongs to a link when the
 middle of its height is inside the link's box and four fifths of its width

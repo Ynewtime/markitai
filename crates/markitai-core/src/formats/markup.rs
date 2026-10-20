@@ -1,5 +1,6 @@
 //! Stateful readers for lightweight markup and non-executing TeX extraction.
 
+use crate::formats::{autolink_destination, link_destination as destination};
 use crate::{Document, Error, Result};
 use std::collections::HashMap;
 
@@ -106,16 +107,6 @@ fn code(text: &str) -> String {
     } else {
         format!("{marker}{text}{marker}")
     }
-}
-
-fn destination(value: &str) -> String {
-    value
-        .replace(' ', "%20")
-        .replace('(', "%28")
-        .replace(')', "%29")
-        .replace('<', "%3C")
-        .replace('>', "%3E")
-        .replace('\n', "%0A")
 }
 
 fn label(value: &str) -> String {
@@ -781,7 +772,7 @@ fn org_inline(text: &str, depth: usize) -> String {
                 || target.starts_with("https://")
                 || target.starts_with("mailto:")
             {
-                out.push_str(&format!("<{}>", destination(&target)));
+                out.push_str(&format!("<{}>", autolink_destination(&target)));
             } else {
                 out.push_str(&link(&target, &target));
             }
@@ -1536,7 +1527,7 @@ fn tex_render(
             } else if name == "path" {
                 out.push_str(&code(target));
             } else {
-                out.push_str(&format!("<{}>", destination(target)));
+                out.push_str(&format!("<{}>", autolink_destination(target)));
             }
             continue;
         }
@@ -1753,6 +1744,26 @@ mod tests {
 
     fn read(source: &str, extension: &str) -> Document {
         extract(source, extension).unwrap()
+    }
+
+    #[test]
+    fn org_links_and_autolinks_keep_a_backslash_in_their_address() {
+        let doc = read(
+            "See [[https://example.invalid/a\\_b c][the site]] and [[https://example.invalid/x\\_y z]].\n",
+            "org",
+        );
+        assert!(
+            doc.markdown
+                .contains("[the site](https://example.invalid/a\\\\_b%20c)"),
+            "{}",
+            doc.markdown
+        );
+        // An autolink reads no escapes.
+        assert!(
+            doc.markdown.contains("<https://example.invalid/x\\_y%20z>"),
+            "{}",
+            doc.markdown
+        );
     }
 
     #[test]

@@ -169,7 +169,8 @@ impl AnchorElementHandler {
 }
 
 fn escape_link_destination(link: String) -> String {
-    if !link.contains(['(', ')']) {
+    // markitai: a backslash is escaped too, or `a\_b` would read as `a_b`.
+    if !link.contains(['(', ')', '\\']) {
         return link;
     }
 
@@ -178,6 +179,7 @@ fn escape_link_destination(link: String) -> String {
         match ch {
             '(' => escaped.push_str("\\("),
             ')' => escaped.push_str("\\)"),
+            '\\' => escaped.push_str("\\\\"),
             _ => escaped.push(ch),
         }
     }

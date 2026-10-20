@@ -89,6 +89,10 @@ Each change is marked `markitai` in a comment.
   paragraph that starts a block (heading, quote, list item, table row,
   rule, indented code) and content holding a code fence are left as they
   were. `tests/markitai_tests.rs`: one test.
+- `src/element_handler/anchor.rs` and `src/element_handler/img.rs`: a
+  backslash in a link or image destination is escaped like the parentheses
+  already were; upstream wrote it bare, so `a\_b` read as `a_b`.
+  `tests/markitai_tests.rs`: one test.
 - `src/text_util.rs`: `indent_text_except_first_line`, which indents a list
   item's lines, keeps a hard break written as two trailing spaces on a line
   that a line with content follows, instead of trimming it with the other
@@ -189,8 +193,8 @@ lines, an empty title, and an emphasis element nested in one of its own kind.
 In the isolated copy (it sits under another workspace, so a `[workspace]` table
 is appended to its manifest) the suite passes with 114 tests, 112 before the two
 added ones, and the three turndown expectations above updated; with the
-paragraph-spanning emphasis test added since, the
-run counts 116 (unit, integration and doc tests) and
+paragraph-spanning emphasis and destination backslash tests added since, the
+run counts 117 (unit, integration and doc tests) and
 `cargo clippy --all-targets -- -D warnings` reports nothing.
 
 `rustfmt` 1.9 with default settings leaves the modified files unchanged and

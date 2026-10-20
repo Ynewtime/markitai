@@ -982,3 +982,19 @@ fn image_text_joins_its_lines_and_an_empty_title_is_left_out() {
         assert_eq!(markdown, htmd::convert(html).unwrap(), "{html}");
     }
 }
+
+#[test]
+fn a_backslash_in_a_destination_is_kept() {
+    for (html, markdown) in [
+        (
+            "<a href=\"https://example.org/a\\_b(c)\">x</a>",
+            "[x](https://example.org/a\\\\_b\\(c\\))",
+        ),
+        (
+            "<img src=\"https://example.org/a\\_b.png\" alt=\"x\">",
+            "![x](https://example.org/a\\\\_b.png)",
+        ),
+    ] {
+        assert_eq!(markdown, htmd::convert(html).unwrap(), "{html}");
+    }
+}

@@ -63,8 +63,8 @@ impl LinkBox {
 }
 
 /// The destination a link annotation's URI may carry into Markdown: a web or
-/// mail address, written as a link destination (spaces and angle brackets
-/// encoded, parentheses and backslashes escaped). Another scheme
+/// mail address, written as a link destination
+/// ([`crate::formats::link_destination`]). Another scheme
 /// (`javascript:`, `file:`, `data:`), a relative or local reference and a URI
 /// holding control characters or other white space carry none.
 pub(super) fn target(uri: &str) -> Option<Arc<str>> {
@@ -78,21 +78,13 @@ pub(super) fn target(uri: &str) -> Option<Arc<str>> {
     if !allowed {
         return None;
     }
-    let mut destination = String::with_capacity(uri.len());
-    for ch in uri.chars() {
-        match ch {
-            ' ' => destination.push_str("%20"),
-            '<' => destination.push_str("%3C"),
-            '>' => destination.push_str("%3E"),
-            '(' | ')' | '\\' => {
-                destination.push('\\');
-                destination.push(ch);
-            }
-            _ if ch.is_control() || ch.is_whitespace() => return None,
-            _ => destination.push(ch),
-        }
+    if uri
+        .chars()
+        .any(|ch| ch != ' ' && (ch.is_control() || ch.is_whitespace()))
+    {
+        return None;
     }
-    Some(destination.into())
+    Some(crate::formats::link_destination(uri).into())
 }
 
 /// Mark the runs `links` cover. A run belongs to a link when the middle of
@@ -514,7 +506,11 @@ mod tests {
     fn only_web_and_mail_targets_are_carried() {
         assert_eq!(
             target("https://example.com/a b(c)").as_deref(),
-            Some("https://example.com/a%20b\\(c\\)")
+            Some("https://example.com/a%20b%28c%29")
+        );
+        assert_eq!(
+            target("https://example.com/a\\_b<c>").as_deref(),
+            Some("https://example.com/a\\\\_b%3Cc%3E")
         );
         assert_eq!(
             target(" mailto:a@example.com ").as_deref(),

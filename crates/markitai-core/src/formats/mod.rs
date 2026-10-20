@@ -55,6 +55,41 @@ pub(crate) fn page_ranges(pages: &[usize]) -> String {
         .join(", ")
 }
 
+/// An address written as an inline Markdown link or image destination,
+/// `[text](here)`: one that every CommonMark reader takes whole. Tabs and line
+/// breaks are dropped, as a browser drops them from an address; spaces,
+/// parentheses, angle brackets, double quotes and other control characters
+/// are percent-encoded; a backslash is escaped, so it is not read as escaping
+/// the character after it.
+pub(crate) fn link_destination(value: &str) -> String {
+    destination(value, true)
+}
+
+/// An address written as a Markdown autolink, `<here>`: as
+/// [`link_destination`], except that a backslash stays as it is, since an
+/// autolink reads no escapes.
+pub(crate) fn autolink_destination(value: &str) -> String {
+    destination(value, false)
+}
+
+fn destination(value: &str, escapes: bool) -> String {
+    let mut out = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            '\t' | '\r' | '\n' => {}
+            '\\' if escapes => out.push_str("\\\\"),
+            ' ' | '(' | ')' | '<' | '>' | '"' => out.push_str(&format!("%{:02X}", ch as u32)),
+            _ if ch.is_control() => {
+                for byte in ch.encode_utf8(&mut [0; 4]).bytes() {
+                    out.push_str(&format!("%{byte:02X}"));
+                }
+            }
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
 pub(crate) fn extract_pdf_with_config(bytes: &[u8], cfg: &serde_json::Value) -> Result<Document> {
     native::pdf::extract_with_config(bytes, cfg)
 }
@@ -284,6 +319,41 @@ fn extract_as_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_destination_is_read_whole_by_a_markdown_reader() {
+        let address = "https://example.org/a b(c)<d>\"e\\_f\u{7}\r\n\tg";
+        let written = link_destination(address);
+        assert_eq!(
+            written,
+            "https://example.org/a%20b%28c%29%3Cd%3E%22e\\\\_f%07g"
+        );
+        let markdown = format!("[x]({written})");
+        let destinations: Vec<String> = pulldown_cmark::Parser::new(&markdown)
+            .filter_map(|event| match event {
+                pulldown_cmark::Event::Start(pulldown_cmark::Tag::Link { dest_url, .. }) => {
+                    Some(dest_url.to_string())
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            destinations,
+            ["https://example.org/a%20b%28c%29%3Cd%3E%22e\\_f%07g"]
+        );
+        // An autolink reads no escapes, so its backslash stays single.
+        let autolink = format!("<{}>", autolink_destination("https://example.org/a\\_b c"));
+        assert_eq!(autolink, "<https://example.org/a\\_b%20c>");
+        let read: Vec<String> = pulldown_cmark::Parser::new(&autolink)
+            .filter_map(|event| match event {
+                pulldown_cmark::Event::Start(pulldown_cmark::Tag::Link { dest_url, .. }) => {
+                    Some(dest_url.to_string())
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(read, ["https://example.org/a\\_b%20c"]);
+    }
 
     #[test]
     fn format_support_does_not_promise_unimplemented_readers() {

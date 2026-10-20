@@ -661,33 +661,33 @@ fn safe_url(value: &str, base: Option<&Url>) -> Option<String> {
         && let Ok(url) = Url::parse(&destination)
         && let Some(target) = sites::redirect_target(&url)
     {
-        return Some(
-            target
-                .replace('<', "%3C")
-                .replace('>', "%3E")
-                .replace('"', "%22"),
-        );
+        return Some(attribute_url(&target));
     }
     Some(destination)
 }
 
+/// An address kept in an attribute of the cleaned page: the characters that
+/// would end the attribute or an angle-bracketed Markdown destination are
+/// percent-encoded. The address stays otherwise as written, since it is also
+/// the page's `canonical_url`; the Markdown converter writes the destination.
+fn attribute_url(value: &str) -> String {
+    value
+        .replace('<', "%3C")
+        .replace('>', "%3E")
+        .replace('"', "%22")
+}
+
 fn resolved_url(value: &str, base: Option<&Url>) -> Option<String> {
-    fn destination(value: &str) -> String {
-        value
-            .replace('<', "%3C")
-            .replace('>', "%3E")
-            .replace('"', "%22")
-    }
     let value = value.trim();
     if value.is_empty() || value.chars().any(char::is_control) {
         return None;
     }
     if value.starts_with('#') {
-        return Some(destination(value));
+        return Some(attribute_url(value));
     }
     if let Ok(url) = Url::parse(value) {
         return matches!(url.scheme(), "http" | "https" | "mailto" | "tel")
-            .then(|| destination(value));
+            .then(|| attribute_url(value));
     }
     // A scheme-relative address (`//host/path`) names another host; without a
     // page to take the scheme from, Markdown would read it as a local path.
@@ -695,7 +695,7 @@ fn resolved_url(value: &str, base: Option<&Url>) -> Option<String> {
         return Url::parse(&format!("https:{value}"))
             .ok()
             .filter(|url| url.host_str().is_some())
-            .map(|_| destination(&format!("https:{value}")));
+            .map(|_| attribute_url(&format!("https:{value}")));
     }
     if let Some(base) = base {
         return base
@@ -707,7 +707,7 @@ fn resolved_url(value: &str, base: Option<&Url>) -> Option<String> {
     // Without a base, a colon before the first `/`, `?` or `#` could be read
     // as a scheme; one after it is part of a relative path or query.
     let head = value.split(['/', '?', '#']).next().unwrap_or_default();
-    (!head.contains(':')).then(|| destination(value))
+    (!head.contains(':')).then(|| attribute_url(value))
 }
 
 /// A saved page's own address for its relative links: an absolute

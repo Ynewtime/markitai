@@ -16,6 +16,7 @@ use super::Attribute;
 use super::hacker_news::escaped;
 use super::{Announcement, Landmarks, render_clean, selector};
 use crate::Result;
+use crate::formats::link_destination;
 use regex::Regex;
 use scraper::{ElementRef, Html};
 use serde_json::{Map, Value};
@@ -379,12 +380,12 @@ fn media(
                 (Some(poster), Some(file)) => add(format!(
                     "[{}]({})",
                     image_markdown(&poster).replacen("![]", &format!("![{label}]"), 1),
-                    file.replace(' ', "%20")
+                    link_destination(&file)
                 )),
                 (Some(poster), None) => {
                     add(image_markdown(&poster).replacen("![]", &format!("![{label}]"), 1));
                 }
-                (None, Some(file)) => add(format!("[{label}]({})", file.replace(' ', "%20"))),
+                (None, Some(file)) => add(format!("[{label}]({})", link_destination(&file))),
                 (None, None) => {}
             }
         } else if let Some(photo) = https(element.value().attribute("src"))
@@ -397,12 +398,7 @@ fn media(
 }
 
 fn image_markdown(url: &str) -> String {
-    format!(
-        "![]({})",
-        url.replace(' ', "%20")
-            .replace('(', "%28")
-            .replace(')', "%29")
-    )
+    format!("![]({})", link_destination(url))
 }
 
 /// The date a post shows: the older page's `time[datetime]`, else the text
@@ -1085,8 +1081,16 @@ pub(super) fn post(
 #[cfg(test)]
 mod tests {
     use super::super::extract_html;
-    use super::{canonical_status_url, id_date, original_image, published};
+    use super::{canonical_status_url, id_date, image_markdown, original_image, published};
     use url::Url;
+
+    #[test]
+    fn a_post_image_address_is_written_as_one_destination() {
+        assert_eq!(
+            image_markdown("https://pbs.example/media/a b(c)<d>.jpg"),
+            "![](https://pbs.example/media/a%20b%28c%29%3Cd%3E.jpg)"
+        );
+    }
 
     /// A post of the newest server-rendered page: no test ids, the text in a
     /// `div[dir=auto]`, the date in the status link, counters in
