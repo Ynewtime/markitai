@@ -118,9 +118,9 @@ _SYMBOL_WORDS: dict[str, str] = {
     "rtlmark": "\u200f",
 }
 
-# Destinations whose content is not document text. Footnotes are dropped
-# rather than inlined: a Markdown footnote needs a reference at the call site,
-# and RTF puts none there.
+# Destinations whose content is not document text. (A footnote is text: its
+# group sits where its reference is, after the \chftn that prints the mark,
+# and becomes a Markdown note; see _Parser._begin_note.)
 _SKIPPED_DESTINATIONS = frozenset(
     {
         "colortbl",
@@ -142,7 +142,6 @@ _SKIPPED_DESTINATIONS = frozenset(
         "footerl",
         "footerr",
         "footerf",
-        "footnote",
         "ftnsep",
         "ftnsepc",
         "ftncn",
@@ -212,6 +211,7 @@ _DESTINATION_SINKS: dict[str, str] = {
     "pntext": "pntext",
     "fldinst": "fldinst",
     "fldrslt": "body",
+    "footnote": "note",
     "pict": "pict",
     # Word writes the same image twice, as \shppict and \nonshppict; the
     # second copy is skipped without counting so the tally stays honest.
@@ -300,6 +300,8 @@ class _Document:
     styles: dict[int, str] = field(default_factory=dict)
     title: str | None = None
     pictures: int = 0
+    # Footnote and endnote texts, numbered in reading order ([^1] is notes[0])
+    notes: list[str] = field(default_factory=list)
 
 
 class _Parser:
@@ -338,6 +340,8 @@ class _Parser:
         self._pn_text: str | None = None
         self._pn_kind: str | None = None
         self._pn_level: int | None = None
+
+        self._note_paras: list[str] = []
 
         self._fields: list[_Field] = []
         self._fldinst: list[str] = []
@@ -553,7 +557,11 @@ class _Parser:
             return
         if name == "fldrslt":
             self._begin_field_result()
-            state.sink = "body"
+            # A link in a footnote stays in the footnote
+            state.sink = "note" if state.sink == "note" else "body"
+            return
+        if name == "footnote":
+            self._begin_note()
             return
         state.sink = sink
 
@@ -626,6 +634,49 @@ class _Parser:
             self._begin_field()
         elif name in _SYMBOL_WORDS:
             self._text(_SYMBOL_WORDS[name])
+
+    # ------------------------------------------------------------ sink: note
+
+    def _begin_note(self) -> None:
+        """A footnote or endnote (``\\ftnalt``) group: a ``[^n]`` mark where
+        it stands, its text collected as note *n*. One outside the body (in
+        a page header) is skipped."""
+        state = self._state
+        if state.sink != "body":
+            state.sink = "skip"
+            return
+        notes = self._doc.notes
+        notes.append("")
+        number = len(notes)
+        body_runs = self._runs
+        body_runs.append(_Run(f"[^{number}]", size=state.size))
+        self._runs = []
+        self._note_paras = []
+
+        def _end() -> None:
+            self._end_note_paragraph()
+            notes[number - 1] = " ".join(self._note_paras)
+            self._runs = body_runs
+
+        self._on_close(_end)
+        state.sink = "note"
+
+    def _end_note_paragraph(self) -> None:
+        text = _render_runs(self._runs).replace(_HARD_BREAK, "")
+        text = " ".join(text.split())
+        if text:
+            self._note_paras.append(text)
+        self._runs = []
+
+    def _note_control(self, name: str, param: int | None) -> None:
+        if name in ("par", "sect", "page", "column", "cell", "row", "nestcell"):
+            self._end_note_paragraph()
+        elif name in ("line", "tab"):
+            self._text(" ")
+        elif name == "chftn":
+            pass  # the note's own number, which [^n]: stands for
+        elif name not in ("nestrow", "trowd", "intbl"):
+            self._body_control(name, param)
 
     # ------------------------------------------------------- sink: side tables
 
@@ -736,7 +787,7 @@ class _Parser:
         if not value:
             return
         sink = self._state.sink
-        if sink == "body":
+        if sink in ("body", "note"):
             if not self._state.hidden:
                 self._runs.append(
                     _Run(
@@ -764,6 +815,9 @@ class _Parser:
 
     def _flush_paragraph(self) -> None:
         state = self._state
+        if state.sink == "note":
+            self._end_note_paragraph()
+            return
         if state.sink != "body":
             self._runs = []
             self._reset_list_state()
@@ -852,6 +906,7 @@ _SINK_HANDLERS: dict[str, Callable[[_Parser, str, int | None], None]] = {
     "listtable": _Parser._listtable_control,
     "listoverride": _Parser._listoverride_control,
     "pn": _Parser._pn_control,
+    "note": _Parser._note_control,
 }
 
 
@@ -985,6 +1040,9 @@ def _render_document(doc: _Document, styles: dict[int, str]) -> str:
             previous = pieces[index - 1][0]
             out.append("\n" if kind == "list" and previous == "list" else "\n\n")
         out.append(text)
+    if doc.notes:
+        out.append("\n\n")
+        out.append("\n".join(f"[^{n}]: {text}" for n, text in enumerate(doc.notes, 1)))
     return _normalise("".join(out))
 
 

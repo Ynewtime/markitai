@@ -332,9 +332,7 @@ class TestFieldsAndDestinations:
 
         assert markdown == "Page 7 of 9.\n"
 
-    def test_headers_footers_footnotes_and_pictures_are_dropped(
-        self, tmp_path: Path
-    ) -> None:
+    def test_headers_footers_and_pictures_are_dropped(self, tmp_path: Path) -> None:
         path = tmp_path / "dropped.rtf"
         path.write_bytes(
             _PREAMBLE
@@ -350,9 +348,53 @@ class TestFieldsAndDestinations:
         )
         result = RtfConverter().convert(path)
 
-        assert result.markdown == "Body text continues.\n\nCaption.\n"
+        assert result.markdown == (
+            "Body text[^1] continues.\n\nCaption.\n\n[^1]: A footnote.\n"
+        )
         assert result.metadata["title"] == "My Title"
         assert result.metadata["dropped_images"] == 1
+
+    def test_footnotes_and_endnotes_become_markdown_notes(self, tmp_path: Path) -> None:
+        """Footnotes were dropped. Word writes the reference mark as
+        ``\\chftn`` with the note group after it, and the note's own text
+        starts with another ``\\chftn`` (its number); LibreOffice and pandoc
+        write the group starred, inside the superscript."""
+        markdown = _convert(
+            tmp_path,
+            # Word: a footnote with formatting and two paragraphs
+            rb"{\pard Word says{\cs16\super \chftn {\footnote \pard\plain"
+            rb"{\cs16\super \chftn } A \b bold\b0  note.\par Second part.}}"
+            rb" here.\par}"
+            # LibreOffice: starred, a tab after the number
+            rb"{\pard Writer{{\super \chftn{\*\footnote \chftn\pard\plain"
+            rb"{\tab The LibreOffice note.}}}}.\par}"
+            # an endnote, and a note in a table cell
+            rb"{\pard End{\super\chftn}{\footnote\ftnalt\chftn\~ An endnote.}"
+            rb"\par}"
+            rb"\trowd\cellx1000\cellx2000"
+            rb"\pard\intbl cell{\super\chftn}{\footnote\chftn In a cell.}\cell"
+            rb"\pard\intbl two\cell\row",
+        )
+
+        assert markdown == (
+            "Word says[^1] here.\n\n"
+            "Writer[^2].\n\n"
+            "End[^3]\n\n"
+            "| cell[^4] | two |\n| --- | --- |\n\n"
+            "[^1]: A **bold** note. Second part.\n"
+            "[^2]: The LibreOffice note.\n"
+            "[^3]: An endnote.\n"
+            "[^4]: In a cell.\n"
+        )
+
+    def test_a_footnote_in_a_header_is_not_a_body_note(self, tmp_path: Path) -> None:
+        markdown = _convert(
+            tmp_path,
+            rb"{\header\pard Head{\footnote\pard Lost.\par}\par}"
+            rb"{\pard Body.\par}",
+        )
+
+        assert markdown == "Body.\n"
 
     def test_bin_data_is_skipped_by_its_byte_count(self, tmp_path: Path) -> None:
         """``\\binN`` is followed by N raw bytes, which may hold braces and
