@@ -81,7 +81,14 @@ Each change is marked `markitai` in a comment.
 - `src/element_handler/emphasis.rs`: an emphasis element inside one that
   writes the same emphasis (`b` or `strong` in either, `i` or `em` in either,
   in the same block) adds no markers (see the differences below).
-  `tests/markitai_tests.rs`: two tests for these changes.
+  `tests/markitai_tests.rs`: two tests for these changes. An emphasis
+  whose content spans paragraphs (`<b>` around `<p>`s, or an unclosed one
+  the HTML parser carries over a stray `</p>`) wraps each paragraph alone,
+  since emphasis cannot span a blank line; upstream wrote its markers once
+  around them all, leaving literal `**Bold *start` and `next para***`. A
+  paragraph that starts a block (heading, quote, list item, table row,
+  rule, indented code) and content holding a code fence are left as they
+  were. `tests/markitai_tests.rs`: one test.
 - `src/text_util.rs`: `indent_text_except_first_line`, which indents a list
   item's lines, keeps a hard break written as two trailing spaces on a line
   that a line with content follows, instead of trimming it with the other
@@ -181,7 +188,10 @@ emphasis changes: since them the two differ on an alt text or title that spans
 lines, an empty title, and an emphasis element nested in one of its own kind.
 In the isolated copy (it sits under another workspace, so a `[workspace]` table
 is appended to its manifest) the suite passes with 114 tests, 112 before the two
-added ones, and the three turndown expectations above updated.
+added ones, and the three turndown expectations above updated; with the
+paragraph-spanning emphasis test added since, the
+run counts 116 (unit, integration and doc tests) and
+`cargo clippy --all-targets -- -D warnings` reports nothing.
 
 `rustfmt` 1.9 with default settings leaves the modified files unchanged and
 would join one call onto a line in three unmodified upstream files

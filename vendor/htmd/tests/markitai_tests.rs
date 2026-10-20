@@ -943,6 +943,25 @@ fn nested_identical_emphasis_is_written_once() {
 }
 
 #[test]
+fn emphasis_around_paragraphs_wraps_each_paragraph() {
+    for (html, markdown) in [
+        // A `</p>` with no open paragraph leaves `b` and `i` around both.
+        (
+            "<div><b>Bold <i>start</p><p>next para</p></div>",
+            "**Bold *start***\n\n***next para***",
+        ),
+        ("<b><p>one</p><p>two</p></b>", "**one**\n\n**two**"),
+        // A block inside is left as it is.
+        (
+            "<b><p>one</p><ul><li>item</li></ul></b>",
+            "**one**\n\n*   item",
+        ),
+    ] {
+        assert_eq!(markdown, htmd::convert(html).unwrap(), "{html}");
+    }
+}
+
+#[test]
 fn image_text_joins_its_lines_and_an_empty_title_is_left_out() {
     for (html, markdown) in [
         (
