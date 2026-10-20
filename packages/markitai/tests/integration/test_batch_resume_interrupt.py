@@ -145,6 +145,10 @@ def stub() -> Iterator[_Stub]:
         server.server_close()
 
 
+def _default_sigint() -> None:
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
+
+
 def _wait_for(condition, timeout: float = 60.0) -> bool:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -217,6 +221,12 @@ def test_resume_after_sigint_reports_the_whole_batch(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         start_new_session=True,
+        # A suite started in the background by a shell without job control
+        # (`pytest ... &`, a CI step, an agent's background command) runs
+        # with SIGINT ignored, which the CLI inherits: the Ctrl-C below then
+        # did nothing and the batch finished with exit 0. A terminal's
+        # Ctrl-C reaches a CLI with the default disposition.
+        preexec_fn=_default_sigint,
     )
     try:
         assert _wait_for(lambda: stub.waiting.is_set() or proc.poll() is not None)
