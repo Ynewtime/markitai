@@ -1203,6 +1203,31 @@ def chromium_proxy_bypass(patterns: Sequence[str]) -> str:
     return ",".join(rules)
 
 
+async def _start_playwright() -> Any:
+    """Start the Playwright driver; a cancellation waits for it to start.
+
+    Cancelling ``async_playwright().start()`` part-way leaves the driver's
+    connection task pending for good, and ``asyncio.run`` then never
+    returns: Ctrl-C on ``markitai serve`` while a browser fetch was starting
+    hung the server. The start runs to the end under a shield; a cancelled
+    caller stops the driver it started and is cancelled as asked.
+    """
+    import contextlib
+
+    from playwright.async_api import (
+        async_playwright,  # pyright: ignore[reportMissingImports]
+    )
+
+    start = asyncio.ensure_future(async_playwright().start())
+    try:
+        return await asyncio.shield(start)
+    except asyncio.CancelledError:
+        with contextlib.suppress(Exception):
+            playwright = await start
+            await playwright.stop()
+        raise
+
+
 class PlaywrightRenderer:
     """Reusable Playwright renderer to avoid browser cold starts."""
 
@@ -1253,16 +1278,12 @@ class PlaywrightRenderer:
         if self._browser is not None:
             return self._browser
 
-        from playwright.async_api import (
-            async_playwright,  # pyright: ignore[reportMissingImports]
-        )
-
         async with self._lock:
             if self._browser is not None:
                 return self._browser
 
             if self._playwright is None:
-                self._playwright = await async_playwright().start()
+                self._playwright = await _start_playwright()
             launch_options: dict[str, Any] = {"headless": True}
             if self.proxy:
                 launch_options["proxy"] = {
@@ -1294,14 +1315,10 @@ class PlaywrightRenderer:
             return None
         if self._new_headless is not None and self._new_headless_agent:
             return self._new_headless, self._new_headless_agent
-        from playwright.async_api import (
-            async_playwright,  # pyright: ignore[reportMissingImports]
-        )
-
         async with self._lock:
             if self._playwright is None:
                 try:
-                    self._playwright = await async_playwright().start()
+                    self._playwright = await _start_playwright()
                 except Exception as e:  # _ensure_browser reports it
                     logger.debug("[Playwright] Could not start: {}", e)
                     return None

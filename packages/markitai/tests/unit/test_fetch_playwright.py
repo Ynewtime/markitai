@@ -2539,3 +2539,49 @@ def test_browser_lookup_honours_playwright_browsers_path(
     assert is_playwright_browser_installed(use_cache=False) is True
     monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path / "nowhere"))
     assert is_playwright_browser_installed(use_cache=False) is False
+
+
+@requires_playwright
+class TestStartPlaywright:
+    @pytest.mark.asyncio
+    async def test_a_cancelled_start_finishes_and_stops_the_driver(self) -> None:
+        """Cancelling Playwright's start part-way left its connection task
+        pending and asyncio.run never returned (Ctrl-C on markitai serve
+        during a browser fetch hung the server)."""
+        import asyncio
+
+        from markitai.fetch_playwright import _start_playwright
+
+        started = asyncio.Event()
+        release = asyncio.Event()
+        driver = MagicMock()
+        driver.stop = AsyncMock()
+
+        async def start() -> MagicMock:
+            started.set()
+            await release.wait()
+            return driver
+
+        starter = MagicMock()
+        starter.start = start
+        with patch("playwright.async_api.async_playwright", return_value=starter):
+            caller = asyncio.ensure_future(_start_playwright())
+            await started.wait()
+            caller.cancel()
+            await asyncio.sleep(0)
+            # The start itself is not cancelled: the caller waits for it
+            assert not caller.done()
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await caller
+        driver.stop.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_returns_the_started_driver(self) -> None:
+        from markitai.fetch_playwright import _start_playwright
+
+        driver = MagicMock()
+        starter = MagicMock()
+        starter.start = AsyncMock(return_value=driver)
+        with patch("playwright.async_api.async_playwright", return_value=starter):
+            assert await _start_playwright() is driver
