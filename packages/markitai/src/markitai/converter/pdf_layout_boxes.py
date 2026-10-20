@@ -35,7 +35,7 @@ TEXT_COVERAGE = 0.5
 #: of the two makes it a real picture.
 IMAGE_OVERLAP = 0.1
 
-_PICTURE_TEXT = re.compile(
+PICTURE_TEXT = re.compile(
     r"(?:<!-- Start of picture text -->|\*\*----- Start of picture text -----\*\*<br>)"
     r"\s*(.*?)\s*"
     r"(?:<!-- End of picture text -->|\*\*----- End of picture text -----\*\*<br>)",
@@ -122,8 +122,11 @@ def _is_rendered_text(page: Any, bbox: Any) -> bool:
     return covered >= TEXT_COVERAGE * area
 
 
-def _picture_as_text(segment: str) -> str | None:
-    match = _PICTURE_TEXT.search(segment)
+def picture_as_text(segment: str) -> str | None:
+    """A picture block's Markdown (its image reference and the "picture
+    text" pymupdf4llm read in it) as that text alone, one line per line;
+    None when the block has no image reference or no text."""
+    match = PICTURE_TEXT.search(segment)
     if match is None or _IMAGE_REF.search(segment) is None:
         return None
     lines = [line.strip() for line in match.group(1).split("<br>")]
@@ -196,7 +199,7 @@ def clean_layout_chunks(input_path: Path, chunks: list[Any]) -> list[Any]:
                         replacement = ""
                         dropped[key] += 1
                 elif box.get("class") == "picture":
-                    as_text = _picture_as_text(piece)
+                    as_text = picture_as_text(piece)
                     if as_text is not None and _is_rendered_text(page, bbox):
                         replacement = as_text
                         box["class"] = "text"

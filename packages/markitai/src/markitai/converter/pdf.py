@@ -30,7 +30,11 @@ from markitai.converter.base import (
     append_screenshot_comments,
     register_converter,
 )
-from markitai.converter.pdf_layout_boxes import clean_layout_chunks
+from markitai.converter.pdf_layout_boxes import (
+    PICTURE_TEXT,
+    clean_layout_chunks,
+    picture_as_text,
+)
 from markitai.converter.pdf_markdown import repair_pages
 from markitai.converter.pdf_ocr import (
     PageShot,
@@ -780,11 +784,6 @@ class PdfConverter(BaseConverter):
     _MAX_INTERNAL_WORKERS = 6
 
     _IMAGE_REF_RE = re.compile(r"!\[[^\]]*\]\((?:[^)]+/)?([^)]+)\)")
-    _PICTURE_TEXT_RE = re.compile(
-        r"\*\*----- Start of picture text -----\*\*<br>\s*(.*?)\s*"
-        r"\*\*----- End of picture text -----\*\*<br>",
-        re.DOTALL,
-    )
     _TEXT_TOKEN_RE = re.compile(r"[A-Za-z]+(?:[-'][A-Za-z]+)?|[\u4e00-\u9fff]+")
 
     def _get_worker_count(self, input_path: Path, task_count: int) -> int:
@@ -875,11 +874,13 @@ class PdfConverter(BaseConverter):
 
             rebuilt_parts.append(text[cursor:start])
             segment = text[start:end]
-            match = self._PICTURE_TEXT_RE.search(segment)
+            match = PICTURE_TEXT.search(segment)
             image_match = self._IMAGE_REF_RE.search(segment)
+            as_text = picture_as_text(segment)
             if (
                 match is not None
                 and image_match is not None
+                and as_text is not None
                 and self._is_text_heavy_picture_text(match.group(1))
             ):
                 image_name = image_match.group(1)
@@ -890,7 +891,9 @@ class PdfConverter(BaseConverter):
                         "rel_path": f"{ASSETS_REL_PATH}/{image_name}",
                     }
                 )
-                rebuilt_parts.append(self._IMAGE_REF_RE.sub("", segment, count=1))
+                # The text, readable: pymupdf4llm writes it into an HTML
+                # comment under the picture, which no longer stands there
+                rebuilt_parts.append(as_text)
             else:
                 rebuilt_parts.append(segment)
             cursor = end

@@ -487,6 +487,61 @@ class TestConvertBasic:
             == ".markitai/assets/test.pdf-0002-04.jpg"
         )
 
+    def test_text_heavy_picture_in_pymupdf4llm_128_markup(self) -> None:
+        """pymupdf4llm 1.28 writes a picture's text into an HTML comment.
+
+        Only the older bold-marker markup was recognized, so no picture was
+        ever demoted; once one is, its text must be readable, not left in a
+        comment that renders as nothing.
+        """
+        rows = "".join(
+            f"{n} Fusce vitae vestibulum velit, in fringilla dui commodo<br>"
+            for n in range(1, 5)
+        )
+        picture = (
+            "![](/tmp/stage/doc.pdf-0002-04.jpg)\n\n"
+            "<!-- Start of picture text -->\n"
+            f"Header A Header B Header C<br>{rows}"
+            "<!-- End of picture text -->\n\n"
+        )
+        text = f"Lead paragraph.\n\n{picture}Tail paragraph."
+        start = text.index("![](")
+        chunk = {
+            "text": text,
+            "page_boxes": [
+                {"class": "text", "pos": (0, start)},
+                {"class": "picture", "pos": (start, start + len(picture))},
+                {"class": "text", "pos": (start + len(picture), len(text))},
+            ],
+        }
+
+        markdown, references = PdfConverter()._demote_reference_picture_blocks(chunk, 2)
+
+        assert [ref["name"] for ref in references] == ["doc.pdf-0002-04.jpg"]
+        assert "![](" not in markdown
+        assert "<!--" not in markdown
+        assert "<br>" not in markdown
+        assert "\nHeader A Header B Header C\n1 Fusce vitae" in markdown
+        assert markdown.startswith("Lead paragraph.")
+        assert markdown.endswith("Tail paragraph.")
+
+    def test_picture_with_little_text_keeps_its_reference(self) -> None:
+        """A chart with a few labels stays a picture, its labels as they were."""
+        picture = (
+            "![](/tmp/stage/doc.pdf-0001-01.jpg)\n\n"
+            "<!-- Start of picture text -->\n12<br>10<br>Column 1<br>"
+            "<!-- End of picture text -->\n\n"
+        )
+        chunk = {
+            "text": picture,
+            "page_boxes": [{"class": "picture", "pos": (0, len(picture))}],
+        }
+
+        markdown, references = PdfConverter()._demote_reference_picture_blocks(chunk, 1)
+
+        assert references == []
+        assert markdown == picture
+
     @patch("markitai.converter.pdf.pymupdf4llm")
     def test_convert_with_image_format_config(
         self, mock_pymupdf4llm: Mock, tmp_path: Path
