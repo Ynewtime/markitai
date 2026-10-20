@@ -280,8 +280,11 @@ class TestBatchConvert:
         assert started["total"] == 3
 
         status = await _wait_for_completion(started["job_id"])
-        assert status["done"] == 3
+        # done counts what succeeded, as in markitai serve; finished counts
+        # every item that ended, failed ones included
+        assert status["done"] == 2
         assert status["failed"] == 1
+        assert status["finished"] == 3
         by_source = {entry["source"]: entry for entry in status["results"]}
         assert by_source[str(sample_md)]["status"] == "ok"
         assert Path(by_source[str(sample_md)]["markdown_file"]).is_file()

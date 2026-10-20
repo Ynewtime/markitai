@@ -37,7 +37,7 @@ Every conversion writes real files, into the `output_dir` the agent passes or in
 
 Results also carry `warnings`: notices that didn't fail the conversion but are worth acting on, such as pages that look scanned (retry with `ocr: true`), hidden PDF text that may be a prompt injection, OCR that found no text, a URL screenshot that wasn't captured, an image whose analysis failed (it keeps its original alt text), or an LLM enhancement that failed (the result is then the unenhanced conversion; with `llm.on_failure = "fail"` in the server's config the call fails instead). Each successful `job_status` result has its own `warnings` too.
 
-Batch jobs run inside the server process. Poll `job_status` until `status` is `"completed"`, then read the `markdown_file` paths. Each item lands in `output_dir/batch-<job_id>/<item_number>/`, so same-named files never collide. `concurrency` (default 10) bounds how many conversions run at once. A server restart forgets the jobs; the written files remain.
+Batch jobs run inside the server process. Poll `job_status` until `status` is `"completed"`, then read the `markdown_file` paths. Its counts are `done` (items that succeeded, as in `markitai serve`), `failed`, and `finished` (`done` + `failed`, every item that ended) out of `total`. Each item lands in `output_dir/batch-<job_id>/<item_number>/`, so same-named files never collide. `concurrency` (default 10) bounds how many conversions run at once. A server restart forgets the jobs; the written files remain.
 
 ## LLM Enhancement
 

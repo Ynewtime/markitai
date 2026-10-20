@@ -109,8 +109,9 @@ class JobStatus(TypedDict):
     job_id: str
     status: str
     total: int
-    done: int
+    done: int  # finished successfully, as in markitai serve
     failed: int
+    finished: int  # done + failed: every item that ended
     output_dir: str
     results: list[dict[str, Any]]
 
@@ -123,7 +124,7 @@ class _Job:
     total: int
     output_dir: str
     status: str = "running"  # "running" | "completed" | "cancelled"
-    done: int = 0
+    finished: int = 0  # items that ended, failed ones included
     results: list[dict[str, Any]] = field(default_factory=list)
     # Strong reference: asyncio only keeps weak references to running tasks.
     task: asyncio.Task[None] | None = None
@@ -474,7 +475,7 @@ async def _convert_all(
                 }
             # Drop the None gaps so a poll mid-run sees only finished items.
             job.results = [slot for slot in slots if slot is not None]
-            job.done += 1
+            job.finished += 1
 
     # One LLM processor for the whole job, so llm.concurrency bounds the
     # batch rather than each item
@@ -591,8 +592,10 @@ async def job_status(job_id: str) -> JobStatus:
 
     Returns:
         Object with status ("running" until every item finished, then
-        "completed"; "cancelled" if the job was cancelled), total, done,
-        failed, output_dir, and results — one
+        "completed"; "cancelled" if the job was cancelled), total, done
+        (items that succeeded, as in markitai serve), failed, finished
+        (done + failed: every item that ended, for progress), output_dir,
+        and results — one
         entry per finished item: {source, status: "ok"|"error",
         markdown_file, cost_usd, warnings} or {source, status, error}. Poll until
         status is "completed" (or "cancelled"), then read the markdown_file
@@ -619,12 +622,14 @@ async def job_status(job_id: str) -> JobStatus:
             f"wrote."
         )
     failed = sum(1 for r in job.results if r.get("status") == "error")
+    # done once counted failed items too; finished is that number now
     return {
         "job_id": job.id,
         "status": job.status,
         "total": job.total,
-        "done": job.done,
+        "done": job.finished - failed,
         "failed": failed,
+        "finished": job.finished,
         "output_dir": job.output_dir,
         "results": list(job.results),
     }

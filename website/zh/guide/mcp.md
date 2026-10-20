@@ -37,7 +37,7 @@ claude mcp add markitai -- uvx --from "markitai[mcp]" markitai-mcp
 
 结果里还有 `warnings`：没有让转换失败、但值得处理的提示，例如页面疑似扫描件（可加 `ocr: true` 重试）、PDF 隐藏文字可能是提示注入、OCR 没识别出文字、URL 截图没拍到、某张图片分析失败（保留原来的 alt 文本），或 LLM 增强失败（此时结果是未增强的转换；服务器配置里设了 `llm.on_failure = "fail"` 时调用直接失败）。`job_status` 里每个成功条目也带自己的 `warnings`。
 
-批量任务在服务进程内执行。轮询 `job_status` 直到 `status` 为 `"completed"`，再读取各项的 `markdown_file`。每项写入 `output_dir/batch-<job_id>/<item_number>/`，同名文件不会互相覆盖。`concurrency`（默认 10）限制同时转换的数量。服务重启后任务记录会丢失，已写出的文件仍在。
+批量任务在服务进程内执行。轮询 `job_status` 直到 `status` 为 `"completed"`，再读取各项的 `markdown_file`。其中的计数为 `done`（成功的条目，与 `markitai serve` 一致）、`failed`，以及 `finished`（`done` + `failed`，已结束的全部条目），总数为 `total`。每项写入 `output_dir/batch-<job_id>/<item_number>/`，同名文件不会互相覆盖。`concurrency`（默认 10）限制同时转换的数量。服务重启后任务记录会丢失，已写出的文件仍在。
 
 ## LLM 增强
 
