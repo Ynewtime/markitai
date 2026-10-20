@@ -606,6 +606,16 @@ The local changes, each marked `markitai` (or, for sorts, made through
   glyphs nothing identifies (counted by `unidentified_glyphs`) read as
   before. A test in `fonts.rs` covers marked, mixed and defined codes; the
   isolated copy gives 1,726 passed and the same 21 failed.
+- `src/tables/detect_lines.rs` (`detect_tables_from_lines_inner`, row
+  edges): when a page's columns come from drawn vertical borders, a
+  horizontal rule above or below every border's reach (by more than 3 pt) is
+  no row edge of that grid, provided three row edges remain. A ruled grid
+  followed on its page by a table with only a header rule (ReportLab's
+  `LINEBELOW` on row 0, wider than the grid) had the band down to that rule
+  added as a row, which took the next table's header (`||Owner||Due
+  date||Status|`) and left its body as one paragraph. A test in
+  `detect_lines.rs` covers the case and fails without the change; the
+  isolated copy gives 1,727 passed and the same 21 failed.
 - `src/tables/detect_heuristic.rs` (`is_word_grid_table`, applied to every
   hypothesis `detect_tables_with_page_width` returns): five columns or more,
   seven in ten filled cells one word, and the runs of a row closer than 1.5

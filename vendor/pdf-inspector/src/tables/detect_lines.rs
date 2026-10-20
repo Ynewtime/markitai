@@ -2205,7 +2205,34 @@ fn detect_tables_from_lines_inner(
 
     // Snap Y-values of horizontal lines → row edges
     let h_ys: Vec<f32> = horizontals.iter().map(|(y, _, _)| *y).collect();
-    let row_edges = snap_edges(&h_ys, 3.0);
+    let mut row_edges = snap_edges(&h_ys, 3.0);
+    // markitai: a rule above or below every drawn column border (another
+    // table's header rule under a ruled grid) bounds no row of this grid:
+    // the band it would add has no column separators, and the text in it
+    // belongs to what follows.
+    if !cols_from_segments && !verticals.is_empty() {
+        let reach_low = verticals
+            .iter()
+            .map(|(_, y_min, _)| *y_min)
+            .fold(f32::MAX, f32::min);
+        let reach_high = verticals
+            .iter()
+            .map(|(_, _, y_max)| *y_max)
+            .fold(f32::MIN, f32::max);
+        let within: Vec<f32> = row_edges
+            .iter()
+            .copied()
+            .filter(|y| *y >= reach_low - 3.0 && *y <= reach_high + 3.0)
+            .collect();
+        if within.len() >= 3 && within.len() < row_edges.len() {
+            log::debug!(
+                "detect_lines p{}: {} row edges beyond the column borders' reach dropped",
+                page,
+                row_edges.len() - within.len()
+            );
+            row_edges = within;
+        }
+    }
 
     // Column edges from drawn verticals when present, else from the
     // horizontal-segment endpoints derived above.
@@ -2496,6 +2523,60 @@ mod tests {
             y2,
             page,
         }
+    }
+
+    /// markitai: a ruled grid followed on its page by a table with only a
+    /// header rule (wider than the grid) stays a grid of its own rows: the
+    /// later table's header is not appended to it as a row.
+    #[test]
+    fn a_rule_below_the_column_borders_adds_no_row_to_a_grid() {
+        let columns = [208.0, 251.7, 277.0, 302.4, 327.7, 353.0, 387.3];
+        let mut lines: Vec<PdfLine> = columns
+            .iter()
+            .map(|&x| make_vline(x, 667.9, 745.9, 1))
+            .collect();
+        lines.extend(
+            // A taller header row: evenly spaced rules read as a chart.
+            [667.9, 685.9, 703.9, 721.9, 745.9]
+                .iter()
+                .map(|&y| make_hline(y, 208.0, 387.3, 1)),
+        );
+        // The next table's header rule, below the grid and wider than it.
+        lines.push(make_hline(601.9, 176.4, 418.9, 1));
+        let mut items = Vec::new();
+        for (y, row) in [
+            (729.9, ["Region", "Q1", "Q2", "Q3", "Q4", "Total"]),
+            (708.9, ["North", "1", "2", "3", "4", "10"]),
+            (690.9, ["South", "1", "2", "3", "4", "10"]),
+            (672.9, ["East", "1", "2", "3", "4", "10"]),
+        ] {
+            for (x, text) in [214.0, 257.7, 283.0, 308.4, 333.7, 359.0].iter().zip(row) {
+                let mut item = make_item(text, *x, y, 1);
+                item.width = 12.0;
+                items.push(item);
+            }
+        }
+        for (x, text) in [
+            (182.4, "Item"),
+            (258.3, "Owner"),
+            (299.7, "Due date"),
+            (362.9, "Status"),
+        ] {
+            items.push(make_item(text, x, 606.9, 1));
+        }
+        let tables = detect_tables_from_lines(&items, &lines, 1);
+        assert_eq!(tables.len(), 1);
+        assert_eq!(tables[0].cells.len(), 4);
+        assert_eq!(tables[0].cells[3][0], "East");
+        assert!(
+            !tables[0]
+                .cells
+                .iter()
+                .flatten()
+                .any(|cell| cell.contains("Owner")),
+            "{:?}",
+            tables[0].cells
+        );
     }
 
     #[test]
