@@ -2,8 +2,9 @@
 
 The native HTML serializer has a separate DOM reader for confirmed code blocks.
 It emits only a sanitized `pre`/`code` pair with an optional safe language class.
-Syntax token wrappers and links inside the block contribute their literal text;
-link destinations, copy buttons, executable elements, editor chrome, and hidden
+Syntax token wrappers and links inside the block contribute their literal text,
+as do names a code line shows as hover buttons (Twoslash); link destinations,
+copy buttons, hover popups, executable elements, editor chrome, and hidden
 content do not become code. It never evaluates scripts or renders a browser.
 
 Supported structural families include Chroma/Pygments/Rouge number columns and

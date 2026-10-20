@@ -175,7 +175,7 @@ No HTTP response arrived; the words after `failed:` say why and the parenthesis
 at the end names the deployment and host. `connection refused` means nothing
 listens there (a local server that is not running, or a wrong port in
 `api_base`); `host name not resolved` a misspelled host or no DNS; `TLS
-handshake failed` a proxy or server certificate the system does not trust (a handshake the other end cut off says a proxy or network problem is likely: set `HTTPS_PROXY` or turn on the system proxy), or
+handshake failed` a certificate outside markitai's built-in root set (see [proxies](fetch.md#proxies); a handshake the other end cut off says a proxy or network problem is likely: set `HTTPS_PROXY` or turn on the system proxy), or
 `https://` to a plain HTTP port; `connection closed without a response` a proxy
 or server that dropped the request. `LLM request timed out: no response within
 120 s` names `router_settings.timeout`; such a request was sent once more before
