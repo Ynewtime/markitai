@@ -412,20 +412,26 @@ fn isolated_header(element: ElementRef<'_>) -> bool {
         .any(target)
         && header_with_copy(element)
 }
+/// A `div` holding a code block and a bar with its language and a copy
+/// button, above it (X's Articles) or below it (nodejs.org's `CodeBox`, whose
+/// CSS-module classes carry no fixed name).
 fn inferred_wrapper(element: ElementRef<'_>) -> bool {
     if element.value().name() != "div" {
         return false;
     }
     let mut children = element.child_elements();
-    let (Some(header), Some(content), None) = (children.next(), children.next(), children.next())
+    let (Some(first), Some(second), None) = (children.next(), children.next(), children.next())
     else {
         return false;
     };
-    header_with_copy(header)
-        && content
+    let holds_code = |content: ElementRef<'_>| {
+        content
             .descendants()
             .filter_map(ElementRef::wrap)
             .any(target)
+    };
+    (header_with_copy(first) && holds_code(second))
+        || (isolated_header(second) && holds_code(first))
 }
 
 /// A language's name with the spellings a label and a class give it reduced to
@@ -1044,6 +1050,19 @@ mod tests {
             code("<pre><code>\r\n\n  x</code></pre>", "pre"),
             "<pre><code>\n  x</code></pre>"
         );
+    }
+    #[test]
+    fn a_footer_with_the_language_and_a_copy_button_is_not_code_or_prose() {
+        // nodejs.org's CodeBox: CSS-module classes, the language and a copy
+        // button in a bar after the block.
+        let source = "<div class='fFLmHq_root'><pre class='fFLmHq_content shiki language-cjs'><code><span class='line'>const http = require('node:http');</span></code></pre><div class='fFLmHq_footer'><span class='fFLmHq_language'>JavaScript</span><button type='button'><svg></svg>Copy to clipboard</button></div></div>";
+        assert_eq!(
+            code(source, "div"),
+            "<pre><code class=\"language-cjs\">const http = require('node:http');</code></pre>"
+        );
+        // A bar after the block that says more than a language is the page's.
+        let banner = "<div><pre>x</pre><div><span>Run this in your terminal</span><button>Copy</button></div></div>";
+        assert!(!normalized(banner, "div").0);
     }
     #[test]
     fn a_copy_header_names_its_language_in_at_most_the_longest_label() {
