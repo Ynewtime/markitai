@@ -2627,3 +2627,27 @@ class TestStartPlaywright:
         starter.start = AsyncMock(return_value=driver)
         with patch("playwright.async_api.async_playwright", return_value=starter):
             assert await _start_playwright() is driver
+
+    @pytest.mark.asyncio
+    async def test_the_renderer_starts_its_driver_through_the_shield(self) -> None:
+        """Both of the renderer's starts go through _start_playwright: one
+        that called async_playwright().start() itself would hang Ctrl-C."""
+        from markitai import fetch_playwright
+        from markitai.fetch_playwright import PlaywrightRenderer
+
+        driver = MagicMock()
+        driver.chromium.launch = AsyncMock(return_value=MagicMock())
+        shielded = AsyncMock(return_value=driver)
+        with (
+            patch.object(fetch_playwright, "_start_playwright", shielded),
+            patch(
+                "playwright.async_api.async_playwright",
+                side_effect=AssertionError("started outside the shield"),
+            ),
+        ):
+            renderer = PlaywrightRenderer()
+            await renderer._ensure_browser()
+            renderer._playwright = None
+            renderer._new_headless = None
+            await renderer._ensure_new_headless()
+        assert shielded.await_count == 2
