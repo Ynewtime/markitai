@@ -12,6 +12,10 @@ use std::thread;
 const PDF: &[u8] = include_bytes!("../pdf_raster/fixtures/mixed-native-scanned-blank.pdf");
 
 fn isolated(name: &str) -> bool {
+    isolated_with(name, &[])
+}
+/// [`isolated`], the child process also given `env`.
+fn isolated_with(name: &str, env: &[(&str, &str)]) -> bool {
     if std::env::var("MARKITAI_BROWSER_RUNTIME_CASE").as_deref() == Ok(name) {
         return false;
     }
@@ -51,6 +55,7 @@ fn isolated(name: &str) -> bool {
             command.env(name, value);
         }
     }
+    command.envs(env.iter().copied());
     let mut child = command.spawn().unwrap();
     let deadline = Instant::now() + Duration::from_secs(90);
     let status = loop {
@@ -169,6 +174,8 @@ impl Site {
                     let mut status=200;let mut headers=String::new();let mut mime="text/html";
                     let body=if request.path=="/redirect" {
                         status=302;headers.push_str("Location: /pdf-auth\r\n");Vec::new()
+                    } else if let Some(target)=request.path.strip_prefix("/to?u=") {
+                        status=302;headers.push_str(&format!("Location: {target}\r\n"));Vec::new()
                     } else if request.path=="/pdf-auth" {
                         if request.authorization!=format!("Basic {}",base64::engine::general_purpose::STANDARD.encode("reader:fixture")) {
                             status=401;headers.push_str("WWW-Authenticate: Basic realm=\"runtime\"\r\n");b"Private fixture".to_vec()
@@ -790,6 +797,70 @@ fn the_callers_headers_reach_the_initial_origin_only() {
     assert_eq!(account(&site, "/same-asset"), "private-token");
     // The other origin never sees it.
     assert_eq!(account(&other, "/asset"), "");
+}
+
+#[test]
+#[ignore = "requires installed Chromium; private process and loopback only"]
+fn the_callers_headers_do_not_follow_a_redirect_to_another_origin() {
+    if isolated("the_callers_headers_do_not_follow_a_redirect_to_another_origin") {
+        return;
+    }
+    assert!(available());
+    let site = Site::new();
+    let other = Site::new();
+    let runtime = BrowserRuntime::new(1).unwrap();
+    let mut cfg = config(false);
+    cfg["fetch"]["playwright"]["extra_http_headers"] = json!({"X-Account":"private-token"});
+    // The initial origin answers with a redirect to the other origin's page.
+    let path = format!("/to?u={}/seed", other.base);
+    assert!(html(&site, &path, &cfg, &runtime).contains("Runtime fixture"));
+    let account = |site: &Site, path: &str| {
+        site.state
+            .0
+            .lock()
+            .unwrap()
+            .requests
+            .iter()
+            .find(|request| request.path == path)
+            .map(|request| request.account.clone())
+            .unwrap()
+    };
+    assert_eq!(account(&site, &path), "private-token");
+    assert_eq!(account(&other, "/seed"), "");
+}
+
+#[test]
+#[ignore = "requires installed Chromium; private process and loopback only"]
+fn a_restricted_browser_fetch_refuses_a_redirect_to_a_host_on_this_machine() {
+    // The fixture's own address stands in for a public host; the redirect
+    // target, another loopback address, is on this machine.
+    if isolated_with(
+        "a_restricted_browser_fetch_refuses_a_redirect_to_a_host_on_this_machine",
+        &[("MARKITAI_TEST_PUBLIC_NET_ALLOW", "127.0.0.1")],
+    ) {
+        return;
+    }
+    assert!(available());
+    let site = Site::new();
+    let runtime = BrowserRuntime::new(1).unwrap();
+    let cfg = config(false);
+    let _restriction = crate::public_net::restrict(true);
+    // The allowed start is fetched under the restriction.
+    let page = fetch_with_runtime(&site.url("/seed"), &cfg, false, Some(&runtime))
+        .unwrap()
+        .page()
+        .html;
+    assert!(page.contains("Runtime fixture"));
+    // Its redirect to a refused address is blocked before any connection,
+    // not refused by the (absent) server there.
+    let port = site.base.rsplit(':').next().unwrap();
+    let path = format!("/to?u=http://127.0.0.2:{port}/seed");
+    let error = fetch_with_runtime(&site.url(&path), &cfg, false, Some(&runtime))
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(error.contains("ERR_BLOCKED_BY_CLIENT"), "{error}");
+    assert_eq!(site.count(&path), 1);
 }
 
 #[test]

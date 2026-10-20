@@ -270,11 +270,22 @@ mod tests {
             .timeout(std::time::Duration::from_secs(10))
             .build()
             .unwrap();
-        let error = client
-            .get(format!("http://localhost:{port}/v1/models"))
-            .send()
-            .unwrap_err();
-        assert!(error.is_connect(), "{error:?}");
-        assert!(listener.accept().is_err(), "the request reached loopback");
+        // A trailing dot (the fully qualified name) changes nothing: names
+        // are judged by the addresses they resolve to, not by spelling, and
+        // an address written with one is still that address.
+        for host in ["localhost", "localhost.", "LOCALHOST."] {
+            let error = client
+                .get(format!("http://{host}:{port}/v1/models"))
+                .send()
+                .unwrap_err();
+            assert!(error.is_connect(), "{host}: {error:?}");
+            assert!(listener.accept().is_err(), "{host} reached loopback");
+        }
+        assert!(!url_allowed(
+            &url::Url::parse("http://127.0.0.1./v1").unwrap()
+        ));
+        assert!(!host_all_public(
+            &url::Url::parse(&format!("http://localhost.:{port}/")).unwrap()
+        ));
     }
 }
