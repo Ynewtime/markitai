@@ -9,7 +9,7 @@ import pytest
 
 from markitai.config import FetchConfig, ScreenshotConfig
 from markitai.fetch import _capture_missing_screenshot
-from markitai.fetch_page_check import page_problem, visible_text
+from markitai.fetch_page_check import is_interstitial, page_problem, visible_text
 from markitai.fetch_types import FetchResult
 
 # An invented click-the-characters challenge, shaped like the vendors' pages
@@ -43,6 +43,29 @@ class TestPageProblem:
 
     def test_an_article_about_captchas_is_the_page(self):
         assert page_problem(ARTICLE_HTML) is None
+
+    def test_fastly_client_challenge(self):
+        html = (
+            "<html><head><title>Client Challenge</title></head><body>"
+            "<div>A required part of this site couldn't load.</div>"
+            "<script>loadScript('/_fs-ch-1T1wmsGaOgGaSxcX/errors.js')</script>"
+            "</body></html>"
+        )
+        assert page_problem(html) == "challenge"
+        assert is_interstitial(html)
+
+    def test_a_form_widget_is_not_an_interstitial(self):
+        """A short contact page with a reCAPTCHA is the page itself when
+        fetched; only the rendered-page check counts it as a challenge."""
+        html = (
+            "<html><body><h1>Contact</h1><form><textarea></textarea>"
+            '<div class="g-recaptcha"></div></form>'
+            '<script src="https://www.google.com/recaptcha/api.js"></script>'
+            "</body></html>"
+        )
+        assert page_problem(html) == "challenge"
+        assert not is_interstitial(html)
+        assert not is_interstitial(ARTICLE_HTML)
 
     def test_empty_document(self):
         assert (

@@ -1371,6 +1371,21 @@ def _is_html_result(result: FetchResult) -> bool:
     return kind is None or kind == "html"
 
 
+def _static_html_is_challenge(result: FetchResult) -> bool:
+    """Whether a static fetch's HTML is a verification page.
+
+    The extracted Markdown can hide it: PyPI's Fastly "Client Challenge"
+    keeps its markers in ``<title>``, ``<noscript>`` and script URLs and
+    converts to one sentence of ordinary prose ("A required part of this
+    site couldn't load ...").
+    """
+    if result.strategy_used != "static" or not result.html:
+        return False
+    from markitai.fetch_page_check import is_interstitial
+
+    return is_interstitial(result.html)
+
+
 def _challenge_page_reason(result: FetchResult) -> str | None:
     """The ``captcha_*`` reason when an HTML result is an anti-bot page.
 
@@ -1383,6 +1398,8 @@ def _challenge_page_reason(result: FetchResult) -> str | None:
     is_invalid, reason = _is_invalid_content(result.content)
     if is_invalid and reason.startswith("captcha_"):
         return reason
+    if _static_html_is_challenge(result):
+        return "captcha_page"
     return None
 
 
@@ -1423,6 +1440,8 @@ def _static_result_rejection(result: FetchResult) -> tuple[str | None, bool]:
         # Before the JavaScript heuristics: challenge pages say "enable
         # JavaScript" too, but they are not JavaScript shells
         return f"invalid content ({reason})", False
+    if _static_html_is_challenge(result):
+        return "invalid content (captcha_page)", False
     if detect_js_required(result.content, allow_short_content=native_accepted):
         return (
             "page requires JavaScript rendering",

@@ -410,6 +410,54 @@ class TestSpaLearningSignals:
 
         spa_cache.record_spa_domain.assert_not_called()
 
+    @pytest.mark.asyncio
+    async def test_a_challenge_hidden_from_the_markdown_is_still_one(self) -> None:
+        """PyPI's Fastly "Client Challenge" converts to one ordinary
+        sentence; AUTO accepted it as the page (2026-10-19)."""
+        html = (
+            "<html><head><title>Client Challenge</title></head><body>"
+            "<noscript>JavaScript is disabled in your browser.</noscript>"
+            '<div id="loading-error" role="alert">A required part of this site '
+            "couldn't load. This may be due to a browser extension, network "
+            "issues, or browser settings. Please check your connection, disable "
+            "any ad blockers, or try using a different browser.</div>"
+            "<script>loadScript('/_fs-ch-1T1wmsGaOgGaSxcX/errors.js')</script>"
+            "</body></html>"
+        )
+        response = StaticHttpResponse(
+            content=html.encode(),
+            status_code=200,
+            headers={"content-type": "text/html; charset=utf-8"},
+            url="https://site.example.com/",
+        )
+        spa_cache = MagicMock()
+        spa_cache.is_known_spa.return_value = False
+        config = FetchConfig()
+        config.policy.strategy_priority = ["static"]
+        with (
+            patch("markitai.fetch.get_spa_domain_cache", return_value=spa_cache),
+            patch("markitai.fetch_strategies.static._detect_proxy", return_value=""),
+            patch(
+                "markitai.fetch_strategies.static.get_static_http_client",
+                return_value=_client(response),
+            ),
+        ):
+            with pytest.raises(FetchError, match="captcha_page"):
+                await fetch_url(
+                    "https://site.example.com/",
+                    FetchStrategy.AUTO,
+                    config,
+                    skip_read_cache=True,
+                )
+            with pytest.raises(FetchError, match="anti-bot"):
+                await fetch_url(
+                    "https://site.example.com/",
+                    FetchStrategy.STATIC,
+                    config,
+                    skip_read_cache=True,
+                )
+        spa_cache.record_spa_domain.assert_not_called()
+
     def test_short_page_is_retried_in_a_browser_without_teaching(self) -> None:
         from markitai.fetch import _static_result_rejection
         from markitai.fetch_types import FetchResult

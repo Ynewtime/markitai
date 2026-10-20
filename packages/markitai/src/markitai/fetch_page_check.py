@@ -21,11 +21,18 @@ from html.parser import HTMLParser
 CHALLENGE_MAX_TEXT = 1500
 BLANK_MAX_TEXT = 20
 
+# Markup only a whole-page interstitial carries (not a widget on a form)
+_INTERSTITIAL_MARKERS = (
+    r"/cdn-cgi/challenge-platform/|cf[-_]chl[-_]|captcha-delivery\.com|px-captcha"
+    r"|_Incapsula_Resource|awswaf"
+    # Fastly's client challenge (PyPI): /_fs-ch-<token>/script.js
+    r"|/_fs-ch-[\w-]+/"
+)
+_INTERSTITIAL_RE = re.compile(_INTERSTITIAL_MARKERS, re.IGNORECASE)
 _VENDOR_MARKERS = re.compile(
-    r"/cdn-cgi/challenge-platform/|cf[-_]chl[-_]|challenges\.cloudflare\.com/turnstile"
-    r"|geetest|captcha-delivery\.com|px-captcha|_Incapsula_Resource"
+    _INTERSTITIAL_MARKERS + r"|challenges\.cloudflare\.com/turnstile|geetest"
     r"|hcaptcha\.com/1/api\.js|google\.com/recaptcha|recaptcha/api\.js"
-    r"|awswaf|aliyun_captcha|nc_1_wrapper|tcaptcha|turing\.captcha",
+    r"|aliyun_captcha|nc_1_wrapper|tcaptcha|turing\.captcha",
     re.IGNORECASE,
 )
 _TEXT_MARKERS = re.compile(
@@ -103,6 +110,19 @@ def page_problem(
     if len(text) < BLANK_MAX_TEXT and not media and not shadow_roots:
         return "blank"
     return None
+
+
+def is_interstitial(html: str) -> bool:
+    """Whether fetched (not rendered) HTML is a bot-check interstitial.
+
+    Stricter than :func:`page_problem`: a short contact page with a
+    reCAPTCHA or Turnstile widget on its form is the page itself, so only
+    the challenge phrases and the markup of whole-page interstitials count.
+    """
+    text, _media = visible_text(html)
+    if len(text) >= CHALLENGE_MAX_TEXT:
+        return False
+    return bool(_TEXT_MARKERS.search(text) or _INTERSTITIAL_RE.search(html))
 
 
 #: What a kept-page problem means, for notices.
