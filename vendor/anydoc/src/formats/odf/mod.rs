@@ -143,6 +143,11 @@ fn walk_shapes(
     for child in parent.child_elems() {
         if child.is(ns::PRESENTATION, "notes") {
             for frame in child.descendants(ns::DRAW, "frame") {
+                // markitai: the notes page's own placeholders (its slide
+                // number, `<number>` until drawn, its date) are no notes.
+                if is_placeholder_field(frame) {
+                    continue;
+                }
                 if let Some(text_box) = frame.find(ns::DRAW, "text-box") {
                     notes.extend(parse_container(text_box, ctx)?);
                 }
@@ -159,7 +164,7 @@ fn walk_shapes(
         match child.local.as_str() {
             "frame" => {
                 let class = child.attr(ns::PRESENTATION, "class").unwrap_or("");
-                if matches!(class, "page-number" | "date-time" | "footer" | "header") {
+                if is_placeholder_field(child) {
                     continue;
                 }
                 let mut inner = Vec::new();
@@ -168,6 +173,10 @@ fn walk_shapes(
                         inner.extend(parse_container(content, ctx)?);
                     } else if content.is(ns::TABLE, "table") {
                         inner.extend(slide_table(content, ctx)?);
+                        // markitai: the frame's other children are the
+                        // table's replacement picture (`TablePreview1.svm`)
+                        // for readers without tables.
+                        break;
                     } else if content.is(ns::DRAW, "object")
                         && let Some(tex) = text::formula_tex(ctx, content)?
                     {
@@ -210,6 +219,15 @@ fn walk_shapes(
         }
     }
     Ok(())
+}
+
+/// A frame holding a page's slide number, date, header or footer
+/// placeholder, not its content.
+fn is_placeholder_field(frame: &Element) -> bool {
+    matches!(
+        frame.attr(ns::PRESENTATION, "class"),
+        Some("page-number" | "date-time" | "footer" | "header")
+    )
 }
 
 /// A table keeps the same header policy whether it stands directly on
@@ -473,6 +491,42 @@ mod tests {
         // notes of the otherwise blank slide 3 stay in it; slide 5 has none
         // and is last, so it starts at the end.
         assert_eq!(doc.slide_starts, [0, 2, 2, 3, 4]);
+    }
+
+    // markitai: a table frame's replacement picture and the notes page's
+    // slide-number placeholder are neither content nor notes.
+    #[test]
+    fn a_slide_table_drops_its_preview_and_notes_drop_their_slide_number() {
+        let content = r#"<office:document-content
+            xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
+            xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"
+            xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0"
+            xmlns:xlink="http://www.w3.org/1999/xlink"
+            xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0"
+            xmlns:presentation="urn:oasis:names:tc:opendocument:xmlns:presentation:1.0">
+            <office:body><office:presentation><draw:page>
+              <draw:frame><table:table>
+                <table:table-row><table:table-cell><text:p>A</text:p></table:table-cell></table:table-row>
+              </table:table><draw:image xlink:href="Pictures/TablePreview1.svm"/></draw:frame>
+              <presentation:notes>
+                <draw:frame presentation:class="notes"><draw:text-box>
+                  <text:p>Say this.</text:p></draw:text-box></draw:frame>
+                <draw:frame presentation:class="page-number"><draw:text-box>
+                  <text:p><text:page-number>&lt;number&gt;</text:page-number></text:p>
+                </draw:text-box></draw:frame>
+              </presentation:notes>
+            </draw:page></office:presentation></office:body>
+            </office:document-content>"#;
+        let doc = parse(&package(&[
+            ("content.xml", content),
+            ("Pictures/TablePreview1.svm", "VCLMTF"),
+        ]))
+        .unwrap();
+        assert!(doc.assets.is_empty(), "{:?}", doc.assets);
+        let md = crate::render::markdown::document_to_markdown(&doc);
+        assert!(md.contains("> Say this."), "{md}");
+        assert!(!md.contains("number"), "{md}");
+        assert!(!md.contains("svm"), "{md}");
     }
 
     #[test]

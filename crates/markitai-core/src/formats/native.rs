@@ -990,6 +990,17 @@ impl Renderer<'_> {
                         // Whether Markdown reads the marker as one (a number
                         // and a stop, or a bullet); a label such as `a)`,
                         // `(1)` or `一、` is only text at the head of a line.
+                        // An item holding only a deeper list, as Impress
+                        // writes a second-level point (`<text:list-item>`
+                        // around a `<text:list>`), shows no marker of its
+                        // own: its list is written indented, nested under
+                        // the item before it, not as `* * point`.
+                        let only_a_list = !self.in_cell
+                            && matches!(marker.as_str(), "*" | "-")
+                            && matches!(
+                                item.blocks.iter().find(|block| has_content(block)),
+                                Some(Block::List(_))
+                            );
                         let digits = marker.bytes().take_while(u8::is_ascii_digit).count();
                         let markdown_marker = matches!(marker.as_str(), "*" | "-" | "+")
                             || ((1..=9).contains(&digits)
@@ -1000,7 +1011,11 @@ impl Renderer<'_> {
                         let width = marker.chars().count() + 1;
                         let indent = " ".repeat(if markdown_marker { width } else { width.min(3) });
                         let mut lines = content.lines();
-                        let mut item_text = format!("{marker} {}", lines.next().unwrap_or(""));
+                        let mut item_text = if only_a_list {
+                            format!("{indent}{}", lines.next().unwrap_or(""))
+                        } else {
+                            format!("{marker} {}", lines.next().unwrap_or(""))
+                        };
                         for line in lines {
                             item_text.push_str(&format!("\n{indent}{line}"));
                         }
@@ -1950,6 +1965,64 @@ mod tests {
                 ]
             )]),
             // A label Markdown does not read (`1-a)`) is text at the head of a
+    #[test]
+    fn an_item_holding_only_a_list_nests_it_under_the_item_before() {
+        use anydoc::model::{List, ListItem, MarkerKind};
+        // Impress writes a second-level point as an item around a list, in
+        // a list of its own after the first-level one.
+        let point = |text: &str| ListItem {
+            blocks: vec![Block::Paragraph(vec![Inline::plain(text)])],
+            marker_label: None,
+        };
+        let bullets = |items| {
+            Block::List(List {
+                marker: MarkerKind::Bullet,
+                start: 1,
+                items,
+            })
+        };
+        let blocks = [
+            bullets(vec![point("First")]),
+            bullets(vec![
+                ListItem {
+                    blocks: vec![bullets(vec![point("Deeper")])],
+                    marker_label: None,
+                },
+                point("Second"),
+            ]),
+        ];
+        let mut renderer = Renderer {
+            asset_names: &[],
+            merged_cells: false,
+            in_cell: false,
+            anchors: BTreeSet::new(),
+            extension: "odp",
+        };
+        let markdown = renderer.blocks(&blocks);
+        assert_eq!(markdown, "* First\n\n  * Deeper\n* Second");
+        // CommonMark reads the deeper point inside the first, two lists
+        // deep, and the second point back at the first level.
+        let mut depth = 0;
+        let mut depths = Vec::new();
+        for event in pulldown_cmark::Parser::new(&markdown) {
+            match event {
+                pulldown_cmark::Event::Start(pulldown_cmark::Tag::List(_)) => depth += 1,
+                pulldown_cmark::Event::End(pulldown_cmark::TagEnd::List(_)) => depth -= 1,
+                pulldown_cmark::Event::Text(text) => depths.push((text.to_string(), depth)),
+                _ => {}
+            }
+        }
+        assert_eq!(
+            depths,
+            [
+                ("First".into(), 1),
+                ("Deeper".into(), 2),
+                ("Second".into(), 1)
+            ]
+        );
+        assert!(!markdown.contains("* *"));
+    }
+
             // line, which the hard break keeps from joining the line before.
             "1. First\n2. Second  \n1-a) Composite"
         );

@@ -56,6 +56,13 @@ upstream files:
   upstream wrote each as an `<a id>` anchor and every mark as a link to a
   chapter-scoped anchor (`#EPUB/text/ch001.xhtml#fn1`). Other HTML readers
   do not collect notes (`HtmlCtx::collects_notes` defaults to false).
+- `src/formats/odf/mod.rs`: a slide's table frame is read as its table
+  alone; the picture after it in the frame is the replacement LibreOffice
+  writes for readers without tables (`Pictures/TablePreview1.svm`), which
+  upstream linked as an image. The notes page's slide number, date, header
+  and footer placeholders (`presentation:class`, as on the slide itself) are
+  not notes, where upstream wrote the unexpanded `<number>` field among
+  them.
 - `src/formats/sheet/numfmt.rs`, `src/formats/sheet/mod.rs`,
   `src/formats/sheet/xlsx.rs`: a date/time format records whether it shows
   seconds, and a time of day, alone or after a date, is written `hh:mm` when
@@ -550,7 +557,7 @@ package; it reproduces upstream's formatting, so `cargo fmt` in this directory
 changes nothing upstream wrote.
 
 Tests covering these changes were added beside the upstream ones; the upstream
-suite passes in an isolated copy (451 tests; 520 with the added ones), and so does its own
+suite passes in an isolated copy (451 tests; 523 with the added ones), and so does its own
 `cargo clippy --all-targets -- -D warnings` after one upstream line in
 `src/formats/docx/numbering.rs` passes `level_value` by value instead of by
 reference (`needless_borrows_for_generic_args`).
