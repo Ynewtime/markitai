@@ -123,6 +123,7 @@
 
 ### Fixed
 
+- Pictures that follow an unclosed backtick in a document (a lone `` ` `` in a Word paragraph, for example) are linked to their saved files again. The rest of the document was read as code, so those links kept the temporary `.markitai/assets/asset-N` name of a file that was never written, on stdout, in `-o` output (also with `--profile`) and in `markitai serve` results, and image analysis left the pictures out.
 - A scanned page read from its image seldom gets a sentence the page repeats written once more: each page image of a visual request now follows a `Page N:` label, as Python markitai sends it (Gemini Flash on pages repeating one sentence six times in each of six paragraphs: 38, 42 and 42 copies for 36 before; with the labels 36 in 4 of 5 answers and 40 in one, Python 36 in 2 of 2; a whole 12-page run now matches Python's word precision, 0.992 for 0.948 before). Cached visual answers from earlier builds are not reused.
 - Workbench on Python markitai: the pricing and subscription guide links open their pages on the Python docs site (`https://markitai.dev/guide/…`) instead of its home page; a docs address ending in `index.md` still opens the page beside it.
 - A workbook converted with `--screenshot` no longer fails as a whole when a sheet's text runs far past its right edge, or when LibreOffice's page rendering fails: the sheet keeps its layout (or the document its text) and one notice says what is missing.

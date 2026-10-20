@@ -479,11 +479,22 @@ fn code_span_end(text: &str) -> Option<usize> {
             if closing == width {
                 return Some(index);
             }
+        } else if text[index..].starts_with('\n')
+            && text[index + 1..]
+                .split('\n')
+                .next()
+                .is_some_and(|line| line.trim_matches([' ', '\t', '\r']).is_empty())
+        {
+            // A code span ends with its paragraph.
+            break;
         } else {
             index += text[index..].chars().next()?.len_utf8();
         }
     }
-    Some(text.len())
+    // Without a closing run of the same width the backticks are literal text
+    // (CommonMark), not the start of code running to the end of the document:
+    // `` A lone `tick `` must not hide the pictures after it.
+    Some(width)
 }
 
 fn html_literal_end(text: &str) -> Option<usize> {
@@ -2827,6 +2838,34 @@ mod tests {
         assert!(result.contains("class='download'>Download</a>"));
         assert!(result.contains("`![id]`"));
         assert!(!has_image_references(&result));
+    }
+
+    /// A backtick without a closing one (a Word paragraph's lone `` ` ``, or
+    /// the second of an escaped pair) is text: the pictures after it are
+    /// still published under their final names.
+    #[test]
+    fn an_unclosed_backtick_does_not_hide_later_pictures() {
+        let replacements = paths(&[("assets/a.png", "assets/b.jpg")]);
+        for prefix in [
+            "A lone `backtick here\n\n",
+            "A \\`pair` here\n\n",
+            "One `` run and a ` single\n\n",
+            "Opened `here\n\nclosed` there\n\n",
+        ] {
+            let input = format!("{prefix}![](assets/a.png)\n");
+            assert_eq!(
+                rewrite_asset_references(&input, &replacements),
+                format!("{prefix}![](assets/b.jpg)\n"),
+                "{prefix:?}"
+            );
+            assert!(has_image_references(&input), "{prefix:?}");
+        }
+        // A span still runs over the lines of its paragraph.
+        let literal = "`code\n![](assets/a.png)\nends` ![](assets/a.png)\n";
+        assert_eq!(
+            rewrite_asset_references(literal, &replacements),
+            "`code\n![](assets/a.png)\nends` ![](assets/b.jpg)\n"
+        );
     }
 
     #[test]
