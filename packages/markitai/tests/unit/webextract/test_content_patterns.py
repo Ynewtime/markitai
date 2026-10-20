@@ -367,6 +367,35 @@ class TestTocRemoval:
         assert "First resource" in root.get_text()
 
 
+class TestMetadataListRemoval:
+    def test_removes_short_label_list_at_the_start(self) -> None:
+        html = f"""<div>
+        <ul><li>March 3, 2024</li><li>5 min read</li></ul>
+        {_PROSE}
+        </div>"""
+        root = _make_root(html)
+        remove_content_patterns(root)
+        assert "5 min read" not in root.get_text()
+
+    def test_keeps_a_list_nested_in_a_list_item(self) -> None:
+        # A pandoc/Markdown nested list near the end of a short document:
+        # the inner <ul> has no previous element sibling (the item's own
+        # text is a text node), so only its nesting says it is content
+        html = f"""<div>
+        {_PROSE}
+        <h2>Lists</h2>
+        <ol>
+        <li>First step
+        <ul><li>nested a</li><li>nested b</li></ul></li>
+        <li>Second step</li>
+        </ol>
+        </div>"""
+        root = _make_root(html)
+        remove_content_patterns(root)
+        assert "nested a" in root.get_text()
+        assert "nested b" in root.get_text()
+
+
 class TestEyebrowRemoval:
     def test_removes_category_label_before_h1(self) -> None:
         html = f"<div><p>Announcements</p><h1>Big Title</h1>{_PROSE}</div>"

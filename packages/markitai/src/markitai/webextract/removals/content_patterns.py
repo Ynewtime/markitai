@@ -842,6 +842,12 @@ def _remove_metadata_lists(root: Tag, content_text: str) -> int:
         # and punctuation-free but are real content markitai preserves.
         if _css_select_one(list_el, 'input[type="checkbox"]') is not None:
             continue
+        # NOTE: divergence from defuddle — a list nested in a list item is
+        # that item's sub-points, never a standalone metadata block. Its
+        # previousElementSibling is usually None (the item's text is a text
+        # node), so the heading/colon guard below never saw it.
+        if isinstance(list_el.parent, Tag) and list_el.parent.name in ("li", "dd"):
+            continue
         is_dl = list_el.name == "dl"
         items = [
             c for c in tag_children(list_el) if c.name == ("dd" if is_dl else "li")
