@@ -105,6 +105,35 @@ def _check_chromium_paths() -> bool:
     return installed_chromium() is not None
 
 
+def _expected_chromium_folders() -> tuple[str, ...] | None:
+    """The browser folders the installed Playwright launches Chromium from.
+
+    ``chromium_headless_shell-<rev>`` (a headless launch) and
+    ``chromium-<rev>`` from the ``browsers.json`` Playwright ships, or None
+    when it cannot be read (an unusual install: any folder then counts).
+    """
+    import json
+
+    spec = find_spec("playwright")
+    if spec is None or not spec.submodule_search_locations:
+        return None
+    for location in spec.submodule_search_locations:
+        manifest = Path(location) / "driver" / "package" / "browsers.json"
+        try:
+            browsers = json.loads(manifest.read_text(encoding="utf-8"))["browsers"]
+            revisions = {b["name"]: str(b["revision"]) for b in browsers}
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+        folders = tuple(
+            f"{name.replace('-', '_')}-{revisions[name]}"
+            for name in ("chromium-headless-shell", "chromium")
+            if name in revisions
+        )
+        if folders:
+            return folders
+    return None
+
+
 def installed_chromium() -> Path | None:
     """The marker or executable that shows Playwright's Chromium is installed.
 
@@ -136,11 +165,17 @@ def installed_chromium() -> Path | None:
             Path.home() / ".cache" / "ms-playwright",
         ]
 
+    expected = _expected_chromium_folders()
     for base in base_paths:
         if not base.exists():
             continue
-        # Look for chromium-* directories
-        chromium_dirs = list(base.glob("chromium-*"))
+        # Look for chromium-* directories: the revisions this Playwright
+        # launches when it names them, else any (a folder left by an older
+        # Playwright counted as installed, and every launch then failed)
+        if expected is not None:
+            chromium_dirs = [base / name for name in expected if (base / name).is_dir()]
+        else:
+            chromium_dirs = list(base.glob("chromium-*"))
         if chromium_dirs:
             for chromium_dir in chromium_dirs:
                 # Primary check: Playwright writes this marker after a

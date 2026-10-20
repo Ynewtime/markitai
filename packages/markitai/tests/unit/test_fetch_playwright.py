@@ -2530,6 +2530,10 @@ def test_browser_lookup_honours_playwright_browsers_path(
     browsers = tmp_path / "browsers"
     (browsers / "chromium-9999").mkdir(parents=True)
     (browsers / "chromium-9999" / "INSTALLATION_COMPLETE").write_text("")
+    monkeypatch.setattr(
+        "markitai.fetch_playwright._expected_chromium_folders",
+        lambda: ("chromium_headless_shell-9999", "chromium-9999"),
+    )
     monkeypatch.setenv("HOME", str(tmp_path / "empty-home"))
     # The lookup is under test, not whether the browser extra is installed
     monkeypatch.setattr(
@@ -2539,6 +2543,44 @@ def test_browser_lookup_honours_playwright_browsers_path(
     assert is_playwright_browser_installed(use_cache=False) is True
     monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path / "nowhere"))
     assert is_playwright_browser_installed(use_cache=False) is False
+
+
+def test_a_revision_this_playwright_does_not_launch_is_not_installed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A Chromium left by an older Playwright counted as installed, so
+    every browser fetch tried to launch it and failed, and the browser
+    tests ran instead of skipping."""
+    from markitai.fetch_playwright import installed_chromium
+
+    browsers = tmp_path / "browsers"
+    for name in ("chromium-1194", "chromium_headless_shell-1243"):
+        (browsers / name).mkdir(parents=True)
+    (browsers / "chromium-1194" / "INSTALLATION_COMPLETE").write_text("")
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(browsers))
+    monkeypatch.setattr(
+        "markitai.fetch_playwright._expected_chromium_folders",
+        lambda: ("chromium_headless_shell-1243", "chromium-1243"),
+    )
+    assert installed_chromium() is None
+    marker = browsers / "chromium_headless_shell-1243" / "INSTALLATION_COMPLETE"
+    marker.write_text("")
+    assert installed_chromium() == marker
+    # Without Playwright's manifest any revision still counts
+    monkeypatch.setattr(
+        "markitai.fetch_playwright._expected_chromium_folders", lambda: None
+    )
+    assert installed_chromium() == browsers / "chromium-1194" / "INSTALLATION_COMPLETE"
+
+
+@requires_playwright
+def test_the_expected_folders_come_from_playwrights_manifest() -> None:
+    from markitai.fetch_playwright import _expected_chromium_folders
+
+    folders = _expected_chromium_folders()
+    assert folders is not None
+    assert folders[0].startswith("chromium_headless_shell-")
+    assert folders[1].startswith("chromium-")
 
 
 @requires_playwright
