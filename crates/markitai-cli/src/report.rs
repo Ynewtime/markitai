@@ -59,6 +59,9 @@ pub(crate) struct RunItem {
     pub(crate) llm_cache_hit: bool,
     pub(crate) fetch_cache_hit: bool,
     pub(crate) fetch_strategy: Option<String>,
+    /// For a PDF, where each page's text came from; in memory only (an
+    /// item an earlier run completed has none).
+    pub(crate) page_sources: Vec<markitai_core::PageSource>,
 }
 
 #[derive(Debug)]
@@ -2019,6 +2022,7 @@ mod tests {
             llm_cache_hit: false,
             fetch_cache_hit: false,
             fetch_strategy: Some("static".into()),
+            page_sources: Vec::new(),
         }
     }
 

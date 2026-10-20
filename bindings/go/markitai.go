@@ -48,6 +48,16 @@ type ConversionOutput struct {
 	SkipReason    *string          `json:"skip_reason"`
 	Duration      float64          `json:"duration"`
 	Warnings      []string         `json:"warnings"`
+	// A PDF's pages, each with where its text came from; empty otherwise.
+	PageSources []PageSource `json:"page_sources"`
+}
+
+// PageSource is where one PDF page's text came from: Source is "text" (the
+// text layer), "ocr" or "mixed", Reason a short English note.
+type PageSource struct {
+	Page   int    `json:"page"`
+	Source string `json:"source"`
+	Reason string `json:"reason"`
 }
 
 type ConversionError struct {

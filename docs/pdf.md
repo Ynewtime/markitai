@@ -861,6 +861,67 @@ one ideograph (U+2E9F, U+2EF3 by NFKC, then the 28 forms of the workbench's
 Compare table) to those ideographs; component shapes such as `⺁` and `⺌` stay.
 Other formats are left as they are. Python markitai 1.2.1 uses the same mapping.
 
+## Text layers that read wrong
+
+A page whose text layer is there but wrong is read as a page needing OCR, not
+as text. Besides the reader's own checks (runs that cannot be decoded,
+substitution ciphers and consonant soup, above), every page with at least 50
+characters of text is checked for four more signs, after the reader has put
+its lines into reading order and before layout:
+
+- a broken font map: private-use, replacement, unassigned or control code
+  points (Symbol and Wingdings bytes, U+F020–U+F0FF, excepted) are at least
+  ten characters and a fifth of the page;
+- raw glyph codes: three `(cid:NN)` codes or more, a fifth of the text;
+- mojibake, UTF-8 read as Windows-1252 (`cafÃ©`, `â€œ`): three words or
+  more, and three in ten of the words with a non-ASCII character, read as
+  UTF-8 again;
+- Hebrew or Arabic in reverse order: right-to-left letters are a fifth of the
+  page's letters, and at least three words, twice as many as speak for reading
+  order, start with a letter that only ends a word (Hebrew final forms,
+  Arabic `ة` and `ى`) or end with one that does not (Hebrew `כ מ נ פ צ`, a
+  reversed article `لا`). Points and harakat are ignored, Arabic presentation
+  forms read as their letters.
+
+Such a page joins the pages no reader recovered: its section is its marker,
+it is listed in `unread_pages`, the warning names the check
+(`PDF page 2 (1 of 3): native text was not recovered (text layer failed the
+script check: mojibake, UTF-8 read as Windows-1252); OCR is required to read
+it. Run again with --ocr.`), `--ocr` recognizes it from its image and a vision
+model given the page images reads it. A page in a script that OCR with the
+configured `ocr.lang` does not read (reversed Hebrew, which no OCR language
+reads; reversed Arabic under the default language) keeps its text layer, with
+a warning that says so and which `ocr.lang` would read it:
+`PDF page 1 (1 of 1): the text layer reads wrong (right-to-left text in
+reverse order); consider re-running with --ocr and ocr.lang set to ar.`
+The default language counts as reading Latin, CJK and Hangul; a
+single-language recognizer its script and Latin; every other language Latin
+and CJK.
+
+Correct Chinese, Japanese, Korean, English, code, table and math pages pass
+these checks, as do Hebrew and Arabic in reading order and a page that quotes
+a few codes or a reversed phrase; their Markdown is unchanged. The 25 PDFs
+under `crates/markitai-core/src` convert byte-identically. The idea of
+checking a text layer by the script it shows comes from Indra OCR
+(datalab-to/indra); the code is markitai's own. Python markitai also crops a
+few lines of each font under `--ocr` and has the recognizer read them, which
+catches a legacy font whose codes stand for other letters than it draws (a
+shifted alphabet, Latin codes for CJK glyphs); this reader does not.
+
+## Where each page's text came from
+
+Every PDF result lists its pages in `page_sources`, as Python markitai does:
+`{"page", "source", "reason"}`, `source` being `text` (the text layer), `ocr`
+(the page recognized from its image) or `mixed` (the text layer with its
+pictures' text recognized, or a vision model reading the page image beside it
+under `--ocr --llm`). `reason` is a short note: `text layer trusted`,
+`no text layer`, `text layer failed the script check: mojibake, UTF-8 read as
+Windows-1252 (24 words)`, `…; kept, since OCR with ocr.lang en does not read
+Hebrew`, `OCR forced by --ocr (ocr.per_page_routing is off)`, `…; OCR found no
+text`, or `text layer trusted: the invisible OCR layer over the page image`.
+It is in the `--json` items, the bindings' result, recorded history and
+`markitai serve` items, not in the front matter.
+
 ## Images and remaining work
 
 Executed embedded raster images retain their existing extraction path and are

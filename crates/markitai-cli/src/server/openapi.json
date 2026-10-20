@@ -1231,7 +1231,19 @@
           "retryable": { "type": "boolean" },
           "warnings": { "type": "array", "items": { "type": "string" } },
           "models": { "type": "array", "items": { "type": "string" }, "description": "The models whose requests produced the retained result, in name order; absent when none did" },
-          "source_size": { "type": ["integer", "null"], "description": "Bytes of the uploaded original; absent for URLs and CLI records" }
+          "source_size": { "type": ["integer", "null"], "description": "Bytes of the uploaded original; absent for URLs and CLI records" },
+          "page_sources": { "type": "array", "items": { "$ref": "#/components/schemas/PageSource" }, "description": "A PDF's pages, each with where its text came from; empty for other items and for earlier records" }
+        }
+      },
+      "PageSource": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Where one PDF page's text came from",
+        "required": ["page", "source", "reason"],
+        "properties": {
+          "page": { "type": "integer", "minimum": 1 },
+          "source": { "type": "string", "enum": ["text", "ocr", "mixed"], "description": "text: the text layer; ocr: OCR of the page image; mixed: the text layer with its pictures OCR'd, or a vision model reading the page image beside it" },
+          "reason": { "type": "string", "description": "A short English note: text layer trusted, no text layer, text layer failed the script check: ..., OCR forced by --ocr ..." }
         }
       },
       "RerunFailure": {

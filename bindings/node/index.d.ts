@@ -31,6 +31,14 @@ export interface ConversionOutput {
   skip_reason: string | null;
   duration: number;
   warnings: string[];
+  /** A PDF's pages, each with where its text came from; empty otherwise. */
+  page_sources: PageSource[];
+}
+
+export interface PageSource {
+  page: number;
+  source: "text" | "ocr" | "mixed";
+  reason: string;
 }
 
 export class ConversionError extends Error {

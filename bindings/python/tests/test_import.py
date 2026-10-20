@@ -210,7 +210,8 @@ class RecordIdentityTests(unittest.TestCase):
         self.assertEqual(
             [field.name for field in dataclasses.fields(markitai.ConversionOutput)],
             ["source", "markdown", "llm_markdown", "frontmatter", "output_path", "llm_output_path",
-             "assets", "screenshots", "images", "usage", "skip_reason", "duration", "warnings"])
+             "assets", "screenshots", "images", "usage", "skip_reason", "duration", "warnings",
+             "page_sources"])
         self.assertEqual(
             [field.name for field in dataclasses.fields(markitai.ConversionUsage)],
             ["cost_usd", "requests", "input_tokens", "output_tokens", "by_model"])

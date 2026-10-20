@@ -702,7 +702,7 @@ fn clipped_vector_chart_becomes_an_asset_without_the_screenshot_option() {
     let image = image::load_from_memory(&asset.bytes).unwrap().to_rgb8();
     assert_eq!(image.dimensions(), (680, 400));
     assert!(!document.warnings.iter().any(|w| w == LIMITATION));
-    let filtered = extract_pages_policy(&bytes, None, sanitize::Mode::Remove)
+    let filtered = extract_pages_policy(&bytes, None, sanitize::Mode::Remove, &Trust::default())
         .unwrap()
         .finish()
         .unwrap();

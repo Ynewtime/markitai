@@ -1806,6 +1806,7 @@ fn recorded(
         llm_cache_hit: false,
         fetch_cache_hit: false,
         fetch_strategy: None,
+        page_sources: Vec::new(),
     };
     match &result {
         Ok(output) => {
@@ -1838,6 +1839,7 @@ fn recorded(
             );
             record.llm_cache_hit = output.llm_cache_hit();
             record.fetch_cache_hit = output.fetch_cache_hit();
+            record.page_sources = output.page_sources.clone();
             if record.kind == ItemKind::Url {
                 record.fetch_strategy = output.fetch_strategy().map(str::to_owned);
             }
@@ -1887,6 +1889,7 @@ fn outcome(item: &RunItem) -> Value {
         "fetch_strategy": item.fetch_strategy,
         "source_file": item.source_file,
         "llm_usage": usage.by_model,
+        "page_sources": item.page_sources,
     });
     if let Some(diagnostics) = &item.diagnostics {
         result["diagnostics"] = json!(diagnostics);
@@ -3202,6 +3205,7 @@ mod tests {
             llm_cache_hit: false,
             fetch_cache_hit: false,
             fetch_strategy: None,
+            page_sources: Vec::new(),
         };
         let records = [
             item(0, &["own", "priced"], None),

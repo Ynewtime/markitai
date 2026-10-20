@@ -178,7 +178,8 @@ MARKITAI_LANG=zh markitai doctor
 
 转换 `--json` 顶层为 `version`、`ok`、`error`、`batch`、`items`、`totals`。
 逐项读取 `items[].status`（completed/failed/skipped/pending）、`output`、`error`、
-`warnings` 与 `skip_reason`；按字段名解析，不依赖显示顺序。普通批量中断/续跑
+`warnings` 与 `skip_reason`；PDF 条目的 `page_sources` 逐页说明文字来源（`text` 文字层、`ocr`、`mixed`，
+见 [PDF](pdf.md#where-each-pages-text-came-from)），续跑时此前已完成的条目为空列表。按字段名解析，不依赖显示顺序。普通批量中断/续跑
 只列本次已经结束的条目，未启动项不会凭空出现在 `items`，也不应把它当全历史。
 
 退出码：0 成功或正常跳过；1 单项/运行错误；2 用法错误或供应商 Batch 尚未完成；

@@ -505,7 +505,7 @@ fn accepted_searchable_scans_keep_their_layer_in_every_sanitize_policy() {
         sanitize::Mode::Warn,
         sanitize::Mode::Remove,
     ] {
-        let pages = extract_pages_policy(&bytes, None, mode).unwrap();
+        let pages = extract_pages_policy(&bytes, None, mode, &Trust::default()).unwrap();
         assert_eq!(
             pages.pages[0].ocr_layer,
             Some(ocr_layer::LayerCheck::Aligned)

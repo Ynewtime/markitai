@@ -408,6 +408,7 @@ async fn convert_one(
             item.models = super::types::models(item.llm_enhanced, &result.usage);
             item.diagnostics = AttemptDiagnostics::completed(Operation::Convert, result.usage);
             item.warnings = result.warnings;
+            item.page_sources = result.page_sources;
             item.output = result
                 .llm_output_path
                 .or(result.output_path)

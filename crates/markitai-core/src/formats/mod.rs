@@ -18,7 +18,7 @@ pub(crate) use native::extract_presentation_count;
 #[cfg(test)]
 pub(crate) use native::pdf::extract_pages as extract_pdf_pages;
 pub(crate) use native::pdf::{
-    PdfPages, UNREAD_PAGES,
+    OCR_FORCED as PDF_OCR_FORCED, PAGE_SOURCES as PDF_PAGE_SOURCES, PdfPages, UNREAD_PAGES,
     extract_pages_bounded_with_config as extract_pdf_pages_bounded_with_config,
     is_unrecovered_warning, screenshot_reference as pdf_screenshot_reference,
 };

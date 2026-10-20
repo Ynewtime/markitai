@@ -329,6 +329,7 @@ struct Item<'a> {
     warnings: Vec<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     diagnostics: Option<&'a crate::diagnostics::AttemptDiagnostics>,
+    page_sources: &'a [markitai_core::PageSource],
 }
 
 impl<'a> Item<'a> {
@@ -403,6 +404,7 @@ impl<'a> Item<'a> {
                 .map(String::as_str)
                 .filter(|warning| seen.insert(*warning))
                 .collect(),
+            page_sources: &item.page_sources,
         }
     }
 }
@@ -588,6 +590,7 @@ mod tests {
             llm_cache_hit: false,
             fetch_cache_hit: false,
             fetch_strategy: None,
+            page_sources: Vec::new(),
         }
     }
     fn plan(root: &Path, mode: RunMode) -> Plan {
@@ -798,7 +801,7 @@ mod tests {
             json!({"preset":null,"llm":false,"ocr":false,"origin":"cli"})
         );
         for item in meta["items"].as_array().unwrap() {
-            assert_eq!(item.as_object().unwrap().len(), 16);
+            assert_eq!(item.as_object().unwrap().len(), 17);
             assert_eq!(item["finished_at"], meta["finished_at"]);
             assert_eq!(item["warnings"], json!(["first", "second"]));
         }

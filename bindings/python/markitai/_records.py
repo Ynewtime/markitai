@@ -66,3 +66,5 @@ class ConversionOutput:
     skip_reason: str | None = None
     duration: float = 0.0
     warnings: list[str] = field(default_factory=list)
+    # A PDF's pages: {"page", "source", "reason"}, source text | ocr | mixed
+    page_sources: list[dict[str, Any]] = field(default_factory=list)

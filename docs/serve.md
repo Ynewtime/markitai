@@ -75,7 +75,10 @@ workbench relies on; they are not a byte-for-byte contract of every payload.
    An item reports `source_size`, the bytes of its uploaded original, and
    `models`, the models whose requests produced its retained result (named as
    its usage records them, in name order); each is omitted when unknown or
-   empty.
+   empty. `page_sources` lists a PDF's pages with where each page's text came
+   from (`{"page", "source", "reason"}`, see [PDF](pdf.md#where-each-pages-text-came-from));
+   it is empty for other items and earlier records, and the workbench does not
+   show it.
 4. `GET /api/jobs/{job_id}/events` streams a first `snapshot`, subsequent `item`
    and `job` events, and idle keepalives. A terminal job event closes the stream.
    Slow subscribers receive a fresh snapshot after a bounded event-buffer

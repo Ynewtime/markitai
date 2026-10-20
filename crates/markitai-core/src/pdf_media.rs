@@ -29,6 +29,9 @@ pub(crate) struct PreparedPdf {
     screenshot_pages: Vec<usize>,
     completed_media: bool,
     media_requested: bool,
+    /// The page images go to a vision model that reads them beside the
+    /// text layer (`--ocr --llm`).
+    vision_reads: bool,
 }
 
 impl PreparedPdf {
@@ -39,7 +42,9 @@ impl PreparedPdf {
         }
         for (asset, &index) in self.screenshots.iter().zip(&self.screenshot_pages) {
             validate_name(&asset.name)?;
-            self.pages.pages[index].screenshot_name = Some(asset.name.clone());
+            let page = &mut self.pages.pages[index];
+            page.screenshot_name = Some(asset.name.clone());
+            page.vision_read = self.vision_reads;
         }
         let mut document = if self.completed_media {
             self.pages.finish_with_media()?
@@ -62,6 +67,10 @@ struct Plan {
     local_ocr: bool,
     vlm_ocr: bool,
     screenshots: bool,
+    /// The vision model is sent the page images (see [`PreparedPdf`]).
+    vision_reads: bool,
+    /// Only the pages needing it are recognized (`ocr.per_page_routing`).
+    routing: bool,
     recognize: Vec<bool>,
 }
 
@@ -119,6 +128,8 @@ impl Plan {
             local_ocr,
             vlm_ocr,
             screenshots,
+            vision_reads: vlm_ocr && sends_images,
+            routing,
             recognize,
         })
     }
@@ -810,6 +821,17 @@ fn prepare_with(
     validate_name(prefix)?;
     let mut pages = extract_pdf_pages_bounded_with_config(bytes, MAX_PAGES, cfg)?;
     let plan = Plan::new(&pages, cfg, vlm_optout)?;
+    // Why each page OCR reads is read, before its recognition replaces the
+    // reader's verdict: its page source.
+    for (page, &recognize) in pages.pages.iter_mut().zip(&plan.recognize) {
+        if recognize {
+            page.ocr_note = Some(if plan.routing {
+                page.layer_reason()
+            } else {
+                crate::formats::PDF_OCR_FORCED.into()
+            });
+        }
+    }
     let render_indices = plan
         .recognize
         .iter()
@@ -1013,6 +1035,7 @@ fn prepare_with(
         screenshot_pages,
         completed_media,
         media_requested,
+        vision_reads: plan.vision_reads,
     })
 }
 
@@ -1294,6 +1317,7 @@ mod tests {
             has_reliable_text: true,
             completed_media: true,
             media_requested: true,
+            vision_reads: false,
         };
         prepared.screenshots[0].name = "report.pdf.v2.page0003.jpg".into();
         let (document, shots) = prepared.finish().unwrap();
@@ -1328,6 +1352,7 @@ mod tests {
             has_reliable_text: true,
             completed_media: false,
             media_requested: true,
+            vision_reads: false,
         };
         let (document, _) = prepared.finish().unwrap();
         assert!(
@@ -1362,6 +1387,7 @@ mod tests {
             has_reliable_text: false,
             completed_media: false,
             media_requested: false,
+            vision_reads: false,
         };
         assert!(prepared.finish().is_err());
         assert!(validate_name("../escape").is_err());

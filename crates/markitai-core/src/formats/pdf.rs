@@ -40,6 +40,11 @@ mod sanitize;
 #[cfg(test)]
 #[path = "pdf/sanitize_tests.rs"]
 mod sanitize_tests;
+#[path = "pdf/text_trust.rs"]
+pub(crate) mod text_trust;
+#[cfg(test)]
+#[path = "pdf/text_trust_tests.rs"]
+mod text_trust_tests;
 #[cfg(test)]
 #[path = "pdf/title_tests.rs"]
 mod title_tests;
@@ -721,6 +726,109 @@ pub(crate) struct PdfPage {
     /// The body is the invisible OCR text layer laid over the page image,
     /// and how it was checked against the image.
     pub ocr_layer: Option<ocr_layer::LayerCheck>,
+    /// Why the text layer failed the checks of [`text_trust`], when it did.
+    pub layer_failure: Option<text_trust::Failure>,
+    /// A failed text layer kept, as OCR with the configured language does
+    /// not read its script.
+    pub layer_kept: Option<KeptLayer>,
+    /// Why OCR read the page, noted before recognition replaces the
+    /// reader's verdict: the page's source reason (see [`PdfPage::source`]).
+    pub ocr_note: Option<String>,
+    /// A vision model reads the page's image beside its text layer.
+    pub vision_read: bool,
+}
+
+/// A failed text layer kept as extracted: what the warning advises, and
+/// what its page source adds with `--ocr` on.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct KeptLayer {
+    pub advice: String,
+    pub note: Option<String>,
+}
+
+/// The page source reason when `--ocr` reads every page.
+pub(crate) const OCR_FORCED: &str = "OCR forced by --ocr (ocr.per_page_routing is off)";
+/// The page source reason when a vision model reads every page's image.
+pub(crate) const VLM_READ: &str =
+    "OCR forced by --ocr: the vision model reads the page image beside its text layer";
+
+impl PdfPage {
+    /// Why the page's text layer was used or not, by what the readers and
+    /// the checks found: `text layer trusted`, `no text layer`,
+    /// `text layer failed the script check: …`.
+    pub(crate) fn layer_reason(&self) -> String {
+        if let Some(failure) = &self.layer_failure {
+            let mut reason = format!("{}{}", text_trust::FAILED, failure.detail);
+            if let Some(note) = self
+                .layer_kept
+                .as_ref()
+                .and_then(|kept| kept.note.as_deref())
+            {
+                reason.push_str("; ");
+                reason.push_str(note);
+            }
+            return reason;
+        }
+        if self.needs_ocr {
+            return match self.ocr_reason.as_deref() {
+                None
+                | Some(
+                    pdf_inspector::OCR_REASON_SCANNED
+                    | pdf_inspector::OCR_REASON_NO_TEXT
+                    | "image-only",
+                ) => text_trust::NO_TEXT_LAYER.into(),
+                Some(pdf_inspector::OCR_REASON_INVISIBLE_TEXT_LAYER) => {
+                    "no text layer (its invisible OCR layer was not used)".into()
+                }
+                Some(pdf_inspector::OCR_REASON_VECTOR_TEXT) => {
+                    "no text layer (its text is drawn as outlines)".into()
+                }
+                Some(pdf_inspector::OCR_REASON_SUSPECTED_GARBLED_TEXT) => {
+                    format!("{}garbled or enciphered text", text_trust::FAILED)
+                }
+                Some(other) => format!("text layer not read ({other})"),
+            };
+        }
+        if self.markdown.trim().is_empty() {
+            text_trust::NO_TEXT_LAYER.into()
+        } else if self.ocr_layer.is_some() {
+            format!(
+                "{}: the invisible OCR layer over the page image",
+                text_trust::TRUSTED
+            )
+        } else if self.visibility_suspect {
+            "text layer with hidden-text signals".into()
+        } else if self.omitted_text.is_some() {
+            format!(
+                "{}, but some of its text could not be decoded",
+                text_trust::TRUSTED
+            )
+        } else {
+            text_trust::TRUSTED.into()
+        }
+    }
+
+    /// Where the page's text came from (`text`, `ocr` or `mixed`: the text
+    /// layer with its pictures OCR'd, or a vision model reading the page
+    /// image beside it), and why.
+    fn source(&self) -> (&'static str, String) {
+        if self.ocr_completed {
+            let mut reason = self.ocr_note.clone().unwrap_or_else(|| self.layer_reason());
+            if self.markdown.trim().is_empty() {
+                reason.push_str("; OCR found no text");
+            }
+            ("ocr", reason)
+        } else if self.vision_read {
+            ("mixed", VLM_READ.into())
+        } else if self.asset_ocr.values().any(|text| !text.trim().is_empty()) {
+            (
+                "mixed",
+                format!("{}; text in its pictures OCR'd", self.layer_reason()),
+            )
+        } else {
+            ("text", self.layer_reason())
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -760,6 +868,15 @@ impl PdfPages {
             .iter()
             .map(|page| !page.needs_ocr && !page.markdown.trim().is_empty())
             .collect();
+        // Where each page's text came from, and why, before a table
+        // continued from one page to the next joins the earlier page.
+        let sources: Vec<serde_json::Value> = pages
+            .iter()
+            .map(|page| {
+                let (source, reason) = page.source();
+                serde_json::json!({"page": page.number, "source": source, "reason": reason})
+            })
+            .collect();
         continued::join_tables(&mut pages);
         let mut sections = Vec::with_capacity(pages.len());
         let mut readable_pages = 0;
@@ -793,11 +910,49 @@ impl PdfPages {
                 .metadata
                 .insert("ocr_layer_pages".into(), layer_pages.into());
         }
+        let total = pages.len();
+        // The pages that keep a text layer which failed the checks, as OCR
+        // does not read their script: one warning for those failing alike,
+        // where the first of them stands.
+        let mut kept_groups: Vec<(&'static str, &str, Vec<usize>, usize)> = Vec::new();
+        for page in &pages {
+            let (Some(failure), Some(kept)) = (&page.layer_failure, &page.layer_kept) else {
+                continue;
+            };
+            if page.ocr_completed {
+                continue;
+            }
+            match kept_groups
+                .iter_mut()
+                .find(|(kind, advice, ..)| *kind == failure.kind && *advice == kept.advice)
+            {
+                Some((.., numbers, _)) => numbers.push(page.number),
+                None => kept_groups.push((
+                    failure.kind,
+                    &kept.advice,
+                    vec![page.number],
+                    page.warning_index,
+                )),
+            }
+        }
+        for (kind, advice, numbers, index) in kept_groups {
+            let label = if numbers.len() == 1 { "page" } else { "pages" };
+            deferred.push((
+                index,
+                format!(
+                    "PDF {label} {} ({} of {total}): the text layer reads wrong ({kind}); {advice}.",
+                    crate::formats::page_ranges(&numbers),
+                    numbers.len(),
+                ),
+            ));
+        }
+        document
+            .metadata
+            .insert(PAGE_SOURCES.into(), sources.into());
         let mut appended_images = false;
         // A scanned page's pictures dropped for its screenshot, and the
         // pictures other pages still show.
         let (mut dropped, mut shown) = (BTreeSet::new(), BTreeSet::new());
-        let total = pages.len();
         // The pages whose native text was not recovered, with their reason,
         // and where the warning for the first of them stands.
         let mut unrecovered: Vec<(usize, String)> = Vec::new();
@@ -1056,6 +1211,11 @@ fn unrecovered_reason(page: &PdfPage) -> Option<&str> {
 /// Metadata key listing the pages whose text no reader recovered.
 pub(crate) const UNREAD_PAGES: &str = "unread_pages";
 
+/// Metadata key of where each page's text came from (see
+/// [`PdfPage::source`]): `{"page", "source", "reason"}` in page order. The
+/// output moves it out of the metadata into the result's `page_sources`.
+pub(crate) const PAGE_SOURCES: &str = "page_sources";
+
 /// Whether `warning` is one of [`unrecovered_warnings`]: it tells the user to
 /// run OCR, which a model that read the page images has made unnecessary.
 pub(crate) fn is_unrecovered_warning(warning: &str) -> bool {
@@ -1293,11 +1453,17 @@ pub(super) fn extract(bytes: &[u8]) -> Result<Document> {
 }
 
 pub(crate) fn extract_pages(bytes: &[u8]) -> Result<PdfPages> {
-    extract_pages_policy(bytes, None, sanitize::Mode::Warn)
+    extract_pages_policy(bytes, None, sanitize::Mode::Warn, &Trust::default())
 }
 
 pub(crate) fn extract_with_config(bytes: &[u8], cfg: &serde_json::Value) -> Result<Document> {
-    extract_pages_policy(bytes, None, sanitize::Mode::from_config(cfg)?)?.finish()
+    extract_pages_policy(
+        bytes,
+        None,
+        sanitize::Mode::from_config(cfg)?,
+        &Trust::from_config(cfg),
+    )?
+    .finish()
 }
 
 pub(crate) fn extract_pages_bounded_with_config(
@@ -1305,17 +1471,88 @@ pub(crate) fn extract_pages_bounded_with_config(
     max_pages: usize,
     cfg: &serde_json::Value,
 ) -> Result<PdfPages> {
-    extract_pages_policy(bytes, Some(max_pages), sanitize::Mode::from_config(cfg)?)
+    extract_pages_policy(
+        bytes,
+        Some(max_pages),
+        sanitize::Mode::from_config(cfg)?,
+        &Trust::from_config(cfg),
+    )
+}
+
+/// What the text-layer check ([`text_trust`]) needs of the configuration:
+/// which writing systems OCR reads, and whether it runs.
+pub(crate) struct Trust {
+    /// `ocr.lang` as configured, for the advice.
+    lang: String,
+    readable: &'static [&'static str],
+    ocr: bool,
+}
+
+impl Default for Trust {
+    fn default() -> Self {
+        Self::from_config(&serde_json::Value::Null)
+    }
+}
+
+impl Trust {
+    pub(crate) fn from_config(cfg: &serde_json::Value) -> Self {
+        let lang = cfg
+            .pointer("/ocr/lang")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|lang| !lang.is_empty())
+            .unwrap_or("en");
+        let spelling = lang.to_ascii_lowercase().replace('_', "-");
+        Self {
+            lang: lang.to_owned(),
+            readable: text_trust::readable_scripts(&spelling),
+            ocr: crate::config::enabled(cfg, "/ocr/enabled"),
+        }
+    }
+
+    /// Judge a page's text, as the reader gives it: a page whose layer
+    /// fails is sent to OCR, unless OCR does not read its script; then it
+    /// keeps its layer, with advice.
+    fn judge(
+        &self,
+        page: &mut pdf_inspector::PageMarkdown,
+    ) -> Option<(text_trust::Failure, Option<KeptLayer>)> {
+        if page.needs_ocr || page.markdown.trim().chars().count() < text_trust::MIN_CHARS {
+            return None;
+        }
+        let failure = text_trust::judge(&page.markdown)?;
+        if failure
+            .script
+            .is_none_or(|script| self.readable.contains(&script))
+        {
+            page.needs_ocr = true;
+            page.ocr_reason = Some(failure.reason());
+            return Some((failure, None));
+        }
+        let script = failure.script.unwrap_or("this script");
+        let kept = KeptLayer {
+            advice: text_trust::unread_script_advice(failure.script, &self.lang, self.ocr),
+            note: self.ocr.then(|| {
+                format!(
+                    "kept, since OCR with ocr.lang {} does not read {script}",
+                    self.lang
+                )
+            }),
+        };
+        Some((failure, Some(kept)))
+    }
 }
 
 fn extract_pages_policy(
     bytes: &[u8],
     max_pages: Option<usize>,
     mode: sanitize::Mode,
+    trust: &Trust,
 ) -> Result<PdfPages> {
     crate::pdf_budget::within(bytes, || {
-        let mut pages = extract_pages_inner(bytes, max_pages, mode != sanitize::Mode::Remove)?;
-        sanitize::apply(bytes, max_pages, mode, &mut pages)?;
+        let mut pages =
+            extract_pages_inner(bytes, max_pages, mode != sanitize::Mode::Remove, trust)?;
+        sanitize::apply(bytes, max_pages, mode, &mut pages, trust)?;
         Ok(pages)
     })
 }
@@ -1323,13 +1560,30 @@ fn extract_pages_policy(
 /// Bound page processing before invoking the native text/layout reader.
 #[cfg(test)]
 pub(crate) fn extract_pages_bounded(bytes: &[u8], max_pages: usize) -> Result<PdfPages> {
-    extract_pages_policy(bytes, Some(max_pages), sanitize::Mode::Warn)
+    extract_pages_policy(
+        bytes,
+        Some(max_pages),
+        sanitize::Mode::Warn,
+        &Trust::default(),
+    )
+}
+
+/// [`extract_pages`] with the configuration's text-layer check settings.
+#[cfg(test)]
+pub(crate) fn extract_pages_with_config(bytes: &[u8], cfg: &serde_json::Value) -> Result<PdfPages> {
+    extract_pages_policy(
+        bytes,
+        None,
+        sanitize::Mode::from_config(cfg)?,
+        &Trust::from_config(cfg),
+    )
 }
 
 fn extract_pages_inner(
     bytes: &[u8],
     max_pages: Option<usize>,
     preserve_charts: bool,
+    trust: &Trust,
 ) -> Result<PdfPages> {
     // One parse of the file serves the page reader, the layout reader and,
     // when the reader's document is what lopdf alone makes of the bytes,
@@ -1517,6 +1771,8 @@ fn extract_pages_inner(
     // How each page read from its OCR layer was checked against its image,
     // in the reader's own document, whose objects the layer names.
     let mut layer_checks = BTreeMap::new();
+    // The pages whose text layer failed the text-layer check.
+    let mut layer_verdicts = BTreeMap::new();
     let layer_document = loaded
         .as_ref()
         .map(pdf_inspector::LoadedPdf::document)
@@ -1568,6 +1824,11 @@ fn extract_pages_inner(
             }
             let inspection = &inspections[&number];
             recover_plain_text(pdf, number, id, page, inspection, &mut document.warnings);
+            // A text layer that is there but wrong goes to OCR like a scan,
+            // before layout reads it.
+            if let Some(verdict) = trust.judge(page) {
+                layer_verdicts.insert(number, verdict);
+            }
             if !page.needs_ocr
                 && !page.markdown.trim().is_empty()
                 && let Some(geometry) = shapes.remove(&number)
@@ -1770,6 +2031,9 @@ fn extract_pages_inner(
                 asset_names.push(name.clone());
             }
         }
+        let (layer_failure, layer_kept) = layer_verdicts
+            .remove(&number)
+            .map_or((None, None), |(failure, kept)| (Some(failure), kept));
         extracted_pages.push(PdfPage {
             number: number as usize,
             markdown: page.markdown,
@@ -1785,6 +2049,10 @@ fn extract_pages_inner(
             warning_index,
             continues_table,
             ocr_layer: layer_checks.remove(&number),
+            layer_failure,
+            layer_kept,
+            ocr_note: None,
+            vision_read: false,
         });
     }
     // Running page headers and footers go like the page numbers the reader
@@ -2305,6 +2573,10 @@ mod tests {
                 warning_index: 0,
                 continues_table: false,
                 ocr_layer: None,
+                layer_failure: None,
+                layer_kept: None,
+                ocr_note: None,
+                vision_read: false,
             },
             &mut warnings,
         );
@@ -2324,6 +2596,10 @@ mod tests {
                 warning_index: 0,
                 continues_table: false,
                 ocr_layer: None,
+                layer_failure: None,
+                layer_kept: None,
+                ocr_note: None,
+                vision_read: false,
             },
             &mut warnings,
         );
@@ -3231,6 +3507,10 @@ mod tests {
             warning_index: 0,
             continues_table: false,
             ocr_layer: None,
+            layer_failure: None,
+            layer_kept: None,
+            ocr_note: None,
+            vision_read: false,
         };
         let omitted = pdf_inspector::PageOmittedText {
             page: 2,

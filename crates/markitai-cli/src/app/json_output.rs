@@ -39,6 +39,7 @@ impl Scope {
                 "llm_usage",
                 "diagnostics",
                 "pricing",
+                "page_sources",
             ],
             Self::Totals => &[
                 "total",

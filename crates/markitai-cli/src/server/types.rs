@@ -423,6 +423,16 @@ pub(super) struct Item {
     /// Bytes of the uploaded original; unknown for URLs and CLI records.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_size: Option<u64>,
+    /// A PDF's pages, each with where its text came from; empty otherwise.
+    /// A saved entry of another shape is dropped.
+    #[serde(default, deserialize_with = "page_sources")]
+    pub page_sources: Vec<markitai_core::PageSource>,
+}
+fn page_sources<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<markitai_core::PageSource>, D::Error> {
+    let value = Value::deserialize(deserializer)?;
+    Ok(markitai_core::PageSource::list_from(&value))
 }
 fn convert_operation() -> String {
     "convert".into()
@@ -456,6 +466,7 @@ impl Item {
             warnings: Vec::new(),
             models: Vec::new(),
             source_size: None,
+            page_sources: Vec::new(),
         }
     }
     pub fn created(&self) -> Value {

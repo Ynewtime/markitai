@@ -486,7 +486,10 @@ fn read_job(path: &Path) -> Value {
             "skip_reason",
             "retryable",
             "warnings",
+            "page_sources",
         ];
+        // No PDF among these: no page records where its text came from.
+        assert_eq!(item["page_sources"], json!([]));
         if let Some(diagnostics) = item.get("diagnostics") {
             item_keys.push("diagnostics");
             keys(diagnostics, &["last_attempt"]);

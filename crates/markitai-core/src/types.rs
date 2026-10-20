@@ -340,6 +340,39 @@ fn subscription_row(key: &str) -> bool {
         .any(|prefix| key.starts_with(prefix))
 }
 
+/// Where one PDF page's text came from, as Python markitai records it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PageSource {
+    /// The page number, from 1.
+    pub page: usize,
+    /// `text` (the text layer), `ocr`, or `mixed` (the text layer with its
+    /// pictures OCR'd, or a vision model reading the page image beside it).
+    pub source: String,
+    /// A short English note: `text layer trusted`, `no text layer`,
+    /// `text layer failed the script check: …`, `OCR forced by --ocr …`.
+    pub reason: String,
+}
+
+impl PageSource {
+    /// The entries of `value` of the written shape (a page from 1, a known
+    /// source, a reason); others are dropped.
+    pub fn list_from(value: &Value) -> Vec<Self> {
+        value
+            .as_array()
+            .map(|entries| {
+                entries
+                    .iter()
+                    .filter_map(|entry| serde_json::from_value::<Self>(entry.clone()).ok())
+                    .filter(|entry| {
+                        entry.page > 0 && matches!(entry.source.as_str(), "text" | "ocr" | "mixed")
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct ConversionOutput {
     pub source: String,
@@ -355,6 +388,9 @@ pub struct ConversionOutput {
     pub skip_reason: Option<String>,
     pub duration: f64,
     pub warnings: Vec<String>,
+    /// For a PDF, where each page's text came from; empty otherwise.
+    #[serde(default)]
+    pub page_sources: Vec<PageSource>,
     /// Original YAML bytes retained for writing pure input without reformatting.
     #[serde(skip)]
     pub(crate) pure_prefix: Option<String>,

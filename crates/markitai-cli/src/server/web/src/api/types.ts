@@ -117,6 +117,16 @@ export interface ItemPayload {
   models?: string[];
   /** Bytes of the uploaded original; null for URLs or when unknown. */
   source_size?: number | null;
+  /** A PDF's pages, each with where its text came from; empty otherwise. Older servers omit it. */
+  page_sources?: PageSource[];
+}
+
+/** Where one PDF page's text came from: the text layer, OCR, or both. */
+export interface PageSource {
+  page: number;
+  source: "text" | "ocr" | "mixed";
+  /** A short note, such as `text layer trusted` or `no text layer`. */
+  reason: string;
 }
 
 /** `event: job`. */

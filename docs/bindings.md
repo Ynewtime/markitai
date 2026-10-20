@@ -157,7 +157,9 @@ Success is `{"ok":true,"result":{...}}`; failure is
 unwrap this envelope into a result or host-language error. Result fields are
 `source`, `markdown`, `llm_markdown`, `frontmatter`, `output_path`,
 `llm_output_path`, `assets`, `screenshots`, `images`, `usage`, `skip_reason`,
-`duration`, and `warnings`. Durations are seconds. In-memory conversions have
+`duration`, `warnings` and `page_sources` (a PDF's pages with where each page's
+text came from, see [PDF](pdf.md#where-each-pages-text-came-from); empty
+otherwise). Durations are seconds. In-memory conversions have
 null output paths and empty asset/screenshot path lists and keep relative
 `.markitai/...` image references. They do not publish document/image outputs;
 configuration, caches and optional backends can still use local state or

@@ -423,6 +423,12 @@ pub(crate) fn apply_profiles(result: &mut ConversionOutput, cfg: &Value) {
 }
 
 pub fn prepare(source: &str, name: &str, doc: &mut Document, cfg: &Value) -> ConversionOutput {
+    // A result field, not front matter.
+    let page_sources = doc
+        .metadata
+        .remove(crate::formats::PDF_PAGE_SOURCES)
+        .map(|value| crate::PageSource::list_from(&value))
+        .unwrap_or_default();
     let pure = config::enabled(cfg, "/llm/pure");
     let (mut meta, markdown, pure_prefix) = if pure {
         let (meta, body) = split_frontmatter(&doc.markdown);
@@ -526,6 +532,7 @@ pub fn prepare(source: &str, name: &str, doc: &mut Document, cfg: &Value) -> Con
         pure_prefix,
         frontmatter: meta,
         warnings: std::mem::take(&mut doc.warnings),
+        page_sources,
         ..Default::default()
     }
 }

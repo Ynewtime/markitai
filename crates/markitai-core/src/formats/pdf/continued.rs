@@ -275,6 +275,10 @@ mod tests {
             warning_index: 0,
             continues_table,
             ocr_layer: None,
+            layer_failure: None,
+            layer_kept: None,
+            ocr_note: None,
+            vision_read: false,
         }
     }
 

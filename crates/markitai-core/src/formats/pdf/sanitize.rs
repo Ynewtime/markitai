@@ -241,6 +241,7 @@ pub(super) fn apply(
     max_pages: Option<usize>,
     mode: Mode,
     pages: &mut PdfPages,
+    trust: &super::Trust,
 ) -> Result<()> {
     if mode == Mode::Off {
         let removed: Vec<_> = pages
@@ -359,7 +360,7 @@ pub(super) fn apply(
         let reread = rewritten
             .save_to(&mut buffer)
             .ok()
-            .and_then(|_| super::extract_pages_inner(&buffer.bytes, max_pages, false).ok());
+            .and_then(|_| super::extract_pages_inner(&buffer.bytes, max_pages, false, trust).ok());
         if let Some(mut reread) = reread {
             let mut by_page: BTreeMap<_, _> = reread
                 .pages
@@ -383,6 +384,8 @@ pub(super) fn apply(
                     page.needs_ocr = body.needs_ocr;
                     page.ocr_reason = body.ocr_reason;
                     page.omitted_text = body.omitted_text;
+                    page.layer_failure = body.layer_failure;
+                    page.layer_kept = body.layer_kept;
                     if reports[&number].notes.is_empty() {
                         page.visibility_suspect = false;
                     }

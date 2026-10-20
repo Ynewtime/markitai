@@ -56,6 +56,8 @@
 - CLI 报告、可选历史、目录/URL 列表批量续跑、受控中断、输出锁及恢复凭据；共享资源和标准输出引用的图片保存在隔离的 Markitai 状态目录中。
 - 中英文 CLI 帮助和引导式转换、配置初始化/编辑/验证、能力诊断及私有轮转日志。Windows 支持原生控制台处理、订阅命令包装器、恢复和进程树清理。
 - `markitai serve` 可在页面中显示条目自己提取出的图片：`GET /api/jobs/{job_id}/items/{item_id}/assets/{relpath}` 只发送该条目结果所列的 PNG、JPEG、GIF、WebP 或 AVIF，以内联方式并在沙箱中发送，带 `ETag`（`If-None-Match` 匹配时返回 304）；其他文件、别的条目的图片或越出任务目录的路径一律 404 `file_not_found`。能力接口以 `features.item_assets` 声明。工作台的预览图片改由此路由读取，检查器的「结果开头」现在也显示图片（此前每张图都显示为「[图片：无法预览]」）；文件夹对不上的图片引用（电子书自带的 `../Images/x.png`、模型改写的 `assets/x.png`）按文件名对应到该条目唯一同名的图片。
+- 能识别存在却读错的 PDF 文字层。以前能识别辅音乱码、未定义的字形编码和加密文字；现在还能识别把字母映射到私用区、替换字符、控制字符或原始 `(cid:NN)` 编码的字体，被当成 Windows-1252 读出的 UTF-8（`cafÃ©`），以及按相反顺序存放的从右到左的希伯来文或阿拉伯文。这些页面按扫描页处理：不使用它们的文字，列入扫描页提示和 `unread_pages`，由 `--ocr`（或视觉模型）改从页面图像读取。页面所用的文字是配置的 `ocr.lang` 读不了的，就保留文字层，并在警告里说明哪个 `ocr.lang` 能读（`PDF page 1 (1 of 1): the text layer reads wrong (right-to-left text in reverse order); consider re-running with --ocr and ocr.lang set to ar.`）。中文、日文、英文、代码、表格和公式页面不受影响，Markdown 不变。这种检查文字层的思路来自 [Indra OCR](https://github.com/datalab-to/indra)，代码由 markitai 自己实现。
+- PDF 每页都说明文字来自哪里。`page_sources` 把各页列成 `{"page", "source", "reason"}`：`source` 是 `text`（文字层）、`ocr` 或 `mixed`（文字层加上对其中图片的 OCR，或在 `--ocr --llm` 下视觉模型对照文字层读页面图片），`reason` 是一句简短说明，比如 `text layer trusted`、`no text layer`、`text layer failed the script check: …` 或 `OCR forced by --ocr (ocr.per_page_routing is off)`。它出现在 `--json` 条目、各语言绑定的结果、记录的历史和 `markitai serve` 的条目里（workbench 会忽略这个新增字段）。
 
 ### 变更
 - HTTPS 请求（URL 抓取、模型调用、模型发现与检测、图片下载、OCR 模型与浏览器下载）在 markitai 内置的 Mozilla 根证书之外，同时信任操作系统的证书库；设置了 `SSL_CERT_FILE` 或 `SSL_CERT_DIR` 时，改用它们指定的证书代替系统证书库。在会重签 HTTPS 的代理之后，只要代理的证书颁发机构已安装在上述位置或由这些变量指定，请求不再以 `invalid peer certificate: UnknownIssuer` 失败；变量指向的内容无法读取时会在标准错误输出中提示，内置根证书仍然有效。
