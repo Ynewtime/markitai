@@ -1026,6 +1026,15 @@ impl<'a> LopdfEncodings<'a> {
             })
             .as_ref()
     }
+
+    /// markitai: whether the font `name` names neither an encoding nor a
+    /// ToUnicode CMap, so that lopdf reads it through the standard encoding
+    /// it falls back to (see [`mark_undefined_codes`]).
+    pub(crate) fn reads_by_default(&self, name: &str) -> bool {
+        self.fonts
+            .get(name)
+            .is_some_and(|font| !font.font.has(b"Encoding") && !font.font.has(b"ToUnicode"))
+    }
 }
 
 /// The font resources of a page or form by resource name.
@@ -3424,8 +3433,15 @@ pub(crate) fn extract_text_from_operand(
                             return None;
                         }
                         // Non-CID fonts: fall through to other methods
-                    } else {
+                    } else if is_type0_cid_font || !encoding_cache.reads_by_default(current_font) {
                         return Some(text);
+                    } else {
+                        return Some(mark_undefined_codes(
+                            encoding,
+                            bytes,
+                            text,
+                            use_cp1252_fallback,
+                        ));
                     }
                 }
             }
@@ -3532,6 +3548,45 @@ fn decode_single_byte_fallback_char(byte: u8, use_cp1252_fallback: bool) -> char
         0x9F => '\u{0178}',
         _ => byte as char,
     }
+}
+
+/// markitai: `text`, lopdf's reading of `bytes` through a single-byte
+/// `encoding`, with U+FFFD for each code the encoding leaves undefined.
+/// lopdf leaves such a code out without a trace, so a font no reading
+/// identifies (an embedded TrueType subset with neither `/Encoding` nor
+/// `/ToUnicode`, read through the standard encoding lopdf falls back to)
+/// lost its text silently: its codes below 0x20 read as nothing, and the
+/// page neither counted the loss nor asked for OCR. Marked, the run is
+/// weighed by `drop_undecodable_runs` like any other unreadable run. A
+/// whitespace control or NUL still reads as nothing. Only a simple font
+/// that names no encoding and no ToUnicode CMap is marked (its caller
+/// checks): a font whose `/Differences` name glyphs nothing identifies is
+/// counted by `unidentified_glyphs` instead.
+fn mark_undefined_codes(
+    encoding: &Encoding,
+    bytes: &[u8],
+    text: String,
+    use_cp1252_fallback: bool,
+) -> String {
+    if !matches!(encoding, Encoding::OneByteEncoding(_)) {
+        return text;
+    }
+    let read = |b: u8| Document::decode_text(encoding, &[b]).unwrap_or_default();
+    let undefined = |b: u8| !matches!(b, 0x00 | b'\t' | b'\n' | b'\r') && read(b).is_empty();
+    if !bytes.iter().any(|&b| undefined(b)) {
+        return text;
+    }
+    let marked = bytes
+        .iter()
+        .map(|&b| {
+            if undefined(b) {
+                "\u{FFFD}".to_string()
+            } else {
+                read(b)
+            }
+        })
+        .collect();
+    normalize_cp1252_controls(marked, use_cp1252_fallback)
 }
 
 fn normalize_cp1252_controls(text: String, use_cp1252_fallback: bool) -> String {
@@ -6172,6 +6227,60 @@ mod tests {
         )
         .expect("text decoded");
         text
+    }
+
+    /// markitai: an embedded TrueType subset with neither `/Encoding` nor
+    /// `/ToUnicode` (ReportLab's CJK subsets, their ToUnicode lost) is read
+    /// through the standard encoding lopdf falls back to. Its codes that
+    /// encoding leaves undefined read as U+FFFD, so the run is counted as
+    /// undecodable and its page asks for OCR, not as nothing at all; the
+    /// codes it defines, and whitespace controls, read as before.
+    #[test]
+    fn codes_the_fallback_encoding_leaves_undefined_are_marked_not_dropped() {
+        let (mut doc, _, page_id) = simple_font_doc("<21> <0041>", None, None, None, false);
+        for (_, object) in doc.objects.iter_mut() {
+            if let Ok(dict) = object.as_dict_mut() {
+                dict.remove(b"ToUnicode");
+            }
+        }
+        let decode = |bytes: &[u8]| -> String {
+            let cmaps = FontCMaps::from_doc(&doc);
+            let fonts = doc.get_page_fonts(page_id).unwrap();
+            let (font_encodings, _) = build_font_encodings(
+                &doc,
+                &fonts,
+                &FontObjectIds::new(),
+                &cmaps,
+                &mut FontStyleCache::new(),
+            );
+            let encoding_cache = LopdfEncodings::new(&doc, &fonts);
+            let mut font_widths: PageFontWidths = HashMap::new();
+            font_widths.insert("F1".to_string(), make_font_info(&[], 1000, false));
+            extract_text_from_operand(
+                &Object::String(bytes.to_vec(), lopdf::StringFormat::Hexadecimal),
+                "F1",
+                Some("ABCDEF+Subset"),
+                &cmaps,
+                &HashMap::new(),
+                &HashMap::new(),
+                &font_encodings,
+                &encoding_cache,
+                &mut CMapDecisionCache::new(),
+                &font_widths,
+                &build_font_kinds(&fonts),
+            )
+            .expect("text decoded")
+            .0
+        };
+        // A CJK title shown as subset codes 1..: nothing it reads, all marked.
+        assert_eq!(decode(&[0x01, 0x02, 0x03, 0x04]), "\u{FFFD}".repeat(4));
+        // Mixed: ASCII codes the subset keeps read as themselves.
+        assert_eq!(decode(b"API \x05\x06"), "API \u{FFFD}\u{FFFD}");
+        assert!(crate::text_quality::run_is_undecodable(&decode(&[
+            0x01, 0x02, 0x03
+        ])));
+        // A defined code, and a tab, read as before.
+        assert_eq!(decode(b"Mixed\ttext"), "Mixedtext");
     }
 
     /// An odd-length string through a Type0 font is read byte by byte

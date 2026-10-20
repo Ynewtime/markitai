@@ -593,6 +593,19 @@ The local changes, each marked `markitai` (or, for sorts, made through
 
   Run in the isolated copy, the crate's unit tests give 1,702 passed (19
   added) and the same 21 failed.
+- `src/extractor/fonts.rs` (`mark_undefined_codes`,
+  `LopdfEncodings::reads_by_default`): a simple font that names neither an
+  `/Encoding` nor a `/ToUnicode` CMap is read by lopdf through the standard
+  encoding, which leaves out every code it does not define without a trace;
+  such a code now reads as U+FFFD, a NUL or whitespace control still as
+  nothing. An embedded TrueType subset whose ToUnicode was lost (ReportLab's
+  CJK subsets use codes 1–31 and 128 and up) had silently lost its title and
+  paragraphs while the page kept the few codes the standard encoding defines
+  as Latin punctuation; its runs are now counted by `drop_undecodable_runs`
+  and the page needs OCR. CID fonts and fonts whose `/Differences` name
+  glyphs nothing identifies (counted by `unidentified_glyphs`) read as
+  before. A test in `fonts.rs` covers marked, mixed and defined codes; the
+  isolated copy gives 1,726 passed and the same 21 failed.
 - `src/tables/detect_heuristic.rs` (`is_word_grid_table`, applied to every
   hypothesis `detect_tables_with_page_width` returns): five columns or more,
   seven in ten filled cells one word, and the runs of a row closer than 1.5
