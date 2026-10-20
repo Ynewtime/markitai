@@ -201,7 +201,9 @@ def convert_pptx(path: Path) -> ConvertResult:
 
         for shape in sorted(slide.shapes, key=positions.key):
             _render_shape(shape, title, positions, chunks)
-        text = "".join(chunks).strip()
+        # Each shape is its own block: run together, a picture or text box
+        # after a table read as one more table row
+        text = "\n\n".join(chunk.strip() for chunk in chunks if chunk.strip())
         if slide.has_notes_slide:
             text += "\n\n### Notes:\n"
             frame = slide.notes_slide.notes_text_frame

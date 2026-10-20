@@ -869,3 +869,40 @@ class TestScreenshotCommentsOnlyWithoutLlm:
         assert result.markdown == text
         assert result.images == []
         assert len(result.metadata["page_images"]) == 1
+
+
+def test_each_shape_is_its_own_markdown_block(tmp_path: Path) -> None:
+    """A picture or text box placed after a table followed its last row on
+    the next line, which Markdown reads as one more row of the table."""
+    from pptx import Presentation
+    from pptx.chart.data import CategoryChartData
+    from pptx.enum.chart import XL_CHART_TYPE
+    from pptx.util import Inches
+
+    from markitai.converter.pptx import convert_pptx
+
+    deck = Presentation()
+    slide = deck.slides.add_slide(deck.slide_layouts[6])
+    data: Any = CategoryChartData()
+    data.categories = ["Q1", "Q2"]
+    data.add_series("Sales", (1.5, 2.5))
+    slide.shapes.add_chart(
+        XL_CHART_TYPE.COLUMN_CLUSTERED, Inches(1), Inches(1), Inches(4), Inches(2), data
+    )
+    table = slide.shapes.add_table(2, 2, Inches(1), Inches(3), Inches(3), Inches(1))
+    for (row, col), text in {
+        (0, 0): "h1",
+        (0, 1): "h2",
+        (1, 0): "a",
+        (1, 1): "b",
+    }.items():
+        table.table.cell(row, col).text = text
+    box = slide.shapes.add_textbox(Inches(1), Inches(5), Inches(3), Inches(1))
+    box.text_frame.text = "after the table"
+    path = tmp_path / "deck.pptx"
+    deck.save(str(path))
+
+    markdown = convert_pptx(path).markdown
+
+    assert "| Q2 | 2.5 |\n\n| h1 | h2 |" in markdown
+    assert "| a | b |\n\nafter the table" in markdown

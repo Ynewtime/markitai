@@ -57,15 +57,23 @@ def rich_deck(tmp_path, fixtures_dir):
 
 
 def _reference(path):
-    """MarkItDown's output, except the one cell break it writes as a space."""
+    """MarkItDown's output, except the one cell break it writes as a space.
+
+    Lines only: markitai also keeps a blank line between a slide's shapes,
+    where MarkItDown ran a picture or text box into the table before it.
+    """
     reference = OfficeConverter().convert(path).markdown
     assert "| Line break |" in reference
-    return reference.replace("| Line break |", "| Line<br>break |")
+    return _lines(reference.replace("| Line break |", "| Line<br>break |"))
+
+
+def _lines(markdown):
+    return [line for line in markdown.splitlines() if line.strip()]
 
 
 def test_rich_pptx_keeps_reference_output(rich_deck):
     actual = PptxConverter().convert(rich_deck).markdown
-    assert actual == _reference(rich_deck)
+    assert _lines(actual) == _reference(rich_deck)
     for text in [
         "Speaker notes",
         "Chart",
@@ -173,4 +181,4 @@ def test_svg_picture_without_raster_fallback(rich_deck, tmp_path):
     deck.save(path)
     actual = PptxConverter().convert(path).markdown
     assert "data:image/svg+xml;base64," in actual
-    assert actual == _reference(path)
+    assert _lines(actual) == _reference(path)
