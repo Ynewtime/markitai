@@ -463,9 +463,14 @@ class TestResolveProxyForUrlFallback:
             "http://127.example.com/x",
         ],
     )
-    def test_non_loopback_still_uses_proxy(self, url: str) -> None:
+    def test_non_loopback_still_uses_proxy(
+        self, url: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         from markitai import fetch_http
 
+        # An earlier test on this worker may have left the session's bypass
+        # provider registered, carrying the shell's own NO_PROXY.
+        monkeypatch.setattr(fetch_http, "_proxy_bypass_provider", None)
         with patch.dict(os.environ, {}, clear=True):
             assert (
                 fetch_http.resolve_proxy_for_url(url, "http://10.0.0.1:8080")
