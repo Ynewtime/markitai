@@ -166,6 +166,7 @@ fn control(element: ElementRef<'_>) -> bool {
                 "rehype-pretty-copy",
                 "hover-container",
                 "hover-info",
+                "twoslash-popup-container",
             ],
         )
         || element.value().attribute("data-floating-buttons").is_some()
@@ -173,6 +174,23 @@ fn control(element: ElementRef<'_>) -> bool {
 }
 fn excluded(element: ElementRef<'_>) -> bool {
     control(element) || gutter(element)
+}
+/// A button inside a highlighted line is a word of the code that the page made
+/// interactive: Twoslash (nodejs.org, the TypeScript and Vue docs) wraps each
+/// identifier that has a type popup in `<button class="twoslash-hover">`. Its
+/// text is code; copy buttons and toolbars sit outside the lines.
+fn line_word(element: ElementRef<'_>) -> bool {
+    let value = element.value();
+    (value.name() == "button" || value.attribute("role") == Some("button"))
+        && !super::is_hidden(element)
+        && element
+            .descendants()
+            .filter_map(ElementRef::wrap)
+            .skip(1)
+            .all(|inner| !matches!(inner.value().name(), "button" | "svg" | "img"))
+}
+fn excluded_in(element: ElementRef<'_>, in_line: bool) -> bool {
+    excluded(element) && !(in_line && line_word(element))
 }
 fn visible_between(element: ElementRef<'_>, root: ElementRef<'_>) -> bool {
     !element
@@ -672,12 +690,20 @@ fn row(element: ElementRef<'_>) -> bool {
                 .any(|child| has_class(child, "CodeMirror-line")))
 }
 fn text_content(element: ElementRef<'_>, output: &mut String, depth: usize) -> Result<()> {
+    line_text(element, output, depth, false)
+}
+fn line_text(
+    element: ElementRef<'_>,
+    output: &mut String,
+    depth: usize,
+    in_line: bool,
+) -> Result<()> {
     if depth > MAX_DEPTH {
         return Err(Error::Conversion(
             "HTML code nesting exceeds 256 elements".into(),
         ));
     }
-    if excluded(element) {
+    if excluded_in(element, in_line) {
         return Ok(());
     }
     if element.value().name() == "br" {
@@ -690,7 +716,7 @@ fn text_content(element: ElementRef<'_>, output: &mut String, depth: usize) -> R
     let mut gap_has_line = false;
     for child in element.children() {
         if let Some(child) = ElementRef::wrap(child) {
-            if Some(child) == skip || excluded(child) || isolated_header(child) {
+            if Some(child) == skip || excluded_in(child, in_line) || isolated_header(child) {
                 continue;
             }
             if row(child) {
@@ -704,7 +730,7 @@ fn text_content(element: ElementRef<'_>, output: &mut String, depth: usize) -> R
                         .is_some_and(|v| v.value().name() == "br")
                     && child.text().all(|text| text.is_empty());
                 if !placeholder {
-                    text_content(child, &mut text, depth + 1)?;
+                    line_text(child, &mut text, depth + 1, true)?;
                 }
                 if saw_row && !previous_ends_line && !gap_has_line {
                     output.push('\n');
@@ -715,7 +741,7 @@ fn text_content(element: ElementRef<'_>, output: &mut String, depth: usize) -> R
                 gap_has_line = false;
             } else {
                 let start = output.len();
-                text_content(child, output, depth + 1)?;
+                line_text(child, output, depth + 1, in_line)?;
                 if output[start..].contains('\n') {
                     gap_has_line = true;
                 }
@@ -1041,6 +1067,20 @@ mod tests {
     fn hidden_and_executable_nodes_never_enter_code_but_escaped_examples_do() {
         let source = "<pre><code>start<span hidden>secret</span><script>execute()</script><template>secret2</template><span style='visibility:hidden'>secret3</span><button>Copy</button><span class='hover-container'>metadata</span> &lt;script&gt;example&lt;/script&gt;</code></pre>";
         assert_eq!(text(source, "pre"), "start <script>example</script>");
+    }
+    /// Twoslash (nodejs.org) wraps identifiers with type popups in buttons
+    /// inside the highlighted lines: they are code. A copy button beside the
+    /// lines, a hidden one and a popup's type text are not.
+    #[test]
+    fn a_button_inside_a_code_line_is_code_text() {
+        let source = "<pre class='shiki twoslash language-cjs'><button class='copy'>Copy</button><code>\
+            <span class='line'><span>const {</span><span> </span><span><button class='twoslash-hover'>createServer</button></span><span> } = </span>\
+            <span><button data-state='closed' class='twoslash-hover'><span class='twoslash-popup-container'>function require(id: string): any</span>require</button></span><span>('node:http');</span></span>\n\
+            <span class='line'><span>const </span><span role='button'>port</span><span> = 3000;</span><button hidden>secret</button></span></code></pre>";
+        assert_eq!(
+            text(source, "pre"),
+            "const { createServer } = require('node:http');\nconst port = 3000;"
+        );
     }
     #[test]
     fn language_attributes_are_bounded_and_html_safe() {

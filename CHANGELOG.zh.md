@@ -122,6 +122,7 @@
 - 文件夹自带的 `.env` 和 `markitai.json` 不再能让转换反过来对付你。当前目录的 `.env` 仍可提供密钥和选项，但不再接受选择程序、路径、地址、代理、主目录或凭据文件的名称（`*_CLI_PATH`、`*_PATH`、`*_EXECUTABLE`、`*_API_BASE`、`*_BASE_URL`、`HTTP(S)_PROXY`、`AWS_*_FILE`、`GOOGLE_APPLICATION_CREDENTIALS`、`LD_*`、`HOME` 等），被忽略的名称会提示一次。在当前文件夹找到的 `./markitai.json`（未用 `-c` 或 `MARKITAI_CONFIG` 指定）不会把环境中的密钥发往它自带的地址：`api_base` 不是服务商文档地址的模型或连接只使用条目里写明的密钥，其中的 `env:` 密钥引用改为占位密钥 `markitai-no-key`（并提示）。`markitai doctor` 和 `--verbose` 会注明配置文件是在当前文件夹找到的。这类值请放在环境变量或 `~/.markitai/.env` 中，或用 `-c` 指定文件。
 
 ### 修复
+- 代码行中的名称被标记为悬停按钮的网页（Twoslash，如 nodejs.org）中的代码示例保留这些名称：此前 `const { createServer } = require('node:http');` 会写成 `const {  } = ('node:http');`。代码行以外的按钮（如「复制」）仍会略去。
 - 文档中跟在未闭合反引号之后的图片（例如 Word 段落中单独的一个 `` ` ``）重新链接到实际保存的文件。此前文档的其余部分被当作代码，这些链接停留在从未写出的临时文件名 `.markitai/assets/asset-N`，标准输出、`-o` 输出（包括使用 `--profile` 时）和 `markitai serve` 的结果都受影响，图片分析也会漏掉这些图片。
 - 从图片读取的扫描页很少再把页面中重复出现的句子多写一遍：视觉请求中的每张页面图片前都会附上 `Page N:` 标签，与 Python markitai 的做法一致（Gemini Flash 处理六个段落、每段将同一句重复六次的页面时，修复前三次分别写出 38、42、42 句（应为 36）；加标签后 5 次回答中 4 次为 36、1 次为 40，Python 2 次均为 36；完整的 12 页转换的词精确率与 Python 相同，为 0.992，修复前为 0.948）。不再复用早期版本缓存的视觉回答。
 - Python markitai 上的工作台：价格和订阅指南链接打开 Python 文档站上的对应页面（`https://markitai.dev/guide/…`），不再落到首页；以 `index.md` 结尾的文档地址仍打开它旁边的页面。
