@@ -130,7 +130,7 @@ The workbench runs on a small REST + SSE API that scripts can call directly. Err
 | `GET /api/jobs/{job_id}` | Job status and items (each item carries its `warnings`, `error_code`, `page_sources` (where each PDF page's text came from; empty for other items) and, when a model ran, `pricing`) |
 | `GET /api/jobs/{job_id}/events` | Live progress stream (SSE) |
 | `POST /api/jobs/{job_id}/cancel` | Stop the items still waiting to start |
-| `POST /api/jobs/{job_id}/items/{item_id}/retry` | Retry an item, or LLM-enhance it with `operation: "enhance"` |
+| `POST /api/jobs/{job_id}/items/{item_id}/retry` | Retry an item (JSON body optional: `operation`, `options`; without `options` it reruns with the item's own), or LLM-enhance it with `operation: "enhance"`, which turns the LLM on unless `options` say `"llm": false` |
 | `DELETE /api/jobs/{job_id}/items/{item_id}` | Permanently remove an item with its upload, outputs, images and screenshots |
 | `GET /api/jobs/{job_id}/items/{item_id}/result` | Item result (`?max_bytes=` for an excerpt); sibling assets via `GET /api/jobs/{job_id}/files/{path}` |
 | `GET /api/jobs/{job_id}/items/{item_id}/assets/{path}` | One of the item's own extracted images (PNG, JPEG, GIF, WebP, AVIF), inline, for display |

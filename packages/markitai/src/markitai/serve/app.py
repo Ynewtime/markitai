@@ -5705,6 +5705,10 @@ def create_app(
                 },
                 strict=False,
             )
+        if operation == "enhance" and not (explicit_options and opts.llm is False):
+            # "enhance" asks for the model: an item converted without one
+            # (preset minimal, "llm": false) is exactly the one to enhance
+            opts = opts.model_copy(update={"llm": True})
         _check_preset(state, opts)
 
         if item.kind == "file":

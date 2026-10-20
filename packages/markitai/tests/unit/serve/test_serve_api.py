@@ -1711,6 +1711,63 @@ class TestRetry:
             assert not (tmp_path / "jobs" / job_id).exists()
         assert calls == [url]  # the first run only
 
+    async def test_enhance_without_options_turns_the_model_on(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Regression: ``{"operation": "enhance"}`` reran an item with its
+        saved options, so one converted without the LLM (the item the
+        API doc's "LLM-enhance it" is for) got 409 llm_unavailable."""
+        from markitai.batch import ProcessResult
+        from markitai.config import LiteLLMParams, ModelConfig
+
+        attempts: list[bool] = []
+
+        async def convert(file_path: Path, cfg: Any, out_dir: Path, shared: Any):
+            attempts.append(cfg.llm.enabled)
+            suffix = ".llm.md" if cfg.llm.enabled else ".md"
+            output = out_dir / f"{file_path.name}{suffix}"
+            output.write_text("text", encoding="utf-8")
+            return ProcessResult(
+                success=True, output_path=str(output), llm_enhanced=cfg.llm.enabled
+            )
+
+        cfg = MarkitaiConfig()
+        cfg.llm.model_list = [
+            ModelConfig(
+                model_name="default",
+                litellm_params=LiteLLMParams(model="openai/test", api_key="test"),
+            )
+        ]
+        monkeypatch.setattr("markitai.serve.jobs.process_file_item", convert)
+        monkeypatch.setattr(
+            "markitai.workflow.helpers.create_llm_processor",
+            lambda *_args, **_kwargs: object(),
+        )
+        async with _serve_client(_make_app(tmp_path, cfg)) as client:
+            created = await client.post(
+                "/api/jobs",
+                files=_multipart(
+                    files=[("doc.txt", b"hello")],
+                    options={"preset": "minimal", "llm": False},
+                ),
+            )
+            job_id = created.json()["job_id"]
+            await _wait_job_done(client, job_id)
+
+            refused = await client.post(
+                f"/api/jobs/{job_id}/items/i1/retry",
+                json={"operation": "enhance", "options": {"llm": False}},
+            )
+            assert refused.status_code == 409
+            queued = await client.post(
+                f"/api/jobs/{job_id}/items/i1/retry", json={"operation": "enhance"}
+            )
+            assert queued.status_code == 202, queued.text
+            enhanced = await _wait_job_done(client, job_id)
+
+        assert enhanced["items"][0]["llm_enhanced"] is True
+        assert attempts == [False, True]
+
     async def test_explicit_llm_enhancement_reuses_row_and_records_cost(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

@@ -130,7 +130,7 @@ Vertex AI（以及 watsonx、GigaChat）用服务器自己的登录凭据而不�
 | `GET /api/jobs/{job_id}` | 任务状态与条目（每个条目带 `warnings`、`error_code`、`page_sources`（PDF 每页文字的来源，其他条目为空），用过模型时还有 `pricing`） |
 | `GET /api/jobs/{job_id}/events` | 实时进度流（SSE） |
 | `POST /api/jobs/{job_id}/cancel` | 停下尚未开始的条目 |
-| `POST /api/jobs/{job_id}/items/{item_id}/retry` | 重试条目，或以 `operation: "enhance"` 做 LLM 增强 |
+| `POST /api/jobs/{job_id}/items/{item_id}/retry` | 重试条目（JSON 请求体可选：`operation`、`options`；不带 `options` 时沿用该条目自己的选项），或以 `operation: "enhance"` 做 LLM 增强：除非 `options` 写明 `"llm": false`，它总会开启 LLM |
 | `DELETE /api/jobs/{job_id}/items/{item_id}` | 永久移除条目，连同其上传原件、输出、图片与截图 |
 | `GET /api/jobs/{job_id}/items/{item_id}/result` | 条目结果（`?max_bytes=` 只取开头）；配套资源经 `GET /api/jobs/{job_id}/files/{path}` 获取 |
 | `GET /api/jobs/{job_id}/items/{item_id}/assets/{path}` | 条目自身提取出的一张图片（PNG、JPEG、GIF、WebP、AVIF），以内联方式返回供显示 |
