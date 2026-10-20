@@ -43,10 +43,15 @@ def _lines(page: Any) -> list[tuple[float, float, float, str]]:
     A line's size is its largest span's; superscript spans (a footnote
     mark) and spans much smaller than that are left out of its text.
     """
-    from markitai.converter.pdf import _background_sampler, _is_hidden_span
+    from markitai.converter.pdf import (
+        _background_sampler,
+        _is_hidden_span,
+        _page_pictures,
+    )
 
     page_rect = tuple(page.rect)
     background = _background_sampler(page)
+    pictures = _page_pictures(page)
     lines: list[tuple[float, float, float, str]] = []
     data = page.get_text("dict", flags=0)
     for block in data.get("blocks", []):
@@ -56,7 +61,7 @@ def _lines(page: Any) -> list[tuple[float, float, float, str]]:
                 for span in line.get("spans", [])
                 if str(span.get("text", "")).strip()
                 and not int(span.get("flags", 0)) & 1  # superscript
-                and not _is_hidden_span(span, page_rect, background)
+                and not _is_hidden_span(span, page_rect, background, pictures)
             ]
             if not spans:
                 continue

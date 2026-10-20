@@ -44,6 +44,7 @@
 - **需要密码的 PDF 和没有页面的 PDF 会说明原因。** 它们原本在提取库内部失败，报 `TypeError: 'NoneType' object is not subscriptable` 和 `IndexError: range object index out of range`；现在的错误是 `report.pdf is password-protected; decrypt it before converting` 或 `report.pdf has no pages`。只限制打印或复制的 PDF（只有所有者密码、没有用户密码）照常转换。
 - **带海报尺寸页面的 PDF 可以转换。** 以 150 dpi 渲染过大的页面（最大可到 200 x 200 英寸）在被图片铺满、或为 `--screenshot`、`--ocr`、`--ocr --llm` 渲染时，会让整个转换失败，报 `FzErrorLimit: Overly large image`；刚好低于 MuPDF 上限的页面则要占用数 GB 内存。现在每页渲染最多约 3200 万像素，含这类页面的文档会以较低分辨率裁剪图片。
 - **PDF 中以文字为主的图片重新显示其文字。** 带有多行文本层的图片（被版面模型当成插图的表格或整段文字）本应变成文字，图片留作页面参考；pymupdf4llm 1.28 起把这段文字写进 HTML 注释，markitai 认不出，于是图片仍留在正文里，文字只以注释形式存在于 Markdown 中，渲染出来什么也看不到。
+- **可搜索的扫描件不再被报告为隐藏文字。** OCRmyPDF、Acrobat、ABBYY 和扫描仪在扫描页上叠加的不可见 OCR 文字层原本被算作隐藏文字：每个这样的 PDF 都会触发引用其自身文字的“possible prompt injection”提示，设置 `security.pdf_sanitize: remove` 时全部文字都会被删掉。现在盖在图片上的不可见文字被视为这种文字层；其他位置的不可见文字照旧报告。
 
 ## [1.2.1] - 2026-10-18
 

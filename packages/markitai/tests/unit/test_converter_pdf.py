@@ -1958,6 +1958,61 @@ class TestHiddenTextDetection:
 
         assert hidden == {1: ["invisible payload"]}
 
+    @staticmethod
+    def _searchable_scan(path: Path, lines: list[str]) -> Path:
+        """A scanned page with an invisible OCR layer, as OCRmyPDF writes."""
+        import pymupdf
+
+        with pymupdf.open() as source:
+            page = source.new_page()
+            for n, line in enumerate(lines):
+                page.insert_text((72, 100 + 30 * n), line, fontsize=14)
+            scan = page.get_pixmap(dpi=100, colorspace=pymupdf.csGRAY)
+        with pymupdf.open() as doc:
+            page = doc.new_page()
+            page.insert_image(page.rect, stream=scan.tobytes("png"))
+            for n, line in enumerate(lines):
+                page.insert_text((72, 100 + 30 * n), line, fontsize=14, render_mode=3)
+            doc.save(path)
+        return path
+
+    def test_ocr_layer_over_a_scan_is_not_hidden(self, tmp_path: Path) -> None:
+        """A searchable scan's invisible OCR layer was reported as hidden
+        text ("possible prompt injection"), all of it, and ``remove``
+        deleted the document's whole text."""
+        import pymupdf
+
+        from markitai.converter.pdf import collect_hidden_text
+
+        lines = ["Quarterly harbour report", "Tonnage rose by a tenth this year"]
+        pdf_file = self._searchable_scan(tmp_path / "scan.pdf", lines)
+
+        with pymupdf.open(pdf_file) as doc:
+            assert collect_hidden_text(doc) == {}
+
+        config = MarkitaiConfig()
+        config.security.pdf_sanitize = "remove"
+        result = PdfConverter(config).convert(pdf_file)
+        for line in lines:
+            assert line in result.markdown
+
+    def test_invisible_text_beside_a_picture_still_flagged(self) -> None:
+        import pymupdf
+
+        from markitai.converter.pdf import collect_hidden_text
+
+        picture = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 32, 32), False)
+        picture.clear_with(200)
+        doc = pymupdf.open()
+        page = doc.new_page()
+        page.insert_image(pymupdf.Rect(72, 72, 300, 200), stream=picture.tobytes())
+        page.insert_text((72, 140), "over the picture", fontsize=11, render_mode=3)
+        page.insert_text((72, 400), "invisible payload", fontsize=11, render_mode=3)
+        hidden = collect_hidden_text(doc)
+        doc.close()
+
+        assert hidden == {1: ["invisible payload"]}
+
     def test_off_cropbox_text_flagged(self) -> None:
         """Text fully outside the CropBox is detected."""
         import pymupdf

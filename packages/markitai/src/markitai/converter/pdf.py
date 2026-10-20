@@ -393,6 +393,8 @@ _HIDDEN_MAX_FONT_SIZE = 2.0
 _HIDDEN_MIN_LUMINANCE = 0.95
 # Scale of the page render the background is sampled from (36 dpi).
 _BACKGROUND_SAMPLE_SCALE = 0.5
+# Invisible text with a picture under this share of its bbox is an OCR layer.
+_OCR_LAYER_MIN_COVER = 0.8
 # Max characters of hidden text quoted in the consolidated warning.
 _HIDDEN_EXCERPT_MAX_CHARS = 80
 
@@ -463,24 +465,56 @@ def _background_sampler(
     return sample
 
 
+def _page_pictures(page: Any) -> list[tuple[float, float, float, float]]:
+    """The bboxes of the pictures drawn on *page* (none when unreadable)."""
+    try:
+        return [tuple(info["bbox"]) for info in page.get_image_info()]
+    except Exception as e:
+        logger.debug("[PDF] Pictures of page {} not read: {}", page.number + 1, e)
+        return []
+
+
+def _over_picture(
+    bbox: Any, pictures: Sequence[tuple[float, float, float, float]]
+) -> bool:
+    """Whether a picture covers ``_OCR_LAYER_MIN_COVER`` of *bbox*."""
+    if not isinstance(bbox, (tuple, list)) or len(bbox) != 4:
+        return False
+    x0, y0, x1, y1 = bbox
+    area = (x1 - x0) * (y1 - y0)
+    if area <= 0:
+        return False
+    for px0, py0, px1, py1 in pictures:
+        width = min(x1, px1) - max(x0, px0)
+        height = min(y1, py1) - max(y0, py0)
+        if width > 0 and height > 0 and width * height >= _OCR_LAYER_MIN_COVER * area:
+            return True
+    return False
+
+
 def _is_hidden_span(
     span: dict[str, Any],
     page_rect: tuple[float, float, float, float],
     background: Callable[[tuple[float, float, float, float]], float | None]
     | None = None,
+    pictures: Sequence[tuple[float, float, float, float]] = (),
 ) -> bool:
     """Classify a pymupdf text span as hidden (invisible to a human reader).
 
     A span is hidden when it is drawn at zero opacity (pymupdf maps text
-    render mode 3 to ``alpha == 0``), its font size is below 2pt, its
-    fill color is near-white on a near-white background (sampled with
-    *background*; assumed white without one), or its bbox lies fully
-    outside the page CropBox.
+    render mode 3 to ``alpha == 0``) anywhere but over one of the page's
+    *pictures*, its font size is below 2pt, its fill color is near-white
+    on a near-white background (sampled with *background*; assumed white
+    without one), or its bbox lies fully outside the page CropBox.
+
+    Invisible text over a picture is a searchable scan's OCR layer
+    (OCRmyPDF, Acrobat, ABBYY and scanners write one): it says what the
+    picture shows, and is the only text such a document has.
     """
     text = span.get("text", "")
     if not isinstance(text, str) or not text.strip():
         return False
-    if span.get("alpha", 255) == 0:
+    if span.get("alpha", 255) == 0 and not _over_picture(span.get("bbox"), pictures):
         return True
     size = span.get("size")
     if isinstance(size, (int, float)) and size < _HIDDEN_MAX_FONT_SIZE:
@@ -533,11 +567,12 @@ def collect_hidden_text(
             logger.debug("[PDF] Hidden-text scan failed for page {}: {}", i + 1, e)
             continue
         background = _background_sampler(page)
+        pictures = _page_pictures(page)
         texts: list[str] = []
         for block in data.get("blocks", []):
             for line in block.get("lines", []):
                 for span in line.get("spans", []):
-                    if _is_hidden_span(span, page_rect, background):
+                    if _is_hidden_span(span, page_rect, background, pictures):
                         texts.append(span["text"].strip())
         if texts:
             hidden[i + 1] = texts
@@ -568,11 +603,12 @@ def _scan_visible_text(
                     ),
                 )
                 background = _background_sampler(page)
+                pictures = _page_pictures(page)
                 visible[i + 1] = "\n".join(
                     "".join(
                         span.get("text", "")
                         for span in line.get("spans", [])
-                        if not _is_hidden_span(span, page_rect, background)
+                        if not _is_hidden_span(span, page_rect, background, pictures)
                     )
                     for block in data.get("blocks", [])
                     for line in block.get("lines", [])
