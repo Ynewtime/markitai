@@ -15,7 +15,9 @@ FIXTURES = Path(__file__).parent.parent / "fixtures"
 _NS = (
     'xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" '
     'xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" '
-    'xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0"'
+    'xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" '
+    'xmlns:dc="http://purl.org/dc/elements/1.1/" '
+    'xmlns:xlink="http://www.w3.org/1999/xlink"'
 )
 
 
@@ -89,6 +91,43 @@ class TestOdtConverter:
         assert "| --- | --- |" in markdown
         assert "| a | b |" in markdown
 
+    def test_footnotes_links_comments_and_deletions(self, tmp_path: Path) -> None:
+        """A footnote's body landed mid-sentence, a comment's author, date
+        and text were inlined, a link lost its address, and text a reviewer
+        deleted (kept in the tracked-changes record) came back."""
+        path = _write_odf(
+            tmp_path / "review.odt",
+            "<office:text>"
+            "<text:tracked-changes><text:changed-region text:id='c1'>"
+            "<text:deletion><office:change-info><dc:creator>Bob</dc:creator>"
+            "</office:change-info><text:p>DELETED TEXT</text:p></text:deletion>"
+            "</text:changed-region></text:tracked-changes>"
+            "<text:p>Body<text:note text:note-class='footnote'>"
+            "<text:note-citation>1</text:note-citation><text:note-body>"
+            "<text:p>The note.</text:p></text:note-body></text:note> and"
+            "<office:annotation><dc:creator>Alice</dc:creator>"
+            "<text:p>Review this</text:p></office:annotation> more."
+            "<text:change text:change-id='c1'/> See "
+            "<text:a xlink:href='https://example.com/a b'>the site</text:a>"
+            " and <text:a xlink:href='#Intro'>the intro</text:a>.</text:p>"
+            "<table:table><table:table-row><table:table-cell><text:p>cell"
+            "<text:note text:note-class='endnote'><text:note-citation>i"
+            "</text:note-citation><text:note-body><text:p>End note.</text:p>"
+            "</text:note-body></text:note></text:p></table:table-cell>"
+            "</table:table-row></table:table>"
+            "</office:text>",
+        )
+
+        markdown = OdtConverter().convert(path).markdown
+
+        assert "Body[^1] and more." in markdown
+        assert "[the site](<https://example.com/a b>)" in markdown
+        assert "and the intro." in markdown
+        assert "| cell[^2] |" in markdown
+        assert markdown.rstrip().endswith("[^1]: The note.\n[^2]: End note.")
+        for gone in ("DELETED", "Bob", "Alice", "Review this"):
+            assert gone not in markdown
+
     def test_unreadable_zip_is_a_conversion_error(self, tmp_path: Path) -> None:
         path = tmp_path / "broken.odt"
         path.write_bytes(b"not a zip at all")
@@ -117,6 +156,23 @@ class TestOdtConverter:
 
 
 class TestOdsConverter:
+    def test_a_cell_comment_is_not_cell_text(self, tmp_path: Path) -> None:
+        path = _write_odf(
+            tmp_path / "comment.ods",
+            '<office:spreadsheet><table:table table:name="S">'
+            "<table:table-row><table:table-cell>"
+            "<office:annotation><dc:creator>Alice</dc:creator>"
+            "<text:p>check this</text:p></office:annotation>"
+            "<text:p>42</text:p></table:table-cell></table:table-row>"
+            "</table:table></office:spreadsheet>",
+        )
+
+        markdown = OdsConverter().convert(path).markdown
+
+        assert "42" in markdown
+        assert "Alice" not in markdown
+        assert "check this" not in markdown
+
     def test_fixture_sheets_become_sections(self) -> None:
         result = OdsConverter().convert(FIXTURES / "sample.ods")
 

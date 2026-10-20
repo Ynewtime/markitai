@@ -57,8 +57,32 @@ def _repeat_count(elem: ElementTree.Element, attribute: str) -> int:
         return 1
 
 
-def _text_of(elem: ElementTree.Element) -> str:
-    """Flatten an element's text, honouring the ODF whitespace elements."""
+_XLINK_HREF = "{http://www.w3.org/1999/xlink}href"
+_LINK_SCHEMES = ("http://", "https://", "mailto:", "ftp://")
+# Not part of the text: a comment (its author, date and body), the
+# end-of-range mark a ranged comment leaves, and the record of tracked
+# changes, which holds the text a reviewer deleted
+_SKIPPED_TAGS = frozenset({"annotation", "annotation-end", "tracked-changes"})
+
+
+def _link(text: str, href: str) -> str:
+    """``[text](href)`` for a web or mail address, the bare text otherwise
+    (a bookmark inside the document, a relative file)."""
+    href = href.strip()
+    if not text.strip() or not href.lower().startswith(_LINK_SCHEMES):
+        return text
+    if any(ch.isspace() or ch in "()<>" for ch in href):
+        href = f"<{href.replace('<', '%3C').replace('>', '%3E')}>"
+    return f"[{text}]({href})"
+
+
+def _text_of(elem: ElementTree.Element, notes: list[str] | None = None) -> str:
+    """Flatten an element's text, honouring the ODF whitespace elements.
+
+    A footnote or endnote becomes a ``[^n]`` marker with its body added to
+    *notes* (left out where there is no list to add it to), a hyperlink a
+    Markdown link, and comments are not text.
+    """
     parts: list[str] = [elem.text or ""]
     for child in elem:
         tag = _local(child.tag)
@@ -72,8 +96,22 @@ def _text_of(elem: ElementTree.Element) -> str:
             parts.append("\t")
         elif tag == "line-break":
             parts.append("\n")
+        elif tag in _SKIPPED_TAGS:
+            pass
+        elif tag == "note":
+            if notes is not None:
+                body = next((c for c in child if _local(c.tag) == "note-body"), None)
+                paragraphs = (
+                    [_text_of(p, notes).strip() for p in body]
+                    if body is not None
+                    else []
+                )
+                notes.append(" ".join(p for p in paragraphs if p))
+                parts.append(f"[^{len(notes)}]")
+        elif tag == "a":
+            parts.append(_link(_text_of(child, notes), child.get(_XLINK_HREF, "")))
         else:
-            parts.append(_text_of(child))
+            parts.append(_text_of(child, notes))
         parts.append(child.tail or "")
     return "".join(parts)
 
@@ -108,17 +146,24 @@ def _content_root(input_path: Path) -> ElementTree.Element:
         raise _OdfError(f"malformed content.xml: {exc}") from exc
 
 
-def _cell_text(cell: ElementTree.Element) -> str:
-    blocks = [_text_of(child).strip() for child in cell]
+def _cell_text(cell: ElementTree.Element, notes: list[str] | None = None) -> str:
+    blocks = [
+        _text_of(child, notes).strip()
+        for child in cell
+        if _local(child.tag) not in _SKIPPED_TAGS
+    ]
     return "\n".join(block for block in blocks if block)
 
 
 def _table_rows(
-    table: ElementTree.Element, spans: Spans | None = None
+    table: ElementTree.Element,
+    spans: Spans | None = None,
+    notes: list[str] | None = None,
 ) -> list[list[str]]:
     """Read a table into a rectangular matrix, trailing blanks trimmed.
 
-    ``spans`` collects (row, column) -> column span for merged cells.
+    ``spans`` collects (row, column) -> column span for merged cells, and
+    ``notes`` the bodies of footnotes in the cells.
     """
     # Runs of blank cells/rows keep their full width, but are only emitted
     # once a value follows: the trailing filler runs spreadsheets write
@@ -134,7 +179,7 @@ def _table_rows(
         for cell in element:
             if _local(cell.tag) not in {"table-cell", "covered-table-cell"}:
                 continue
-            text = _cell_text(cell)
+            text = _cell_text(cell, notes)
             repeat = _repeat_count(cell, "number-columns-repeated")
             if not text:
                 blank_cells += repeat
@@ -167,24 +212,30 @@ def _table_rows(
     return [row[:width] for row in rows]
 
 
-def _render_list(elem: ElementTree.Element, depth: int, out: list[str]) -> None:
+def _render_list(
+    elem: ElementTree.Element, depth: int, out: list[str], notes: list[str]
+) -> None:
     for item in elem:
         if _local(item.tag) not in {"list-item", "list-header"}:
             continue
         for child in item:
             tag = _local(child.tag)
             if tag == "list":
-                _render_list(child, depth + 1, out)
+                _render_list(child, depth + 1, out, notes)
                 continue
-            text = _text_of(child).strip()
+            text = _text_of(child, notes).strip()
             if text:
                 out.append(f"{'  ' * depth}- {text}")
 
 
-def _render_text_element(elem: ElementTree.Element, out: list[str]) -> None:
+def _render_text_element(
+    elem: ElementTree.Element, out: list[str], notes: list[str]
+) -> None:
     tag = _local(elem.tag)
+    if tag in _SKIPPED_TAGS:
+        return
     if tag == "h":
-        text = _text_of(elem).strip()
+        text = _text_of(elem, notes).strip()
         if text:
             try:
                 level = int(elem.get(f"{{{_TEXT_NS}}}outline-level", "1"))
@@ -192,22 +243,22 @@ def _render_text_element(elem: ElementTree.Element, out: list[str]) -> None:
                 level = 1
             out.append(f"{'#' * max(1, min(level, _MAX_HEADING_LEVEL))} {text}")
     elif tag == "p":
-        text = _text_of(elem).strip()
+        text = _text_of(elem, notes).strip()
         if text:
             out.append(text)
     elif tag == "list":
         items: list[str] = []
-        _render_list(elem, 0, items)
+        _render_list(elem, 0, items, notes)
         if items:
             out.append("\n".join(items))
     elif tag == "table":
-        table = render_markdown_table(_table_rows(elem))
+        table = render_markdown_table(_table_rows(elem, notes=notes))
         if table:
             out.append(table)
     else:
         # Sections, frames, change-tracking wrappers: keep walking.
         for child in elem:
-            _render_text_element(child, out)
+            _render_text_element(child, out, notes)
 
 
 @register_converter(FileFormat.ODT)
@@ -234,15 +285,20 @@ class OdtConverter(BaseConverter):
             conversion_failed(str(exc))
 
         blocks: list[str] = []
+        notes: list[str] = []
         for body in root.iter(f"{{{_OFFICE_NS}}}text"):
             for child in body:
-                _render_text_element(child, blocks)
+                _render_text_element(child, blocks, notes)
             break
 
         for block in blocks:
             if block.startswith("# "):
                 metadata["title"] = block[2:].strip()
                 break
+        if notes:
+            blocks.append(
+                "\n".join(f"[^{n}]: {body}" for n, body in enumerate(notes, 1))
+            )
 
         return ConvertResult(
             markdown="\n\n".join(blocks) + "\n" if blocks else "",
