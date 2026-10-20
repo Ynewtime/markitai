@@ -409,6 +409,19 @@ def no_network(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
 
 def record_network(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
     """Record, instead of sending, every model test or discovery."""
+    # Start from no proxy settings at all: the shell running the tests may set
+    # its own, and a user's model is refused outright behind a proxy.
+    for name in (
+        "HTTPS_PROXY",
+        "https_proxy",
+        "HTTP_PROXY",
+        "http_proxy",
+        "ALL_PROXY",
+        "all_proxy",
+        "NO_PROXY",
+        "no_proxy",
+    ):
+        monkeypatch.delenv(name, raising=False)
     sent: list[Any] = []
 
     async def probe(body: Any) -> str:
