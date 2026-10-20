@@ -936,7 +936,21 @@ fn backend(
             "No installed executable was found",
             hint,
         ),
-        // Child stderr and arbitrary exception strings may contain credentials.
+        // Child stderr and arbitrary exception strings may contain credentials;
+        // only the fixed text of a known cause is shown.
+        Err(error)
+            if error
+                .to_string()
+                .contains(markitai_core::BROWSER_ROOT_SANDBOX_REFUSED) =>
+        {
+            Check::new(
+                name,
+                description,
+                "warning",
+                markitai_core::BROWSER_ROOT_SANDBOX_REFUSED,
+                hint,
+            )
+        }
         Err(_) => Check::new(
             name,
             description,
@@ -1123,6 +1137,45 @@ mod tests {
                 .unwrap()
                 .values()
                 .all(|check| check.get("required").is_none())
+        );
+    }
+
+    /// Chromium run as root exits at once; doctor names that cause (a fixed
+    /// text) instead of a startup check that failed for no stated reason,
+    /// and still shows nothing else of the error.
+    #[test]
+    fn a_browser_refused_as_root_is_named() {
+        let cfg = config::normalize(&json!({})).unwrap();
+        let refused = format!(
+            "{} (secret-child-error)",
+            markitai_core::BROWSER_ROOT_SANDBOX_REFUSED
+        );
+        let named = checks(
+            &cfg,
+            None,
+            &HashMap::new(),
+            Err(markitai_core::Error::Fetch(refused)),
+            Ok(None),
+            Vec::new(),
+        );
+        let browser = &named["playwright"];
+        assert_eq!(browser.message, markitai_core::BROWSER_ROOT_SANDBOX_REFUSED);
+        assert!(
+            !serde_json::to_string(browser)
+                .unwrap()
+                .contains("secret-child-error")
+        );
+        let other = checks(
+            &cfg,
+            None,
+            &HashMap::new(),
+            Err(markitai_core::Error::Fetch("exited early".into())),
+            Ok(None),
+            Vec::new(),
+        );
+        assert_eq!(
+            other["playwright"].message,
+            "The installed backend could not complete its bounded startup check"
         );
     }
 

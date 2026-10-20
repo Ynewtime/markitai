@@ -137,6 +137,10 @@ pub fn office_render_available() -> bool {
 }
 
 /// Launch and close an isolated browser session; no document or provider request is made.
+/// The browser startup failure [`browser_diagnostic`] reports when Chromium
+/// refuses to run as root, a fixed text that names no path or output.
+pub const BROWSER_ROOT_SANDBOX_REFUSED: &str = browser::ROOT_SANDBOX_REFUSED;
+
 pub fn browser_diagnostic() -> Result<Option<PathBuf>> {
     browser::diagnostic()
 }

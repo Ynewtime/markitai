@@ -73,6 +73,32 @@ fn paired_surrogates(text: &str) -> String {
     out
 }
 
+/// Why Chromium exited before its debugging endpoint was ready. On Linux,
+/// Chromium refuses to start as root with its sandbox on (`Running as root
+/// without --no-sandbox is not supported`), which markitai keeps on, so the
+/// usual cause in a container is named.
+pub(crate) fn early_exit(as_root: bool) -> &'static str {
+    if as_root {
+        super::ROOT_SANDBOX_REFUSED
+    } else {
+        "Chromium exited before its debugging endpoint became ready"
+    }
+}
+
+/// Whether this process runs as root on Linux, where Chromium's sandbox
+/// does not start.
+fn running_as_root() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        // SAFETY: geteuid has no preconditions and cannot fail.
+        unsafe { libc::geteuid() == 0 }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        false
+    }
+}
+
 fn private_profile() -> Result<TempDir> {
     let mut builder = tempfile::Builder::new();
     builder.prefix("markitai-browser-");
@@ -173,9 +199,7 @@ impl Process {
         let deadline = Instant::now() + Duration::from_secs(15);
         loop {
             if process.group.try_reap(&mut process.child)?.is_some() {
-                return Err(failure(
-                    "Chromium exited before its debugging endpoint became ready",
-                ));
+                return Err(failure(early_exit(running_as_root())));
             }
             let path = process._profile.path().join("DevToolsActivePort");
             if let Ok(bytes) = std::fs::read(&path)
@@ -874,6 +898,16 @@ impl Browser {
 mod tests {
     use super::*;
     use std::net::TcpListener;
+
+    #[test]
+    fn an_early_exit_as_root_names_the_sandbox() {
+        assert_eq!(early_exit(true), super::super::ROOT_SANDBOX_REFUSED);
+        assert!(early_exit(true).contains("as root"));
+        assert_eq!(
+            early_exit(false),
+            "Chromium exited before its debugging endpoint became ready"
+        );
+    }
 
     fn mock(
         limit: usize,

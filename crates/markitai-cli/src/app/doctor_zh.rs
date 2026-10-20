@@ -78,6 +78,10 @@ const KNOWN: &[(&str, &str)] = &[
         "已安装的后端没能完成有时限的启动检查",
     ),
     (
+        "Chromium does not start as root with its sandbox on; run markitai as a regular user (in a container, a non-root USER)",
+        "Chromium 在开启沙箱时不能以 root 身份启动；请以普通用户运行 markitai（在容器中设置非 root 的 USER）",
+    ),
+    (
         "Installed, and it answers --version",
         "已安装，且能响应 --version",
     ),

@@ -271,6 +271,11 @@ page whose text is little next to a large script (the `quotes.toscrape.com/js/`
 example) is converted with a warning under `-s static` and rendered by `auto`;
 see [pages that need JavaScript](fetch.md#pages-that-need-javascript).
 
+**`✗ Chromium does not start as root with its sandbox on; run markitai as a regular user …`.**
+On Linux, Chromium refuses to start as root while its sandbox is on, and markitai
+keeps the sandbox on. Run markitai as a regular user; in a container, set a
+non-root `USER`. `markitai doctor` reports the same cause for the browser.
+
 **A page's text is garbled, or a warning says its encoding could not be determined.**
 The server's `Content-Type` and the page's `<meta>` agree with the bytes in nearly
 every case. When neither fits, as with a GBK page labelled `utf-8` or one with no

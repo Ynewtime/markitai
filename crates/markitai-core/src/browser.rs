@@ -21,6 +21,9 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use url::Url;
 
+/// The startup failure of Chromium run as root on Linux, which it refuses
+/// with its sandbox on (see `cdp::early_exit`).
+pub(crate) const ROOT_SANDBOX_REFUSED: &str = "Chromium does not start as root with its sandbox on; run markitai as a regular user (in a container, a non-root USER)";
 const MAX_HTML: usize = 100 * 1024 * 1024;
 const MAX_SCREENSHOT_BYTES: usize = 100 * 1024 * 1024;
 const MAX_SCREENSHOT_PIXELS: u64 = 50_000_000;
