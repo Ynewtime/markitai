@@ -1,8 +1,13 @@
 """Excel workbooks (XLSX with openpyxl, XLS with xlrd) as Markdown tables.
 
-Cells are read as written: an empty cell is empty, the text ``NA`` stays
-``NA``, and a header-less column has an empty header. Sheet layout (banner
-rows, one table per block) follows :mod:`markitai.converter.sheet_tables`.
+Cells show what the spreadsheet shows: a value through its number format
+(``0.256`` under ``0.00%`` is ``25.60%``, see
+:mod:`markitai.converter.number_format`), an empty cell empty, the text
+``NA`` as ``NA``, and a header-less column has an empty header. Sheet layout
+(banner rows, one table per block) follows
+:mod:`markitai.converter.sheet_tables`. As in markitai-rust, a hidden sheet
+is converted under a heading that says it is hidden, and a sheet with
+nothing in it is left out.
 """
 
 from __future__ import annotations
@@ -14,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from markitai.converter.base import ConvertResult
+from markitai.converter.number_format import format_cell
 from markitai.converter.sheet_tables import Spans, sheet_markdown
 from markitai.converter.structured_text import _normalize
 
@@ -24,8 +30,16 @@ _MERGE_REF = re.compile(
 _CHUNK = 1 << 20
 
 
-def cell_text(value: Any) -> str:
-    """The text a cell shows, without pandas' column-wide inference."""
+def cell_text(value: Any, number_format: str | None = None) -> str:
+    """The text a cell shows, without pandas' column-wide inference.
+
+    *number_format* is the cell's format code; without one, or one outside
+    what :func:`format_cell` implements, the value shows as a General cell.
+    """
+    if number_format is not None:
+        formatted = format_cell(number_format, value)
+        if formatted is not None:
+            return formatted
     if value is None:
         return ""
     if isinstance(value, bool):
@@ -87,24 +101,35 @@ def _xlsx_rows(sheet: Any) -> list[list[str]]:
         for cell in cells:
             value = getattr(cell, "value", None)
             # An error cell shows its code (#DIV/0!, #N/A, ...).
-            row.append(str(value) if cell.data_type == "e" else cell_text(value))
+            row.append(
+                str(value)
+                if cell.data_type == "e"
+                else cell_text(value, getattr(cell, "number_format", None))
+            )
         rows.append(row)
     return rows
 
 
-def _section(title: str, markdown: str) -> str:
-    return f"## {title}\n\n{markdown}" if markdown else f"## {title}"
+def _section(title: str, markdown: str, *, hidden: bool = False) -> str | None:
+    """A sheet's heading and tables; None for a sheet with nothing in it."""
+    if not markdown:
+        return None
+    if hidden:
+        title = f"{title} (hidden sheet)"
+    return f"## {title}\n\n{markdown}"
 
 
 def convert_xlsx(path: Path) -> ConvertResult:
     from openpyxl import load_workbook
 
     book = load_workbook(path, read_only=True, data_only=True, keep_links=False)
-    sections = []
+    sections: list[str] = []
     try:
         for sheet in book.worksheets:
             markdown = sheet_markdown(_xlsx_rows(sheet), _xlsx_spans(sheet))
-            sections.append(_section(sheet.title, markdown))
+            hidden = sheet.sheet_state in ("hidden", "veryHidden")
+            if section := _section(sheet.title, markdown, hidden=hidden):
+                sections.append(section)
     finally:
         book.close()
     return ConvertResult(
@@ -113,21 +138,38 @@ def convert_xlsx(path: Path) -> ConvertResult:
     )
 
 
+def _xls_format(book: Any, cell: Any) -> str | None:
+    """The cell's number format code (read with formatting_info only)."""
+    try:
+        xf = book.xf_list[cell.xf_index]
+        return book.format_map[xf.format_key].format_str
+    except (AttributeError, IndexError, KeyError, TypeError):
+        return None
+
+
 def _xls_value(book: Any, cell: Any) -> str:
     import xlrd
 
     if cell.ctype == xlrd.XL_CELL_DATE:
+        code = _xls_format(book, cell)
+        # An elapsed span ([h]:mm:ss) is a duration, not a point in time
+        span = format_cell(code, datetime.timedelta(days=cell.value))
+        if span is not None:
+            return span
         try:
-            return cell_text(xlrd.xldate.xldate_as_datetime(cell.value, book.datemode))
+            moment: Any = xlrd.xldate.xldate_as_datetime(cell.value, book.datemode)
         except (ValueError, OverflowError, xlrd.xldate.XLDateError):
             return cell_text(cell.value)
+        if 0 <= cell.value < 1:
+            moment = moment.time()  # a time of day, as openpyxl reads it
+        return cell_text(moment, code)
     if cell.ctype == xlrd.XL_CELL_BOOLEAN:
         return cell_text(bool(cell.value))
     if cell.ctype == xlrd.XL_CELL_ERROR:
         return xlrd.error_text_from_code.get(cell.value, "#N/A")
     if cell.ctype in (xlrd.XL_CELL_EMPTY, xlrd.XL_CELL_BLANK):
         return ""
-    return cell_text(cell.value)
+    return cell_text(cell.value, _xls_format(book, cell))
 
 
 def convert_xls(path: Path) -> ConvertResult:
@@ -138,7 +180,7 @@ def convert_xls(path: Path) -> ConvertResult:
     except NotImplementedError:
         # formatting_info is BIFF8-only; older files convert without merges.
         book = xlrd.open_workbook(str(path), on_demand=True)
-    sections = []
+    sections: list[str] = []
     try:
         for index in range(book.nsheets):
             sheet = book.sheet_by_index(index)
@@ -151,7 +193,11 @@ def convert_xls(path: Path) -> ConvertResult:
                 for r0, _r1, c0, c1 in getattr(sheet, "merged_cells", [])
                 if c1 - c0 > 1
             }
-            sections.append(_section(sheet.name, sheet_markdown(rows, spans)))
+            # visibility: 0 visible, 1 hidden, 2 very hidden
+            hidden = getattr(sheet, "visibility", 0) != 0
+            section = _section(sheet.name, sheet_markdown(rows, spans), hidden=hidden)
+            if section:
+                sections.append(section)
             book.unload_sheet(index)
     finally:
         book.release_resources()

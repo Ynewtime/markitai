@@ -138,6 +138,100 @@ class TestXlsx:
                 archive.writestr(name, data)
         assert "| 1 | #DIV/0! |" in XlsxConverter().convert(path).markdown
 
+    def test_number_formats_show_as_excel_shows_them(self, tmp_path):
+        """Cells showed their stored value: 0.256 where Excel shows 25.60%."""
+        from openpyxl import Workbook
+
+        cells = [
+            ("rate", 0.256, "0.00%"),
+            ("share", 0.5, "0%"),
+            ("amount", 1234.5, "#,##0.00"),
+            ("count", 1234567, "#,##0"),
+            ("pi", 3.14159, "0.00"),
+            ("half up", 5.255, "0.00"),
+            ("loss", -1234.5, '"$"#,##0.00_);[Red]("$"#,##0.00)'),
+            ("big", 12345.678, "0.00E+00"),
+            ("thousands", 1500000, '#,##0,"K"'),
+            ("code", 7, "000"),
+            ("euro", 99.5, "#,##0.00 [$€-407]"),
+            ("when", datetime.datetime(2024, 3, 5, 14, 30, 15), "m/d/yy h:mm"),
+            ("day", datetime.datetime(2024, 3, 5), "mmmm d, yyyy"),
+            ("short", datetime.datetime(2024, 3, 5), "d-mmm-yy"),
+            ("clock", datetime.time(9, 5, 7), "h:mm AM/PM"),
+            ("span", datetime.timedelta(hours=27, minutes=3), "[h]:mm:ss"),
+            ("fraction", 0.5, "# ?/?"),
+            ("plain", 0.1, "General"),
+        ]
+        path = tmp_path / "formats.xlsx"
+        book = Workbook()
+        sheet = book.active
+        assert sheet is not None
+        sheet.title = "Formats"
+        sheet.append(["what", "shows"])
+        for name, value, code in cells:
+            sheet.append([name, value])
+            sheet.cell(sheet.max_row, 2).number_format = code
+        book.save(path)
+
+        markdown = XlsxConverter().convert(path).markdown
+
+        shown = dict(
+            line.strip("| ").split(" | ")
+            for line in markdown.splitlines()[4:]
+            if line.startswith("| ")
+        )
+        assert shown == {
+            "rate": "25.60%",
+            "share": "50%",
+            "amount": "1,234.50",
+            "count": "1,234,567",
+            "pi": "3.14",
+            "half up": "5.26",
+            "loss": "($1,234.50)",
+            "big": "1.23E+04",
+            "thousands": "1,500K",
+            "code": "007",
+            "euro": "99.50 €",
+            "when": "2024-03-05 14:30",
+            "day": "March 5, 2024",
+            "short": "2024-03-05",
+            "clock": "09:05",
+            "span": "27:03:00",
+            "fraction": "0.5",
+            "plain": "0.1",
+        }
+
+    def test_hidden_sheets_are_marked_and_empty_sheets_left_out(self, tmp_path):
+        """A hidden sheet read as any other, and an empty sheet left a bare
+        heading. Like markitai-rust: the hidden one is converted under a
+        heading that says so, the empty one is not there."""
+        from openpyxl import Workbook
+
+        path = tmp_path / "sheets.xlsx"
+        book = Workbook()
+        shown = book.active
+        assert shown is not None
+        shown.title = "Shown"
+        shown.append(["a", 1])
+        book.create_sheet("Blank")
+        secret = book.create_sheet("Secret")
+        secret.append(["s", 2])
+        secret.sheet_state = "hidden"
+        deep = book.create_sheet("Deep")
+        deep.append(["d", 3])
+        deep.sheet_state = "veryHidden"
+        book.save(path)
+
+        markdown = XlsxConverter().convert(path).markdown
+
+        headings = [line for line in markdown.splitlines() if line.startswith("#")]
+        assert headings == [
+            "## Shown",
+            "## Secret (hidden sheet)",
+            "## Deep (hidden sheet)",
+        ]
+        assert "| s | 2 |" in markdown
+
     def test_conversion_does_not_load_pandas(self, tmp_path):
         path = _workbook(tmp_path / "plan.xlsx", DAY_PLAN, BANNER_ROWS)
         code = (
@@ -175,6 +269,26 @@ class TestXls:
             "| Raffle | 14:00 | Draw tickets | NA |\n"
             "| Close | 17.5 |  | 3 |"
         )
+
+    def test_number_formats_and_hidden_sheets_as_in_xlsx(self):
+        # tests/fixtures/number-formats.xls: LibreOffice's export of a
+        # workbook with formatted cells, a hidden sheet and an empty one
+        markdown = XlsConverter().convert(FIXTURES / "number-formats.xls").markdown
+        for shown in (
+            "| 25.60% |",
+            "| 1,234.50 |",
+            "| ($1,234.50) |",
+            "| 1.23E+04 |",
+            "| 2024-03-05 14:30 |",
+            "| March 5, 2024 |",
+            "| 09:05 |",
+            "| 27:03:00 |",
+            "| 1,500K |",
+            "| 007 |",
+        ):
+            assert shown in markdown
+        headings = [line for line in markdown.splitlines() if line.startswith("#")]
+        assert headings == ["## Data", "## Hidden (hidden sheet)"]
 
     def test_not_an_xls_falls_back(self, tmp_path):
         path = tmp_path / "notes.xls"
