@@ -260,7 +260,7 @@ class EmlConverter(BaseConverter):
         msg = message_from_bytes(input_path.read_bytes(), policy=_DEFAULT_POLICY)
         markdown = _render_message(
             msg,
-            source=f"file://{input_path.resolve()}",
+            source=input_path.resolve().as_uri(),
         )
 
         metadata: dict = {

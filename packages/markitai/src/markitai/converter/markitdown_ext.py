@@ -62,7 +62,10 @@ def _convert_html(input_path: Path) -> ConvertResult:
         )
 
         html = read_text_file(input_path, html=True)
-        source_url = f"file://{input_path.resolve()}"
+        # as_uri(): a "#" or "%" in the path is part of it, not a fragment
+        # (relative images and links of "C# notes/page.html" resolved one
+        # folder up), and a Windows path becomes a usable URL
+        source_url = input_path.resolve().as_uri()
         extracted = extract_web_content(html, source_url)
         markdown = extracted.markdown
 
