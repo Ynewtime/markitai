@@ -462,7 +462,7 @@ Each of the five keys defaults to `false`. Use it with `markitai document.pdf --
 |---------|---------|-------------|
 | `enabled` | `false` | Same as `--ocr` |
 | `lang` | `en` | Language: `en`, `zh`, `zh_tw`, `ja`, `ko`, `ar`, `th`, `latin`, `cyrillic`, `el`, `devanagari`, `ta`, `te`, or a code the multilingual model reads (`fr`, `de`, `es`, `it`, `pt`, `nl`, `pl`, `tr`, `vi`, ...). Any other value is an error |
-| `per_page_routing` | `true` | Keep the native text layer on pages that look fine and OCR only the rest. `false` OCRs every page |
+| `per_page_routing` | `true` | Keep the native text layer on pages whose text passes the checks and OCR only the rest (see [PDF text layers that read wrong](/guide/cli#pdf-text-layers-that-read-wrong)). `false` OCRs every page |
 
 Local OCR uses [RapidOCR](https://github.com/RapidAI/RapidOCR) from the `ocr` extra:
 

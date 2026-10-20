@@ -130,6 +130,14 @@ PDF 中本来就有文字层的页面保留原文（标题、列表、表格、�
 
 单张图片作为输入时需要 `--ocr` 或 `--llm`，两者都没有时 markitai 以状态码 1 退出，而不是报告一次空成功。
 
+#### 读错的 PDF 文字层
+
+PDF 的文字层可能存在却是错的：字体把字母映射到私用区或 `(cid:NN)` 编码，UTF-8 文字被当成 Windows-1252 读出（`cafÃ©`），从右到左的希伯来文或阿拉伯文按相反顺序存放，或者旧式字体的编码代表的字母和它画出来的不一样。markitai 用本来就要提取的文字逐页检查这些情况。不带 `--ocr` 时，这些页面和扫描页写在同一条提示里（`[PDF] plan.pdf: 2 of 40 pages look scanned/garbled (pages 7–8); consider re-running with --ocr`）。带 `--ocr` 时，这些页面改走 OCR，而且在此之前会把每种字体的几小段文字裁出来交给识别器读，揪出字母看似合理、却不是页面上画的那些字的文字层：每个文档每种字体两段，每页最多四段，50 页的文档也只读几段。正常页面（中文、日文、英文、代码、表格、公式）保留文字层，Markdown 不变。
+
+页面所用的文字是配置的 [`ocr.lang`](/zh/guide/configuration#ocr-配置) 读不了的，就保留文字层，因为 OCR 只会更糟；提示里会说哪种语言能读（`… right-to-left text in reverse order; consider re-running with --ocr and ocr.lang set to ar`）。没有哪种 OCR 语言能读希伯来文，所以顺序颠倒的希伯来文文字层按提取结果保留。
+
+每个 PDF 结果都会记录各页文字的来源：`--json` 条目、[Python API](/zh/guide/python-api#conversionoutput) 和 serve 条目里的 `page_sources`，形如 `{"page": 7, "source": "ocr", "reason": "text layer failed the script check: …"}`。`source` 是 `text`（文字层）、`ocr` 或 `mixed`（文字层加上对其中图片的 OCR，或在 `--ocr --llm` 下视觉模型对照文字层读页面图片）；`reason` 是一句简短的英文说明，比如 `text layer trusted`、`no text layer` 或 `OCR forced by --ocr (ocr.per_page_routing is off)`。`--verbose` 会在日志里列出没有被直接信任的页面。
+
 #### PDF 里的数学公式
 
 | 运行方式 | 公式的下场 |
@@ -193,7 +201,7 @@ markitai document.pdf -o ./output --json | jq '.items[] | select(.status == "fai
 
 文档结构是 `{version, ok, error, batch, items[], totals}`：
 
-- `items[]`：每个输入一条，含 `source`、`status`（`completed`、`failed`、`skipped`、`pending`）、`output`、`error`、`warnings`、`cost_usd`、`duration_s`、`fetch_strategy`、`screenshots` 和 `llm_usage`。`pending` 只出现在不再等待的 `--llm-batch` 运行里：基础 `.md` 已写出，增强还在批次里运行。`warnings` 列出没让条目失败的问题，比如某张图片分析失败，或要求的截图没拍到。模型没有已知价格时，它的 `llm_usage` 条目会记 `unpriced_requests`，`cost_usd` 只含有价格的请求：费用未知，不是零。`--resume` 之后（`--llm-batch` 除外），之前的运行完成的条目排在前面，带 `earlier_run: true` 和它们完成时记下的费用、用量与耗时；这次运行做的条目 `earlier_run` 为 `false`。
+- `items[]`：每个输入一条，含 `source`、`status`（`completed`、`failed`、`skipped`、`pending`）、`output`、`error`、`warnings`、`cost_usd`、`duration_s`、`fetch_strategy`、`screenshots`、`llm_usage` 和 `page_sources`。`pending` 只出现在不再等待的 `--llm-batch` 运行里：基础 `.md` 已写出，增强还在批次里运行。`warnings` 列出没让条目失败的问题，比如某张图片分析失败，或要求的截图没拍到。`page_sources` 对 PDF 说明每页文字的来源（见[读错的 PDF 文字层](#读错的-pdf-文字层)），其他输入为空。模型没有已知价格时，它的 `llm_usage` 条目会记 `unpriced_requests`，`cost_usd` 只含有价格的请求：费用未知，不是零。`--resume` 之后（`--llm-batch` 除外），之前的运行完成的条目排在前面，带 `earlier_run: true` 和它们完成时记下的费用、用量与耗时；这次运行做的条目 `earlier_run` 为 `false`。
 - `error`：没产生任何条目的运行级错误，否则为 `null`。
 - `batch`：`--llm-batch` 转为后台后，是仍在运行的批次 `{id, status, collect_command}`；否则为 `null`。
 - `totals`：按状态计数，加 `cost_usd`、`this_run_cost_usd` 和 `duration_s`。`cost_usd` 统计所有费用已知的条目，`--resume` 之后就是整个批量的费用；`this_run_cost_usd` 只统计这次运行转换的条目（没有续跑时两者相等）。

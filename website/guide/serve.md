@@ -127,7 +127,7 @@ The workbench runs on a small REST + SSE API that scripts can call directly. Err
 |----------|-------------|
 | `GET /api/capabilities` | Server version and build (`build: {version, commit, built_at, dirty}`), presets, LLM and extras status, limits and supported features |
 | `POST /api/jobs` | Create a job (multipart form: `files`, `urls` JSON array, `options` JSON, optional `label`). A `.urls` file becomes URL items. Asking for LLM processing without a usable model is refused (`llm_unavailable`) |
-| `GET /api/jobs/{job_id}` | Job status and items (each item carries its `warnings`, `error_code` and, when a model ran, `pricing`) |
+| `GET /api/jobs/{job_id}` | Job status and items (each item carries its `warnings`, `error_code`, `page_sources` (where each PDF page's text came from; empty for other items) and, when a model ran, `pricing`) |
 | `GET /api/jobs/{job_id}/events` | Live progress stream (SSE) |
 | `POST /api/jobs/{job_id}/cancel` | Stop the items still waiting to start |
 | `POST /api/jobs/{job_id}/items/{item_id}/retry` | Retry an item, or LLM-enhance it with `operation: "enhance"` |

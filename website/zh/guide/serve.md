@@ -127,7 +127,7 @@ Vertex AI（以及 watsonx、GigaChat）用服务器自己的登录凭据而不�
 |------|------|
 | `GET /api/capabilities` | 服务版本与构建（`build: {version, commit, built_at, dirty}`）、预设、LLM 与 extras 状态、限制与支持的功能 |
 | `POST /api/jobs` | 创建任务（multipart 表单：`files`、`urls` JSON 数组、`options` JSON，可选 `label`）。`.urls` 文件展开为 URL 条目。要求 LLM 处理却没有可用模型时直接拒绝（`llm_unavailable`） |
-| `GET /api/jobs/{job_id}` | 任务状态与条目（每个条目带 `warnings`、`error_code`，用过模型时还有 `pricing`） |
+| `GET /api/jobs/{job_id}` | 任务状态与条目（每个条目带 `warnings`、`error_code`、`page_sources`（PDF 每页文字的来源，其他条目为空），用过模型时还有 `pricing`） |
 | `GET /api/jobs/{job_id}/events` | 实时进度流（SSE） |
 | `POST /api/jobs/{job_id}/cancel` | 停下尚未开始的条目 |
 | `POST /api/jobs/{job_id}/items/{item_id}/retry` | 重试条目，或以 `operation: "enhance"` 做 LLM 增强 |

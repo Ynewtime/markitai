@@ -122,5 +122,6 @@ if __name__ == "__main__":
 | `skip_reason` | `str \| None` | 因冲突策略跳过时为 `"exists"` |
 | `duration` | `float` | 耗时（秒） |
 | `warnings` | `list[str]` | 没有让调用失败、但值得处理的提示：页面疑似扫描件（可加 `ocr=True` 重试）、PDF 隐藏文字（可能是提示注入）、OCR 没识别出文字、幻灯片无法渲染、URL 截图没拍到、某张图片分析失败（保留原来的 alt 文本）、LLM 增强失败（此时 `llm_markdown` 为 `None`，结果是未增强的转换；设了 `llm.on_failure = "fail"` 时改为抛出 `ConversionError`）。按调用收集，并发的 `aconvert` 调用不会互相串；这些提示同时也会写进日志 |
+| `page_sources` | `list[dict]` | PDF 每页一条：`{"page", "source", "reason"}`，`source` 为 `"text"`（文字层）、`"ocr"` 或 `"mixed"`，`reason` 是一句简短的英文说明（`"text layer trusted"`、`"no text layer"`、`"text layer failed the script check: …"`）。其他输入为空 |
 
 失败时直接抛异常，不返回半成品：管线失败抛 `ConversionError`，URL 不可达抛 `FetchError`，开了 LLM 却解析不出模型、或者没有一个模型有 API key 时抛 `NoModelConfiguredError`（`ValueError` 的子类；消息写明要设置的变量，不会发出请求），配置文件格式错误或取值无效抛 `ConfigFileError`。这四个异常都可以从 `markitai.api` 导入。一次调用转一个文件或 URL，目录批量仍由 CLI 负责。
