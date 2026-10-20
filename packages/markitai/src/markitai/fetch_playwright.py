@@ -1037,6 +1037,36 @@ def _note_followed(context: Any, request: Any, final_url: str) -> None:
     _ROUTED_FINAL_URLS.setdefault(context, {})[request.url] = final_url
 
 
+#: Why a restricted context's route refused a page's own document: the
+#: browser itself reports only ``net::ERR_BLOCKED_BY_CLIENT``.
+_ROUTED_REFUSALS: weakref.WeakKeyDictionary[Any, str] = weakref.WeakKeyDictionary()
+
+
+def _note_refused(context: Any, request: Any, error: BaseException) -> None:
+    """Remember why the route refused a page's own document (see fetch)."""
+    if not isinstance(error, PermissionError):
+        return
+    try:
+        if not request.is_navigation_request() or request.frame.parent_frame:
+            return
+    except Exception:  # pragma: no cover - frame already detached
+        return
+    _ROUTED_REFUSALS[context] = str(error)
+
+
+def _navigation_refusal(context: Any, error: BaseException) -> FetchError | None:
+    """The refusal behind a failed navigation, worded as a static fetch's.
+
+    A user token's page on a private address failed with the browser's
+    ``net::ERR_BLOCKED_BY_CLIENT``; the static path says
+    ``Fetch target refused: private_or_local_host``.
+    """
+    reason = _ROUTED_REFUSALS.pop(context, None)
+    if reason is None:
+        return None
+    return FetchError(f"Playwright cannot fetch this URL: {reason}")
+
+
 def _routed_final_url(context: Any, url: str) -> str:
     """The URL *url*'s document came from, when a route followed it."""
     return _ROUTED_FINAL_URLS.get(context, {}).get(url, url)
@@ -1189,6 +1219,7 @@ async def _guard_public_context(
             )
         except Exception as exc:
             logger.debug("[Fetch] Blocked browser request: {}", exc)
+            _note_refused(context, request, exc)
             await route.abort("blockedbyclient")
 
     async def block_socket(socket: Any) -> None:
@@ -1582,7 +1613,13 @@ class PlaywrightRenderer:
             wait_until = wait_until_map.get(wait_for, "domcontentloaded")
 
             navigation_started = time.perf_counter()
-            response = await page.goto(url, timeout=timeout, wait_until=wait_until)
+            try:
+                response = await page.goto(url, timeout=timeout, wait_until=wait_until)
+            except Exception as exc:
+                refusal = _navigation_refusal(context, exc) if restricted else None
+                if refusal is None:
+                    raise
+                raise refusal from exc
             status = getattr(response, "status", None)
             logger.debug(
                 "[Playwright] Navigation: {:.3f}s, HTTP {}",

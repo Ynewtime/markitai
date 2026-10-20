@@ -466,3 +466,34 @@ async def test_a_public_page_cannot_redirect_the_restricted_browser_inward() -> 
     assert hop.final_url == f"http://public.example:{port}/doc/"
     assert ("/doc/pic.gif", "") in public_seen
     assert "The page a redirect led to" in hop.content
+
+
+@pytest.mark.slow
+async def test_a_restricted_browser_names_the_refusal_of_a_private_page() -> None:
+    """A user token's private URL fails as the static path's does, not with
+    the browser's ``net::ERR_BLOCKED_BY_CLIENT``, and nothing is asked."""
+    _skip_if_no_playwright_browser()
+    import markitai.fetch_policy as fetch_policy
+    from markitai.fetch_playwright import PlaywrightRenderer
+    from markitai.fetch_types import FetchError
+
+    seen: list[tuple[str, str]] = []
+    server = _redirecting_server("127.0.0.1", seen, {})
+    token = fetch_policy.public_network_only.set(True)
+    try:
+        async with PlaywrightRenderer() as renderer:
+            with pytest.raises(FetchError) as raised:
+                await renderer.fetch(
+                    f"http://127.0.0.1:{server.server_address[1]}/",
+                    timeout=15000,
+                    extra_wait_ms=0,
+                    skip_auto_scroll=True,
+                )
+    finally:
+        fetch_policy.public_network_only.reset(token)
+        server.shutdown()
+        server.server_close()
+
+    assert "Fetch target refused: private_or_local_host" in str(raised.value)
+    assert "ERR_BLOCKED_BY_CLIENT" not in str(raised.value)
+    assert seen == []

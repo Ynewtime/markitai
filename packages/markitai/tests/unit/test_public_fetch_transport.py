@@ -236,3 +236,55 @@ async def test_a_followed_document_gets_a_base_for_its_relative_links(
     assert body.startswith(
         b'<html><head><base href="https://public.example/doc/"><title>'
     )
+
+
+async def test_a_refused_page_says_why_instead_of_a_browser_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A restricted browser asked for a private address names the refusal.
+
+    The route aborts the page's own document, and Playwright reported only
+    ``net::ERR_BLOCKED_BY_CLIENT``; a static fetch of the same URL says
+    ``Fetch target refused: private_or_local_host``. A refused subresource
+    is not the page's refusal.
+    """
+    from types import SimpleNamespace
+
+    from markitai.fetch_playwright import _guard_public_context, _navigation_refusal
+    from markitai.fetch_types import FetchError
+
+    class Context:  # weakly referenced, as a Playwright context is
+        route = AsyncMock()
+        route_web_socket = AsyncMock()
+
+    context = Context()
+    transport = AsyncMock(
+        side_effect=PermissionError("Fetch target refused: private_or_local_host")
+    )
+    monkeypatch.setattr("markitai.fetch_http.public_http_request", transport)
+    await _guard_public_context(context, 30000, None)
+    _pattern, handler = context.route.await_args.args
+    blocked = Exception("Page.goto: net::ERR_BLOCKED_BY_CLIENT at http://127.0.0.1/")
+
+    def request(url: str, *, document: bool) -> SimpleNamespace:
+        return SimpleNamespace(
+            url=url,
+            method="GET",
+            all_headers=AsyncMock(return_value={}),
+            post_data_buffer=None,
+            is_navigation_request=lambda: document,
+            frame=SimpleNamespace(parent_frame=None),
+        )
+
+    picture = request("http://127.0.0.1/pic.png", document=False)
+    await handler(SimpleNamespace(request=picture, abort=AsyncMock()))
+    assert _navigation_refusal(context, blocked) is None
+
+    page = request("http://127.0.0.1/", document=True)
+    route = SimpleNamespace(request=page, abort=AsyncMock())
+    await handler(route)
+    route.abort.assert_awaited_once_with("blockedbyclient")
+    refusal = _navigation_refusal(context, blocked)
+    assert isinstance(refusal, FetchError)
+    assert "Fetch target refused: private_or_local_host" in str(refusal)
+    assert "ERR_BLOCKED_BY_CLIENT" not in str(refusal)
