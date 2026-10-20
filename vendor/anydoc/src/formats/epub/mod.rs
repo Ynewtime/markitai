@@ -2,7 +2,10 @@
 //! chapter-scoped anchors so intra-book navigation survives.
 
 use crate::error::ConvertError;
-use crate::model::{AnchorId, Block, Document, ImageSource, Inline, LinkTarget};
+use crate::model::{
+    AnchorId, Block, CellSlot, Document, ImageSource, Inline, LinkTarget, Note,
+    inlines_to_plain_text,
+};
 use crate::package::xml::Element;
 use crate::package::{Package, path};
 use crate::shared::assets::{AssetSink, media_type_for};
@@ -69,6 +72,7 @@ pub fn parse(bytes: &[u8]) -> Result<Document, ConvertError> {
     }
 
     let assets = RefCell::new(AssetSink::new());
+    let notes = RefCell::new(Vec::new());
     let mut css_cache: HashMap<String, Option<String>> = HashMap::new();
     let mut converted = 0usize;
     for chapter_path in &spine_paths {
@@ -90,6 +94,7 @@ pub fn parse(bytes: &[u8]) -> Result<Document, ConvertError> {
             assets: &assets,
             chapter_path: chapter_path.clone(),
             spine_parts: &spine_parts,
+            notes: &notes,
         };
         // Chapter-start anchor: renders only when a link targets this chapter.
         doc.blocks.push(Block::Paragraph(vec![Inline::Anchor(chapter_path.clone())]));
@@ -101,7 +106,76 @@ pub fn parse(bytes: &[u8]) -> Result<Document, ConvertError> {
     }
 
     doc.assets = std::mem::take(&mut assets.borrow_mut().assets);
+    doc.notes = notes.into_inner();
+    // markitai: a short link to a note (`<a href="#fn1">1</a>`) is its
+    // reference mark, whatever the markup calls it. Notes are numbered
+    // through the book in reading order: their chapter-scoped anchors
+    // (`EPUB/text/ch001.xhtml#fn1`) are no label for a reader.
+    let ids: HashMap<String, String> = doc
+        .notes
+        .iter()
+        .enumerate()
+        .map(|(n, note)| (note.id.clone(), (n + 1).to_string()))
+        .collect();
+    if !ids.is_empty() {
+        for note in &mut doc.notes {
+            note.id = ids[&note.id].clone();
+        }
+        mark_note_refs(&mut doc.blocks, &ids);
+        for note in &mut doc.notes {
+            mark_note_refs(&mut note.blocks, &ids);
+        }
+    }
     Ok(doc)
+}
+
+/// markitai: the longest link text read as a note's mark (`[12]`, `iv`, `*`).
+const MAX_NOTE_MARK: usize = 8;
+
+fn mark_note_refs(blocks: &mut [Block], ids: &HashMap<String, String>) {
+    fn walk(inlines: &mut [Inline], ids: &HashMap<String, String>) {
+        for inline in inlines {
+            let reference = match inline {
+                Inline::Link { content, target: LinkTarget::Anchor(id) }
+                    if ids.contains_key(id)
+                        && !content.iter().any(|c| matches!(c, Inline::Image { .. }))
+                        && inlines_to_plain_text(content).trim().chars().count()
+                            <= MAX_NOTE_MARK =>
+                {
+                    Some(ids[id].clone())
+                }
+                Inline::Link { content, .. } => {
+                    walk(content, ids);
+                    None
+                }
+                _ => None,
+            };
+            if let Some(id) = reference {
+                *inline = Inline::NoteRef(id);
+            }
+        }
+    }
+    for block in blocks {
+        match block {
+            Block::Heading { content, .. } | Block::Paragraph(content) => walk(content, ids),
+            Block::List(list) => {
+                for item in &mut list.items {
+                    mark_note_refs(&mut item.blocks, ids);
+                }
+            }
+            Block::Table(table) => {
+                for row in &mut table.grid {
+                    for slot in row {
+                        if let CellSlot::Origin(cell) = slot {
+                            mark_note_refs(&mut cell.blocks, ids);
+                        }
+                    }
+                }
+            }
+            Block::BlockQuote(inner) => mark_note_refs(inner, ids),
+            Block::CodeBlock { .. } | Block::Rule | Block::Math(_) => {}
+        }
+    }
 }
 
 /// A chapter's CSS cascade: its linked stylesheets and inline `<style>`
@@ -152,6 +226,8 @@ struct ChapterCtx<'a, 'b> {
     assets: &'b RefCell<AssetSink>,
     chapter_path: String,
     spine_parts: &'b HashSet<String>,
+    /// markitai: the book's footnotes and endnotes, in reading order.
+    notes: &'b RefCell<Vec<Note>>,
 }
 
 impl HtmlCtx for ChapterCtx<'_, '_> {
@@ -200,6 +276,14 @@ impl HtmlCtx for ChapterCtx<'_, '_> {
     fn anchor_id(&self, raw: &str) -> AnchorId {
         scoped(&self.chapter_path, Some(raw))
     }
+
+    fn collects_notes(&self) -> bool {
+        true
+    }
+
+    fn note(&self, note: Note) {
+        self.notes.borrow_mut().push(note);
+    }
 }
 
 /// Chapter-scoped anchor id: the chapter path itself targets the chapter
@@ -215,6 +299,66 @@ fn scoped(chapter_path: &str, fragment: Option<&str>) -> AnchorId {
 mod tests {
     use super::*;
     use std::io::{Cursor, Write};
+
+    /// markitai: a book of the given chapters, in spine order.
+    fn book(chapters: &[&str]) -> Vec<u8> {
+        let items: String = (0..chapters.len())
+            .map(|i| {
+                format!(r#"<item id="c{i}" href="c{i}.xhtml" media-type="application/xhtml+xml"/>"#)
+            })
+            .collect();
+        let refs: String =
+            (0..chapters.len()).map(|i| format!(r#"<itemref idref="c{i}"/>"#)).collect();
+        let mut w = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default();
+        w.start_file("META-INF/container.xml", options).unwrap();
+        w.write_all(
+            br#"<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="c.opf" media-type="application/oebps-package+xml"/></rootfiles></container>"#,
+        )
+        .unwrap();
+        w.start_file("c.opf", options).unwrap();
+        w.write_all(
+            format!(
+                r#"<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0"><metadata/><manifest>{items}</manifest><spine>{refs}</spine></package>"#
+            )
+            .as_bytes(),
+        )
+        .unwrap();
+        for (i, body) in chapters.iter().enumerate() {
+            w.start_file(format!("c{i}.xhtml"), options).unwrap();
+            w.write_all(
+                format!(
+                    r#"<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body>{body}</body></html>"#
+                )
+                .as_bytes(),
+            )
+            .unwrap();
+        }
+        w.finish().unwrap().into_inner()
+    }
+
+    #[test]
+    fn footnotes_are_markdown_footnotes_not_anchors_and_links() {
+        // Pandoc's EPUB 3 (epub:type) and EPUB 2 (class) notes, each
+        // chapter numbering its own from 1.
+        let epub3 = r##"<section><h1>One</h1><p>A note.<a href="#fn1" class="footnote-ref" id="fnref1" epub:type="noteref">1</a> And <a href="#fn2" epub:type="noteref">2</a>.</p></section><section id="footnotes" class="footnotes footnotes-end-of-document" epub:type="footnotes"><hr /><aside epub:type="footnote" id="fn1"><p><a href="#fnref1" class="footnote-back" role="doc-backlink">1</a>. The first note, with <em>emphasis</em>.</p></aside><aside epub:type="footnote" id="fn2"><p><a href="#fnref2" class="footnote-back" role="doc-backlink">2</a>. The second note.</p></aside></section>"##;
+        let epub2 = r##"<div><h1>Two</h1><p>Third.<a href="#fn1" class="footnote-ref" id="fnref1">1</a> See <a href="#fn1">the note on sources</a>.</p></div><div class="footnotes"><hr /><ol><li id="fn1"><p>The third note.<a href="#fnref1" class="footnote-back">↩︎</a></p></li></ol></div>"##;
+        let doc = parse(&book(&[epub3, epub2])).unwrap();
+        // Numbered through the book, not by their chapter-scoped anchors.
+        let ids: Vec<&str> = doc.notes.iter().map(|note| note.id.as_str()).collect();
+        assert_eq!(ids, ["1", "2", "3"]);
+        let markdown = crate::render::markdown::document_to_markdown(&doc);
+        assert!(markdown.contains("A note.[^1] And [^2]."), "{markdown}");
+        assert!(markdown.contains("Third.[^3]"), "{markdown}");
+        assert!(markdown.contains("[^1]: The first note, with *emphasis*."), "{markdown}");
+        assert!(markdown.contains("[^2]: The second note."), "{markdown}");
+        assert!(markdown.contains("[^3]: The third note."), "{markdown}");
+        for stray in ["<a id", "c0.xhtml", "c1.xhtml", "↩", "---", "](#"] {
+            assert!(!markdown.contains(stray), "{stray}: {markdown}");
+        }
+        // Prose linking to a note keeps its words.
+        assert!(markdown.contains("the note on sources"), "{markdown}");
+    }
 
     #[test]
     fn a_part_repeated_across_the_spine_is_read_once() {

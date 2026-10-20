@@ -9,7 +9,7 @@
 use crate::error::ConvertError;
 use crate::model::{
     AnchorId, Block, Cell, GridBuilder, ImageSource, Inline, LinkTarget, List, ListItem,
-    MarkerKind, TableKind, inlines_are_empty, inlines_to_plain_text,
+    MarkerKind, Note, NoteKind, TableKind, inlines_are_empty, inlines_to_plain_text,
 };
 use crate::package::xml::{Element, Node};
 use crate::shared::delta::{StyleDelta, rebase_emphasis};
@@ -25,6 +25,14 @@ pub trait HtmlCtx {
     /// A failed load degrades to `Ok(None)`; resource-limit errors propagate.
     fn image_source(&self, src: &str) -> Result<Option<ImageSource>, ConvertError>;
     fn anchor_id(&self, raw: &str) -> AnchorId;
+    /// markitai: whether footnotes and endnotes the markup marks as such
+    /// leave the text for [`HtmlCtx::note`] (EPUB); otherwise they stay in
+    /// place as ordinary content.
+    fn collects_notes(&self) -> bool {
+        false
+    }
+    /// markitai: a note taken out of the text (see [`HtmlCtx::collects_notes`]).
+    fn note(&self, _note: Note) {}
 }
 
 pub fn to_blocks(
@@ -424,6 +432,16 @@ impl Builder<'_> {
         // default (`<b>`, `<i>`, …), then CSS — so `font-weight: normal`
         // can undo a `<b>`.
         let delta = merge_inline_tag(elem, delta).merge(props.delta);
+        if self.ctx.collects_notes() {
+            if let Some(kind) = note_kind(elem)
+                && let Some(id) = elem.attr_any("id").filter(|id| !id.is_empty())
+            {
+                return self.take_note(elem, id, kind, delta);
+            }
+            if notes_section(elem) {
+                return self.walk_notes_section(elem, delta);
+            }
+        }
         match elem.local.as_str() {
             "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
                 self.flush_paragraph();
@@ -540,6 +558,11 @@ impl Builder<'_> {
     }
 
     fn walk_inline(&mut self, elem: &Element, delta: StyleDelta) -> Result<(), ConvertError> {
+        // markitai: a note's link back to its reference (`↩`) goes with the
+        // note's place in the text.
+        if self.ctx.collects_notes() && is_backlink(elem) {
+            return Ok(());
+        }
         self.push_anchor(elem);
         match elem.local.as_str() {
             "br" => self.inlines.push(Inline::LineBreak),
@@ -570,6 +593,65 @@ impl Builder<'_> {
             }
             "ruby" => self.walk_ruby(elem, delta)?,
             _ => self.walk_children(elem, delta)?,
+        }
+        Ok(())
+    }
+
+    /// markitai: a footnote or endnote's body, handed to the frontend. A
+    /// leading back link's trailing punctuation (Pandoc's `<a>1</a>. Text`)
+    /// goes with the link.
+    fn take_note(
+        &mut self,
+        elem: &Element,
+        id: &str,
+        kind: NoteKind,
+        delta: StyleDelta,
+    ) -> Result<(), ConvertError> {
+        let mut blocks = self.sub_blocks(elem, delta)?;
+        if starts_with_backlink(elem) {
+            trim_leading_mark(&mut blocks);
+        }
+        self.ctx.note(Note { id: self.ctx.anchor_id(id), kind, blocks });
+        Ok(())
+    }
+
+    /// markitai: a section holding notes (`epub:type="footnotes"`, Pandoc's
+    /// `class="footnotes"`): each child with an id, or list item with one,
+    /// is a note, and the rule above them goes with them.
+    fn walk_notes_section(
+        &mut self,
+        elem: &Element,
+        delta: StyleDelta,
+    ) -> Result<(), ConvertError> {
+        let kind = if has_semantic(elem, &["endnotes", "rearnotes", "doc-endnotes"]) {
+            NoteKind::Endnote
+        } else {
+            NoteKind::Footnote
+        };
+        for node in &elem.children {
+            let Node::Elem(child) = node else { continue };
+            if child.local == "hr" {
+                continue;
+            }
+            if matches!(child.local.as_str(), "ol" | "ul") {
+                for item in child.child_elems() {
+                    match item.attr_any("id").filter(|id| !id.is_empty()) {
+                        Some(id) => {
+                            self.take_note(item, id, note_kind(item).unwrap_or(kind), delta)?
+                        }
+                        None => self.walk_elem(item, delta)?,
+                    }
+                }
+                continue;
+            }
+            match child.attr_any("id").filter(|id| !id.is_empty()) {
+                Some(id)
+                    if !matches!(child.local.as_str(), "h1" | "h2" | "h3" | "h4" | "h5" | "h6") =>
+                {
+                    self.take_note(child, id, note_kind(child).unwrap_or(kind), delta)?
+                }
+                _ => self.walk_elem(child, delta)?,
+            }
         }
         Ok(())
     }
@@ -825,6 +907,82 @@ fn block_text(block: &Block) -> String {
             .collect::<Vec<_>>()
             .join(" "),
         Block::Rule => String::new(),
+    }
+}
+
+/// markitai: the EPUB structural-semantics namespace (`epub:type`).
+const OPS: &str = "http://www.idpf.org/2007/ops";
+
+/// markitai: whether `epub:type` or `role` names one of `names`.
+fn has_semantic(elem: &Element, names: &[&str]) -> bool {
+    elem.attr_qualified(OPS, "type")
+        .into_iter()
+        .chain(elem.attr_unqualified("role"))
+        .flat_map(str::split_whitespace)
+        .any(|token| names.contains(&token))
+}
+
+fn has_class(elem: &Element, names: &[&str]) -> bool {
+    elem.attr_unqualified("class")
+        .is_some_and(|class| class.split_whitespace().any(|token| names.contains(&token)))
+}
+
+/// markitai: the kind of note an element is, by its declared semantics.
+fn note_kind(elem: &Element) -> Option<NoteKind> {
+    if has_semantic(elem, &["footnote", "doc-footnote"]) {
+        Some(NoteKind::Footnote)
+    } else if has_semantic(elem, &["endnote", "rearnote", "doc-endnote"]) {
+        Some(NoteKind::Endnote)
+    } else {
+        None
+    }
+}
+
+/// markitai: a section of notes, by its semantics or Pandoc's class.
+fn notes_section(elem: &Element) -> bool {
+    has_semantic(elem, &["footnotes", "endnotes", "rearnotes", "doc-endnotes"])
+        || has_class(elem, &["footnotes"])
+}
+
+/// markitai: a note's link back to where it is referenced.
+fn is_backlink(elem: &Element) -> bool {
+    elem.local == "a"
+        && (has_semantic(elem, &["backlink", "doc-backlink"])
+            || has_class(elem, &["footnote-back", "footnote-backref", "fn-back"]))
+}
+
+/// markitai: whether a note's first content is its back link.
+fn starts_with_backlink(elem: &Element) -> bool {
+    let mut current = elem;
+    loop {
+        let Some(first) = current.children.iter().find(|node| match node {
+            Node::Text(text) => !text.trim().is_empty(),
+            Node::Elem(_) => true,
+        }) else {
+            return false;
+        };
+        match first {
+            Node::Text(_) => return false,
+            Node::Elem(child) if is_backlink(child) => return true,
+            Node::Elem(child) => current = child,
+        }
+    }
+}
+
+/// markitai: drop the `.` or `)` a removed leading back link left behind.
+fn trim_leading_mark(blocks: &mut [Block]) {
+    let Some(Block::Paragraph(inlines)) = blocks.first_mut() else { return };
+    let Some(index) = inlines.iter().position(|inline| !matches!(inline, Inline::Anchor(_))) else {
+        return;
+    };
+    if let Inline::Text { text, .. } = &mut inlines[index] {
+        let rest = text.strip_prefix(['.', ')', ':']).unwrap_or(text);
+        let rest = rest.trim_start_matches(|c: char| c.is_whitespace()).to_string();
+        if rest.is_empty() {
+            inlines.remove(index);
+        } else {
+            *text = rest;
+        }
     }
 }
 

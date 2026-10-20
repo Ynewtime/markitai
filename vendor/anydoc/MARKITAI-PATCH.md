@@ -43,6 +43,19 @@ upstream files:
   (`[^5]`, a label of letters, digits, `-` and `_` up to 32 bytes), outside
   code, is a note reference, so a book's `text.[^5]` and `[^5]: …` definition
   are written as marks instead of escaped text.
+- `src/shared/html.rs`, `src/formats/epub/mod.rs`: an EPUB's footnotes and
+  endnotes are document notes. An element marked as a note (`epub:type` or
+  `role` `footnote`/`endnote`/`rearnote`, the `doc-` roles) is taken out of
+  the text, as is each `li` or other identified child of a notes section
+  (`epub:type="footnotes"`, Pandoc's `class="footnotes"`) apart from its
+  headings and rule; a back-link (`doc-backlink`, `footnote-back` and the
+  like) and the `.`/`)`/`:` after a leading one are left out. A link to a
+  note whose text is a short mark (eight characters at most, no image)
+  becomes the note's reference; longer prose linking to it keeps its words.
+  Notes are numbered `1`, `2`, … through the book in reading order, where
+  upstream wrote each as an `<a id>` anchor and every mark as a link to a
+  chapter-scoped anchor (`#EPUB/text/ch001.xhtml#fn1`). Other HTML readers
+  do not collect notes (`HtmlCtx::collects_notes` defaults to false).
 - `src/formats/sheet/numfmt.rs`, `src/formats/sheet/mod.rs`,
   `src/formats/sheet/xlsx.rs`: a date/time format records whether it shows
   seconds, and a time of day, alone or after a date, is written `hh:mm` when
