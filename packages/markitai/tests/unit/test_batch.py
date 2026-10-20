@@ -1,6 +1,7 @@
 """Tests for batch processing module."""
 
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -613,6 +614,28 @@ class TestBatchProcessor:
         )
 
         assert files == [public_report]
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="symlinks need privileges")
+    def test_discover_files_globs_match_a_symlinks_own_name(
+        self, tmp_path: Path
+    ) -> None:
+        """Globs were matched against a symlink's target, so "!link*" kept
+        link.docx -> report.docx and "link*" did not pick it."""
+        report = tmp_path / "report.docx"
+        report.touch()
+        link = tmp_path / "link.docx"
+        link.symlink_to(report)
+        processor = BatchProcessor(
+            BatchConfig(), tmp_path / "output", input_path=tmp_path
+        )
+
+        def discover(*patterns: str) -> list[Path]:
+            return processor.discover_files(
+                tmp_path, extensions={".docx"}, glob_patterns=list(patterns)
+            )
+
+        assert discover("*.docx", "!link*") == [report]
+        assert discover("link*") == [link]
 
     def test_discover_files_with_relative_input_path_and_globs(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

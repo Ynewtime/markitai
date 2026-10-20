@@ -1022,7 +1022,7 @@ class BatchProcessor:
 
         def should_include(path: Path) -> bool:
             try:
-                resolved_path = validate_path_within_base(path, input_resolved)
+                validate_path_within_base(path, input_resolved)
             except ValueError:
                 logger.warning(f"Skipping file outside input directory: {path}")
                 return False
@@ -1033,7 +1033,9 @@ class BatchProcessor:
             if not positive_globs and not negative_globs:
                 return True
 
-            relative_path = resolved_path.relative_to(input_resolved).as_posix()
+            # The file's own name, not a symlink's target: "!link*" must
+            # exclude link.docx -> report.docx
+            relative_path = path.relative_to(input_path).as_posix()
             if positive_globs and not any(
                 pattern.match(relative_path) for pattern in positive_globs
             ):
