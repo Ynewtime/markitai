@@ -132,7 +132,7 @@ The workbench runs on a small REST + SSE API that scripts can call directly. Err
 | `POST /api/jobs/{job_id}/cancel` | Stop the items still waiting to start |
 | `POST /api/jobs/{job_id}/items/{item_id}/retry` | Retry an item (JSON body optional: `operation`, `options`; without `options` it reruns with the item's own), or LLM-enhance it with `operation: "enhance"`, which turns the LLM on unless `options` say `"llm": false` |
 | `DELETE /api/jobs/{job_id}/items/{item_id}` | Permanently remove an item with its upload, outputs, images and screenshots |
-| `GET /api/jobs/{job_id}/items/{item_id}/result` | Item result (`?max_bytes=` for an excerpt); sibling assets via `GET /api/jobs/{job_id}/files/{path}` |
+| `GET /api/jobs/{job_id}/items/{item_id}/result` | Item result (`?max_bytes=N` for an excerpt: N is at least 1024, otherwise 422 `invalid_max_bytes`; at most N bytes, cut at a line end when one is near, with `truncated` and the full `markdown_bytes`; a whole result over 64 MiB is 413 `result_too_large`); sibling assets via `GET /api/jobs/{job_id}/files/{path}` |
 | `GET /api/jobs/{job_id}/items/{item_id}/assets/{path}` | One of the item's own extracted images (PNG, JPEG, GIF, WebP, AVIF), inline, for display |
 | `GET /api/jobs/{job_id}/items/{item_id}/original` | What can be shown of the item's original (for a web page also how usable its copy and screenshot were, `capture`); `/original/file`, `/original/view`, `/original/pages/{n}?width=`, `/original/pages/{n}/text`, `/original/outline` (a PDF's bookmarks) and `/original/blocks` (where a web page's blocks are on its screenshots) serve it |
 | `GET /api/jobs/{job_id}/archive` | Download the job as a zip |

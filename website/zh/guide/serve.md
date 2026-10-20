@@ -132,7 +132,7 @@ Vertex AI（以及 watsonx、GigaChat）用服务器自己的登录凭据而不�
 | `POST /api/jobs/{job_id}/cancel` | 停下尚未开始的条目 |
 | `POST /api/jobs/{job_id}/items/{item_id}/retry` | 重试条目（JSON 请求体可选：`operation`、`options`；不带 `options` 时沿用该条目自己的选项），或以 `operation: "enhance"` 做 LLM 增强：除非 `options` 写明 `"llm": false`，它总会开启 LLM |
 | `DELETE /api/jobs/{job_id}/items/{item_id}` | 永久移除条目，连同其上传原件、输出、图片与截图 |
-| `GET /api/jobs/{job_id}/items/{item_id}/result` | 条目结果（`?max_bytes=` 只取开头）；配套资源经 `GET /api/jobs/{job_id}/files/{path}` 获取 |
+| `GET /api/jobs/{job_id}/items/{item_id}/result` | 条目结果（`?max_bytes=N` 只取开头：N 至少为 1024，否则返回 422 `invalid_max_bytes`；最多 N 字节，附近有行尾时在行尾截断，并给出 `truncated` 和完整的 `markdown_bytes`；完整结果超过 64 MiB 时返回 413 `result_too_large`）；配套资源经 `GET /api/jobs/{job_id}/files/{path}` 获取 |
 | `GET /api/jobs/{job_id}/items/{item_id}/assets/{path}` | 条目自身提取出的一张图片（PNG、JPEG、GIF、WebP、AVIF），以内联方式返回供显示 |
 | `GET /api/jobs/{job_id}/items/{item_id}/original` | 条目原件能显示什么（网页还包括其副本和截图是否可用，`capture`）；`/original/file`、`/original/view`、`/original/pages/{n}?width=`、`/original/pages/{n}/text`、`/original/outline`（PDF 的书签）与 `/original/blocks`（网页各区块在截图上的位置）提供内容 |
 | `GET /api/jobs/{job_id}/archive` | 整个任务打包为 zip 下载 |
