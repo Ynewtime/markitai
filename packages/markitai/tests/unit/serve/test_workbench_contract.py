@@ -850,7 +850,13 @@ class TestCreateJob:
     async def test_items_files_first_then_list_urls_then_field_urls(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        async def never(*args: Any, **kwargs: Any) -> Any:
+            await asyncio.Event().wait()
+
         monkeypatch.setattr("markitai.serve.jobs.process_file_item", _converter())
+        # The URL items stay pending: a real fetch of example.com hung
+        # without network access (and depended on it with one)
+        monkeypatch.setattr("markitai.serve.jobs.process_url_item", never)
         url_list = b"# reading list\nhttps://example.com/a  Report\nftp://skip.me/x\n"
         async with _client(_make_app(tmp_path)) as client:
             created = await client.post(
@@ -864,7 +870,7 @@ class TestCreateJob:
             assert created.status_code == 201
             body = created.json()
             check_shape("CreatedJob", body)
-            # Snapshot right away: URL items have not run (they would fetch)
+            # Snapshot right away: the URL items never finish
             snapshot = (await client.get(f"/api/jobs/{body['job_id']}")).json()
         assert [(i["item_id"], i["name"], i["kind"]) for i in body["items"]] == [
             ("i1", "b.txt", "file"),
