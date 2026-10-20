@@ -416,6 +416,76 @@ async def test_resume_from_another_cwd_writes_into_the_original_output(
 
 
 @pytest.mark.asyncio
+async def test_a_symlink_keeps_its_own_state_entry(tmp_path: Path) -> None:
+    """``link.txt -> a.txt`` in the input folder is converted to ``link.txt.md``.
+
+    The state keyed documents by their resolved path, so the link and its
+    target shared one entry (holding whichever output finished last) and
+    ``--resume`` counted, and redid, one document where there were two.
+    """
+    import os
+
+    from markitai.cli.processors import batch as batch_module
+    from markitai.cli.processors.batch import process_batch
+
+    input_dir = tmp_path / "in"
+    input_dir.mkdir()
+    (input_dir / "a.txt").write_text("alpha")
+    (input_dir / "b.txt").write_text("bravo")
+    try:
+        os.symlink("a.txt", input_dir / "link.txt")
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks are not available here")
+    output_dir = tmp_path / "out"
+
+    async def run(resume: bool) -> list[str]:
+        converted: list[str] = []
+        original = batch_module.create_process_file
+
+        def _counting(cfg, input_dir, output_dir, shared_processor):
+            process_file = original(cfg, input_dir, output_dir, shared_processor)
+
+            async def _process(path: Path):
+                converted.append(path.name)
+                return await process_file(path)
+
+            return _process
+
+        with patch.object(batch_module, "create_process_file", _counting):
+            await process_batch(
+                input_dir=input_dir,
+                output_dir=output_dir,
+                cfg=MarkitaiConfig(),
+                resume=resume,
+                dry_run=False,
+                quiet=True,
+            )
+        return converted
+
+    assert sorted(await run(resume=False)) == ["a.txt", "b.txt", "link.txt"]
+    documents = _load_state(output_dir)["documents"]
+    assert sorted(documents) == ["a.txt", "b.txt", "link.txt"]
+    assert documents["a.txt"]["output"] == str(output_dir / "a.txt.md")
+    assert documents["link.txt"]["output"] == str(output_dir / "link.txt.md")
+
+    # Nothing is left to do, and the link's own failure is redone on its own
+    assert await run(resume=True) == []
+    state_file = _state_files(output_dir)[0]
+    data = _load_state(output_dir)
+    data["documents"]["link.txt"] = {"status": "failed", "error": "boom"}
+    import json
+
+    state_file.write_text(json.dumps(data), encoding="utf-8")
+    state_file.with_suffix(".jsonl").unlink(missing_ok=True)
+    assert await run(resume=True) == ["link.txt"]
+    assert sorted(_load_state(output_dir)["documents"]) == [
+        "a.txt",
+        "b.txt",
+        "link.txt",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_resume_with_relative_input_keeps_the_subdirectory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

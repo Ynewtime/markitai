@@ -237,8 +237,14 @@ def _document_key(path: str | Path, input_dir: Path) -> str:
     on Linux and the other way round, and ``sub/a.txt`` is the same key
     everywhere. ``input_dir`` must already be resolved. A file outside it
     is keyed by its name.
+
+    Only the folder is resolved, not the file: a symlink ``link.txt`` to
+    ``a.txt`` is its own document (converted to ``link.txt.md``) and needs
+    its own entry, or the two share one and ``--resume`` counts one
+    document where there are two.
     """
-    file_path = Path(path).resolve()
+    given = Path(path)
+    file_path = given.parent.resolve() / given.name
     try:
         return file_path.relative_to(input_dir).as_posix()
     except ValueError:

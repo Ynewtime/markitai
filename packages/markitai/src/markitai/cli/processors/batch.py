@@ -896,6 +896,7 @@ async def process_batch(
         FileState,
         FileStatus,
         UrlState,
+        _document_key,
         url_state_key,
     )
     from markitai.cli.processors.validators import (
@@ -1030,9 +1031,10 @@ async def process_batch(
             elif url_state.status == FileStatus.COMPLETED and url_state.output:
                 reservations.reserve(Path(url_state.output))
 
-        known_resolved = {str(Path(k).resolve()) for k in resumed_state.files}
+        # Matched by state key, which keeps a symlink's own name
+        known_keys = {_document_key(k, input_dir) for k in resumed_state.files}
         for f in files:
-            if str(f.resolve()) not in known_resolved:
+            if _document_key(f, input_dir) not in known_keys:
                 resumed_state.files[str(f)] = FileState(path=str(f))
         files_to_process = resumed_state.get_pending_files()
 
