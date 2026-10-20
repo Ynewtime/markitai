@@ -26,6 +26,7 @@
 - **幻灯片中的每个形状各自成为一个 Markdown 块。** PPTX 幻灯片上紧跟在表格后的图片或文本框原本粘在表格最后一行上，被读成表格多出来的一行。
 - **带 UTF-8 BOM 的 CSV 文件**（Excel 的“CSV UTF-8”）不再把 BOM 放在第一个列名前面。
 - **本地 HTML 文件所在文件夹的名字含 `#` 或 `%` 时，相对路径的图片和链接不再失效。** 它们的基准地址原本是手工拼出来的，遇到 `#` 就断了。
+- **本地 HTML 文件中的图片保存为资源文件。** 它们原本保留绝对的 `file://` 地址，Markdown 换个地方读就失效。现在页面所在文件夹内的图片像 DOCX 图片一样随条目的资源文件保存；文件夹以外的图片（经 `..`、绝对路径或符号链接）、超过 32 MiB 的图片，以及内容不是 PNG、JPEG、GIF、WebP、BMP 或 TIFF 的文件保留原引用，也不会被读取。
 - **目录批量转换时，`--glob` 按符号链接自己的名字匹配**，而不是按它指向的文件名。
 - **UTF-8 文本网址不再变成乱码。** `.md`、`.txt`、`.csv`、`.json` 地址先按 `Content-Type` 解码，之后又根据开头的字节重新猜一次编码，于是较短或以 ASCII 为主的文件会被读成 Windows-1252 或 GB18030（raw.githubusercontent.com 上 defuddle 的 README 变成 `deÂ·â€‹fudÂ·dle`）。
 - **不经浏览器抓到的人机验证页面不再被当成网页内容。** PyPI 的 “Client Challenge” 转换后只剩一句普通的话（“A required part of this site couldn't load …”），`auto` 把它当作内容返回。现在会检查抓到的 HTML 是否是整页拦截页（Cloudflare、DataDome、PerimeterX、Incapsula、AWS WAF、Fastly）或含有验证用语：`auto` 改用浏览器，`--strategy static` 报告遇到了验证页。表单页上的 reCAPTCHA 或 Turnstile 不算拦截页。

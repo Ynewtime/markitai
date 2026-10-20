@@ -39,6 +39,105 @@ if TYPE_CHECKING:
 _markitdown: MarkItDown | None = None
 
 
+# A local page's own pictures are embedded up to these sizes (the EPUB
+# reader's), and only when their bytes are one of these raster formats
+_LOCAL_IMAGE_MAX_BYTES = 32 * 1024 * 1024
+_LOCAL_IMAGES_MAX_BYTES = 128 * 1024 * 1024
+_IMAGE_SIGNATURES: tuple[tuple[bytes, str], ...] = (
+    (b"\x89PNG\r\n\x1a\n", "png"),
+    (b"\xff\xd8\xff", "jpeg"),
+    (b"GIF87a", "gif"),
+    (b"GIF89a", "gif"),
+    (b"BM", "bmp"),
+    (b"II*\x00", "tiff"),
+    (b"MM\x00*", "tiff"),
+)
+_MARKDOWN_IMAGE = re.compile(r"!\[([^\]]*)\]\(([^()\n]*(?:\([^()\n]*\)[^()\n]*)*)\)")
+_IMAGE_TITLE = re.compile(r'^(.*?)\s+"[^"]*"$')
+
+
+def _image_kind(head: bytes) -> str | None:
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return "webp"
+    return next(
+        (kind for magic, kind in _IMAGE_SIGNATURES if head.startswith(magic)), None
+    )
+
+
+def _local_image_path(target: str, folder: Path) -> Path | None:
+    """The file a picture reference of a page in *folder* names, when it is
+    a ``file:`` address or a relative path; None for any other address."""
+    from urllib.parse import unquote, urlsplit
+    from urllib.request import url2pathname
+
+    parts = urlsplit(target)
+    if parts.scheme.lower() == "file":
+        if parts.netloc not in ("", "localhost"):
+            return None  # a share on another host: never contacted
+        return Path(url2pathname(parts.path))
+    if parts.scheme or parts.netloc or not parts.path or target.startswith("#"):
+        return None
+    return folder / unquote(parts.path)
+
+
+def _embed_local_images(markdown: str, page: Path) -> str:
+    """Embed the pictures a local page shows as ``data:`` URIs, which the
+    image pipeline saves as the item's assets, like a DOCX picture.
+
+    Only a picture inside the page's own folder is read, the rules
+    markitai-rust applies: its resolved path (symlinks followed) stays in
+    that folder, it is a regular file of at most 32 MiB (128 MiB per page),
+    and its bytes are a PNG, JPEG, GIF, WebP, BMP or TIFF picture, so a
+    page's ``<img src="../../.ssh/id_rsa">`` copies nothing. Any other
+    reference is left as it is.
+    """
+    if "](" not in markdown:
+        return markdown
+    try:
+        folder = page.resolve().parent
+    except OSError:
+        return markdown
+    budget = _LOCAL_IMAGES_MAX_BYTES
+    cache: dict[Path, str | None] = {}
+
+    def data_uri(path: Path) -> str | None:
+        nonlocal budget
+        try:
+            resolved = path.resolve()
+        except (OSError, RuntimeError):
+            return None
+        if resolved in cache:
+            return cache[resolved]
+        uri = None
+        try:
+            if resolved.is_relative_to(folder) and resolved.is_file():
+                size = resolved.stat().st_size
+                if size <= min(_LOCAL_IMAGE_MAX_BYTES, budget):
+                    with resolved.open("rb") as stream:
+                        data = stream.read(size + 1)
+                    kind = _image_kind(data[:16])
+                    if kind and len(data) <= min(_LOCAL_IMAGE_MAX_BYTES, budget):
+                        budget -= len(data)
+                        encoded = base64.b64encode(data).decode("ascii")
+                        uri = f"data:image/{kind};base64,{encoded}"
+        except OSError:
+            uri = None
+        cache[resolved] = uri
+        return uri
+
+    def replace(match: re.Match[str]) -> str:
+        alt, inner = match.group(1), match.group(2).strip()
+        titled = _IMAGE_TITLE.match(inner)
+        target = (titled.group(1) if titled else inner).strip()
+        if target.startswith("<") and target.endswith(">"):
+            target = target[1:-1]
+        path = _local_image_path(target, folder)
+        uri = data_uri(path) if path is not None else None
+        return f"![{alt}]({uri})" if uri else match.group(0)
+
+    return _MARKDOWN_IMAGE.sub(replace, markdown)
+
+
 def _convert_html(input_path: Path) -> ConvertResult:
     """Convert an HTML file using the webextract pipeline.
 
@@ -78,7 +177,7 @@ def _convert_html(input_path: Path) -> ConvertResult:
             if extracted.metadata and extracted.metadata.title:
                 metadata["title"] = extracted.metadata.title
             return ConvertResult(
-                markdown=markdown,
+                markdown=_embed_local_images(markdown, input_path),
                 images=[],
                 metadata=metadata,
             )
@@ -91,7 +190,9 @@ def _convert_html(input_path: Path) -> ConvertResult:
             "[HtmlConverter] webextract failed, falling back to markitdown: {}", exc
         )
 
-    return _convert(input_path)
+    result = _convert(input_path)
+    result.markdown = _embed_local_images(result.markdown, input_path)
+    return result
 
 
 def _convert(input_path: Path) -> ConvertResult:
