@@ -17,19 +17,44 @@ _NS = (
     'xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" '
     'xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" '
     'xmlns:dc="http://purl.org/dc/elements/1.1/" '
-    'xmlns:xlink="http://www.w3.org/1999/xlink"'
+    'xmlns:xlink="http://www.w3.org/1999/xlink" '
+    'xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" '
+    'xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" '
+    'xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" '
+    'xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0"'
 )
 
 
-def _write_odf(path: Path, body: str) -> Path:
-    """Wrap a document body in the minimum content.xml an ODF file needs."""
+def _write_odf(
+    path: Path,
+    body: str,
+    *,
+    automatic_styles: str = "",
+    styles: str = "",
+    members: dict[str, bytes] | None = None,
+) -> Path:
+    """Wrap a document body in the minimum content.xml an ODF file needs.
+
+    *automatic_styles* go into content.xml, *styles* into a styles.xml
+    (its ``office:styles``), and *members* are further files of the zip.
+    """
     content = (
         f'<?xml version="1.0" encoding="UTF-8"?>'
-        f"<office:document-content {_NS}><office:body>{body}"
-        f"</office:body></office:document-content>"
+        f"<office:document-content {_NS}>"
+        f"<office:automatic-styles>{automatic_styles}</office:automatic-styles>"
+        f"<office:body>{body}</office:body></office:document-content>"
     )
     with zipfile.ZipFile(path, "w") as archive:
         archive.writestr("content.xml", content)
+        if styles:
+            archive.writestr(
+                "styles.xml",
+                f'<?xml version="1.0" encoding="UTF-8"?>'
+                f"<office:document-styles {_NS}><office:styles>{styles}"
+                f"</office:styles></office:document-styles>",
+            )
+        for name, data in (members or {}).items():
+            archive.writestr(name, data)
     return path
 
 
@@ -127,6 +152,133 @@ class TestOdtConverter:
         assert markdown.rstrip().endswith("[^1]: The note.\n[^2]: End note.")
         for gone in ("DELETED", "Bob", "Alice", "Review this"):
             assert gone not in markdown
+
+    def test_bold_and_italic_spans_and_paragraphs(self, tmp_path: Path) -> None:
+        """Every span was flattened: bold and italic text came out plain."""
+        path = _write_odf(
+            tmp_path / "styled.odt",
+            "<office:text>"
+            "<text:p>Plain <text:span text:style-name='T1'>bold words</text:span>"
+            " and <text:span text:style-name='T2'>italic</text:span>, "
+            "<text:span text:style-name='T3'>both</text:span> and "
+            "<text:span text:style-name='Strong_20_Emphasis'>strong</text:span>"
+            "<text:span text:style-name='T1'> joined</text:span>.</text:p>"
+            "<text:p text:style-name='P1'>A whole bold paragraph</text:p>"
+            "<text:p text:style-name='P1'>Bold with "
+            "<text:span text:style-name='T2'>italic</text:span> inside</text:p>"
+            "<text:h text:outline-level='1'>A <text:span text:style-name='T2'>"
+            "styled</text:span> heading</text:h>"
+            "</office:text>",
+            automatic_styles=(
+                "<style:style style:name='T1' style:family='text'>"
+                "<style:text-properties fo:font-weight='bold'/></style:style>"
+                "<style:style style:name='T2' style:family='text'>"
+                "<style:text-properties fo:font-style='italic'/></style:style>"
+                "<style:style style:name='T3' style:family='text'>"
+                "<style:text-properties fo:font-weight='700' fo:font-style='italic'/>"
+                "</style:style>"
+                "<style:style style:name='P1' style:family='paragraph' "
+                "style:parent-style-name='BoldBody'/>"
+            ),
+            styles=(
+                "<style:style style:name='Strong_20_Emphasis' style:family='text'"
+                " style:parent-style-name='Base'/>"
+                "<style:style style:name='Base' style:family='text'>"
+                "<style:text-properties fo:font-weight='bold'/></style:style>"
+                "<style:style style:name='BoldBody' style:family='paragraph'>"
+                "<style:text-properties fo:font-weight='bold'/></style:style>"
+            ),
+        )
+
+        lines = OdtConverter().convert(path).markdown.rstrip("\n").split("\n\n")
+
+        assert lines[0] == (
+            "Plain **bold words** and *italic*, ***both*** and **strong joined**."
+        )
+        assert lines[1] == "**A whole bold paragraph**"
+        assert lines[2] == "**Bold with *italic* inside**"
+        assert lines[3] == "# A *styled* heading"
+
+    def test_ordered_lists_are_numbered(self, tmp_path: Path) -> None:
+        """Every list came out as bullets, whatever its list style said."""
+        path = _write_odf(
+            tmp_path / "lists.odt",
+            "<office:text>"
+            "<text:list text:style-name='L1'>"
+            "<text:list-item><text:p>first</text:p></text:list-item>"
+            "<text:list-item><text:p>second</text:p>"
+            "<text:list><text:list-item><text:p>nested a</text:p></text:list-item>"
+            "<text:list-item><text:p>nested b</text:p></text:list-item>"
+            "</text:list></text:list-item>"
+            "<text:list-item><text:p>third</text:p>"
+            "<text:p>more of third</text:p></text:list-item>"
+            "</text:list>"
+            "<text:list text:style-name='Bullets'>"
+            "<text:list-item><text:p>dot</text:p></text:list-item></text:list>"
+            "<text:list text:style-name='L2'>"
+            "<text:list-item><text:p>five</text:p></text:list-item>"
+            "<text:list-item text:start-value='9'><text:p>nine</text:p>"
+            "</text:list-item></text:list>"
+            "<text:list text:style-name='L1'><text:list-item>"
+            "<text:h text:outline-level='2'>Numbered heading</text:h>"
+            "</text:list-item></text:list>"
+            "</office:text>",
+            automatic_styles=(
+                "<text:list-style style:name='L1'>"
+                "<text:list-level-style-number text:level='1' style:num-format='1'/>"
+                "<text:list-level-style-bullet text:level='2' text:bullet-char='-'/>"
+                "</text:list-style>"
+                "<text:list-style style:name='L2'>"
+                "<text:list-level-style-number text:level='1' style:num-format='1'"
+                " text:start-value='5'/></text:list-style>"
+            ),
+            styles=(
+                "<text:list-style style:name='Bullets'>"
+                "<text:list-level-style-bullet text:level='1' text:bullet-char='*'/>"
+                "</text:list-style>"
+            ),
+        )
+
+        blocks = OdtConverter().convert(path).markdown.rstrip("\n").split("\n\n")
+
+        assert blocks == [
+            "1. first\n2. second\n   - nested a\n   - nested b\n"
+            "3. third\n   more of third",
+            "- dot",
+            "5. five\n9. nine",
+            "## Numbered heading",
+        ]
+
+    def test_pictures_become_embedded_images(self, tmp_path: Path) -> None:
+        """A picture was dropped, with nothing left where it stood."""
+        import base64
+
+        png = (FIXTURES / "sample.jpg").read_bytes()
+        path = _write_odf(
+            tmp_path / "picture.odt",
+            "<office:text><text:p>Before "
+            "<draw:frame draw:name='img1'><svg:title>A [red] box</svg:title>"
+            "<draw:image xlink:href='Pictures/red.jpg' draw:mime-type='image/jpeg'/>"
+            "</draw:frame> after</text:p>"
+            "<text:p><draw:frame><draw:image xlink:href='Pictures/missing.png'/>"
+            "</draw:frame><draw:frame><draw:image "
+            "xlink:href='https://example.com/remote.png'/></draw:frame>"
+            "<draw:frame><draw:text-box><text:p>Box text</text:p></draw:text-box>"
+            "</draw:frame></text:p>"
+            "</office:text>",
+            members={"Pictures/red.jpg": png},
+        )
+
+        result = OdtConverter().convert(path)
+        markdown = result.markdown
+
+        encoded = base64.b64encode(png).decode("ascii")
+        assert f"Before ![A red box](data:image/jpeg;base64,{encoded}) after" in (
+            markdown
+        )
+        assert "missing.png" not in markdown
+        assert "remote.png" not in markdown
+        assert "Box text" in markdown
 
     def test_unreadable_zip_is_a_conversion_error(self, tmp_path: Path) -> None:
         path = tmp_path / "broken.odt"

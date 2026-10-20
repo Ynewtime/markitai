@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **OpenDocument text keeps its footnotes, links and only the text that is there.** An `.odt` footnote or endnote becomes a `[^n]` reference with its text at the end (its body used to sit in the middle of the sentence), a link keeps its address, and comments and tracked deletions are left out (they used to read as body text, in `.ods` cells too).
+- **OpenDocument text keeps its formatting, footnotes, links and pictures, and only the text that is there.** An `.odt` keeps its bold and italic, its numbered lists are numbered (they all came out as bullets), and its pictures are saved as the item's assets like a DOCX picture's (they were dropped). A footnote or endnote becomes a `[^n]` reference with its text at the end (its body used to sit in the middle of the sentence), a link keeps its address, a heading numbered by the outline stays a heading, and comments and tracked deletions are left out (they used to read as body text, in `.ods` cells too).
 - **A slide's shapes are separate Markdown blocks.** A picture or text box right after a table on a PPTX slide was glued to the table's last line and read as one more row.
 - **A CSV file saved with a UTF-8 BOM** (Excel's "CSV UTF-8") no longer puts the BOM in front of its first column name.
 - **A local HTML file in a folder whose name has `#` or `%` keeps its relative images and links.** Their base address was built by hand and broke at the `#`.
