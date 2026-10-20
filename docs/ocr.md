@@ -253,8 +253,9 @@ reference downloads. A model lives at
 `markitai doctor --fix` installs the files the selected portable engine and
 configured `ocr.lang` need: the default set above (without the qppocr classifier) is 45.2 MB; an explicit
 language needs the detector, the classifier and its recognizer. It names each file
-installed. A normal OCR downloads missing models as needed, with a notice once
-per process on standard error (`Local OCR: downloading …`). It does not
+installed. A normal OCR downloads missing models as it needs them, each download
+announced on standard error with the models' names and size (`Local OCR:
+downloading korean-ppocrv5-rec-mobile (13.5 MB, once) …`). It does not
 necessarily download all four default files before reading its first image.
 Vision, when chosen, does not inspect or install portable models.
 

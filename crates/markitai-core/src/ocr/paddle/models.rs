@@ -16,7 +16,6 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 #[derive(Deserialize)]
@@ -378,9 +377,6 @@ fn load_from(root: &Path, model: &Model, download: bool) -> Result<Vec<u8>> {
     Ok(bytes.expect("ready model's exact read was verified"))
 }
 
-/// Whether the download notice was shown in this process.
-static ANNOUNCED: AtomicBool = AtomicBool::new(false);
-
 /// Explicit repair may replace only a safe damaged managed leaf. A normal
 /// OCR calls install_into with repair=false and never overwrites corruption.
 pub(crate) fn install(models: &[&Model], announce: bool) -> Result<Vec<PathBuf>> {
@@ -423,14 +419,11 @@ fn install_into(
     if needed.is_empty() {
         return Ok(Vec::new());
     }
-    if announce && !ANNOUNCED.swap(true, Ordering::Relaxed) {
-        let bytes: u64 = needed.iter().map(|(model, _)| model.bytes).sum();
-        eprintln!(
-            "Local OCR: downloading {} model file(s) ({:.1} MB, once) from the official PaddleOCR mirror into {}; `markitai doctor --fix` installs them ahead of time.",
-            needed.len(),
-            bytes as f64 / 1e6,
-            root.display()
-        );
+    // Each download is announced: OCR fetches a model when it first needs
+    // it, so a process may download several, one call at a time.
+    if announce {
+        let models: Vec<&Model> = needed.iter().map(|(model, _)| **model).collect();
+        eprintln!("{}", download_notice(&models, root));
     }
     let mut installed = Vec::new();
     for (model, state) in needed {
@@ -440,6 +433,18 @@ fn install_into(
         installed.push(path_in(root, model));
     }
     Ok(installed)
+}
+
+/// The line that announces downloading `models` into `root`.
+fn download_notice(models: &[&Model], root: &Path) -> String {
+    let bytes: u64 = models.iter().map(|model| model.bytes).sum();
+    let names: Vec<&str> = models.iter().map(|model| model.name.as_str()).collect();
+    format!(
+        "Local OCR: downloading {} ({:.1} MB, once) from the official PaddleOCR mirror into {}; `markitai doctor --fix` installs the models ahead of time.",
+        names.join(", "),
+        bytes as f64 / 1e6,
+        root.display()
+    )
 }
 
 fn client() -> Result<reqwest::blocking::Client> {
@@ -577,6 +582,30 @@ fn fetch(
 mod tests {
     use super::*;
     use std::io::Read;
+
+    /// Every download says which models it fetches and their size: OCR
+    /// fetches each when it first needs it, and the notice used to be shown
+    /// once per process, so it counted only the first.
+    #[test]
+    fn a_download_notice_names_its_models_and_their_size() {
+        let korean = named("korean-ppocrv5-rec-mobile").unwrap();
+        let detector = named(super::super::DETECTOR).unwrap();
+        let root = Path::new("models");
+        let one = download_notice(&[korean], root);
+        assert!(
+            one.contains("downloading korean-ppocrv5-rec-mobile (13.5 MB, once)"),
+            "{one}"
+        );
+        let two = download_notice(&[detector, korean], root);
+        assert!(
+            two.contains(&format!("{}, korean-ppocrv5-rec-mobile (", detector.name)),
+            "{two}"
+        );
+        // No once-per-process latch: install_into announces every call.
+        let source = include_str!("models.rs");
+        let code = source.split("#[cfg(test)]\nmod tests").next().unwrap();
+        assert!(!code.contains("AtomicBool"));
+    }
 
     #[test]
     fn the_manifest_names_official_downloads_with_digests_and_licenses() {
