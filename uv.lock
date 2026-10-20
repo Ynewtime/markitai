@@ -1537,7 +1537,6 @@ dependencies = [
     { name = "numpy", version = "2.5.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "olefile" },
     { name = "openpyxl" },
-    { name = "pandas" },
     { name = "pillow" },
     { name = "pydantic" },
     { name = "pymupdf" },
@@ -1551,6 +1550,7 @@ dependencies = [
     { name = "rich-click" },
     { name = "soupsieve" },
     { name = "tinycss2" },
+    { name = "xlrd" },
 ]
 
 [package.optional-dependencies]
@@ -1643,7 +1643,6 @@ requires-dist = [
     { name = "numpy", specifier = ">=1.26" },
     { name = "olefile", specifier = ">=0.46" },
     { name = "openpyxl", specifier = ">=3.1" },
-    { name = "pandas", specifier = ">=2.2,<4" },
     { name = "pillow", specifier = ">=12.1.0" },
     { name = "pillow-heif", marker = "extra == 'all'", specifier = ">=1.0" },
     { name = "pillow-heif", marker = "extra == 'heif'", specifier = ">=1.0" },
@@ -1667,6 +1666,7 @@ requires-dist = [
     { name = "tinycss2", specifier = ">=1.2" },
     { name = "uvicorn", marker = "extra == 'all'", specifier = ">=0.32" },
     { name = "uvicorn", marker = "extra == 'serve'", specifier = ">=0.32" },
+    { name = "xlrd", specifier = ">=2.0" },
 ]
 provides-extras = ["all", "browser", "claude-agent", "copilot", "extra-fetch", "heif", "legacy", "mcp", "ocr", "serve", "svg"]
 
