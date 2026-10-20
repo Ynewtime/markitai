@@ -105,7 +105,9 @@ class TestLists:
 """,
         )
 
-        assert markdown == ("1. Alpha\n  1. Alpha one\n  2. Alpha two\n2. Beta\n")
+        # Three spaces: a list nested under "1. " starts at its text, or a
+        # Markdown reader takes it for more items of the outer list
+        assert markdown == ("1. Alpha\n   1. Alpha one\n   2. Alpha two\n2. Beta\n")
 
     def test_levelnfc23_is_a_bullet_list(self, tmp_path: Path) -> None:
         markdown = _convert(
@@ -119,6 +121,42 @@ class TestLists:
         )
 
         assert markdown == "- One\n- Two\n"
+
+    def test_listtext_is_the_marker_not_text(self, tmp_path: Path) -> None:
+        """Word and LibreOffice write each item's shown marker in a
+        ``\\listtext`` group for readers without list support: it was read
+        as text, so items came out as "1. 1.    First" and "- ·    One"."""
+        markdown = _convert(
+            tmp_path,
+            rb"""
+{\*\listtable{\list{\listlevel\levelnfc0{\leveltext\'02\'00.;}}
+{\listlevel\levelnfc4{\leveltext\'02\'01.;}}\listid1}
+{\list{\listlevel\levelnfc23{\leveltext\'01\u183 ?;}}\listid2}}
+{\*\listoverridetable{\listoverride\listid1\listoverridecount0\ls1}
+{\listoverride\listid2\listoverridecount0\ls2}}
+{\listtext\pard\plain 1.\tab}\pard\plain\ls1\ilvl0 First\par
+{\listtext\pard\plain a.\tab}\pard\plain\ls1\ilvl1 Sub\par
+{\listtext\pard\plain 2.\tab}\pard\plain\ls1\ilvl0 Second\par
+{\listtext\pard\plain \f1\'b7\tab}\pard\plain\ls2\ilvl0 One\par
+""",
+        )
+
+        assert markdown == "1. First\n   1. Sub\n2. Second\n- One\n"
+
+    def test_a_heading_in_a_numbered_outline_stays_a_heading(
+        self, tmp_path: Path
+    ) -> None:
+        markdown = _convert(
+            tmp_path,
+            rb"""
+{\*\listtable{\list{\listlevel\levelnfc0{\leveltext\'02\'00.;}}\listid1}}
+{\*\listoverridetable{\listoverride\listid1\listoverridecount0\ls1}}
+{\listtext 1.\tab}\pard\plain\outlinelevel0\ls1 Introduction\par
+\pard\plain Body.\par
+""",
+        )
+
+        assert markdown == "# Introduction\n\nBody.\n"
 
 
 class TestTables:

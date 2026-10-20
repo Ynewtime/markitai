@@ -209,6 +209,9 @@ _DESTINATION_SINKS: dict[str, str] = {
     "listoverridetable": "listoverride",
     "pn": "pn",
     "pntext": "pntext",
+    # The marker Word 2000+ and LibreOffice show before a \ls list item, for
+    # readers without list support: not text, but the number it shows
+    "listtext": "pntext",
     "fldinst": "fldinst",
     "fldrslt": "body",
     "footnote": "note",
@@ -545,7 +548,7 @@ class _Parser:
             self._doc.pictures += 1
             state.sink = "skip"
             return
-        if name == "pntext":
+        if sink == "pntext":
             self._pntext_buf = []
             self._on_close(self._end_pntext)
             state.sink = "pntext"
@@ -847,6 +850,20 @@ class _Parser:
 
     def _list_of(self, state: _State) -> dict:
         """Decide whether this paragraph is a list item, and of what kind."""
+        if state.ls is not None:
+            listid = self._ls_to_listid.get(state.ls, state.ls)
+            levels = self._list_levels.get(listid, [])
+            nfc = levels[state.ilvl] if state.ilvl < len(levels) else None
+            kind = "bullet" if nfc is None or nfc in _BULLET_NFC else "number"
+            # The \listtext marker, when it is a number, is the one shown
+            match = _NUMBER_MARKER_RE.match(
+                (self._pn_text or "").replace("\t", " ").strip()
+            )
+            if match and not levels:
+                kind = "number"  # a list table that does not say
+            number = int(match.group(1)) if match and kind == "number" else None
+            return {"list_kind": kind, "list_level": state.ilvl, "list_number": number}
+
         if self._pn_text is not None or self._pn_kind is not None:
             marker = (self._pn_text or "").replace("\t", " ").strip()
             kind = self._pn_kind
@@ -861,13 +878,6 @@ class _Parser:
                 kind = kind or "bullet"
             level = self._pn_level if self._pn_level is not None else state.ilvl
             return {"list_kind": kind, "list_level": level, "list_number": number}
-
-        if state.ls is not None:
-            listid = self._ls_to_listid.get(state.ls, state.ls)
-            levels = self._list_levels.get(listid, [])
-            nfc = levels[state.ilvl] if state.ilvl < len(levels) else None
-            kind = "bullet" if nfc is None or nfc in _BULLET_NFC else "number"
-            return {"list_kind": kind, "list_level": state.ilvl, "list_number": None}
 
         return {"list_kind": None, "list_level": 0, "list_number": None}
 
@@ -994,6 +1004,7 @@ def _looks_like_heading(para: _Para, text: str, body_size: int | None) -> bool:
 def _render_document(doc: _Document, styles: dict[int, str]) -> str:
     body_size = _body_size(doc.blocks, styles)
     counters: dict[int, int] = {}
+    widths: dict[int, int] = {}  # list level -> width of its last marker
     pieces: list[tuple[str, str]] = []
 
     for block in doc.blocks:
@@ -1008,7 +1019,8 @@ def _render_document(doc: _Document, styles: dict[int, str]) -> str:
         if not text:
             continue
 
-        if block.list_kind is not None:
+        heading_level = _heading_level(block, styles)
+        if block.list_kind is not None and heading_level is None:
             level = max(0, min(block.list_level, 8))
             if block.list_kind == "number":
                 if block.list_number is not None:
@@ -1016,16 +1028,24 @@ def _render_document(doc: _Document, styles: dict[int, str]) -> str:
                 else:
                     number = counters.get(level, 0) + 1
                 counters[level] = number
-                for deeper in [key for key in counters if key > level]:
-                    del counters[deeper]
                 marker = f"{number}."
             else:
                 marker = "-"
-            pieces.append(("list", f"{'  ' * level}{marker} {text}"))
+            for deeper in [key for key in counters if key > level]:
+                del counters[deeper]
+            # A nested item starts where its parent's text does ("1. " is
+            # three wide): less, and a Markdown reader takes it for more
+            # items of the outer list
+            widths[level] = len(marker) + 1
+            for deeper in [key for key in widths if key > level]:
+                del widths[deeper]
+            indent = " " * sum(widths.get(parent, 2) for parent in range(level))
+            pieces.append(("list", f"{indent}{marker} {text}"))
             continue
 
         counters.clear()
-        level = _heading_level(block, styles)
+        widths.clear()
+        level = heading_level
         if level is None and _looks_like_heading(block, text, body_size):
             level = 1 if not any(kind == "heading" for kind, _ in pieces) else 2
         if level is not None:
