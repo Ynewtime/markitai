@@ -80,10 +80,12 @@ def _render_and_save(
     import pymupdf
 
     from markitai.image import ImageProcessor
+    from markitai.ocr import page_render_matrix
 
     # Each task opens its own document (PyMuPDF is not thread-safe)
     with pymupdf.open(path) as doc:
-        pix = doc[page_num].get_pixmap(matrix=pymupdf.Matrix(dpi / 72, dpi / 72))
+        page = doc[page_num]
+        pix = page.get_pixmap(matrix=page_render_matrix(page, dpi))
     name = f"{shot.prefix}.page{page_num + 1:04d}.{shot.image_format}"
     size, saved = ImageProcessor(shot.image).save_screenshot(
         pix.samples, pix.width, pix.height, Path(shot.directory) / name

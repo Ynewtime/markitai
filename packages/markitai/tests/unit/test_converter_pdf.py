@@ -630,6 +630,7 @@ class TestConvertWithScreenshot:
         # Setup pymupdf mock
         mock_pymupdf = Mock()
         mock_page = Mock()
+        mock_page.rect.width, mock_page.rect.height = 612, 792
         mock_pix = Mock()
         mock_pix.samples = b"fake_pixel_data"
         mock_pix.width = 800
@@ -638,6 +639,7 @@ class TestConvertWithScreenshot:
 
         mock_doc = MagicMock()
         mock_doc.needs_pass = 0
+        mock_doc.__enter__.return_value = mock_doc
         mock_doc.__len__ = Mock(return_value=1)
         mock_doc.__getitem__ = Mock(return_value=mock_page)
         mock_doc.close = Mock()
@@ -704,6 +706,7 @@ class TestRenderPagesForLLM:
         # Setup pymupdf mock for page rendering
         mock_pymupdf = Mock()
         mock_page = Mock()
+        mock_page.rect.width, mock_page.rect.height = 612, 792
         mock_pix = Mock()
         mock_pix.samples = b"pixel_data"
         mock_pix.width = 1000
@@ -1211,6 +1214,7 @@ class TestRenderPagesForLLMWithoutScreenshot:
         """OCR+LLM path must produce page_images even if screenshot.enabled=False."""
         mock_pymupdf = Mock()
         mock_page = Mock()
+        mock_page.rect.width, mock_page.rect.height = 612, 792
         mock_pix = Mock()
         mock_pix.samples = b"pixel_data"
         mock_pix.width = 1000
@@ -1219,6 +1223,7 @@ class TestRenderPagesForLLMWithoutScreenshot:
 
         mock_doc = MagicMock()
         mock_doc.needs_pass = 0
+        mock_doc.__enter__.return_value = mock_doc
         mock_doc.__len__ = Mock(return_value=2)
         mock_doc.__getitem__ = Mock(return_value=mock_page)
         mock_doc.close = Mock()
@@ -1398,6 +1403,7 @@ class TestScreenshotExtensionConsistency:
         """
         mock_pymupdf = Mock()
         mock_page = Mock()
+        mock_page.rect.width, mock_page.rect.height = 612, 792
         mock_pix = Mock()
         mock_pix.samples = b"fake_pixel_data"
         mock_pix.width = 800
@@ -1406,6 +1412,7 @@ class TestScreenshotExtensionConsistency:
 
         mock_doc = MagicMock()
         mock_doc.needs_pass = 0
+        mock_doc.__enter__.return_value = mock_doc
         mock_doc.__len__ = Mock(return_value=1)
         mock_doc.__getitem__ = Mock(return_value=mock_page)
         mock_doc.close = Mock()
@@ -1455,6 +1462,106 @@ class TestScreenshotExtensionConsistency:
         # page_info metadata must also use the actual path
         assert page_info["path"] == str(actual_jpg_path)
         assert page_info["name"] == "test.pdf.page0001.jpg"
+
+
+class TestPosterPageRender:
+    """A page too large to render at 150 dpi is rendered smaller.
+
+    A 200 x 200 inch page (the largest a PDF may have) needed 900 million
+    pixels: MuPDF refused it ("FzErrorLimit: Overly large image") and the
+    whole conversion failed with --screenshot, --ocr or --ocr --llm.
+    """
+
+    @staticmethod
+    def _poster(path: Path) -> Path:
+        import pymupdf
+
+        with pymupdf.open() as doc:
+            doc.new_page(width=14400, height=14400).insert_text(
+                (100, 400), "A poster with one line of large text", fontsize=200
+            )
+            doc.new_page().insert_text((72, 72), "An ordinary page after it.")
+            doc.save(path)
+        return path
+
+    def test_render_matrix_caps_the_pixels(self) -> None:
+        import pymupdf
+
+        from markitai.constants import MAX_PAGE_RENDER_PIXELS
+        from markitai.ocr import page_render_matrix
+
+        with pymupdf.open() as doc:
+            matrix = page_render_matrix(doc.new_page(width=14400, height=14400), 150)
+            assert (14400 * matrix.a) ** 2 == pytest.approx(MAX_PAGE_RENDER_PIXELS)
+            # An ordinary page keeps its resolution
+            letter = doc.new_page(width=612, height=792)
+            assert page_render_matrix(letter, 150).a == pytest.approx(150 / 72)
+
+    def test_screenshots_of_a_poster_page(self, tmp_path: Path) -> None:
+        pdf_file = self._poster(tmp_path / "poster.pdf")
+        config = MarkitaiConfig(screenshot=ScreenshotConfig(enabled=True))
+
+        result = PdfConverter(config).convert(pdf_file, tmp_path / "out")
+
+        assert [info["page"] for info in result.metadata["page_images"]] == [1, 2]
+        assert "A poster with one line of large text" in result.markdown
+        for info in result.metadata["page_images"]:
+            assert Path(info["path"]).is_file()
+
+    def test_a_picture_filling_a_poster_page(self, tmp_path: Path) -> None:
+        """pymupdf4llm crops the picture at the image resolution: capped too."""
+        import pymupdf
+
+        pdf_file = tmp_path / "poster.pdf"
+        picture = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 64, 64), False)
+        picture.clear_with(90)
+        with pymupdf.open() as doc:
+            page = doc.new_page(width=14400, height=14400)
+            page.insert_text((400, 600), "Poster title over a figure", fontsize=200)
+            page.insert_image(
+                pymupdf.Rect(400, 1000, 14000, 14000), stream=picture.tobytes("png")
+            )
+            doc.new_page().insert_text((72, 72), "An ordinary page after it.")
+            doc.save(pdf_file)
+
+        result = PdfConverter().convert(pdf_file, tmp_path / "out")
+
+        assert "Poster title over a figure" in result.markdown
+        assert result.images
+
+        from markitai.converter.pdf_parallel import picture_dpi
+
+        assert picture_dpi(pdf_file, None, 150) < 150
+        # Only a document with such a page loses resolution
+        assert picture_dpi(pdf_file, [1], 150) == 150
+
+    def test_ocr_reads_a_poster_page(self, tmp_path: Path) -> None:
+        """The OCR render of a page goes through the same cap."""
+        from markitai.constants import MAX_PAGE_RENDER_PIXELS
+        from markitai.converter.pdf_ocr import read_page
+
+        pdf_file = self._poster(tmp_path / "poster.pdf")
+        seen: list[int] = []
+
+        class _Reader:
+            def recognize_pdf_page(self, path: Path, page: int, dpi: int) -> Any:
+                from markitai.ocr import OCRProcessor
+
+                def recognize_pixmap(
+                    samples: bytes, width: int, height: int, n: int
+                ) -> Any:
+                    seen.append(width * height)
+                    return Mock(text="read")
+
+                processor = OCRProcessor.__new__(OCRProcessor)
+                processor.recognize_pixmap = recognize_pixmap  # type: ignore[method-assign]
+                return OCRProcessor.recognize_pdf_page(processor, path, page, dpi)
+
+        result = read_page(_Reader(), pdf_file, 0, 150, read=True, shot=None)
+
+        assert result["text"] == "read"
+        # Within a pixel row of the cap: the render rounds its size up
+        assert 0 < seen[0] <= 1.001 * MAX_PAGE_RENDER_PIXELS
 
 
 class TestNormalizeBoundaryLine:

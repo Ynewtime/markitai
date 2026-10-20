@@ -197,7 +197,7 @@ def to_markdown_chunks(
         "write_images": write_images,
         "image_path": image_path,
         "image_format": image_format,
-        "dpi": dpi,
+        "dpi": picture_dpi(path, pages, dpi) if write_images else dpi,
     }
     with _lock:
         _active += 1
@@ -242,6 +242,41 @@ def to_markdown_chunks(
     finally:
         with _lock:
             _active -= 1
+
+
+def picture_dpi(path: Path, pages: list[int] | None, dpi: int) -> int:
+    """*dpi*, or less when a page could not be rendered at it.
+
+    pymupdf4llm crops each picture box at the document's image resolution;
+    a picture filling a poster page (200 x 200 in, the largest a PDF page
+    may be) needs 900 million pixels at 150 dpi, which MuPDF refuses
+    ("Overly large image"), failing the whole extraction. The resolution
+    drops, for every picture of the document, so that the largest page fits
+    the budget of a page render (``constants.MAX_PAGE_RENDER_PIXELS``).
+    """
+    import pymupdf
+
+    from markitai.constants import MAX_PAGE_RENDER_PIXELS
+
+    try:
+        with pymupdf.open(path) as doc:
+            numbers = range(doc.page_count) if pages is None else pages
+            area = max(
+                (float(doc[number].rect.get_area()) for number in numbers),
+                default=0.0,
+            )
+    except Exception:  # the extraction reports an unreadable file
+        return dpi
+    if area * (dpi / 72) ** 2 <= MAX_PAGE_RENDER_PIXELS:
+        return dpi
+    capped = max(1, int(72 * math.sqrt(MAX_PAGE_RENDER_PIXELS / area)))
+    logger.debug(
+        "[PDF] {}: pictures cropped at {} dpi, not {}: a page is too large",
+        path.name,
+        capped,
+        dpi,
+    )
+    return capped
 
 
 def prestart() -> None:

@@ -96,6 +96,12 @@ def page_marker(page_number: int) -> str:
 
 DEFAULT_IMAGE_QUALITY = 75  # JPEG quality (1-100)
 DEFAULT_RENDER_DPI = 150  # DPI for page screenshots (PDF, PPTX, etc.)
+#: Pixels of one rendered PDF page at most (a 5,657 px square, give or take
+#: the rounding of the render's size). At 150 dpi a poster page (200 x 200
+#: in, the largest a PDF page may be) needs 900 million: MuPDF refuses it
+#: ("Overly large image") and failed the whole conversion, and a page just
+#: under its limit took gigabytes of memory.
+MAX_PAGE_RENDER_PIXELS = 32_000_000
 DEFAULT_IMAGE_IO_CONCURRENCY = 8  # Concurrent I/O for image saving (optimized for NVMe)
 DEFAULT_IMAGE_MULTIPROCESS_THRESHOLD = (
     10  # Use multiprocess compression when images > this

@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
-from markitai.constants import DEFAULT_RENDER_DPI
+from markitai.constants import DEFAULT_RENDER_DPI, MAX_PAGE_RENDER_PIXELS
 from markitai.ocr_layout import layout_ocr_text
 from markitai.utils.errors import MissingDependencyError, extra_install_command
 
@@ -119,6 +119,20 @@ def is_likely_garbled(text: str) -> bool:
         return False
     # Vowel ratio < 20% is well outside any natural Latin-script language.
     return vowels * 5 < letters
+
+
+def page_render_matrix(page: Any, dpi: int) -> Any:
+    """The pymupdf matrix rendering *page* at *dpi*, or smaller when that
+    would exceed ``MAX_PAGE_RENDER_PIXELS`` (a screenshot is scaled down to
+    ``image.max_width`` afterwards anyway; OCR reads a poster's text at
+    what resolution fits)."""
+    import pymupdf
+
+    zoom = dpi / 72
+    pixels = page.rect.width * page.rect.height * zoom * zoom
+    if pixels > MAX_PAGE_RENDER_PIXELS:
+        zoom *= math.sqrt(MAX_PAGE_RENDER_PIXELS / pixels)
+    return pymupdf.Matrix(zoom, zoom)
 
 
 @dataclass
@@ -975,8 +989,7 @@ class OCRProcessor:
             page = doc[page_num]
 
             # Render page to image
-            mat = pymupdf.Matrix(dpi / 72, dpi / 72)
-            pix = page.get_pixmap(matrix=mat)
+            pix = page.get_pixmap(matrix=page_render_matrix(page, dpi))
 
             # Use recognize_pixmap for direct processing
             return self.recognize_pixmap(pix.samples, pix.width, pix.height, pix.n)
