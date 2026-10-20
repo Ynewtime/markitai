@@ -183,6 +183,29 @@ class TestRemoveBySelectors:
         removed = remove_by_selectors(root, None)
         assert removed >= 1
 
+    def test_keeps_a_data_tables_header_row(self):
+        # pandoc writes <tr class="header"> for every table's head row
+        soup = _make_soup(
+            '<div><p>content</p><table><thead><tr class="header">'
+            "<th>Region</th><th>Q1</th></tr></thead><tbody><tr>"
+            "<td>East</td><td>12</td></tr></tbody></table></div>"
+        )
+        root = soup.find("div")
+        assert root is not None
+        remove_by_selectors(root, None)
+        assert [th.get_text() for th in root.find_all("th")] == ["Region", "Q1"]
+
+    def test_layout_table_header_cell_still_goes(self):
+        soup = _make_soup(
+            '<div><table><tr><td id="header">Site menu</td></tr>'
+            "<tr><td>content</td></tr></table></div>"
+        )
+        root = soup.find("div")
+        assert root is not None
+        remove_by_selectors(root, None)
+        assert "Site menu" not in root.get_text()
+        assert "content" in root.get_text()
+
     def test_partial_selector_removes_newsletter_signup(self):
         soup = _make_soup(
             '<div><p>content</p><div class="newsletter-signup">Subscribe!</div></div>'

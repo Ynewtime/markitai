@@ -24,6 +24,7 @@ from markitai.webextract.utils import count_words, has_responsive_show_class
 
 _ID_DELIMITER_RE = re.compile(r"[\s_\-:.]")
 _HEADING_NAMES = frozenset({"h1", "h2", "h3", "h4", "h5", "h6"})
+_TABLE_PARTS = frozenset({"thead", "tbody", "tfoot", "tr", "th", "td"})
 
 
 def remove_by_selectors(
@@ -207,6 +208,14 @@ def _skip_hidden_match(el: Tag, skip_hidden_exact: bool) -> bool:
     )
 
 
+def _matches_hidden(el: Tag) -> bool:
+    """Check if element matches the hidden-element exact selectors."""
+    try:
+        return _css_matches(el, HIDDEN_EXACT_SELECTOR)
+    except Exception:
+        return False
+
+
 def _matches_hidden_skip(el: Tag) -> bool:
     """Check if element matches the unguarded hidden selectors."""
     try:
@@ -253,6 +262,21 @@ def _should_protect(el: Tag, main_content: Tag | None) -> bool:
             return True
     except Exception:
         pass
+
+    # NOTE: divergence from defuddle — the rows and cells of a data table
+    # are never page chrome. Pandoc writes <tr class="header"> for every
+    # table's head row, which ".header:not(.banner)" removed, leaving the
+    # Markdown table with an empty header row. A table with <th> cells is
+    # a data table; layout tables (old sites' <td id="header">) have none.
+    # Rows hidden by class still go, like any hidden element.
+    if el.name in _TABLE_PARTS:
+        table = el.find_parent("table")
+        if (
+            table is not None
+            and table.find("th") is not None
+            and not _matches_hidden(el)
+        ):
+            return True
 
     # Protect <header> elements that are direct children of article/main/section.
     # The bare "header" selector is intended to remove site-level page headers,
