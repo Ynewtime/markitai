@@ -662,7 +662,7 @@ class TestConvertWithScreenshot:
             with (
                 patch.dict(sys.modules, {"pymupdf": mock_pymupdf}),
                 patch(
-                    "markitai.converter.pdf.ImageProcessor",
+                    "markitai.image.ImageProcessor",
                     return_value=mock_img_processor,
                 ),
             ):
@@ -741,7 +741,7 @@ class TestRenderPagesForLLM:
             with (
                 patch.dict(sys.modules, {"pymupdf": mock_pymupdf}),
                 patch(
-                    "markitai.converter.pdf.ImageProcessor",
+                    "markitai.image.ImageProcessor",
                     return_value=mock_img_processor,
                 ),
             ):
@@ -1174,7 +1174,7 @@ class TestRenderPagesForLLMWithoutScreenshot:
             with (
                 patch.dict(sys.modules, {"pymupdf": mock_pymupdf}),
                 patch(
-                    "markitai.converter.pdf.ImageProcessor",
+                    "markitai.image.ImageProcessor",
                     return_value=mock_img_processor,
                 ),
             ):
@@ -1362,7 +1362,7 @@ class TestScreenshotExtensionConsistency:
         with (
             patch.dict(sys.modules, {"pymupdf": mock_pymupdf}),
             patch(
-                "markitai.converter.pdf.ImageProcessor",
+                "markitai.image.ImageProcessor",
                 return_value=mock_img_processor,
             ),
         ):

@@ -32,7 +32,13 @@ from markitai.converter.base import (
 )
 from markitai.converter.pdf_layout_boxes import clean_layout_chunks
 from markitai.converter.pdf_markdown import repair_pages
-from markitai.converter.pdf_ocr import PageShot, read_page, read_page_task
+from markitai.converter.pdf_ocr import (
+    PageShot,
+    read_page,
+    read_page_task,
+    shoot_page,
+    shoot_page_task,
+)
 from markitai.converter.pdf_parallel import (
     map_page_runs,
     run_page_tasks,
@@ -1536,24 +1542,26 @@ class PdfConverter(BaseConverter):
         dpi: int = DEFAULT_RENDER_DPI,
         max_workers: int | None = None,
     ) -> list[tuple[ExtractedImage, dict]]:
-        """Render PDF pages as images in parallel using ThreadPoolExecutor.
+        """Render every PDF page and save it as a screenshot.
 
-        Each thread opens its own PDF document for thread safety (PyMuPDF is not thread-safe).
+        PyMuPDF holds the GIL while it renders, so threads in this process
+        render one page at a time. When the extraction workers are running
+        (they just extracted this document, or serve a batch) each renders
+        a page at a time; else threads here do, each opening its own
+        document (PyMuPDF is not thread-safe). The files are the same.
 
         Args:
             input_path: Path to the PDF file
             screenshots_dir: Directory to save screenshots
             image_format: Image format (jpg, png, etc.)
             dpi: Render DPI
-            max_workers: Override worker count. If None, auto-detect based on file size.
+            max_workers: Override the thread count. If None, auto-detect
+                based on file size.
 
         Returns:
             List of (ExtractedImage, page_info_dict) tuples, sorted by page number.
         """
         import pymupdf
-
-        # Create ImageProcessor once (thread-safe for read-only config access)
-        img_processor = ImageProcessor(self.config.image if self.config else None)
 
         screenshots_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1565,80 +1573,71 @@ class PdfConverter(BaseConverter):
         if total_pages == 0:
             return []
 
-        # Auto-detect worker count if not specified
-        if max_workers is None:
-            max_workers = self._get_worker_count(input_path, total_pages)
+        # Named after the resolved output (see BaseConverter.asset_prefix)
+        # so a renamed re-run never overwrites an older output's pages.
+        shot = PageShot(
+            directory=str(screenshots_dir),
+            prefix=self.asset_prefix or input_path.name,
+            image_format=image_format,
+            image=self.config.image if self.config else None,
+        )
+        saved: dict[int, tuple[tuple[int, int], str]] = {}
 
-        def _render_single_page(page_num: int) -> tuple[ExtractedImage, dict]:
-            """Render a single page (thread-safe).
-
-            Each thread opens its own document copy to ensure thread safety.
-            PyMuPDF is not thread-safe when sharing document objects.
-            """
-            thread_doc = pymupdf.open(input_path)
+        def finished(
+            page_num: int, future: Future[tuple[tuple[int, int], str]]
+        ) -> None:
             try:
-                page = thread_doc[page_num]
+                saved[page_num] = future.result()
+            except Exception as e:
+                logger.error(f"Failed to render page {page_num + 1}: {e}")
+                raise
 
-                # Render page to image
-                mat = pymupdf.Matrix(dpi / 72, dpi / 72)
-                pix = page.get_pixmap(matrix=mat)
-
-                # Save page image with compression (ensures < 5MB for LLM)
-                # Named after the resolved output (see BaseConverter.asset_prefix)
-                # so a renamed re-run never overwrites an older output's pages.
-                prefix = self.asset_prefix or input_path.name
-                image_name = f"{prefix}.page{page_num + 1:04d}.{image_format}"
-                image_path = screenshots_dir / image_name
-                final_size, actual_path = img_processor.save_screenshot(
-                    pix.samples, pix.width, pix.height, image_path
-                )
-
-                # Use the actual path returned by save_screenshot, which may
-                # differ from image_path when the fallback changes the extension
-                actual_name = actual_path.name
-                actual_mime = get_mime_type(
-                    actual_path.suffix, default=f"image/{image_format}"
-                )
-
-                extracted_img = ExtractedImage(
-                    path=actual_path,
-                    index=page_num + 1,
-                    original_name=actual_name,
-                    mime_type=actual_mime,
-                    width=final_size[0],
-                    height=final_size[1],
-                )
-
-                page_info = {
-                    "page": page_num + 1,
-                    "path": str(actual_path),
-                    "name": actual_name,
+        pages = list(range(total_pages))
+        left = run_page_tasks(
+            input_path,
+            shoot_page_task,
+            pages,
+            (dpi, shot),
+            finished,
+            only_running=True,
+        )
+        if left is None:
+            left = pages
+        if left:
+            if max_workers is None:
+                max_workers = self._get_worker_count(input_path, len(left))
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = {
+                    executor.submit(shoot_page, input_path, i, dpi, shot): i
+                    for i in left
                 }
+                for future in as_completed(futures):
+                    finished(futures[future], future)
 
-                return (extracted_img, page_info)
-            finally:
-                thread_doc.close()
-
-        # Render pages in parallel
-        results: list[tuple[int, ExtractedImage, dict]] = []
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {
-                executor.submit(_render_single_page, i): i for i in range(total_pages)
+        results: list[tuple[ExtractedImage, dict]] = []
+        for page_num in sorted(saved):
+            (width, height), saved_path = saved[page_num]
+            # The saved path, which may differ from the requested one when
+            # the fallback changes the extension
+            actual_path = Path(saved_path)
+            actual_name = actual_path.name
+            extracted_img = ExtractedImage(
+                path=actual_path,
+                index=page_num + 1,
+                original_name=actual_name,
+                mime_type=get_mime_type(
+                    actual_path.suffix, default=f"image/{image_format}"
+                ),
+                width=width,
+                height=height,
+            )
+            page_info = {
+                "page": page_num + 1,
+                "path": str(actual_path),
+                "name": actual_name,
             }
-
-            for future in as_completed(futures):
-                page_num = futures[future]
-                try:
-                    extracted_img, page_info = future.result()
-                    results.append((page_num, extracted_img, page_info))
-                except Exception as e:
-                    logger.error(f"Failed to render page {page_num + 1}: {e}")
-                    raise
-
-        # Sort by page number to maintain order
-        results.sort(key=lambda x: x[0])
-
-        return [(img, info) for _, img, info in results]
+            results.append((extracted_img, page_info))
+        return results
 
     def _fix_image_paths(self, markdown: str, image_path: Path) -> str:
         """Fix image paths to be relative to output directory.

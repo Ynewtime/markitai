@@ -201,6 +201,58 @@ def test_a_long_document_keeps_only_a_task_per_worker_under_way(
     )
 
 
+def test_running_workers_render_the_same_screenshots(
+    tmp_path: Path, workers: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Screenshots go to the workers when they are running (PyMuPDF holds
+    the GIL while it renders): the same files as rendering them here."""
+    from markitai.config import MarkitaiConfig, ScreenshotConfig
+    from markitai.converter import pdf as pdf_module
+    from markitai.converter.pdf import PdfConverter
+
+    pdf = _make_pdf(tmp_path / "shots.pdf", pages=6)
+    converter = PdfConverter(MarkitaiConfig(screenshot=ScreenshotConfig(enabled=True)))
+    pdf_parallel._get_pool(2)
+
+    def not_here(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("rendered in this process")
+
+    with monkeypatch.context() as patched:
+        patched.setattr(pdf_module, "shoot_page", not_here)
+        pooled = converter._render_pages_parallel(pdf, tmp_path / "pooled", "jpg")
+
+    pdf_parallel.shutdown_pool()
+    monkeypatch.setattr(pdf_parallel, "_enabled", False)
+    here = converter._render_pages_parallel(pdf, tmp_path / "here", "jpg")
+
+    assert [info for _image, info in pooled] == [
+        {**info, "path": str(tmp_path / "pooled" / info["name"])}
+        for _image, info in here
+    ]
+    assert [(i.index, i.width, i.height, i.mime_type) for i, _ in pooled] == [
+        (i.index, i.width, i.height, i.mime_type) for i, _ in here
+    ]
+    for (image, _), (other, _) in zip(pooled, here, strict=True):
+        assert image.path.read_bytes() == other.path.read_bytes()
+
+
+def test_screenshots_alone_do_not_start_the_workers(
+    tmp_path: Path, workers: None
+) -> None:
+    """A page renders in milliseconds: starting the workers for that alone
+    costs more than it saves."""
+    from markitai.config import MarkitaiConfig, ScreenshotConfig
+    from markitai.converter.pdf import PdfConverter
+
+    pdf = _make_pdf(tmp_path / "shots.pdf", pages=6)
+    converter = PdfConverter(MarkitaiConfig(screenshot=ScreenshotConfig(enabled=True)))
+
+    shots = converter._render_pages_parallel(pdf, tmp_path / "shots", "jpg")
+
+    assert [info["page"] for _image, info in shots] == [1, 2, 3, 4, 5, 6]
+    assert pdf_parallel._pool is None
+
+
 def test_without_enable_the_pages_stay_in_process(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -422,6 +422,8 @@ def run_page_tasks(
     pages: list[int],
     args: tuple[Any, ...],
     on_done: Callable[[int, Future[_R]], None],
+    *,
+    only_running: bool = False,
 ) -> list[int] | None:
     """Run ``task(path, page, threads, *args)`` for each page in the workers.
 
@@ -433,7 +435,9 @@ def run_page_tasks(
     at once as cores, more when memory allows fewer. *on_done* gets each page
     and its finished future in this thread, in the order they finish (the
     task's own exception is the future's). *task* must be a module-level
-    function (it is pickled by reference).
+    function (it is pickled by reference). With *only_running*, for pages
+    that take milliseconds (screenshots), the workers serve only when they
+    are already running: starting them would cost more than the pages.
 
     Returns:
         None when the workers do not serve this document (do every page
@@ -448,9 +452,10 @@ def run_page_tasks(
     if not _enabled or not pages:
         return None
     workers = worker_count()
-    if workers < 2 or not (
-        len(pages) >= OCR_PARALLEL_MIN_PAGES or _active > 0 or _pool is not None
-    ):
+    if workers < 2:
+        return None
+    worth_starting = len(pages) >= OCR_PARALLEL_MIN_PAGES or _active > 0
+    if _pool is None and (only_running or not worth_starting):
         return None
     from collections import deque
     from concurrent.futures import FIRST_COMPLETED, CancelledError, wait

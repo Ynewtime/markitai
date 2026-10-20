@@ -55,17 +55,7 @@ def read_page(
         text = ocr.recognize_pdf_page(Path(path), page_num, dpi=dpi).text.strip()
         return {"text": text, "page_image": None}
 
-    import pymupdf
-
-    from markitai.image import ImageProcessor
-
-    # Each task opens its own document (PyMuPDF is not thread-safe)
-    with pymupdf.open(path) as doc:
-        pix = doc[page_num].get_pixmap(matrix=pymupdf.Matrix(dpi / 72, dpi / 72))
-    name = f"{shot.prefix}.page{page_num + 1:04d}.{shot.image_format}"
-    _size, saved = ImageProcessor(shot.image).save_screenshot(
-        pix.samples, pix.width, pix.height, Path(shot.directory) / name
-    )
+    pix, _size, saved = _render_and_save(path, page_num, dpi, shot)
     text: str | None = None
     if read:
         # The render the screenshot came from, not a second one
@@ -76,6 +66,52 @@ def read_page(
         "text": text,
         "page_image": {"page": page_num + 1, "path": str(saved), "name": saved.name},
     }
+
+
+def _render_and_save(
+    path: Path | str, page_num: int, dpi: int, shot: PageShot
+) -> tuple[Any, tuple[int, int], Path]:
+    """Render page *page_num* and save it as its screenshot.
+
+    Returns:
+        The render, the saved image's size, and where it was saved (the
+        fallback may have changed its extension).
+    """
+    import pymupdf
+
+    from markitai.image import ImageProcessor
+
+    # Each task opens its own document (PyMuPDF is not thread-safe)
+    with pymupdf.open(path) as doc:
+        pix = doc[page_num].get_pixmap(matrix=pymupdf.Matrix(dpi / 72, dpi / 72))
+    name = f"{shot.prefix}.page{page_num + 1:04d}.{shot.image_format}"
+    size, saved = ImageProcessor(shot.image).save_screenshot(
+        pix.samples, pix.width, pix.height, Path(shot.directory) / name
+    )
+    return pix, size, saved
+
+
+def shoot_page(
+    path: Path | str, page_num: int, dpi: int, shot: PageShot
+) -> tuple[tuple[int, int], str]:
+    """Render page *page_num* (0-based) and save its screenshot, no OCR.
+
+    Returns:
+        The saved image's size and its path.
+    """
+    _pix, size, saved = _render_and_save(path, page_num, dpi, shot)
+    return size, str(saved)
+
+
+def shoot_page_task(
+    path: str, page_num: int, _threads: int, dpi: int, shot: PageShot
+) -> tuple[tuple[int, int], str]:
+    """:func:`shoot_page` as a worker task (see ``run_page_tasks``).
+
+    PyMuPDF holds the GIL while it renders, so threads in one process
+    render one page at a time; the workers render one each.
+    """
+    return shoot_page(path, page_num, dpi, shot)
 
 
 def read_page_task(
