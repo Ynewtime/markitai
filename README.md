@@ -7,7 +7,7 @@
 
 Opinionated Markdown converter with native LLM enhancement support.
 
-- **Multi-format**: DOCX, PPTX, XLSX, PDF, EPUB, EML, TXT, MD, images (JPG/PNG/WebP), and URLs → clean Markdown; legacy `.doc`/`.ppt` via the `legacy` extra
+- **Multi-format**: DOCX, PPTX, XLSX/XLS, PDF, OpenDocument (ODT/ODS), EPUB, HTML, RTF, CSV/TSV, EML/MSG, Jupyter notebooks, text and markup, images (JPG/PNG/WebP/GIF/SVG, more), and URLs → clean Markdown; legacy `.doc`/`.ppt` via the `legacy` extra ([all formats](https://markitai.dev/guide/getting-started#supported-formats))
 - **LLM enhancement**: format cleaning, frontmatter metadata, and vision analysis of embedded images, all through [litellm](https://github.com/BerriAI/litellm), so any provider works (OpenAI, Anthropic, Gemini, local CLIs, and more)
 - **Batch processing**: concurrent conversion with progress display and `--resume` for interrupted jobs
 - **OCR**: scanned PDFs and images via local RapidOCR (optional extra, see below), or `--ocr --llm` to have the vision model read the page images directly (VLM-OCR)
