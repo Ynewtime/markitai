@@ -8,11 +8,14 @@ processes that each run onnxruntime on a single thread do the same pages for a
 third of the CPU, and in parallel.
 
 The output is identical to one ``pymupdf4llm.to_markdown(..., page_chunks=True)``
-call: each worker parses a contiguous run of pages with the same
+call: each task parses a few consecutive pages with the same
 ``parse_document`` arguments the library uses, and the parent joins the pages
 in order, then assigns heading levels from the font sizes of the whole
 document (``update_header_tags``) — the one step that looks across pages —
-before rendering Markdown.
+before rendering Markdown. A document is cut into many small tasks of which
+only one per worker, and one more, are under way: the cores stay busy to the
+last page however uneven the pages are, and a document converted meanwhile
+gets a worker after a task or two instead of waiting until this one is done.
 
 Small single conversions stay in-process: starting the workers costs more
 than a few pages take. The pool starts for a long document, or as soon as
@@ -49,6 +52,11 @@ if TYPE_CHECKING:
 PARALLEL_MIN_PAGES = 12
 #: Pages per worker task at least: fewer make the per-task overhead show.
 MIN_PAGES_PER_TASK = 4
+#: Pages per extraction task. A task opens the document again: at four pages
+#: that costs nothing measurable, at one page about 5 % more CPU. A worker
+#: takes about a second for four pages, which is how long a document
+#: converted meanwhile waits for a free worker.
+PAGES_PER_TASK = 4
 #: A document with at least this many pages to OCR reads them in the
 #: workers: a page takes seconds of CPU, a worker loads the OCR models once.
 OCR_PARALLEL_MIN_PAGES = 4
@@ -514,6 +522,14 @@ def _page_runs(page_list: list[int], workers: int) -> list[list[int]]:
     return [page_list[i : i + size] for i in range(0, len(page_list), size)]
 
 
+def _page_chunks(page_list: list[int]) -> list[list[int]]:
+    """Consecutive pages, PAGES_PER_TASK to a task (the last may have fewer)."""
+    return [
+        page_list[i : i + PAGES_PER_TASK]
+        for i in range(0, len(page_list), PAGES_PER_TASK)
+    ]
+
+
 def _parallel(
     pool: ProcessPoolExecutor,
     path: Path,
@@ -521,21 +537,40 @@ def _parallel(
     options: dict[str, Any],
     workers: int,
 ) -> list[dict[str, Any]]:
-    runs = _page_runs(page_list, workers)
-    futures: list[Future[Any]] = []
+    """Parse the pages in the workers, a task per worker under way.
+
+    Submitting every task at once would queue all of this document ahead of
+    a document converted meanwhile (the pool runs tasks in order); a task
+    is submitted when one of this document's finishes, so the other
+    document's tasks take turns with these. One more than the workers waits
+    in the queue, as the pool's own call queue holds one more: a worker that
+    finishes takes it at once, without waiting for this thread to submit.
+    """
+    from collections import deque
+    from concurrent.futures import FIRST_COMPLETED, wait
+
+    chunks = _page_chunks(page_list)
+    parsed: list[Any] = [None] * len(chunks)
+    waiting = deque(range(len(chunks)))
+    running: dict[Future[Any], int] = {}
     try:
-        for run in runs:
-            futures.append(pool.submit(_parse_pages, str(path), run, options))
-        parsed = [future.result() for future in futures]
+        while waiting or running:
+            while waiting and len(running) <= workers:
+                index = waiting.popleft()
+                future = pool.submit(_parse_pages, str(path), chunks[index], options)
+                running[future] = index
+            finished, _ = wait(running, return_when=FIRST_COMPLETED)
+            for future in finished:
+                parsed[running.pop(future)] = future.result()
     except BaseException:
-        for future in futures:  # this document's runs still queued: drop them
+        for future in running:  # this document's tasks still queued: drop them
             future.cancel()
         raise
     logger.debug(
         "[PDF] {} page(s) of {} parsed in {} worker task(s)",
         len(page_list),
         path.name,
-        len(runs),
+        len(chunks),
     )
     return _render(parsed, options)
 

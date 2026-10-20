@@ -128,6 +128,79 @@ def test_the_worker_pool_extracts_the_same_output(
     )
 
 
+class _CountingPool:
+    """Runs tasks on threads after a short delay, counting those under way.
+
+    One task runs at a time (PyMuPDF is not thread-safe); the count is of
+    the tasks submitted and not finished, what the pool would hold.
+    """
+
+    def __init__(self) -> None:
+        import threading
+
+        self._broken = False
+        self._shutdown_thread = False
+        self.running = 0
+        self.most = 0
+        self.pages: list[list[int]] = []
+        self._lock = threading.Lock()
+        self._one_at_a_time = threading.Lock()
+
+    def submit(self, fn: Callable[..., Any], /, *args: Any) -> Future[Any]:
+        import threading
+
+        future: Future[Any] = Future()
+        with self._lock:
+            self.running += 1
+            self.most = max(self.most, self.running)
+            self.pages.append(list(args[1]))
+
+        def finish() -> None:
+            try:
+                with self._one_at_a_time:
+                    result = fn(*args)
+            except Exception as e:  # pragma: no cover - the test fails anyway
+                future.set_exception(e)
+            else:
+                future.set_result(result)
+            finally:
+                with self._lock:
+                    self.running -= 1
+
+        threading.Timer(0.01, finish).start()
+        return future
+
+
+def test_a_long_document_keeps_only_a_task_per_worker_under_way(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Small tasks, one per worker (and one waiting) submitted at a time: a
+    document converted meanwhile is not queued behind all of this one's
+    pages. The pages still come back in order, as one document."""
+    pdf = _make_pdf(tmp_path / "headings.pdf", pages=18)
+    pool_dir, serial_dir = tmp_path / "pool", tmp_path / "serial"
+    pool_dir.mkdir()
+    serial_dir.mkdir()
+    pool = _CountingPool()
+
+    chunks = pdf_parallel._parallel(
+        pool,  # type: ignore[arg-type]
+        pdf,
+        list(range(18)),
+        _options(pool_dir),
+        2,
+    )
+
+    assert pool.most == 3  # two workers, one task waiting
+    assert pool.pages == [
+        list(range(i, min(18, i + pdf_parallel.PAGES_PER_TASK)))
+        for i in range(0, 18, pdf_parallel.PAGES_PER_TASK)
+    ]
+    assert _normalized(chunks, pool_dir) == _normalized(
+        _serial(pdf, serial_dir), serial_dir
+    )
+
+
 def test_without_enable_the_pages_stay_in_process(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
