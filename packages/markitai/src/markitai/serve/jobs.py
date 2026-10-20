@@ -184,6 +184,9 @@ class JobItem:
     # {"operation", "error_code", "error", "failed_at"}; cleared by a rerun
     # that stands
     rerun_failure: dict[str, str] | None = None
+    # For a PDF, where each page's text came from: {"page", "source",
+    # "reason"} with source text | ocr | mixed (``ProcessResult.page_sources``)
+    page_sources: list[dict[str, Any]] = field(default_factory=list)
 
     def to_payload(self) -> dict[str, Any]:
         """Return the item event payload (contract: ``event: item``).
@@ -217,6 +220,7 @@ class JobItem:
             "rerun_failure": dict(self.rerun_failure)
             if self.rerun_failure is not None
             else None,
+            "page_sources": [dict(entry) for entry in self.page_sources],
         }
 
 
@@ -241,6 +245,7 @@ class RetryWork:
     prior_warnings: list[str] = field(default_factory=list)
     prior_pricing: dict[str, Any] | None = None
     prior_models: list[str] = field(default_factory=list)
+    prior_page_sources: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -724,7 +729,23 @@ def _item_from_payload(
         if isinstance(raw_size, int) and not isinstance(raw_size, bool)
         else None,
         rerun_failure=_valid_rerun_failure(raw.get("rerun_failure")),
+        page_sources=_valid_page_sources(raw.get("page_sources")),
     )
+
+
+def _valid_page_sources(value: object) -> list[dict[str, Any]]:
+    """Saved page sources, dropping any entry not of the written shape."""
+    if not isinstance(value, list):
+        return []
+    return [
+        {"page": entry["page"], "source": entry["source"], "reason": entry["reason"]}
+        for entry in value
+        if isinstance(entry, dict)
+        and isinstance(entry.get("page"), int)
+        and not isinstance(entry.get("page"), bool)
+        and entry.get("source") in ("text", "ocr", "mixed")
+        and isinstance(entry.get("reason"), str)
+    ]
 
 
 def _valid_rerun_failure(value: object) -> dict[str, str] | None:
@@ -1098,6 +1119,7 @@ def _apply_result(job: Job, item: JobItem, result: ProcessResult) -> None:
     # Only models whose answers the kept result uses (contract v1.6, 6.6):
     # a base-only result names none, though its failed requests still cost
     item.models = models_from_usage(result.llm_usage) if result.llm_enhanced else []
+    item.page_sources = [dict(entry) for entry in result.page_sources]
     item.error_code = None
     if result.output_path:
         try:
@@ -1539,6 +1561,7 @@ def _restore_prior_result(job: Job, item: JobItem, work: RetryWork) -> None:
     item.cost_usd = work.prior_cost_usd
     item.pricing = work.prior_pricing
     item.models = list(work.prior_models)
+    item.page_sources = list(work.prior_page_sources)
     item.duration_ms = work.prior_duration_ms
     item.finished_at = work.prior_finished_at
     item.operation = work.prior_operation

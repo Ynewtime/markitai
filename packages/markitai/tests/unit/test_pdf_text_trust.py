@@ -490,3 +490,121 @@ def test_ocr_reads_the_page_whose_layer_fails(tmp_path: Path, read_lines) -> Non
     assert "members asked how the opening hours" in page_two.lower()
     shifted = "".join(fixtures.shifted_alphabet().get(c, c) for c in "members asked")
     assert shifted not in page_two
+    one, two = result.metadata["page_sources"]
+    assert one == {"page": 1, "source": "text", "reason": TRUSTED}
+    assert two["source"] == "ocr"
+    assert two["reason"].startswith(FAILED)
+
+
+class TestPageSources:
+    """``metadata["page_sources"]``: where each page's text came from, and why."""
+
+    def test_standard_path_says_what_the_checks_found(self, tmp_path: Path) -> None:
+        from markitai.config import MarkitaiConfig
+
+        path = fixtures.mapped_helvetica_pdf(
+            tmp_path / "doc.pdf",
+            [fixtures.LATIN_LINES, [fixtures.LATIN] * 6, []],
+            [{}, fixtures.private_use_alphabet(), {}],
+        )
+        result = PdfConverter(MarkitaiConfig()).convert(path)
+        sources = result.metadata["page_sources"]
+        assert [(s["page"], s["source"]) for s in sources] == [
+            (1, "text"),
+            (2, "text"),
+            (3, "text"),
+        ]
+        assert sources[0]["reason"] == TRUSTED
+        assert sources[1]["reason"].startswith(FAILED)
+        assert sources[2]["reason"] == NO_TEXT_LAYER
+
+    def test_markdown_of_a_trusted_page_is_unchanged(self, tmp_path: Path) -> None:
+        """The record is metadata only: a normal page's Markdown is as before."""
+        import pymupdf4llm
+
+        from markitai.config import MarkitaiConfig
+
+        path = fixtures.text_pdf(
+            tmp_path / "en.pdf", [fixtures.NORMAL_PAGES["english"]]
+        )
+        result = PdfConverter(MarkitaiConfig()).convert(path)
+        expected = pymupdf4llm.to_markdown(str(path)).strip()
+        for line in expected.splitlines():
+            assert line.strip() in result.markdown
+
+    def test_ocr_sources_by_page(self) -> None:
+        from markitai.converter.pdf import OCR_FORCED, _ocr_sources
+        from markitai.converter.pdf_text_trust import LayerVerdict, failed
+
+        verdicts = {
+            1: LayerVerdict("trusted", TRUSTED),
+            2: LayerVerdict("trusted", TRUSTED),
+            3: LayerVerdict("scanned", NO_TEXT_LAYER),
+            4: failed("right-to-left text in reverse order", "Hebrew"),
+            5: failed("mojibake"),
+            6: LayerVerdict("trusted", TRUSTED),
+        }
+        sources = _ocr_sources(
+            6,
+            routing=True,
+            native_pages=[0, 1, 3],  # page 6's extraction failed
+            verdicts=verdicts,
+            empty_pages=[2],
+            picture_pages=[1],
+            ocr_lang="en",
+        )
+        assert [(s["source"], s["reason"]) for s in sources] == [
+            ("text", TRUSTED),
+            ("mixed", f"{TRUSTED}; text in its pictures OCR'd"),
+            ("ocr", f"{NO_TEXT_LAYER}; OCR found no text"),
+            (
+                "text",
+                f"{FAILED}right-to-left text in reverse order; kept, since OCR "
+                "with ocr.lang en does not read Hebrew",
+            ),
+            ("ocr", f"{FAILED}mojibake"),
+            ("ocr", "text layer trusted, but its extraction failed"),
+        ]
+        forced = _ocr_sources(
+            2,
+            routing=False,
+            native_pages=[],
+            verdicts={},
+            empty_pages=[],
+            picture_pages=[],
+            ocr_lang="en",
+        )
+        assert forced == [
+            {"page": 1, "source": "ocr", "reason": OCR_FORCED},
+            {"page": 2, "source": "ocr", "reason": OCR_FORCED},
+        ]
+
+    @pytest.mark.parametrize("rendered", [True, False])
+    def test_vision_path(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, rendered: bool
+    ) -> None:
+        from markitai.config import MarkitaiConfig
+        from markitai.converter.pdf import VLM_READ
+        from markitai.vision_consent import reset_vlm_ocr_disclosure
+
+        monkeypatch.delenv("MARKITAI_NO_VLM_OCR", raising=False)
+        reset_vlm_ocr_disclosure()
+        path = fixtures.text_pdf(
+            tmp_path / "doc.pdf",
+            [fixtures.NORMAL_PAGES["english"], fixtures.NORMAL_PAGES["table"]],
+        )
+        config = MarkitaiConfig()
+        config.ocr.enabled = True
+        config.llm.enabled = True
+        with patch("markitai.vision_consent.get_interaction"):
+            result = PdfConverter(config).convert(
+                path, tmp_path / "out" if rendered else None
+            )
+        sources = result.metadata["page_sources"]
+        if rendered:
+            assert sources == [
+                {"page": 1, "source": "mixed", "reason": VLM_READ},
+                {"page": 2, "source": "mixed", "reason": VLM_READ},
+            ]
+        else:
+            assert [s["source"] for s in sources] == ["text", "text"]

@@ -76,6 +76,8 @@ PYTHON_EXTRAS: dict[str, set[str]] = {
     "ProviderCard": {"default_model"},
     # Python 1.2's name for the credentials display value, kept for 1.2 clients
     "ProviderCredentials": {"api_key_masked"},
+    # Where each PDF page's text came from (text layer, OCR or both)
+    "ItemPayload": {"page_sources"},
 }
 
 

@@ -5805,6 +5805,7 @@ def create_app(
                 prior_warnings=list(item.warnings) if protect else [],
                 prior_pricing=item.pricing if protect else None,
                 prior_models=list(item.models) if protect else [],
+                prior_page_sources=list(item.page_sources) if protect else [],
             )
 
             # Reset only this item. The job keeps its identity and item ordering;
@@ -5820,6 +5821,7 @@ def create_app(
             item.cost_usd = None
             item.pricing = None
             item.models = []
+            item.page_sources = []
             item.llm_enhanced = False
             item.operation = operation
             item.skipped = False

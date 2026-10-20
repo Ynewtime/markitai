@@ -339,6 +339,7 @@ async def process_single_file(
                     cache_hit=ctx.cache_hit,
                     llm_cache_hit=ctx.cache_hit,
                     duration=duration,
+                    page_sources=ctx.page_sources,
                 )
             )
 

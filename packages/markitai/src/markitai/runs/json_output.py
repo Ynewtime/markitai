@@ -55,6 +55,7 @@ def _item(outcome: Outcome) -> dict[str, Any]:
         "fetch_strategy": outcome.fetch_strategy,
         "source_file": outcome.source_file,
         "llm_usage": None if unknown else outcome.llm_usage,
+        "page_sources": [dict(entry) for entry in outcome.page_sources],
     }
 
 

@@ -96,6 +96,7 @@ class TestRecordCliJob:
             "skip_reason": None,
             "retryable": False,
             "warnings": [],
+            "page_sources": [],
         }
         assert failed["status"] == "error"
         assert failed["error"] == "fetch boom"

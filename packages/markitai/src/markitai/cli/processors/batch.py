@@ -92,6 +92,7 @@ def _file_state_to_outcome(file_state: FileState, input_dir: Path) -> Outcome:
         duration=file_state.duration,
         warnings=list(file_state.warnings),
         earlier_run=file_state.earlier_run,
+        page_sources=list(file_state.page_sources),
         usage_unknown=file_state.usage_unknown,
     )
 
@@ -1339,6 +1340,7 @@ async def process_batch(
                     # Non-fatal problems (an image analysis that failed):
                     # logged like a URL's, and --json carries them
                     file_state.warnings = list(result.warnings)
+                    file_state.page_sources = list(result.page_sources)
                     for warning in file_state.warnings:
                         logger.warning(f"[File] {display_name}: {warning}")
                         if not quiet:

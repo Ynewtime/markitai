@@ -184,6 +184,14 @@ class ConversionOutput:
             original alt text was kept), and similar. Also logged as loguru
             warnings; collected per call, so concurrent conversions never
             see each other's. Empty when there were none.
+        page_sources: For a PDF, where each page's text came from:
+            ``{"page": 3, "source": "ocr", "reason": "no text layer"}``,
+            one entry per page in order. ``source`` is ``"text"`` (the
+            PDF's text layer), ``"ocr"`` or ``"mixed"`` (the text layer
+            with its pictures OCR'd, or a vision model reading the page
+            image beside it); ``reason`` is a short English note, e.g.
+            ``"text layer trusted"`` or ``"text layer failed the script
+            check: …"``. Empty for other formats.
 
     Note:
         In in-memory mode (``output_dir=None``) intermediate files live in a
@@ -205,6 +213,7 @@ class ConversionOutput:
     skip_reason: str | None = None
     duration: float = 0.0
     warnings: list[str] = field(default_factory=list)
+    page_sources: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _resolve_config(
@@ -429,6 +438,7 @@ def _build_file_output(
         images=images,
         usage=ConversionUsage.from_usage_dict(ctx.llm_cost, ctx.llm_usage),
         warnings=list(ctx.warnings),
+        page_sources=ctx.page_sources,
     )
 
 

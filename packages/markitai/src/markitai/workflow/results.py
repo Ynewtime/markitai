@@ -81,4 +81,5 @@ def document_process_result(
         cache_hit=ctx.cache_hit,
         llm_enhanced=ctx.llm_output_file is not None and not ctx.llm_fell_back,
         warnings=list(ctx.warnings),
+        page_sources=ctx.page_sources,
     )

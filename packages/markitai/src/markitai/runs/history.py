@@ -303,6 +303,7 @@ def _item_to_payload(
         "skip_reason": PENDING_BATCH_SKIP_REASON if pending else item.skip_reason,
         "retryable": item.kind != "file",
         "warnings": list(dict.fromkeys(item.warnings)),
+        "page_sources": [dict(entry) for entry in item.page_sources],
     }
 
 

@@ -85,6 +85,8 @@ class FileState:
             writing a ``.v2`` copy next to it
         warnings: Non-fatal problems of this run (an image whose analysis
             failed); in memory only, never written to the state file
+        page_sources: For a PDF, where each page's text came from (see
+            ``ProcessResult.page_sources``); in memory only
         earlier_run: Completed by an earlier run of this batch (loaded as
             completed by ``--resume``); in memory only
         usage_unknown: Completed by an earlier run whose state did not
@@ -109,6 +111,7 @@ class FileState:
     warnings: list[str] = field(default_factory=list)
     earlier_run: bool = False
     usage_unknown: bool = False
+    page_sources: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -657,6 +660,8 @@ class ProcessResult:
             reports it beside the English ``error``
         page_html: The HTML page a URL's content was converted from, when
             this process fetched it (the web server keeps it for Compare)
+        page_sources: For a PDF, where each page's text came from
+            (``ConversionContext.page_sources``); empty otherwise
     """
 
     success: bool
@@ -672,6 +677,7 @@ class ProcessResult:
     warnings: list[str] = field(default_factory=list)
     error_code: str | None = None
     page_html: str | None = None
+    page_sources: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _count(n: int, noun: str) -> str:

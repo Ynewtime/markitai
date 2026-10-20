@@ -2466,7 +2466,9 @@ class TestNativePicturesWithoutOcrBackend:
 
         records, sink_id = _capture_records("WARNING")
         try:
-            read = PdfConverter(config=MarkitaiConfig())._ocr_native_page_pictures(
+            read, pages = PdfConverter(
+                config=MarkitaiConfig()
+            )._ocr_native_page_pictures(
                 ocr, page_texts, [0], assets, 2, tmp_path / "doc.pdf"
             )
         finally:
@@ -2475,6 +2477,7 @@ class TestNativePicturesWithoutOcrBackend:
             logger.remove(sink_id)
 
         assert read == 0
+        assert pages == set()
         assert page_texts[0] == f"# Heading\n\n{ref}"
         notices = [r for r in records if is_user_notice(r)]
         assert len(notices) == 1

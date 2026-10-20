@@ -42,6 +42,7 @@ from markitai.converter.pdf_tables import restore_flattened_tables
 from markitai.converter.pdf_text_trust import (
     FAILED,
     NO_TEXT_LAYER,
+    TRUSTED,
     GlyphCheck,
     LayerVerdict,
     failed,
@@ -217,6 +218,108 @@ def _collect_native_text_pages(
         or (verdict.status == "failed" and not _ocr_reads(verdict, readable))
     ]
     return native, verdicts
+
+
+# --- where each page's text came from ------------------------------------------
+
+
+def _page_source(page: int, source: str, reason: str) -> dict[str, Any]:
+    """One entry of ``metadata["page_sources"]``: ``source`` is ``text`` (the
+    text layer), ``ocr`` or ``mixed`` (the text layer with OCR'd pictures,
+    or a vision model reading the page beside it)."""
+    return {"page": page, "source": source, "reason": reason}
+
+
+def _text_layer_sources(
+    pages: Iterable[int], verdicts: dict[int, LayerVerdict]
+) -> list[dict[str, Any]]:
+    """Every page from its text layer (no OCR), with what the checks said."""
+    return [
+        _page_source(
+            page,
+            "text",
+            verdicts[page].reason if page in verdicts else "text layer (not checked)",
+        )
+        for page in pages
+    ]
+
+
+#: Why every page is OCR'd when per-page routing is off
+OCR_FORCED = "OCR forced by --ocr (ocr.per_page_routing is off)"
+#: Why every page is a vision model's reading of its image and text layer
+VLM_READ = (
+    "OCR forced by --ocr: the vision model reads the page image beside its text layer"
+)
+
+
+def _ocr_sources(
+    total_pages: int,
+    *,
+    routing: bool,
+    native_pages: Iterable[int],
+    verdicts: dict[int, LayerVerdict],
+    empty_pages: Iterable[int],
+    picture_pages: Iterable[int],
+    ocr_lang: str,
+) -> list[dict[str, Any]]:
+    """Where each page's text came from on the ``--ocr`` path (RapidOCR).
+
+    *native_pages*, *empty_pages* (OCR'd, nothing found) and
+    *picture_pages* (native pages whose pictures OCR read text from) are
+    0-based; *verdicts* are the routing check's, by 1-based page.
+    """
+    native, empty, pictures = set(native_pages), set(empty_pages), set(picture_pages)
+    sources = []
+    for index in range(total_pages):
+        page = index + 1
+        verdict = verdicts.get(page)
+        if index in native:
+            reason = verdict.reason if verdict else TRUSTED
+            if verdict is not None and verdict.status == "failed":
+                script = verdict.script or "this script"
+                reason += (
+                    f"; kept, since OCR with ocr.lang {ocr_lang} does not read {script}"
+                )
+            if index in pictures:
+                sources.append(
+                    _page_source(page, "mixed", f"{reason}; text in its pictures OCR'd")
+                )
+            else:
+                sources.append(_page_source(page, "text", reason))
+            continue
+        if not routing:
+            reason = OCR_FORCED
+        elif verdict is None:
+            reason = "OCR forced by --ocr (the text-layer check could not run)"
+        elif verdict.status == "trusted":
+            reason = "text layer trusted, but its extraction failed"
+        else:
+            reason = verdict.reason
+        if index in empty:
+            reason += "; OCR found no text"
+        sources.append(_page_source(page, "ocr", reason))
+    return sources
+
+
+def _log_page_sources(input_path: Path, sources: list[dict[str, Any]]) -> None:
+    """Debug-log where the pages' text came from, and why when not trusted."""
+    counts: dict[str, int] = {}
+    for entry in sources:
+        counts[entry["source"]] = counts.get(entry["source"], 0) + 1
+        if entry["reason"] != TRUSTED:
+            logger.debug(
+                "[PDF] {} page {}: {} ({})",
+                input_path.name,
+                entry["page"],
+                entry["source"],
+                entry["reason"],
+            )
+    if counts:
+        logger.debug(
+            "[PDF] {}: page text from {}",
+            input_path.name,
+            ", ".join(f"{name} {n}" for name, n in sorted(counts.items())),
+        )
 
 
 # Pages read at once in this process, at most: its engine already spreads
@@ -549,6 +652,16 @@ class _MergedRuns(Generic[_T]):
     def result(self) -> _T | None:
         parts = [part for run in self._runs if (part := run.result()) is not None]
         return self._merge(parts) if parts else None
+
+
+class _Resolved(Generic[_T]):
+    """A result already in hand, where a pending one is expected."""
+
+    def __init__(self, value: _T) -> None:
+        self._value = value
+
+    def result(self) -> _T:
+        return self._value
 
 
 def _merge_hidden(parts: list[dict[int, list[str]]]) -> dict[int, list[str]]:
@@ -904,10 +1017,11 @@ class PdfConverter(BaseConverter):
             # read those pages: the workflow then says it (or not) once it
             # knows, see ``workflow.core.settle_scan_notice``.
             config = self.config
+            advisories = advisory_scan.result()
             scan_notice = self._warn_scanned_or_garbled(
                 input_path,
                 total_pages=len(page_numbers),
-                prescanned=advisory_scan,
+                prescanned=_Resolved(advisories),
                 defer=bool(
                     config is not None
                     and config.llm.enabled
@@ -1034,7 +1148,11 @@ class PdfConverter(BaseConverter):
                 "source": str(input_path),
                 "format": "PDF",
                 "images": len(images),
+                "page_sources": _text_layer_sources(
+                    page_numbers, advisories.verdicts if advisories else {}
+                ),
             }
+            _log_page_sources(input_path, metadata["page_sources"])
             if reference_images and output_dir:
                 metadata["reference_images"] = reference_images
 
@@ -1847,9 +1965,9 @@ class PdfConverter(BaseConverter):
 
             # Pictures on native pages (a chart or a pasted scan next to real
             # text) are exactly what --ocr is for; read them too.
-            pictures_read = 0
+            pictures_read, picture_pages = 0, set[int]()
             if assets_dir is not None:
-                pictures_read = self._ocr_native_page_pictures(
+                pictures_read, picture_pages = self._ocr_native_page_pictures(
                     ocr, page_texts, native_pages, assets_dir, max_workers, input_path
                 )
 
@@ -1913,7 +2031,17 @@ class PdfConverter(BaseConverter):
                 "images": len(embedded_images),
                 "extracted_text": extracted_text,
                 "page_images": page_images,
+                "page_sources": _ocr_sources(
+                    total_pages,
+                    routing=per_page_routing,
+                    native_pages=native_pages,
+                    verdicts=verdicts,
+                    empty_pages=[page - 1 for page in empty_pages],
+                    picture_pages=picture_pages,
+                    ocr_lang=self._ocr_lang,
+                ),
             }
+            _log_page_sources(input_path, metadata["page_sources"])
             if reference_images and output_dir:
                 metadata["reference_images"] = reference_images
 
@@ -2016,7 +2144,7 @@ class PdfConverter(BaseConverter):
         assets_dir: Path,
         max_workers: int,
         input_path: Path,
-    ) -> int:
+    ) -> tuple[int, set[int]]:
         """OCR the sizable pictures referenced on native pages, in place.
 
         Recognized text goes right under the picture's reference. Pictures
@@ -2025,7 +2153,8 @@ class PdfConverter(BaseConverter):
         and raises a notice; the page's own text is unaffected.
 
         Returns:
-            Number of pictures OCR was run on
+            Number of pictures OCR was run on, and the 0-based pages whose
+            pictures it read text from
         """
         from urllib.parse import unquote
 
@@ -2047,7 +2176,7 @@ class PdfConverter(BaseConverter):
                 if width * height >= _PICTURE_OCR_MIN_PIXELS:
                     targets.append((page, match.group(0), path))
         if not targets:
-            return 0
+            return 0, set()
 
         def read(target: tuple[int, str, Path]) -> str:
             return ocr.recognize(target[2]).text.strip()
@@ -2073,11 +2202,13 @@ class PdfConverter(BaseConverter):
             # fine without OCR; only the pictures go unread. Say so instead of
             # failing a PDF that never needed the backend before.
             user_notice("[OCR] Pictures in {} were not read: {}", input_path.name, e)
-            return 0
+            return 0, set()
 
+        pages_read: set[int] = set()
         for (page, ref, _path), text in recognized.items():
             if text:
                 page_texts[page] = page_texts[page].replace(ref, f"{ref}\n\n{text}", 1)
+                pages_read.add(page)
         if unreadable:
             user_notice(
                 "[OCR] Could not read {} picture(s) in {}: {}",
@@ -2085,7 +2216,7 @@ class PdfConverter(BaseConverter):
                 input_path.name,
                 ", ".join(sorted(unreadable)),
             )
-        return len(targets)
+        return len(targets), pages_read
 
     def _degrade_vlm_ocr(
         self, input_path: Path, output_dir: Path | None
@@ -2233,6 +2364,16 @@ class PdfConverter(BaseConverter):
             self.config, page_count=len(page_images) if page_images else None
         )
 
+        # Each page goes to the model as its rendered image and its text
+        # layer; without an image (no output dir) only the text is there.
+        rendered = {info["page"] for info in page_images}
+        page_sources = [
+            _page_source(page, "mixed", VLM_READ)
+            if page in rendered
+            else _page_source(page, "text", "text layer (no page image to read)")
+            for page in page_numbers
+        ]
+        _log_page_sources(input_path, page_sources)
         return ConvertResult(
             markdown=extracted_text,
             images=images,
@@ -2243,5 +2384,6 @@ class PdfConverter(BaseConverter):
                 "ocr_path": "vlm",
                 "extracted_text": extracted_text,
                 "page_images": page_images,
+                "page_sources": page_sources,
             },
         )

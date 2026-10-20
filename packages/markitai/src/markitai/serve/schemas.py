@@ -728,6 +728,18 @@ class RerunFailure(BaseModel):
     failed_at: str
 
 
+class PageSource(BaseModel):
+    """Where one PDF page's text came from (beyond the workbench contract)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    page: int  # 1-based
+    source: Literal["text", "ocr", "mixed"]
+    # Short English note: "text layer trusted", "no text layer", "text layer
+    # failed the script check: ...", "OCR forced by --ocr ..."
+    reason: str
+
+
 class ItemPayload(BaseModel):
     """Payload of SSE ``event: item`` (and of items inside the snapshot).
 
@@ -764,6 +776,8 @@ class ItemPayload(BaseModel):
     options: JobOptionsEcho | None = None  # this item's saved selections
     # Contract v1.6, 6.6: a failed retry/enhance kept the previous result
     rerun_failure: RerunFailure | None = None
+    # A PDF's pages, each with where its text came from; empty otherwise
+    page_sources: list[PageSource] = Field(default_factory=list)
 
 
 class JobPayload(BaseModel):

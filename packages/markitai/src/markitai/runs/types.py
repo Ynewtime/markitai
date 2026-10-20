@@ -47,6 +47,9 @@ class Outcome:
             run reports it with what that run recorded, but did not redo it.
         usage_unknown: The earlier run's state did not record the item's
             cost and usage (an older markitai): unknown, not zero.
+        page_sources: For a PDF, where each page's text came from:
+            ``{"page", "source", "reason"}`` entries, ``source`` one of
+            ``text``, ``ocr`` or ``mixed``. Empty for other items.
     """
 
     kind: Literal["file", "url"]
@@ -68,3 +71,4 @@ class Outcome:
     duration: float | None = None
     earlier_run: bool = False
     usage_unknown: bool = False
+    page_sources: list[dict[str, Any]] = field(default_factory=list)

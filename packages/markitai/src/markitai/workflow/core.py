@@ -121,6 +121,16 @@ class ConversionContext:
             return self.llm_output_file
         return self.output_file
 
+    @property
+    def page_sources(self) -> list[dict[str, Any]]:
+        """Where each PDF page's text came from: ``{"page", "source",
+        "reason"}`` entries, ``source`` one of ``text`` (the text layer),
+        ``ocr`` or ``mixed``. Empty for every other format."""
+        if self.conversion_result is None:
+            return []
+        sources = self.conversion_result.metadata.get("page_sources")
+        return [dict(entry) for entry in sources] if sources else []
+
 
 @dataclass
 class ConversionStepResult:
