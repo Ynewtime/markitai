@@ -12,6 +12,20 @@
 - **能识别存在却读错的 PDF 文字层。** 以前只能识别辅音乱码；现在还能识别把字母映射到私用区、替换字符或 `(cid:NN)` 编码的字体，被当成 Windows-1252 读出的 UTF-8（`cafÃ©`），以及按相反顺序存放的从右到左的希伯来文或阿拉伯文。这些页面并入扫描页提示（`[PDF] plan.pdf: 2 of 40 pages look scanned/garbled (pages 7–8); consider re-running with --ocr`），`--ocr` 会对它们做 OCR，而不是提取文字层。在 `--ocr` 下，还会把每种字体的几小段文字裁出来交给识别器读，揪出编码代表的字母和画出来的不一样的旧式字体（用拉丁字母编码的中日韩字形、整体移位的字母表）：每个文档每种字体两段，每页最多四段。页面所用的文字是配置的 `ocr.lang` 读不了的，就保留文字层，并提示哪个 `ocr.lang` 能读（`… right-to-left text in reverse order; consider re-running with --ocr and ocr.lang set to ar`）。中文、日文、英文、代码、表格和公式页面不受影响，Markdown 不变。这种检查文字层的思路来自 [Indra OCR](https://github.com/datalab-to/indra)，代码由 markitai 自己实现。
 - **PDF 每页都说明文字来自哪里。** `page_sources` 把各页列成 `{"page", "source", "reason"}`：`source` 是 `text`（文字层）、`ocr` 或 `mixed`（文字层加上对其中图片的 OCR，或在 `--ocr --llm` 下视觉模型对照文字层读页面图片），`reason` 是一句简短说明，比如 `text layer trusted`、`no text layer`、`text layer failed the script check: …` 或 `OCR forced by --ocr (ocr.per_page_routing is off)`。它出现在 `--json` 条目、Python API 的 `ConversionOutput`、记录的历史和 `markitai serve` 的条目里（workbench 会忽略这个新增字段）；`--verbose` 会在日志里列出没有被直接信任的页面。
 
+### 修复
+
+- **OpenDocument 文本保留脚注和链接，只输出真正的正文。** `.odt` 的脚注和尾注变成 `[^n]` 引用，内容放在文末（原本夹在句子中间）；链接保留地址；批注和修订中被删除的文字不再输出（原本被当成正文读出，`.ods` 单元格里也是如此）。
+- **幻灯片中的每个形状各自成为一个 Markdown 块。** PPTX 幻灯片上紧跟在表格后的图片或文本框原本粘在表格最后一行上，被读成表格多出来的一行。
+- **带 UTF-8 BOM 的 CSV 文件**（Excel 的“CSV UTF-8”）不再把 BOM 放在第一个列名前面。
+- **本地 HTML 文件所在文件夹的名字含 `#` 或 `%` 时，相对路径的图片和链接不再失效。** 它们的基准地址原本是手工拼出来的，遇到 `#` 就断了。
+- **目录批量转换时，`--glob` 按符号链接自己的名字匹配**，而不是按它指向的文件名。
+- **UTF-8 文本网址不再变成乱码。** `.md`、`.txt`、`.csv`、`.json` 地址先按 `Content-Type` 解码，之后又根据开头的字节重新猜一次编码，于是较短或以 ASCII 为主的文件会被读成 Windows-1252 或 GB18030（raw.githubusercontent.com 上 defuddle 的 README 变成 `deÂ·â€‹fudÂ·dle`）。
+- **不经浏览器抓到的人机验证页面不再被当成网页内容。** PyPI 的 “Client Challenge” 转换后只剩一句普通的话（“A required part of this site couldn't load …”），`auto` 把它当作内容返回。现在会检查抓到的 HTML 是否是整页拦截页（Cloudflare、DataDome、PerimeterX、Incapsula、AWS WAF、Fastly）或含有验证用语：`auto` 改用浏览器，`--strategy static` 报告遇到了验证页。表单页上的 reCAPTCHA 或 Turnstile 不算拦截页。
+- **网页正文提取保留数据表格的表头行和列表项内嵌套的列表。** `<tr class="header">`（pandoc 就这样写）原本被当成页面装饰删掉，表格因此没有表头；列表项内嵌套的短列表也可能被当成元数据列表丢掉。
+- **浏览器启动期间按 Ctrl-C 不再让 `markitai serve` 卡住**（任何正在用 Playwright 抓取的运行也是如此）；以前需要再强制结束一次。
+- **只有已安装的 Playwright 实际会启动的 Chromium 版本才算已安装。** `markitai doctor`、`serve` 和抓取流程原本把任何 `chromium-*` 文件夹都当作已安装，于是其他 Playwright 版本留下的浏览器能通过检查，启动时却失败。
+- **`{"operation": "enhance"}` 可以增强未经 LLM 转换的条目。** `POST /api/jobs/{job_id}/items/{item_id}/retry` 原本沿用条目保存的选项，以 `minimal` 预设或 `"llm": false` 转换的条目会得到 409 `llm_unavailable`；现在除非请求的选项写明 `"llm": false`，enhance 都会开启 LLM。
+
 ## [1.2.1] - 2026-10-18
 
 ### 新增
