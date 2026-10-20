@@ -41,6 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Pressing Ctrl-C while the browser starts no longer hangs `markitai serve`** (or any run with a Playwright fetch in flight); it used to need a second kill.
 - **Only the Chromium build that the installed Playwright launches counts as installed.** `markitai doctor`, `serve` and the fetch chain took any `chromium-*` folder for one, so a browser left over from another Playwright version passed the check and then failed to launch.
 - **`{"operation": "enhance"}` enhances an item converted without the LLM.** `POST /api/jobs/{job_id}/items/{item_id}/retry` reran the item with its saved options, so an item converted with preset `minimal` or `"llm": false` got 409 `llm_unavailable`; enhance now turns the LLM on unless the request's options say `"llm": false`.
+- **A password-protected PDF, or one without pages, says so.** They failed with `TypeError: 'NoneType' object is not subscriptable` and `IndexError: range object index out of range` from inside the extraction library; the error now reads `report.pdf is password-protected; decrypt it before converting` or `report.pdf has no pages`. A PDF that only restricts printing or copying (an owner password, no user password) converts as before.
 
 ## [1.2.1] - 2026-10-18
 

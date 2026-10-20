@@ -66,7 +66,7 @@ from markitai.ocr import (
     ocr_readable_scripts,
 )
 from markitai.utils.cjk_radicals import fold_cjk_radicals
-from markitai.utils.errors import MissingDependencyError
+from markitai.utils.errors import ConversionError, MissingDependencyError
 from markitai.utils.mime import get_mime_type, normalize_image_extension
 from markitai.utils.page_chrome import strip_repeated_page_lines
 from markitai.utils.paths import (
@@ -335,6 +335,34 @@ _MAX_OCR_THREADS = 8
 # Pictures on native pages smaller than this (pixels at the render DPI, about
 # 1.8 square inches at 150 DPI) are icons, logos or rules: not worth an OCR pass.
 _PICTURE_OCR_MIN_PIXELS = 40_000
+
+
+def _check_openable(input_path: Path) -> None:
+    """Refuse a PDF that opens but cannot be converted, with a clear reason.
+
+    A password-protected PDF failed deep in pymupdf4llm with ``TypeError:
+    'NoneType' object is not subscriptable``, one without pages with
+    ``IndexError: range object index out of range``. A file PyMuPDF cannot
+    open at all is left to the extraction, which reports its own error.
+
+    Raises:
+        ConversionError: The PDF needs a password, or has no pages.
+    """
+    import pymupdf
+
+    try:
+        doc = pymupdf.open(input_path)
+    except Exception:
+        return
+    try:
+        if doc.needs_pass:
+            raise ConversionError(
+                f"{input_path.name} is password-protected; decrypt it before converting"
+            )
+        if doc.page_count == 0:
+            raise ConversionError(f"{input_path.name} has no pages")
+    finally:
+        doc.close()
 
 
 def _document_title(input_path: Path) -> str:
@@ -888,7 +916,11 @@ class PdfConverter(BaseConverter):
 
         Returns:
             ConvertResult containing markdown and extracted images
+
+        Raises:
+            ConversionError: The PDF needs a password, or has no pages.
         """
+        _check_openable(Path(input_path))
         result = self._convert(Path(input_path), output_dir)
         if not result.metadata.get("title"):
             title = _document_title(Path(input_path))

@@ -565,6 +565,7 @@ class TestConvertWithOCR:
         # Setup mock document
         mock_pymupdf = Mock()
         mock_doc = MagicMock()
+        mock_doc.needs_pass = 0
         mock_doc.__len__ = Mock(return_value=2)
         mock_doc.__enter__ = Mock(return_value=mock_doc)
         mock_doc.__exit__ = Mock(return_value=None)
@@ -636,6 +637,7 @@ class TestConvertWithScreenshot:
         mock_page.get_pixmap.return_value = mock_pix
 
         mock_doc = MagicMock()
+        mock_doc.needs_pass = 0
         mock_doc.__len__ = Mock(return_value=1)
         mock_doc.__getitem__ = Mock(return_value=mock_page)
         mock_doc.close = Mock()
@@ -709,6 +711,7 @@ class TestRenderPagesForLLM:
         mock_page.get_pixmap.return_value = mock_pix
 
         mock_doc = MagicMock()
+        mock_doc.needs_pass = 0
         mock_doc.__len__ = Mock(return_value=2)
         mock_doc.__getitem__ = Mock(return_value=mock_page)
         mock_doc.__enter__ = Mock(return_value=mock_doc)
@@ -1059,6 +1062,76 @@ class TestErrorHandling:
         with pytest.raises(Exception, match="PDF parsing failed"):
             converter.convert(pdf_file)
 
+    @pytest.mark.parametrize(
+        "config",
+        [
+            None,
+            MarkitaiConfig(ocr=OCRConfig(enabled=True), llm=LLMConfig(enabled=False)),
+        ],
+        ids=["standard", "ocr"],
+    )
+    def test_password_protected_pdf_says_so(
+        self, tmp_path: Path, config: MarkitaiConfig | None
+    ) -> None:
+        """A PDF that needs a password failed with "TypeError: 'NoneType'
+        object is not subscriptable" from inside pymupdf4llm."""
+        import pymupdf
+
+        from markitai.utils.errors import ConversionError
+
+        pdf_file = tmp_path / "locked.pdf"
+        with pymupdf.open() as doc:
+            doc.new_page().insert_text((72, 72), "Secret text " * 10)
+            doc.save(
+                pdf_file,
+                encryption=pymupdf.PDF_ENCRYPT_AES_256,
+                user_pw="user",
+                owner_pw="owner",
+            )
+
+        with pytest.raises(ConversionError, match="locked.pdf is password-protected"):
+            PdfConverter(config).convert(pdf_file, tmp_path / "out")
+
+    def test_pdf_with_owner_password_only_converts(self, tmp_path: Path) -> None:
+        """Permissions without a user password open without one: no refusal."""
+        import pymupdf
+
+        pdf_file = tmp_path / "restricted.pdf"
+        with pymupdf.open() as doc:
+            doc.new_page().insert_text((72, 72), "Readable text " * 5)
+            doc.save(
+                pdf_file,
+                encryption=pymupdf.PDF_ENCRYPT_AES_256,
+                owner_pw="owner",
+                permissions=pymupdf.PDF_PERM_PRINT,
+            )
+
+        result = PdfConverter().convert(pdf_file)
+
+        assert "Readable text" in result.markdown
+
+    def test_pdf_without_pages_says_so(self, tmp_path: Path) -> None:
+        """A PDF whose page tree is empty failed with "IndexError: range
+        object index out of range" from inside pymupdf4llm."""
+        from markitai.utils.errors import ConversionError
+
+        body = (
+            b"%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n"
+            b"2 0 obj<</Type/Pages/Kids[]/Count 0>>endobj\n"
+        )
+        xref = len(body)
+        body += (
+            b"xref\n0 3\n0000000000 65535 f \n0000000009 00000 n \n"
+            b"0000000052 00000 n \ntrailer<</Size 3/Root 1 0 R>>\nstartxref\n"
+            + str(xref).encode()
+            + b"\n%%EOF\n"
+        )
+        pdf_file = tmp_path / "empty.pdf"
+        pdf_file.write_bytes(body)
+
+        with pytest.raises(ConversionError, match="empty.pdf has no pages"):
+            PdfConverter().convert(pdf_file)
+
     def test_ocr_import_error_handling(self, tmp_path: Path) -> None:
         """Test that ImportError is raised when pymupdf is not available in OCR mode."""
         pdf_file = tmp_path / "test.pdf"
@@ -1145,6 +1218,7 @@ class TestRenderPagesForLLMWithoutScreenshot:
         mock_page.get_pixmap.return_value = mock_pix
 
         mock_doc = MagicMock()
+        mock_doc.needs_pass = 0
         mock_doc.__len__ = Mock(return_value=2)
         mock_doc.__getitem__ = Mock(return_value=mock_page)
         mock_doc.close = Mock()
@@ -1331,6 +1405,7 @@ class TestScreenshotExtensionConsistency:
         mock_page.get_pixmap.return_value = mock_pix
 
         mock_doc = MagicMock()
+        mock_doc.needs_pass = 0
         mock_doc.__len__ = Mock(return_value=1)
         mock_doc.__getitem__ = Mock(return_value=mock_page)
         mock_doc.close = Mock()
