@@ -12,6 +12,10 @@
 - **能识别存在却读错的 PDF 文字层。** 以前只能识别辅音乱码；现在还能识别把字母映射到私用区、替换字符或 `(cid:NN)` 编码的字体，被当成 Windows-1252 读出的 UTF-8（`cafÃ©`），以及按相反顺序存放的从右到左的希伯来文或阿拉伯文。这些页面并入扫描页提示（`[PDF] plan.pdf: 2 of 40 pages look scanned/garbled (pages 7–8); consider re-running with --ocr`），`--ocr` 会对它们做 OCR，而不是提取文字层。在 `--ocr` 下，还会把每种字体的几小段文字裁出来交给识别器读，揪出编码代表的字母和画出来的不一样的旧式字体（用拉丁字母编码的中日韩字形、整体移位的字母表）：每个文档每种字体两段，每页最多四段。页面所用的文字是配置的 `ocr.lang` 读不了的，就保留文字层，并提示哪个 `ocr.lang` 能读（`… right-to-left text in reverse order; consider re-running with --ocr and ocr.lang set to ar`）。中文、日文、英文、代码、表格和公式页面不受影响，Markdown 不变。这种检查文字层的思路来自 [Indra OCR](https://github.com/datalab-to/indra)，代码由 markitai 自己实现。
 - **PDF 每页都说明文字来自哪里。** `page_sources` 把各页列成 `{"page", "source", "reason"}`：`source` 是 `text`（文字层）、`ocr` 或 `mixed`（文字层加上对其中图片的 OCR，或在 `--ocr --llm` 下视觉模型对照文字层读页面图片），`reason` 是一句简短说明，比如 `text layer trusted`、`no text layer`、`text layer failed the script check: …` 或 `OCR forced by --ocr (ocr.per_page_routing is off)`。它出现在 `--json` 条目、Python API 的 `ConversionOutput`、记录的历史和 `markitai serve` 的条目里（workbench 会忽略这个新增字段）；`--verbose` 会在日志里列出没有被直接信任的页面。
 
+### 变更
+
+- **长 PDF 用上所有核提取，也不再拖住同时转换的其他 PDF。** 提取用的工作进程（CLI、`markitai serve`、MCP）原来是 CPU 核数减二：4 核的机器只用两个核提取，主进程只是等待工作进程，另外两个核就空着。现在每个本进程可用的核一个工作进程（taskset 和容器的 CPU 集合都算在内），仍然最多 12 个，合计不超过可用内存的四分之一，所以 14 核及以上的机器不变。文档以每任务四页交给工作进程，同一时刻每个工作进程一个任务（外加一个排队），原来是每个工作进程一整段、一次全部提交：同时转换的 PDF（例如工作台的第二个任务、批处理的下一个文件）只需等一个任务，而不是等整篇文档。页面截图（`--screenshot`，以及 `--ocr --llm` 发给模型的页面）在工作进程运行时由它们渲染；PyMuPDF 渲染时持有 Python 的 GIL，原来在主进程里渲染的多个线程只能轮流进行。输出逐字节相同。在 4 核 Linux 机器上（409 页的文字 PDF，冷启动 CLI）：53–55 秒 → 29–32 秒，CPU 时间不变，约 100 秒，峰值内存 0.8 GB → 1.3 GB（四个工作进程，每个约 380 MB）。在它开始 3 秒后启动的 5 页 PDF 原来 55–65 秒后才完成，现在 1.4–4.7 秒。166 页、带图片并开启 `--screenshot` 的 PDF 在主进程里只花 1.0 秒 CPU，原来是 6.3 秒。
+
 ### 修复
 
 - **OpenDocument 文本保留脚注和链接，只输出真正的正文。** `.odt` 的脚注和尾注变成 `[^n]` 引用，内容放在文末（原本夹在句子中间）；链接保留地址；批注和修订中被删除的文字不再输出（原本被当成正文读出，`.ods` 单元格里也是如此）。

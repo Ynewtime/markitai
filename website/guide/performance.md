@@ -97,6 +97,35 @@ The workbench job also includes a fix to the Markdown cleanup, which spent
 at 150 dpi: 120 and 200 dpi read the invented pages no better, and the
 detector, the only step the resolution changes, is a small part of a page.
 
+## PDF extraction on every core (20 October 2026)
+
+The PDF workers used to be the CPU count minus two, leaving cores to the main
+process, which only waits for them while they extract. On a 4-core machine a
+long PDF was extracted on two cores. There is now one worker per core the
+process may use, still at most 12 and no more than a quarter of the available
+memory. A document goes to the workers in tasks of four pages, one per worker
+and one waiting at a time, so a PDF converted at the same time (another
+workbench job, the next file of a batch) waits for a task rather than for the
+whole document. Page screenshots are rendered in the workers when they are
+running: PyMuPDF holds Python's GIL while it renders, so threads in the main
+process rendered one page at a time. The output is byte-identical.
+
+Invented PDFs, cold CLI, a 4-core Linux machine shared with other work
+(interleaved runs; the first row at raised priority, so that other work took
+little of the cores):
+
+| Workload | Before | Now |
+| --- | ---: | ---: |
+| 409-page text PDF | 53–55 s | 29–32 s |
+| Its CPU time | about 100 s | about 103 s |
+| Its peak memory (all processes, PSS) | 0.8 GB | 1.3 GB |
+| A 5-page PDF started 3 s into it | 55–65 s | 1.4–4.7 s |
+| 166-page PDF with pictures, `--screenshot`: main-process CPU | 6.3 s | 1.0 s |
+
+In one process, with onnxruntime spreading each page over every core, the
+same 409 pages take 101 s and 276 s of CPU time. Machines with 14 or more
+cores already had 12 workers and are unchanged.
+
 ## Understanding a slow run
 
 `-v` prints the selected strategy and the reason for each fallback. `--no-cache`
