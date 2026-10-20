@@ -42,7 +42,9 @@ from markitai.converter.pdf_tables import restore_flattened_tables
 from markitai.converter.pdf_text_trust import (
     FAILED,
     NO_TEXT_LAYER,
+    GlyphCheck,
     LayerVerdict,
+    failed,
     judge_text,
 )
 from markitai.image import ImageProcessor
@@ -100,19 +102,25 @@ def _page_image_coverage(page: Any) -> float:
 
 
 def collect_page_verdicts(
-    doc: Any, pages: Iterable[int] | None = None
+    doc: Any,
+    pages: Iterable[int] | None = None,
+    *,
+    glyph_check: GlyphCheck | None = None,
 ) -> dict[int, LayerVerdict]:
     """Judge each page's text layer (``converter.pdf_text_trust``).
 
     A page with less than ``_SCANNED_MAX_TEXT_CHARS`` of text has no text
     layer to speak of: ``scanned`` when pictures cover half of it or more,
     else ``empty``. Any other page gets the text-only checks of
-    :func:`~markitai.converter.pdf_text_trust.judge_text`. No rendering is
-    performed, so this is cheap even for large documents.
+    :func:`~markitai.converter.pdf_text_trust.judge_text`, which render
+    nothing, so this is cheap even for large documents; with a
+    *glyph_check* (``--ocr``) a page they trust is also compared with what
+    its glyphs draw.
 
     Args:
         doc: An open pymupdf Document
         pages: 0-based pages to check (all when None)
+        glyph_check: Compare the text with OCR of a few crops, per font
 
     Returns:
         1-based page number -> verdict
@@ -130,7 +138,12 @@ def collect_page_verdicts(
                 else NO_TEXT_LAYER,
             )
         else:
-            verdicts[i + 1] = judge_text(text)
+            verdict = judge_text(text)
+            if verdict.status == "trusted" and glyph_check is not None:
+                why = glyph_check.judge(page)
+                if why is not None:
+                    verdict = failed(why)
+            verdicts[i + 1] = verdict
     return verdicts
 
 
@@ -173,7 +186,10 @@ def _ocr_reads(verdict: LayerVerdict, readable: frozenset[str]) -> bool:
 
 
 def _collect_native_text_pages(
-    doc: Any, *, readable: frozenset[str]
+    doc: Any,
+    *,
+    readable: frozenset[str],
+    glyph_check: GlyphCheck | None = None,
 ) -> tuple[list[int], dict[int, LayerVerdict]]:
     """The pages whose text layer passes the checks, and every verdict.
 
@@ -187,11 +203,13 @@ def _collect_native_text_pages(
     Args:
         doc: An open pymupdf Document
         readable: The writing systems the configured OCR language reads
+        glyph_check: Also compare each page's text with what its glyphs
+            draw (see :func:`collect_page_verdicts`)
 
     Returns:
         (0-based native pages in order, 1-based page number -> verdict)
     """
-    verdicts = collect_page_verdicts(doc)
+    verdicts = collect_page_verdicts(doc, glyph_check=glyph_check)
     native = [
         number - 1
         for number, verdict in sorted(verdicts.items())
@@ -1679,13 +1697,17 @@ class PdfConverter(BaseConverter):
         native_pages: list[int] = []
         verdicts: dict[int, LayerVerdict] = {}
         readable = ocr_readable_scripts(self._ocr_lang)
+        # The text layer is also checked against what its glyphs draw: a few
+        # crops per font read by the recognizer (the engine loads on the
+        # first crop, so a document without a text layer never loads it here)
+        glyph_check = GlyphCheck(ocr.read_lines, readable)
         doc = pymupdf.open(input_path)
         try:
             total_pages = len(doc)
             if per_page_routing:
                 try:
                     native_pages, verdicts = _collect_native_text_pages(
-                        doc, readable=readable
+                        doc, readable=readable, glyph_check=glyph_check
                     )
                 except Exception as e:
                     logger.debug("[PDF] OCR routing check failed: {}", e)
@@ -1694,9 +1716,11 @@ class PdfConverter(BaseConverter):
             doc.close()
         if per_page_routing:
             logger.debug(
-                "OCR routing: {} pages native, {} pages OCR",
+                "OCR routing: {} pages native, {} pages OCR ({} line crops read "
+                "for the glyph check)",
                 len(native_pages),
                 total_pages - len(native_pages),
+                glyph_check.crops,
             )
             kept = [
                 i + 1

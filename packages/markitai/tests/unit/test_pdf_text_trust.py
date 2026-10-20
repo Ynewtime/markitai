@@ -20,7 +20,9 @@ from markitai.converter.pdf_text_trust import (
     FAILED,
     NO_TEXT_LAYER,
     TRUSTED,
+    GlyphCheck,
     char_script,
+    compare_sample,
     dominant_script,
     judge_text,
 )
@@ -266,3 +268,225 @@ class TestNotices:
             tmp_path / "he.pdf", fixtures.HEBREW, reversed_layer=False
         )
         assert self._convert(good) == []
+
+
+class TestCompareSample:
+    def test_matching_text(self) -> None:
+        assert compare_sample("The committee met on", "The comittee met on") == (
+            True,
+            "",
+        )
+        assert compare_sample("本报告介绍了城市公共", "本报告介绍了城市公共") == (
+            True,
+            "",
+        )
+
+    def test_another_script(self) -> None:
+        agrees, why = compare_sample("gvuijomwshcaakpe", "本报告介绍了城市公共图书馆")
+        assert agrees is False
+        assert why == "the layer reads Latin, the page shows CJK"
+
+    def test_another_text(self) -> None:
+        agrees, why = compare_sample("cqi luvvoccii vic uw", "the committee met on")
+        assert agrees is False
+        assert "not what its glyphs draw" in why
+
+    def test_ocr_read_nothing(self) -> None:
+        assert compare_sample("The committee met on", "") == (None, "")
+        assert compare_sample("The committee met on", "1") == (None, "")
+
+
+class _Reader:
+    """Stands in for the recognizer: answers each crop from a script."""
+
+    def __init__(self, answer: str | Exception) -> None:
+        self.answer = answer
+        self.calls: list[int] = []
+
+    def __call__(self, images: list[object]) -> list[str]:
+        self.calls.append(len(images))
+        if isinstance(self.answer, Exception):
+            raise self.answer
+        return [self.answer] * len(images)
+
+
+class TestGlyphCheck:
+    """``GlyphCheck`` with a stand-in recognizer: the decision, not OCR."""
+
+    LATIN_READ = frozenset({"Latin", "CJK"})
+
+    def _verdicts(self, path: Path, reader: _Reader) -> dict[int, object]:
+        check = GlyphCheck(reader, self.LATIN_READ)
+        with pymupdf.open(path) as doc:
+            return dict(collect_page_verdicts(doc, glyph_check=check))
+
+    def test_text_that_matches_its_glyphs(self, tmp_path: Path) -> None:
+        path = fixtures.text_pdf(
+            tmp_path / "en.pdf", [fixtures.NORMAL_PAGES["english"]]
+        )
+        reader = _Reader("The committee met on")
+        assert self._verdicts(path, reader)[1] == ("trusted", TRUSTED, "Latin")
+        assert reader.calls == [2]  # two crops of the one font, one batch
+
+    def test_text_that_does_not(self, tmp_path: Path) -> None:
+        path = fixtures.text_pdf(
+            tmp_path / "en.pdf", [fixtures.NORMAL_PAGES["english"]]
+        )
+        verdict = self._verdicts(path, _Reader("本报告介绍了城市公共图书馆"))[1]
+        assert verdict == (
+            "failed",
+            FAILED + "the layer reads Latin, the page shows CJK (font Helvetica)",
+            None,
+        )
+
+    def test_each_font_is_sampled_once_per_document(self, tmp_path: Path) -> None:
+        lines = fixtures.NORMAL_PAGES["english"]
+        path = fixtures.text_pdf(tmp_path / "long.pdf", [lines] * 30)
+        reader = _Reader("The committee met on")
+        verdicts = self._verdicts(path, reader)
+        assert all(v == ("trusted", TRUSTED, "Latin") for v in verdicts.values())
+        assert sum(reader.calls) == 2  # not two per page
+
+    def test_a_failing_font_fails_every_page_it_carries(self, tmp_path: Path) -> None:
+        lines = fixtures.NORMAL_PAGES["english"]
+        path = fixtures.text_pdf(tmp_path / "long.pdf", [lines] * 5)
+        verdicts = self._verdicts(path, _Reader("bcdfg hjklm npqrs"))
+        assert [v[0] for v in verdicts.values()] == ["failed"] * 5  # type: ignore[index]
+
+    def test_a_minor_font_does_not_fail_the_page(self, tmp_path: Path) -> None:
+        """A font carrying under 30% of the page's letters is not the page."""
+        page = [("helv", fixtures.LATIN)] * 8 + [("cour", "x = parse(path) + 1")]
+
+        def read(images: list[object]) -> list[str]:
+            return ["The committee met on" if len(images) > 1 else "zzzz qqqq"] * len(
+                images
+            )
+
+        check = GlyphCheck(read, self.LATIN_READ)
+        path = fixtures.text_pdf(tmp_path / "mixed.pdf", [page])
+        with pymupdf.open(path) as doc:
+            assert collect_page_verdicts(doc, glyph_check=check)[1].status == "trusted"
+
+    def test_scripts_ocr_does_not_read_are_not_sampled(self, tmp_path: Path) -> None:
+        path = fixtures.rtl_pdf(
+            tmp_path / "he.pdf", fixtures.HEBREW, reversed_layer=False
+        )
+        reader = _Reader("anything")
+        assert self._verdicts(path, reader)[1].status == "trusted"  # type: ignore[attr-defined]
+        assert reader.calls == []
+
+    def test_ocr_failing_never_fails_the_conversion(self, tmp_path: Path) -> None:
+        path = fixtures.text_pdf(
+            tmp_path / "en.pdf", [fixtures.NORMAL_PAGES["english"]] * 3
+        )
+        reader = _Reader(RuntimeError("engine gone"))
+        verdicts = self._verdicts(path, reader)
+        assert [v[0] for v in verdicts.values()] == ["trusted"] * 3  # type: ignore[index]
+        assert reader.calls == [2]  # gave up after the first failure, page 1
+
+    def test_ocr_routing_sends_the_failed_page_to_ocr(self, tmp_path: Path) -> None:
+        """Page 1 (Helvetica) reads right; page 2's font (Courier) does not."""
+        from markitai.converter.pdf import _collect_native_text_pages
+
+        english = fixtures.NORMAL_PAGES["english"]
+        path = fixtures.text_pdf(
+            tmp_path / "two.pdf", [english, [("cour", line) for _, line in english]]
+        )
+        answers = iter(["The committee met on", "bcdfg hjklm npqrs"])
+
+        def read(images: list[object]) -> list[str]:
+            return [next(answers)] * len(images)
+
+        with pymupdf.open(path) as doc:
+            native, verdicts = _collect_native_text_pages(
+                doc,
+                readable=self.LATIN_READ,
+                glyph_check=GlyphCheck(read, self.LATIN_READ),
+            )
+        assert native == [0]
+        assert verdicts[2].reason == (
+            FAILED + "the layer's text is not what its glyphs draw (font Courier)"
+        )
+
+
+@pytest.fixture(scope="module")
+def read_lines():
+    pytest.importorskip("rapidocr")
+    from markitai.ocr import OCRProcessor
+
+    return OCRProcessor(None).read_lines
+
+
+class TestGlyphCheckWithOcr:
+    """The real recognizer on synthetic pages (needs the OCR extra)."""
+
+    def _verdict(self, path: Path, read) -> object:
+        check = GlyphCheck(read, ocr_readable_scripts("en"))
+        with pymupdf.open(path) as doc:
+            return collect_page_verdicts(doc, glyph_check=check)[1]
+
+    def test_a_shifted_alphabet(self, tmp_path: Path, read_lines) -> None:
+        path = fixtures.mapped_helvetica_pdf(
+            tmp_path / "shift.pdf",
+            [[fixtures.LATIN.lower()] * 6],
+            fixtures.shifted_alphabet(),
+        )
+        with pymupdf.open(path) as doc:  # the text-only checks pass it
+            assert judge_text(str(doc[0].get_text())).status == "trusted"
+        verdict = self._verdict(path, read_lines)
+        assert verdict == (
+            "failed",
+            FAILED + "the layer's text is not what its glyphs draw (font Helvetica)",
+            None,
+        )
+
+    def test_cjk_glyphs_with_a_latin_layer(self, tmp_path: Path, read_lines) -> None:
+        path = fixtures.cjk_glyphs_latin_layer(tmp_path / "legacy.pdf")
+        verdict = self._verdict(path, read_lines)
+        assert verdict == (
+            "failed",
+            FAILED + "the layer reads Latin, the page shows CJK (font Heiti)",
+            None,
+        )
+
+    @pytest.mark.parametrize("kind", sorted(fixtures.NORMAL_PAGES))
+    def test_correct_pages_pass(self, tmp_path: Path, read_lines, kind: str) -> None:
+        path = fixtures.text_pdf(
+            tmp_path / f"{kind}.pdf", [fixtures.NORMAL_PAGES[kind]]
+        )
+        assert self._verdict(path, read_lines).status == "trusted"  # type: ignore[attr-defined]
+
+    def test_two_fonts_of_one_name_with_different_maps(
+        self, tmp_path: Path, read_lines
+    ) -> None:
+        """Both pages use a Helvetica; only page 2's map is shifted. The
+        font name alone would let page 1's samples vouch for page 2."""
+        path = fixtures.mapped_helvetica_pdf(
+            tmp_path / "two.pdf",
+            [fixtures.LATIN_LINES, [line.lower() for line in fixtures.LATIN_LINES]],
+            [{}, fixtures.shifted_alphabet()],
+        )
+        check = GlyphCheck(read_lines, ocr_readable_scripts("en"))
+        with pymupdf.open(path) as doc:
+            verdicts = collect_page_verdicts(doc, glyph_check=check)
+        assert verdicts[1].status == "trusted"
+        assert verdicts[2].status == "failed"
+
+
+def test_ocr_reads_the_page_whose_layer_fails(tmp_path: Path, read_lines) -> None:
+    """--ocr: page 1 keeps its text layer, page 2 (a shifted map) is OCR'd."""
+    from markitai.config import MarkitaiConfig
+
+    path = fixtures.mapped_helvetica_pdf(
+        tmp_path / "doc.pdf",
+        [fixtures.LATIN_LINES, [line.lower() for line in fixtures.LATIN_LINES]],
+        [{}, fixtures.shifted_alphabet()],
+    )
+    config = MarkitaiConfig()
+    config.ocr.enabled = True
+    result = PdfConverter(config).convert(path, tmp_path / "out")
+    page_one, page_two = result.markdown.split("<!-- Page number: 2 -->")
+    assert "Members asked how the opening hours" in page_one
+    assert "members asked how the opening hours" in page_two.lower()
+    shifted = "".join(fixtures.shifted_alphabet().get(c, c) for c in "members asked")
+    assert shifted not in page_two

@@ -21,6 +21,15 @@ LATIN = (
     "The committee met on Tuesday to review the annual budget and the "
     "plans for the new library."
 )
+# Distinct lines: the glyph check never samples the same text twice
+LATIN_LINES = [
+    LATIN,
+    "Members asked how the opening hours would change over the summer.",
+    "A short report on reading rooms was approved without any changes.",
+    "Volunteers will help move the archive boxes during the first week.",
+    "Questions about parking should be sent to the facilities office.",
+    "The next meeting is planned for the second Monday of the month.",
+]
 CHINESE = "本报告介绍了城市公共图书馆的建设计划，以及明年预算的主要内容。"
 JAPANESE = "この資料は新しい図書館の計画と来年度の予算について説明します。"
 # Hebrew and Arabic in reading order (made-up sentences of common words)
@@ -70,23 +79,36 @@ def _attach_to_unicode(doc: pymupdf.Document, font_xref: int, cmap: bytes) -> No
 def mapped_helvetica_pdf(
     path: Path,
     pages: Sequence[Sequence[str]],
-    mapping: dict[str, str],
+    mapping: dict[str, str] | Sequence[dict[str, str]],
     *,
     fontsize: float = 12,
 ) -> Path:
     """Helvetica draws each line's ASCII characters; the text layer reads
-    them through *mapping* (characters it leaves out read as themselves)."""
+    them through *mapping* (characters it leaves out read as themselves).
+
+    One mapping: one font object for every page. A list of mappings, one per
+    page: each page its own Helvetica, with its own map.
+    """
     doc = pymupdf.open()
-    font_xref = doc.get_new_xref()
-    doc.update_object(
-        font_xref,
-        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica "
-        "/Encoding /WinAnsiEncoding >>",
-    )
-    codes = {code: chr(code) for code in range(32, 127)}
-    codes.update({ord(char): text for char, text in mapping.items()})
-    _attach_to_unicode(doc, font_xref, _to_unicode_cmap(codes, 1))
-    for lines in pages:
+    fonts: dict[int, int] = {}  # id of a mapping -> its font xref
+
+    def font_for(page_mapping: dict[str, str]) -> int:
+        if id(page_mapping) not in fonts:
+            xref = doc.get_new_xref()
+            doc.update_object(
+                xref,
+                "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica "
+                "/Encoding /WinAnsiEncoding >>",
+            )
+            codes = {code: chr(code) for code in range(32, 127)}
+            codes.update({ord(char): text for char, text in page_mapping.items()})
+            _attach_to_unicode(doc, xref, _to_unicode_cmap(codes, 1))
+            fonts[id(page_mapping)] = xref
+        return fonts[id(page_mapping)]
+
+    for index, lines in enumerate(pages):
+        page_mapping = mapping if isinstance(mapping, dict) else mapping[index]
+        font_xref = font_for(page_mapping)
         page = doc.new_page()
         content = []
         y = page.rect.height - 72
@@ -179,7 +201,7 @@ def text_pdf(path: Path, pages: Sequence[Sequence[tuple[str, str]]]) -> Path:
 
 #: Correct pages of every kind the checks must leave alone, by name.
 NORMAL_PAGES: dict[str, list[tuple[str, str]]] = {
-    "english": [("helv", LATIN)] * 8,
+    "english": [("helv", line) for line in LATIN_LINES],
     "chinese": [("china-s", CHINESE)] * 8,
     "japanese": [("japan", JAPANESE)] * 8,
     "mixed_cjk_code": [

@@ -16,8 +16,18 @@ and nothing in the extraction notices:
   ``ة`` and ``ى``) turning up at the start of words.
 - **Latin consonant soup.** A substitution font, the long-standing check in
   :func:`markitai.ocr.is_likely_garbled`.
+- **Text that is not what the glyphs draw** (with OCR, :class:`GlyphCheck`).
+  A legacy or custom-encoded font stores other codes than the letters it
+  draws: Latin codes for Devanagari glyphs, a shifted alphabet, letters for
+  CJK glyphs. Only the image tells, so a few short stretches of text are
+  cropped from the page and read by the OCR recognizer, then compared with
+  the layer by writing system and by characters. A font that fails does so
+  on every page, so each font is sampled a few times per document, not each
+  page: the cost does not grow with the page count.
 
-The checks cost one ``get_text`` per page and run on every conversion.
+The text-only signals cost one ``get_text`` per page and run on every
+conversion. The glyph check needs the OCR engine, so it runs with ``--ocr``,
+where a page that fails is OCR'd instead of extracted.
 
 The idea of checking a page's text layer against the script its line images
 show comes from Indra OCR (datalab-to/indra, ``indra_ocr/textlayer.py`` and
@@ -29,9 +39,13 @@ from __future__ import annotations
 import bisect
 import re
 import unicodedata
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
+from difflib import SequenceMatcher
 from functools import lru_cache
-from typing import NamedTuple
+from typing import Any, NamedTuple
+
+from loguru import logger
 
 from markitai.ocr import is_likely_garbled
 
@@ -277,3 +291,286 @@ def judge_text(text: str) -> LayerVerdict:
         return failed("Latin letters with almost no vowels (a custom font encoding)")
 
     return LayerVerdict("trusted", TRUSTED, dominant_script(text))
+
+
+# --- the glyph check (OCR) --------------------------------------------------
+
+# Characters cut from a span for one sample, and the least letters (and
+# share of letters) a sample needs to say anything.
+_SAMPLE_CHARS = 20
+_SAMPLE_MIN_LETTERS = 6
+_SAMPLE_MIN_LETTER_SHARE = 0.6
+# Samples per font per document, and crops per page at most.
+_SAMPLES_PER_FONT = 2
+_MAX_CROPS_PER_PAGE = 4
+# The crop is scaled so its height is this many pixels: the recognizer's
+# input height, so it is not scaled again.
+_CROP_HEIGHT_PX = 48
+# Below this similarity (difflib ratio over letters and digits) a sample
+# does not say what the glyphs draw. OCR of clean text scores 0.9 and up,
+# a shifted or permuted alphabet under 0.3.
+_MIN_SIMILARITY = 0.5
+# A page fails when fonts whose samples disagree carry this share of its
+# letters.
+_MAX_BAD_LETTER_SHARE = 0.3
+
+_SUBSET_TAG = re.compile(r"^[A-Z]{6}\+")
+
+
+def _font_name(name: str) -> str:
+    """A font's name without its subset tag (``ABCDEF+Arial`` -> ``Arial``),
+    as MuPDF names a span's font."""
+    return _SUBSET_TAG.sub("", name or "") or "?"
+
+
+def _comparable(text: str) -> str:
+    """Letters and digits only, case-folded: what OCR and the layer should
+    share (OCR reads punctuation and spacing in its own way)."""
+    return "".join(
+        c for c in unicodedata.normalize("NFKC", text).casefold() if c.isalnum()
+    )
+
+
+def compare_sample(layer: str, seen: str) -> tuple[bool | None, str]:
+    """Does the text the layer gives for a crop match what OCR reads in it?
+
+    Returns:
+        ``(True, "")`` when it matches; ``(False, why)`` when it does not;
+        ``(None, "")`` when OCR read too little to tell.
+    """
+    seen_letters = sum(1 for char in seen if char.isalpha())
+    if seen_letters < 2:
+        return None, ""
+    layer_script = dominant_script(layer)
+    seen_script = dominant_script(seen)
+    if layer_script and seen_script and layer_script != seen_script:
+        return False, f"the layer reads {layer_script}, the page shows {seen_script}"
+    a, b = _comparable(layer), _comparable(seen)
+    if (
+        a
+        and b
+        and SequenceMatcher(None, a, b, autojunk=False).ratio() < _MIN_SIMILARITY
+    ):
+        return False, "the layer's text is not what its glyphs draw"
+    return True, ""
+
+
+def _map_fingerprint(doc: Any, xref: int, encoding: str) -> str:
+    """A short hash of a font's ``ToUnicode`` map, or its encoding's name."""
+    import hashlib
+
+    try:
+        kind, value = doc.xref_get_key(xref, "ToUnicode")
+        if kind == "xref":
+            stream = doc.xref_stream(int(value.split()[0])) or b""
+            return hashlib.blake2b(stream, digest_size=6).hexdigest()
+    except Exception as e:  # a damaged font dict: its name alone
+        logger.debug("[PDF] ToUnicode of font {} not read: {}", xref, e)
+    return encoding or "-"
+
+
+@dataclass
+class _FontTally:
+    agree: int = 0
+    disagree: int = 0
+    why: str = ""
+    seen: set[str] = field(default_factory=set)  # sampled windows
+
+    @property
+    def settled(self) -> bool:
+        return self.agree + self.disagree >= _SAMPLES_PER_FONT
+
+    @property
+    def bad(self) -> bool:
+        return self.disagree > self.agree
+
+
+@dataclass
+class _Sample:
+    font: str
+    text: str
+    rect: tuple[float, float, float, float]
+
+
+class GlyphCheck:
+    """Compares a document's text layer with what its glyphs draw, per font.
+
+    One instance serves one document, its pages in order. Each page's
+    letters are counted per font; a font not yet sampled
+    ``_SAMPLES_PER_FONT`` times gets up to that many short stretches of its
+    text cropped from the page, rendered at the recognizer's line height,
+    read by OCR (``read``, one batch per page) and compared
+    (:func:`compare_sample`). A page fails when fonts whose samples mostly
+    disagree carry ``_MAX_BAD_LETTER_SHARE`` of its letters.
+
+    Never fatal: when OCR or rendering fails the check stops and every page
+    keeps its text-only verdict.
+
+    Args:
+        read: Reads line images (RGB arrays) and returns their text, in order.
+        readable: The writing systems ``read`` reads (``Latin``, ``CJK`` …):
+            text in any other is not sampled.
+    """
+
+    def __init__(
+        self, read: Callable[[list[Any]], list[str]], readable: frozenset[str]
+    ) -> None:
+        self._read = read
+        self._readable = readable
+        self._fonts: dict[str, _FontTally] = {}
+        self._maps: dict[int, str] = {}  # font xref -> its map's fingerprint
+        self._broken = False
+        self.crops = 0  # line images read so far (for the debug log)
+
+    def judge(self, page: Any) -> str | None:
+        """Why *page*'s text layer does not match its glyphs, or None."""
+        if self._broken or page.rotation:
+            return None
+        try:
+            return self._judge(page)
+        except Exception as e:  # never fails a conversion
+            logger.debug("[PDF] Glyph check stopped: {}", e)
+            self._broken = True
+            return None
+
+    def _judge(self, page: Any) -> str | None:
+        import pymupdf
+
+        letters: dict[str, int] = {}
+        candidates: dict[str, list[_Sample]] = {}
+        keys = self._font_keys(page)
+        content = page.get_text("rawdict", flags=pymupdf.TEXTFLAGS_TEXT)
+        for block in content.get("blocks", []):
+            for line in block.get("lines", []):
+                horizontal = line.get("wmode", 0) == 0 and abs(line["dir"][1]) < 1e-3
+                for span in line.get("spans", []):
+                    chars = span.get("chars", [])
+                    count = sum(1 for c in chars if c["c"].isalpha())
+                    if not count:
+                        continue
+                    name = str(span.get("font") or "")
+                    font = keys.get(name, name)
+                    letters[font] = letters.get(font, 0) + count
+                    tally = self._fonts.setdefault(font, _FontTally())
+                    if horizontal and line["dir"][0] > 0 and not tally.settled:
+                        sample = self._sample(font, chars, page.rect)
+                        if sample is not None and sample.text not in tally.seen:
+                            candidates.setdefault(font, []).append(sample)
+
+        picked: list[_Sample] = []
+        for font, found in candidates.items():
+            tally = self._fonts[font]
+            need = _SAMPLES_PER_FONT - tally.agree - tally.disagree
+            # Spread over the page: the first stretches, then the last
+            step = max(1, len(found) // max(need, 1))
+            for sample in found[::step] + found:
+                if need <= 0:
+                    break
+                if sample.text in tally.seen:  # a running header, a repeat
+                    continue
+                tally.seen.add(sample.text)
+                picked.append(sample)
+                need -= 1
+        picked = picked[:_MAX_CROPS_PER_PAGE]
+        if picked:
+            images = [self._render(page, sample.rect) for sample in picked]
+            texts = self._read(images)
+            self.crops += len(images)
+            for sample, seen in zip(picked, texts, strict=False):
+                agrees, why = compare_sample(sample.text, seen)
+                tally = self._fonts[sample.font]
+                if agrees is True:
+                    tally.agree += 1
+                elif agrees is False:
+                    tally.disagree += 1
+                    tally.why = why
+                logger.debug(
+                    "[PDF] Glyph check, font {}: layer {!r}, OCR {!r} -> {}",
+                    sample.font,
+                    sample.text,
+                    seen,
+                    "unsure" if agrees is None else ("match" if agrees else why),
+                )
+
+        total = sum(letters.values())
+        bad = [font for font in letters if self._fonts[font].bad]
+        bad_letters = sum(letters[font] for font in bad)
+        if total and bad_letters >= _MAX_BAD_LETTER_SHARE * total:
+            worst = max(bad, key=lambda font: letters[font])
+            return f"{self._fonts[worst].why} (font {worst.split('#')[0]})"
+        return None
+
+    def _font_keys(self, page: Any) -> dict[str, str]:
+        """Span font name -> the key its samples are counted under.
+
+        MuPDF names a span's font without its subset tag, and two fonts of
+        one name can map their glyphs differently (two subsets of a font,
+        each with its own ``ToUnicode``). The key adds the map's
+        fingerprint: the same map on every page is one font (sampled once
+        per document, even when each page has its own copy of the font),
+        another map is another font.
+        """
+        doc = page.parent
+        maps: dict[str, set[str]] = {}
+        for xref, _ext, _kind, basefont, _ref, encoding in page.get_fonts():
+            fingerprint = self._maps.get(xref)
+            if fingerprint is None:
+                fingerprint = self._maps[xref] = _map_fingerprint(doc, xref, encoding)
+            maps.setdefault(_font_name(basefont), set()).add(fingerprint)
+        return {
+            name: f"{name}#{'+'.join(sorted(found))}" for name, found in maps.items()
+        }
+
+    def _sample(
+        self, font: str, chars: list[dict[str, Any]], page_rect: Any
+    ) -> _Sample | None:
+        """The first ``_SAMPLE_CHARS`` characters of a span, when they are
+        mostly letters of a script OCR reads and sit on the page."""
+        start = 0
+        while start < len(chars) and chars[start]["c"].isspace():
+            start += 1
+        window = chars[start : start + _SAMPLE_CHARS]
+        while window and window[-1]["c"].isspace():
+            window.pop()
+        text = "".join(c["c"] for c in window)
+        visible = [c for c in text if not c.isspace()]
+        count = sum(1 for c in visible if c.isalpha())
+        if count < _SAMPLE_MIN_LETTERS or count < _SAMPLE_MIN_LETTER_SHARE * len(
+            visible
+        ):
+            return None
+        if dominant_script(text) not in self._readable:
+            return None
+        x0 = min(c["bbox"][0] for c in window)
+        y0 = min(c["bbox"][1] for c in window)
+        x1 = max(c["bbox"][2] for c in window)
+        y1 = max(c["bbox"][3] for c in window)
+        height = y1 - y0
+        if height < 3 or x1 <= x0:
+            return None
+        pad_x, pad_y = 0.3 * height, 0.15 * height
+        rect = (x0 - pad_x, y0 - pad_y, x1 + pad_x, y1 + pad_y)
+        if (
+            rect[0] < page_rect.x0
+            or rect[1] < page_rect.y0
+            or rect[2] > page_rect.x1
+            or rect[3] > page_rect.y1
+        ):
+            return None
+        return _Sample(font, text, rect)
+
+    @staticmethod
+    def _render(page: Any, rect: tuple[float, float, float, float]) -> Any:
+        import numpy as np
+        import pymupdf
+
+        clip = pymupdf.Rect(rect)
+        zoom = min(8.0, max(1.0, _CROP_HEIGHT_PX / clip.height))
+        pix = page.get_pixmap(
+            matrix=pymupdf.Matrix(zoom, zoom),
+            clip=clip,
+            colorspace=pymupdf.csRGB,
+            alpha=False,
+        )
+        array = np.frombuffer(pix.samples, dtype=np.uint8)
+        return array.reshape(pix.height, pix.stride // 3, 3)[:, : pix.width].copy()

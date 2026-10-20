@@ -884,6 +884,23 @@ class OCRProcessor:
         logger.debug("OCR full-image pass was empty; retrying overlapping tiles")
         return self._recognize_sparse_tiles(self._load_rgb_array(image_path))
 
+    def read_lines(self, images: list[Any]) -> list[str]:
+        """Read single text lines (RGB arrays), recognizer only, in one batch.
+
+        No detection, no orientation pass and no engine setting touched, so
+        it runs beside the page reads. ``converter.pdf_text_trust`` reads
+        short crops of a page with it to check its text layer.
+        """
+        if not images:
+            return []
+        from rapidocr.ch_ppocr_rec import TextRecInput
+
+        engine = self.engine
+        with self._gate.shared():
+            output = engine.text_rec(TextRecInput(img=list(images)))
+        texts = list(output.txts) if output.txts is not None else []
+        return [str(text) for text in texts]
+
     def recognize_numpy(self, image_array: Any) -> OCRResult:
         """Perform OCR on an RGB(A) array, with a sparse-layout fallback."""
         import numpy as np
