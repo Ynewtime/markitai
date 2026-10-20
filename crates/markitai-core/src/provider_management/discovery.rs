@@ -1,6 +1,6 @@
 use super::checked_url;
 use crate::{Error, Result, llm::ProbeReason as Reason};
-use reqwest::{blocking::Client, redirect::Policy};
+use reqwest::redirect::Policy;
 use serde_json::{Value, json};
 use std::{collections::HashSet, io::Read, time::Duration};
 const MAX_RESPONSE: u64 = 2 * 1024 * 1024;
@@ -130,7 +130,7 @@ pub(super) fn load(
         }
         _ => {}
     }
-    let builder = Client::builder()
+    let builder = crate::trust::client_builder()
         .redirect(Policy::none())
         .connect_timeout(Duration::from_secs(3))
         .timeout(TIMEOUT);

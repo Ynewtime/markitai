@@ -58,6 +58,7 @@
 - `markitai serve` 可在页面中显示条目自己提取出的图片：`GET /api/jobs/{job_id}/items/{item_id}/assets/{relpath}` 只发送该条目结果所列的 PNG、JPEG、GIF、WebP 或 AVIF，以内联方式并在沙箱中发送，带 `ETag`（`If-None-Match` 匹配时返回 304）；其他文件、别的条目的图片或越出任务目录的路径一律 404 `file_not_found`。能力接口以 `features.item_assets` 声明。工作台的预览图片改由此路由读取，检查器的「结果开头」现在也显示图片（此前每张图都显示为「[图片：无法预览]」）；文件夹对不上的图片引用（电子书自带的 `../Images/x.png`、模型改写的 `assets/x.png`）按文件名对应到该条目唯一同名的图片。
 
 ### 变更
+- HTTPS 请求（URL 抓取、模型调用、模型发现与检测、图片下载、OCR 模型与浏览器下载）在 markitai 内置的 Mozilla 根证书之外，同时信任操作系统的证书库；设置了 `SSL_CERT_FILE` 或 `SSL_CERT_DIR` 时，改用它们指定的证书代替系统证书库。在会重签 HTTPS 的代理之后，只要代理的证书颁发机构已安装在上述位置或由这些变量指定，请求不再以 `invalid peer certificate: UnknownIssuer` 失败；变量指向的内容无法读取时会在标准错误输出中提示，内置根证书仍然有效。
 - 路由权重为 0 到 100 的整数（0 表示停用）：`markitai serve` 在所有写入权重的路由上对其他值返回 422 `invalid_weight`（包括「编辑配置」，并指出是哪一项；文件中原有的权重可以保留）；工作台在空的权重输入框中显示 `0–100`，在框下说明错误，按 Enter 时保持输入框打开，方向键也不超出范围。
 - macOS 上的本地 OCR 默认与 Windows、Linux 一样使用内置的 PP-OCR 引擎；用 `MARKITAI_OCR_BACKEND=vision` 选择 Vision，内置模型无法下载（且未指定引擎）时也由 Vision 读取。Vision 对一个程序的首次使用会编译模型约 20 秒（工作台里首次扫描用了 25 秒），它对 `cjk-scanned.pdf` 的默认识别把行连在一起、压平表格、丢了一个字并漏掉韩文行，内置引擎则完整读出；在语料扫描件上内置引擎找到全部预期行（Python 的 RapidOCR 在中日韩页上为 9/10），每页约 0.6 秒。macOS 构建通过默认的 `portable-media` 特性包含内置引擎；PDF 页面仍用 CoreGraphics 渲染。`MARKITAI_OCR_TRACE` 现在也给每次 Vision 识别计时，`MARKITAI_OCR_VISION_POLICY=detect` 用一次包含所有语言的请求识别（用于测量）。`scripts/bench_ocr_backends.py` 比较各引擎的冷、热耗时。
 - 工作台把文档的 front matter 显示为正文上方的一行浅色信息（标签图标、行内标签、行尾的「简介」），不再单独显示标题（正文自己的标题就是标题）；「简介」展开为两列属性表（简介、标签以小标签显示、来源、处理时间以及其他所有键），表头可再次收起；本标签页会话内记住展开状态，预览、对照和详情摘录中一致。

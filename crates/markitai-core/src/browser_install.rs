@@ -285,7 +285,7 @@ pub(crate) fn install() -> Result<PathBuf> {
     private_directory(&root)?;
     let _lock = lock(&root)?;
     let client = crate::proxy::http_api(
-        Client::builder()
+        crate::trust::client_builder()
             .connect_timeout(Duration::from_secs(15))
             .timeout(Duration::from_secs(600))
             .redirect(reqwest::redirect::Policy::none())

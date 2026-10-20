@@ -4,7 +4,7 @@ use super::{
     payload, providers, refusal_reason,
 };
 use crate::{Error, provider_management};
-use reqwest::{blocking::Client, redirect::Policy};
+use reqwest::redirect::Policy;
 use serde_json::{Value, json};
 use std::{collections::HashMap, io::Read, time::Duration};
 const MAX_RESPONSE: u64 = 1024 * 1024;
@@ -275,7 +275,7 @@ fn perform(entry: &Deployment) -> Result<(), Failure> {
             ),
         )
     };
-    let builder = Client::builder()
+    let builder = crate::trust::client_builder()
         .redirect(Policy::none())
         .connect_timeout(Duration::from_secs(3))
         .timeout(Duration::from_secs(15));

@@ -453,7 +453,7 @@ fn client() -> Result<reqwest::blocking::Client> {
         }
     });
     crate::proxy::http(
-        reqwest::blocking::Client::builder()
+        crate::trust::client_builder()
             .connect_timeout(Duration::from_secs(15))
             .timeout(Duration::from_secs(900))
             .redirect(redirects)

@@ -1,7 +1,7 @@
 use crate::fetch::is_private;
 use crate::{Asset, Document, Error, Result, config, output_profiles};
 use base64::Engine;
-use reqwest::blocking::Client;
+
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::io::Read;
@@ -254,7 +254,7 @@ fn download(mut url: Url, allow_private: bool) -> Result<Vec<u8>> {
         }
         // Pin validated DNS addresses and use direct transport: inherited proxy
         // credentials and browser cookies must not be sent to document images.
-        let client = Client::builder()
+        let client = crate::trust::client_builder()
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
             .timeout(Duration::from_secs(30))

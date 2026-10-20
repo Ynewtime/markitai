@@ -22,7 +22,7 @@ use remote::{Service, Services};
 const MAX_RESPONSE: u64 = 100 * 1024 * 1024;
 
 pub(crate) fn client(timeout: u64) -> Result<Client> {
-    let builder = Client::builder()
+    let builder = crate::trust::client_builder()
         .timeout(Duration::from_secs(timeout))
         .connect_timeout(Duration::from_secs(15))
         .user_agent(concat!("markitai/", env!("CARGO_PKG_VERSION")));

@@ -88,7 +88,7 @@ impl Client {
         let mut value = HeaderValue::from_str(&value)
             .map_err(|_| Error::Invalid("Batch credential is invalid"))?;
         value.set_sensitive(true);
-        let http = HttpClient::builder()
+        let http = crate::trust::client_builder()
             .timeout(timeout)
             .connect_timeout(timeout.min(Duration::from_secs(15)))
             .redirect(reqwest::redirect::Policy::none())

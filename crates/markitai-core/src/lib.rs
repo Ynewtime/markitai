@@ -50,6 +50,7 @@ mod store_retry;
 pub mod subscription;
 #[cfg(target_os = "macos")]
 mod system_frameworks;
+mod trust;
 mod types;
 
 pub use browser_runtime::BrowserRuntime;

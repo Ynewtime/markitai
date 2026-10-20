@@ -1363,7 +1363,7 @@ fn run_mode(
         .map(|entry| runtime.routing().key(entry))
         .collect();
     let client = crate::proxy::http_api(
-        Client::builder()
+        crate::trust::client_builder()
             .timeout(Duration::from_secs(timeout))
             .connect_timeout(Duration::from_secs(timeout.min(15)))
             .redirect(reqwest::redirect::Policy::none())
@@ -1375,7 +1375,7 @@ fn run_mode(
     let public_client = if entries.iter().any(|entry| entry.public_only) {
         Some(
             crate::public_net::client(
-                Client::builder()
+                crate::trust::client_builder()
                     .timeout(Duration::from_secs(timeout))
                     .connect_timeout(Duration::from_secs(timeout.min(15)))
                     .user_agent(concat!("markitai/", env!("CARGO_PKG_VERSION"))),

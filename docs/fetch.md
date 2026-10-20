@@ -817,11 +817,17 @@ download refuse a SOCKS environment proxy by name (set `HTTPS_PROXY` to an HTTP(
 proxy or unset it) rather than connect directly behind the user's back. A
 connection failure to a proxy names it (host, port and the variable or system
 setting, never credentials) instead of blaming the provider. Every client above
-except the browser checks HTTPS certificates against the Mozilla root set built into markitai; the
-operating system's certificate store, `SSL_CERT_FILE` and `SSL_CERT_DIR` are not
-read, so a proxy that re-signs HTTPS with its own certificate authority (a
-TLS-inspecting company proxy) fails with `invalid peer certificate:
-UnknownIssuer`. Provider Batch clients keep their provider environment
+trusts the Mozilla root set built into markitai and, beside it, the operating
+system's certificate store (the Windows and macOS stores; on Linux and other
+Unix systems the OpenSSL bundle and directory). When `SSL_CERT_FILE` or
+`SSL_CERT_DIR` is set, the PEM certificates it names are read in place of the
+system store, as OpenSSL reads them, so a proxy that re-signs HTTPS with its
+own certificate authority (a TLS-inspecting company proxy) works once that
+authority is installed in the system store or named there; a variable that
+names nothing readable gets one line on standard error, and the built-in roots
+still apply. A certificate neither set vouches for fails with `invalid peer
+certificate: UnknownIssuer`. The browser uses Chromium's own trust store.
+Provider Batch clients keep their provider environment
 handling. The Windows registry reader is compiled in native Windows
 builds. That and parser tests do not establish every actual registry/proxy
 configuration; verify proxy behavior in the deployment environment.
