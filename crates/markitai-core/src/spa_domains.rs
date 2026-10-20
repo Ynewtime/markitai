@@ -588,9 +588,14 @@ mod tests {
         symlink(path(&cfg).parent().unwrap(), &alias).unwrap();
         let mut aliased = cfg.clone();
         aliased["cache"]["global_dir"] = serde_json::json!(alias);
-        assert!(list(&aliased).is_err());
-        assert!(record_at(&aliased, &url("https://other.test/a"), 11).is_err());
-        assert_eq!(list(&cfg).unwrap().len(), 1);
+        // Run as root, the alias is root-owned: the policy trusts such a link above
+        // a path as a system link (`/var` on macOS). A linked store file below is
+        // refused either way.
+        if !crate::platform::root_owned(&std::fs::symlink_metadata(&alias).unwrap()) {
+            assert!(list(&aliased).is_err());
+            assert!(record_at(&aliased, &url("https://other.test/a"), 11).is_err());
+            assert_eq!(list(&cfg).unwrap().len(), 1);
+        }
         let original = path(&cfg).with_extension("original");
         std::fs::rename(path(&cfg), &original).unwrap();
         symlink(&original, path(&cfg)).unwrap();

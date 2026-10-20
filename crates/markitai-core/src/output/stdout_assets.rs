@@ -596,6 +596,9 @@ mod tests {
         std::fs::create_dir(&target).unwrap();
         let store = root.path().join("store");
         std::os::unix::fs::symlink(&target, &store).unwrap();
+        if crate::platform::root_owned(&std::fs::symlink_metadata(&store).unwrap()) {
+            return; // Run as root: a root-owned store link is a trusted system link.
+        }
         let markdown = "![x](.markitai/assets/x.png)\n";
         let convert = |cfg: Value| {
             let mut result = document(markdown);

@@ -988,15 +988,19 @@ mod tests {
         write(&actual, "document.md", b"doc");
         let alias = temp.path().join("alias");
         symlink(&actual, &alias).unwrap();
-        assert!(
-            copy_file(
-                &alias.join("document.md"),
-                &temp.path().join("copy"),
-                &mut Budget::default(),
-                false
-            )
-            .is_err()
-        );
+        // Run as root, the alias is root-owned: the ancestor policy trusts such a
+        // link as a system link (`/var` on macOS), so only other users refuse it.
+        if !platform::root_owned(&fs::symlink_metadata(&alias).unwrap()) {
+            assert!(
+                copy_file(
+                    &alias.join("document.md"),
+                    &temp.path().join("copy"),
+                    &mut Budget::default(),
+                    false
+                )
+                .is_err()
+            );
+        }
         copy_file(
             &alias.join("document.md"),
             &temp.path().join("copy"),

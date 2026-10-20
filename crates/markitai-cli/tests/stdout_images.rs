@@ -425,6 +425,10 @@ fn a_symlinked_store_is_not_written_through() {
     let target = sandbox.root.join("elsewhere");
     std::fs::create_dir(&target).unwrap();
     std::os::unix::fs::symlink(&target, sandbox.root.join("home/assets")).unwrap();
+    let link = std::fs::symlink_metadata(sandbox.root.join("home/assets")).unwrap();
+    if markitai_core::platform::root_owned(&link) {
+        return; // Run as root: a root-owned store link is a trusted system link.
+    }
     let output = sandbox.run(&["figures.docx"]);
     assert!(output.status.success());
     let links = images(&text(&output.stdout));

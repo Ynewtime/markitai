@@ -2265,7 +2265,11 @@ mod path_check_tests {
         let link = root.path().join("link");
         symlink(&nested, &link).unwrap();
         assert!(create_private_dir(&link).is_err());
-        assert!(create_private_dir(&link.join("below")).is_err());
+        // Run as root, the fixture link is root-owned: the policy trusts such a
+        // link above a path as a system link (`/var` on macOS), as a leaf never.
+        if !crate::platform::root_owned(&fs::symlink_metadata(&link).unwrap()) {
+            assert!(create_private_dir(&link.join("below")).is_err());
+        }
         let file = root.path().join("file");
         fs::write(&file, b"x").unwrap();
         assert!(create_private_dir(&file).is_err());
@@ -2337,6 +2341,9 @@ mod path_check_tests {
         // Substitute the shared parent with a link to another directory.
         std::fs::rename(&parent, dir.path().join("moved")).unwrap();
         symlink(dir.path().join("moved"), &parent).unwrap();
+        if crate::platform::root_owned(&std::fs::symlink_metadata(&parent).unwrap()) {
+            return; // Run as root: a root-owned parent link is a trusted system link.
+        }
         let error = check_paths(&members, false).unwrap_err().to_string();
         assert!(error.contains("Symlink access is disabled"), "{error}");
         assert!(check_path(members[1], false).is_err());
