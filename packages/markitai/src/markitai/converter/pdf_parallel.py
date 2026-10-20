@@ -96,12 +96,21 @@ def layout_engine_active() -> bool:
     return bool(getattr(pymupdf4llm, "_use_layout", False))
 
 
+def usable_cores() -> int:
+    """Cores this process may run on (taskset and cgroup CPU sets count)."""
+    try:
+        return len(os.sched_getaffinity(0)) or 1
+    except AttributeError:  # macOS, Windows
+        return os.cpu_count() or 1
+
+
 def worker_count() -> int:
     """Workers for this machine: cores and memory bound it, 12 at most.
 
-    Two cores are left to the parent and the rest of the system, and the
-    workers take at most a quarter of the available memory (about 450 MB
-    each).
+    One worker per core this process may run on: while the workers extract,
+    the parent only waits for them and joins the pages, so leaving cores to
+    it left them idle (a 4-core machine extracted on two). The workers take
+    at most a quarter of the available memory (about 450 MB each).
 
     ``MARKITAI_PDF_WORKERS`` overrides it, up to the same maximum; ``1`` or
     less disables the pool.
@@ -112,8 +121,7 @@ def worker_count() -> int:
         workers = _workers_override(override, maximum)
         if workers is not None:
             return workers
-    cpus = os.cpu_count() or 1
-    workers = min(maximum, max(1, cpus - 2))
+    workers = min(maximum, usable_cores())
     try:
         import psutil
 
@@ -452,7 +460,7 @@ def run_page_tasks(
             )
             return None
         slots = min(ocr_slots(workers), len(pages))
-        threads = max(1, (os.cpu_count() or 1) // slots)
+        threads = max(1, usable_cores() // slots)
         waiting = deque(pages)
         running: dict[Future[_R], int] = {}
 

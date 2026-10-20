@@ -175,6 +175,41 @@ def test_worker_count_honours_the_override(monkeypatch: pytest.MonkeyPatch) -> N
     assert 1 <= pdf_parallel.worker_count() <= pdf_parallel._MAX_WORKERS
 
 
+def test_by_default_every_usable_core_gets_a_worker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The parent only waits while the workers extract: no core is held back
+    for it (a 4-core machine used to extract on two). Memory still bounds
+    the count, and so does the maximum."""
+    import psutil
+
+    class _Memory:
+        available = 64 * 2**30
+
+    monkeypatch.delenv("MARKITAI_PDF_WORKERS", raising=False)
+    monkeypatch.setattr(psutil, "virtual_memory", lambda: _Memory())
+    monkeypatch.setattr(pdf_parallel, "usable_cores", lambda: 4)
+    assert pdf_parallel.worker_count() == 4
+    monkeypatch.setattr(pdf_parallel, "usable_cores", lambda: 1)
+    assert pdf_parallel.worker_count() == 1  # below two: no pool
+    monkeypatch.setattr(pdf_parallel, "usable_cores", lambda: 64)
+    assert pdf_parallel.worker_count() == pdf_parallel._MAX_WORKERS
+    _Memory.available = 4 * pdf_parallel._WORKER_RAM_BYTES  # a quarter: one
+    assert pdf_parallel.worker_count() == 1
+
+
+def test_usable_cores_follow_the_affinity_mask(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A process confined to some cores (taskset, a container's CPU set)
+    counts those, not every core of the machine."""
+    monkeypatch.setattr(os, "sched_getaffinity", lambda _pid: {0, 2}, raising=False)
+    monkeypatch.setattr(os, "cpu_count", lambda: 16)
+    assert pdf_parallel.usable_cores() == 2
+    monkeypatch.delattr(os, "sched_getaffinity", raising=False)
+    assert pdf_parallel.usable_cores() == 16
+
+
 def test_the_registry_maps_pdf_to_the_converter() -> None:
     """The converter class, not a helper beside it, is registered for PDF."""
     from markitai.converter import get_converter

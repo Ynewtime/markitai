@@ -158,7 +158,7 @@ def test_pages_go_to_the_workers_a_bounded_number_at_a_time(
     pool = _WindowPool()
     monkeypatch.setattr(pdf_parallel, "_pool", pool)
     monkeypatch.setattr(pdf_parallel, "ocr_slots", lambda _workers: 2)
-    monkeypatch.setattr(os, "cpu_count", lambda: 8)
+    monkeypatch.setattr(pdf_parallel, "usable_cores", lambda: 8)
     seen, on_done = _collect()
 
     left = pdf_parallel.run_page_tasks(

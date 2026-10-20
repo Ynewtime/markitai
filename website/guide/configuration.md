@@ -237,7 +237,7 @@ LiteLLM also takes Gemini's key from `GOOGLE_API_KEY` (ahead of `GEMINI_API_KEY`
 | `MARKITAI_NO_REMOTE_FETCH` | Never send URLs to remote services, even with an explicit `-s` (`1`, `true`, `yes`) |
 | `MARKITAI_NO_VLM_OCR` | With `--ocr --llm`, use local RapidOCR instead of the vision model (`1`, `true`, `yes`). It covers OCR only: `--screenshot --llm` still sends page screenshots to the vision model |
 | `MARKITAI_STATIC_HTTP` | Static fetch client: `httpx` (default) or `curl_cffi` |
-| `MARKITAI_PDF_WORKERS` | Worker processes for PDF page extraction and for OCR of scanned PDF pages; `0` or `1` keeps them in-process. Default: the CPU count minus two, at most 12, and a quarter of the available memory at about 450 MB each |
+| `MARKITAI_PDF_WORKERS` | Worker processes for PDF page extraction and for OCR of scanned PDF pages; `0` or `1` keeps them in-process. Default: one per CPU core the process may use, at most 12, and a quarter of the available memory at about 450 MB each |
 | `MARKITAI_SERVE_TOKEN` | Fixed access token for `markitai serve` |
 | `MARKITAI_TIMINGS` | Print where a command's time went (start-up, each `doctor` check) to stderr when it ends (`1`, `true`, `yes`, `on`) |
 | `MARKITAI_INSTALL_OPTIONAL` | Setup script: install optional components without prompting |
