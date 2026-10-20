@@ -98,9 +98,17 @@ async def _build_native_fetch_result(
 
 
 def _markitdown_convert_bytes(
-    content_bytes: bytes, suffix: str
+    content_bytes: bytes, suffix: str, charset: str | None = None
 ) -> tuple[str, str | None]:
     """Write a temp file and convert with markitdown (CPU-bound).
+
+    Args:
+        content_bytes: The body to convert.
+        suffix: File suffix that picks markitdown's converter.
+        charset: The body's text encoding when the caller knows it.
+            Without it markitdown guesses from the first 4 KB only, and a
+            mostly-ASCII start reads a UTF-8 file as cp1252 ("de·dle"
+            becomes "deÂ·dle").
 
     Returns:
         (text_content, title) tuple.
@@ -110,7 +118,14 @@ def _markitdown_convert_bytes(
         temp_path = Path(f.name)
     try:
         md = _get_markitdown()
-        md_result = md.convert(str(temp_path))
+        if charset is None:
+            md_result = md.convert(str(temp_path))
+        else:
+            from markitdown import StreamInfo
+
+            md_result = md.convert(
+                str(temp_path), stream_info=StreamInfo(charset=charset)
+            )
         return md_result.text_content or "", md_result.title
     finally:
         temp_path.unlink(missing_ok=True)

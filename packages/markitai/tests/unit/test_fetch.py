@@ -1499,7 +1499,9 @@ class TestFetchWithStatic:
             ),
             patch("markitai.fetch_strategies._shared._get_markitdown") as mock_get_md,
         ):
-            mock_md = type("MockMD", (), {"convert": lambda _self, _url: mock_result})()
+            mock_md = type(
+                "MockMD", (), {"convert": lambda _self, _url, **_kw: mock_result}
+            )()
             mock_get_md.return_value = mock_md
 
             result = await fetch_with_static("https://example.com")
@@ -1508,6 +1510,42 @@ class TestFetchWithStatic:
             assert result.strategy_used == "static"
             assert result.title == "Test Page"
             assert result.url == "https://example.com"
+
+    @pytest.mark.asyncio
+    async def test_a_utf8_markdown_file_with_an_ascii_start_is_not_mojibake(
+        self,
+    ) -> None:
+        """A text body is decoded once, by its header; markitdown must not
+        guess the charset again (raw.githubusercontent's defuddle README.md
+        came out as "deÂ·â€‹fudÂ·dle")."""
+        from markitai.fetch import fetch_with_static
+        from markitai.fetch_http import StaticHttpResponse
+
+        # charset_normalizer reads these few bytes as GB18030
+        body = (
+            "> de·\u200bfud·dle /diˈfʌdl/ *transitive verb*  \n"
+            "> to remove unnecessary elements from a web page.\n"
+        )
+        mock_response = StaticHttpResponse(
+            content=body.encode("utf-8"),
+            status_code=200,
+            headers={"content-type": "text/plain; charset=utf-8"},
+            url="https://raw.example.com/README.md",
+        )
+        mock_client = MagicMock()
+        mock_client.name = "httpx"
+        mock_client.get = AsyncMock(return_value=mock_response)
+
+        with (
+            patch("markitai.fetch_strategies.static._detect_proxy", return_value=""),
+            patch(
+                "markitai.fetch_strategies.static.get_static_http_client",
+                return_value=mock_client,
+            ),
+        ):
+            result = await fetch_with_static("https://raw.example.com/README.md")
+
+        assert "de·\u200bfud·dle /diˈfʌdl/ *transitive verb*" in result.content
 
     @pytest.mark.asyncio
     async def test_fetch_with_static_no_content(self) -> None:
@@ -1534,7 +1572,9 @@ class TestFetchWithStatic:
             ),
             patch("markitai.fetch_strategies._shared._get_markitdown") as mock_get_md,
         ):
-            mock_md = type("MockMD", (), {"convert": lambda _self, _url: mock_result})()
+            mock_md = type(
+                "MockMD", (), {"convert": lambda _self, _url, **_kw: mock_result}
+            )()
             mock_get_md.return_value = mock_md
 
             with pytest.raises(FetchError) as exc_info:
@@ -1570,7 +1610,7 @@ class TestFetchWithStatic:
                 "MockMD",
                 (),
                 {
-                    "convert": lambda _self, _url: (_ for _ in ()).throw(
+                    "convert": lambda _self, _url, **_kw: (_ for _ in ()).throw(
                         Exception("Network error")
                     )
                 },

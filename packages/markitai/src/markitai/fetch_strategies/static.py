@@ -553,8 +553,13 @@ async def fetch_with_static_conditional(
         else:
             # Save response to temp file and run sync markitdown in executor
             # to avoid blocking the event loop
+            # HTML and text bodies were decoded above and re-encoded as UTF-8
             text_content, title = await loop.run_in_executor(
-                None, _markitdown_convert_bytes, convert_bytes, suffix
+                None,
+                _markitdown_convert_bytes,
+                convert_bytes,
+                suffix,
+                "utf-8" if content_kind in ("html", "text") else None,
             )
             converter_name = "markitdown"
 

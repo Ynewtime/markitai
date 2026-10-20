@@ -216,7 +216,11 @@ async def fetch_with_cloudflare(
     try:
         loop = asyncio.get_running_loop()
         text_content, title = await loop.run_in_executor(
-            None, _markitdown_convert_bytes, html_content.encode("utf-8"), ".html"
+            None,
+            _markitdown_convert_bytes,
+            html_content.encode("utf-8"),
+            ".html",
+            "utf-8",
         )
     except Exception as e:
         raise FetchError(
