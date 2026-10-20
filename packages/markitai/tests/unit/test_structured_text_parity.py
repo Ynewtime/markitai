@@ -15,7 +15,6 @@ from markitai.converter.markitdown_ext import _convert
         ("a,b\n1\n2,3,4\n", "utf-8"),
         ("名字,数值\n示例,42\n", "utf-16"),
         ("Name,Value\ncafé,42\n", "cp1252"),
-        ("Name,Value\r\n例子,42\r\n", "utf-8-sig"),
         ("", "utf-8"),
     ],
 )
@@ -27,6 +26,18 @@ def test_csv_keeps_reference_output(tmp_path, content, encoding):
     assert converter is not None
     actual = converter.convert(path)
     assert actual.markdown == expected.markdown
+
+
+def test_csv_utf8_bom_is_not_part_of_the_first_header(tmp_path):
+    """MarkItDown keeps the BOM Excel's "CSV UTF-8" writes in the first
+    header cell, an invisible character in the table and its column name."""
+    path = tmp_path / "table.csv"
+    path.write_bytes("Name,Value\r\n例子,42\r\n".encode("utf-8-sig"))
+    converter = get_converter(path)
+    assert converter is not None
+    assert converter.convert(path).markdown == (
+        "| Name | Value |\n| --- | --- |\n| 例子 | 42 |"
+    )
 
 
 @pytest.mark.parametrize(

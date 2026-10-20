@@ -1,7 +1,8 @@
 """Known CSV/notebook inputs need parsers, not binary format detection.
 
 Rendering follows MarkItDown 0.1.7's CSV/notebook rules, including ragged-row
-handling and its final whitespace normalization. See NOTICE (Microsoft, MIT).
+handling and its final whitespace normalization, except that a UTF-8 BOM is
+not part of the first header. See NOTICE (Microsoft, MIT).
 """
 
 from __future__ import annotations
@@ -26,7 +27,8 @@ def convert_csv(path: Path) -> ConvertResult:
     # UTF-8 is common and unambiguous; other encodings use the same detector
     # as the reference CSV reader, without initializing Magika/ONNX.
     try:
-        text = data.decode("utf-8")
+        # -sig: the BOM Excel's "CSV UTF-8" writes stuck to the first header
+        text = data.decode("utf-8-sig")
     except UnicodeDecodeError:
         from markitai.utils.charset import decode_body
 
