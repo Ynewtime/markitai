@@ -37,7 +37,11 @@ _VENDOR_MARKERS = re.compile(
 )
 _TEXT_MARKERS = re.compile(
     r"智能验证检测中|由极验提供技术支持|请在下图依次点击|请按顺序点击|拖动滑块|滑动验证"
-    r"|请完成(?:安全)?验证|安全验证|人机验证|验证码"
+    r"|请完成(?:安全)?验证|安全验证(?!码)|人机验证"
+    # 验证码 alone is any login form or an article about SMS codes; a check
+    # page asks for the code before letting you go on
+    r"|输入(?:下?图中?|图片中?)?的?验证码(?:后|以|才能)?(?:继续|访问)"
+    r"|此验证码用于|验证码用于确认"
     r"|verify (?:that )?you are (?:a )?human|are you a robot|checking your browser"
     r"|just a moment\.\.\.|attention required|complete the security check"
     r"|unusual traffic from your computer|press (?:&|and) hold",

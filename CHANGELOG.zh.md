@@ -32,6 +32,7 @@
 - **用户令牌用浏览器抓取私有地址时说明拒绝原因。** 在 `markitai serve` 中，用户令牌提交私有或本机地址（`http://127.0.0.1:…`、局域网主机）的 URL 时，`playwright` 策略只报 Chromium 的 `net::ERR_BLOCKED_BY_CLIENT`（错误码为 `conversion_error`），而 `static` 会说 `Fetch target refused: private_or_local_host`。现在浏览器路径给出同样的原因，错误码为 `fetch_error`。
 - **MCP `job_status` 的计数与 `markitai serve` 一致。** `done` 原本把失败的条目也算进去，三项中一项失败时显示 `done: 3, failed: 1`。现在 `done` 只计成功的条目（`done: 2, failed: 1`），新增的 `finished`（`done` + `failed`）给出 `done` 原来的数，可用于显示进度。MCP 指南已列出这些计数。
 - **包声明的依赖改为实际导入的 `xlrd`，不再声明并未导入的 `pandas`。** 原先以"保留 Excel 单元格格式"为由声明了 `pandas>=2.2,<4`，但 markitai 从不导入 pandas（表格用 openpyxl 和 xlrd 读取）；pandas 仍随 `markitdown[xlsx,xls]` 安装，供 MarkItDown 的后备读取器使用。XLS 读取器导入的 `xlrd` 原本只经由该 extra 带入，现在直接声明。
+- **提到"验证码"的简短中文页面不再被当成人机验证页。** 任何不足 1500 字且含"验证码"的页面（如带"获取验证码"的登录表单、讲短信验证码的帮助文章）都会被当作验证页：静态抓取的结果被丢弃、改用浏览器，浏览器得到的页面和截图也被当作验证码页丢掉。现在只有要求先输入验证码才能继续的页面（"请输入验证码以继续访问"、"此验证码用于确认……"）才算，"安全验证码"也不再匹配"安全验证"。
 - **目录批量转换时，`--glob` 按符号链接自己的名字匹配**，而不是按它指向的文件名。
 - **UTF-8 文本网址不再变成乱码。** `.md`、`.txt`、`.csv`、`.json` 地址先按 `Content-Type` 解码，之后又根据开头的字节重新猜一次编码，于是较短或以 ASCII 为主的文件会被读成 Windows-1252 或 GB18030（raw.githubusercontent.com 上 defuddle 的 README 变成 `deÂ·â€‹fudÂ·dle`）。
 - **不经浏览器抓到的人机验证页面不再被当成网页内容。** PyPI 的 “Client Challenge” 转换后只剩一句普通的话（“A required part of this site couldn't load …”），`auto` 把它当作内容返回。现在会检查抓到的 HTML 是否是整页拦截页（Cloudflare、DataDome、PerimeterX、Incapsula、AWS WAF、Fastly）或含有验证用语：`auto` 改用浏览器，`--strategy static` 报告遇到了验证页。表单页上的 reCAPTCHA 或 Turnstile 不算拦截页。

@@ -67,6 +67,37 @@ class TestPageProblem:
         assert not is_interstitial(html)
         assert not is_interstitial(ARTICLE_HTML)
 
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "手机号 获取验证码 登录 还没有账号？立即注册",
+            "如何关闭短信验证码？进入设置，在账号与安全里关闭登录时的短信验证码即可。",
+            "账号登录 手机号 请输入验证码 获取验证码 忘记密码？",
+            "安全验证码收不到怎么办？ 关注者 12 被浏览 3,456",
+        ],
+        ids=["login", "article", "form", "question"],
+    )
+    def test_a_page_that_mentions_a_verification_code_is_the_page(self, text):
+        """验证码 alone is a login form or an article, not a bot check."""
+        html = f"<html><body><h1>帮助</h1><p>{text}</p></body></html>"
+        assert not is_interstitial(html)
+        assert page_problem(html) is None
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "请输入验证码以继续访问",
+            "为了确认是您本人操作，请输入图中验证码后继续",
+            "我们的系统检测到您网络中存在异常访问请求。此验证码用于确认这些请求"
+            "是您的正常行为而不是自动程序发出的，需要您协助验证。",
+        ],
+        ids=["go-on", "picture", "sogou"],
+    )
+    def test_a_page_that_asks_for_the_code_to_go_on_is_a_challenge(self, text):
+        html = f"<html><body><p>{text}</p><form><input name=c></form></body></html>"
+        assert is_interstitial(html)
+        assert page_problem(html) == "challenge"
+
     def test_empty_document(self):
         assert (
             page_problem(
