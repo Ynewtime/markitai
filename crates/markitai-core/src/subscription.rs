@@ -18,6 +18,84 @@ use std::time::Duration;
 pub const COPILOT_PROTOCOL: u64 = 3;
 pub const COPILOT_CLI_VERSION: &str = "1.0.90-2";
 
+/// How an installed runtime's release compares with the one its adapter was
+/// verified with.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Release {
+    /// The verified release, or one its maker keeps compatible with it.
+    Verified,
+    /// Newer than the verified one: used, with a one-time warning. Each
+    /// adapter still validates every message, so an incompatible change
+    /// fails as a protocol error rather than passing unnoticed.
+    Newer,
+    /// Older than the verified one, or not a release number: refused.
+    Older,
+}
+
+/// Compares dotted releases with an optional `-N` revision (`1.0.90-2`
+/// comes after `1.0.90`), number by number. `same_line` names how many
+/// leading numbers a newer release may share with the verified one and still
+/// count as verified (Claude Code keeps its protocol within a minor line).
+pub(crate) fn compare_release(installed: &str, verified: &str, same_line: usize) -> Release {
+    let numbers = |text: &str| -> Option<Vec<u64>> {
+        let (base, revision) = match text.split_once('-') {
+            Some((base, revision)) => (base, Some(revision)),
+            None => (text, None),
+        };
+        let mut numbers = base
+            .split('.')
+            .map(|part| {
+                (!part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
+                    .then(|| part.parse::<u64>().ok())
+                    .flatten()
+            })
+            .collect::<Option<Vec<u64>>>()?;
+        if !(2..=3).contains(&numbers.len()) {
+            return None;
+        }
+        numbers.resize(3, 0);
+        numbers.push(match revision {
+            Some(revision) => revision.parse::<u64>().ok()?,
+            None => 0,
+        });
+        Some(numbers)
+    };
+    match (numbers(installed), numbers(verified)) {
+        (Some(installed), Some(verified)) if installed >= verified => {
+            if installed == verified
+                || same_line > 0 && installed[..same_line] == verified[..same_line]
+            {
+                Release::Verified
+            } else {
+                Release::Newer
+            }
+        }
+        _ => Release::Older,
+    }
+}
+
+/// The one-time notice that a newer runtime release than the verified one
+/// is in use, in the warnings of the first document that uses it.
+pub(crate) fn note_newer_release(runtime: &'static str, installed: &str, verified: &str) {
+    static NOTED: std::sync::Mutex<Vec<&'static str>> = std::sync::Mutex::new(Vec::new());
+    if !crate::llm::document_scoped() {
+        return;
+    }
+    let mut noted = NOTED.lock().unwrap_or_else(|e| e.into_inner());
+    if noted.contains(&runtime) {
+        return;
+    }
+    noted.push(runtime);
+    crate::llm::note_document_warning(newer_release_message(runtime, installed, verified));
+}
+
+/// What `doctor` and the one-time warning say about a newer release.
+pub fn newer_release_message(runtime: &str, installed: &str, verified: &str) -> String {
+    format!(
+        "{runtime} {installed} is newer than {verified}, the release this adapter was verified with; it is used, and every message it sends is still checked"
+    )
+}
+
 /// Credentials are deliberately excluded from Debug and serialization.
 #[derive(Clone)]
 pub struct CopilotConfig {

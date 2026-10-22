@@ -20,6 +20,10 @@ const RULES: &[(&str, &str)] = &[
         "未配置 LLM 模型；请设置 MODEL 和供应商的 API key，或配置 llm.model_list",
     ),
     (
+        "{} is newer than {}, the release this adapter was verified with; it is used, and every message it sends is still checked",
+        "{} 比本适配器验证过的 {} 更新；仍会使用它，并检查它发来的每条消息",
+    ),
+    (
         "{} is left out of the model pool: {} is not set; set it with: {} (or add {}=your_key to {})",
         "{} 已移出模型池：未设置 {}；设置方法：{}（或把 {}=your_key 写入 {}）",
     ),

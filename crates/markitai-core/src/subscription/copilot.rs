@@ -14,11 +14,14 @@ fn no_events(message: &Value) -> Result<(), Failure> {
     }
     Ok(())
 }
+/// The runtime, started and checked: protocol 3 is required (another one is
+/// known to be incompatible); the verified CLI release 1.0.90-2 or a newer
+/// one, which is used with a one-time warning. Returns the release it reports.
 fn start(
     config: &CopilotConfig,
     timeout: Duration,
     cancel: Option<&AtomicBool>,
-) -> Result<Process, Failure> {
+) -> Result<(Process, String), Failure> {
     let mut process = Process::spawn(config, timeout, cancel)?;
     let connected = process.call("connect", json!({"clientInfo":{"editorName":"markitai","editorVersion":env!("CARGO_PKG_VERSION")},"supportedTaskKinds":[]}), cancel, &mut no_events)?;
     if connected.get("protocolVersion").and_then(Value::as_u64) != Some(COPILOT_PROTOCOL) {
@@ -28,18 +31,28 @@ fn start(
         ));
     }
     let version = process.call("status.get", json!({}), cancel, &mut no_events)?;
-    if version.get("protocolVersion").and_then(Value::as_u64) != Some(COPILOT_PROTOCOL)
-        || version.get("version").and_then(Value::as_str) != Some(COPILOT_CLI_VERSION)
-    {
+    if version.get("protocolVersion").and_then(Value::as_u64) != Some(COPILOT_PROTOCOL) {
         return Err(Failure::new(
             FailureKind::Unsupported,
-            "Copilot CLI version is outside the verified adapter contract",
+            "Copilot protocol version is unsupported; the adapter requires protocol 3",
         ));
     }
-    Ok(process)
+    let installed = version
+        .get("version")
+        .and_then(Value::as_str)
+        .filter(|installed| installed.len() <= 64)
+        .filter(|installed| compare_release(installed, COPILOT_CLI_VERSION, 0) != Release::Older);
+    let Some(installed) = installed else {
+        return Err(Failure::new(
+            FailureKind::Unsupported,
+            "Installed Copilot CLI is older than the supported release 1.0.90-2",
+        ));
+    };
+    Ok((process, installed.to_owned()))
 }
 fn authenticated(
     process: &mut Process,
+    installed: &str,
     cancel: Option<&AtomicBool>,
 ) -> Result<AuthStatus, Failure> {
     let value = process.call("auth.getStatus", json!({}), cancel, &mut no_events)?;
@@ -57,14 +70,21 @@ fn authenticated(
         expires_at: None,
         error: (!authenticated)
             .then(|| "Copilot is not authenticated; run markitai auth copilot login".into()),
-        details: json!({"source":"official_cli","verification":"runtime-auth-status","auth_type":source,"host":host,"cli_version":COPILOT_CLI_VERSION,"protocol_version":COPILOT_PROTOCOL}),
+        details: json!({"source":"official_cli","verification":"runtime-auth-status","auth_type":source,"host":host,"cli_version":installed,"supported_from":COPILOT_CLI_VERSION,
+            "newer_than_verified":compare_release(installed, COPILOT_CLI_VERSION, 0) == Release::Newer,
+            "protocol_version":COPILOT_PROTOCOL}),
     })
 }
 pub fn status(config: &CopilotConfig, timeout: Duration) -> Result<AuthStatus, Failure> {
-    authenticated(&mut start(config, timeout, None)?, None)
+    let (mut process, installed) = start(config, timeout, None)?;
+    authenticated(&mut process, &installed, None)
 }
-fn require_auth(process: &mut Process, cancel: Option<&AtomicBool>) -> Result<(), Failure> {
-    let auth = authenticated(process, cancel)?;
+fn require_auth(
+    process: &mut Process,
+    installed: &str,
+    cancel: Option<&AtomicBool>,
+) -> Result<(), Failure> {
+    let auth = authenticated(process, installed, cancel)?;
     if auth.details.get("auth_type").and_then(Value::as_str) == Some("api-key") {
         return Err(Failure::new(
             FailureKind::Unsupported,
@@ -80,8 +100,8 @@ fn require_auth(process: &mut Process, cancel: Option<&AtomicBool>) -> Result<()
     Ok(())
 }
 pub fn models(config: &CopilotConfig, timeout: Duration) -> Result<Vec<Model>, Failure> {
-    let mut process = start(config, timeout, None)?;
-    require_auth(&mut process, None)?;
+    let (mut process, installed) = start(config, timeout, None)?;
+    require_auth(&mut process, &installed, None)?;
     let value = process.call("models.list", json!({}), None, &mut no_events)?;
     let rows = value
         .get("models")
@@ -165,8 +185,11 @@ pub fn complete(config: &CopilotConfig, request: Request<'_>) -> Result<Completi
         ..Events::default()
     };
     let result = (|| {
-        let mut process = start(config, request.timeout, request.cancel)?;
-        require_auth(&mut process, request.cancel)?;
+        let (mut process, installed) = start(config, request.timeout, request.cancel)?;
+        if compare_release(&installed, COPILOT_CLI_VERSION, 0) == Release::Newer {
+            note_newer_release("Copilot CLI", &installed, COPILOT_CLI_VERSION);
+        }
+        require_auth(&mut process, &installed, request.cancel)?;
         let settings = session_config(model, request.system, process.workspace.path());
         let created =
             process.call(

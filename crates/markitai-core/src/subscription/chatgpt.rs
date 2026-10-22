@@ -4,7 +4,9 @@ mod events;
 mod tests;
 
 use super::supervisor::{Admission, Messages, ProcessFailure, Runtime};
-use super::{AuthStatus, FailureKind, Model, Request};
+use super::{
+    AuthStatus, FailureKind, Model, Release, Request, compare_release, note_newer_release,
+};
 use crate::process_groups::Workspace;
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -147,16 +149,30 @@ fn small_command(
     let exit = child.finish(cancel)?;
     Ok((output, child.stderr(), exit))
 }
-fn version(config: &Config, deadline: Instant, cancel: Option<&AtomicBool>) -> Result<(), Failure> {
+/// The installed Codex release: the verified 0.159.0, or a newer one, which
+/// is used with a one-time warning (its events are still validated one by
+/// one, so an incompatible change fails as a protocol error). An older or
+/// unreadable release is refused.
+fn version(
+    config: &Config,
+    deadline: Instant,
+    cancel: Option<&AtomicBool>,
+) -> Result<(String, Release), Failure> {
     let (out, _, exit) = small_command(config, &["--version".into()], deadline, cancel)?;
-    if !exit.success() || std::str::from_utf8(&out).ok().map(str::trim) != Some("codex-cli 0.159.0")
-    {
+    let installed = std::str::from_utf8(&out)
+        .ok()
+        .map(str::trim)
+        .and_then(|text| text.strip_prefix("codex-cli "))
+        .filter(|_| exit.success())
+        .map(|installed| (installed, compare_release(installed, CLI_VERSION, 0)))
+        .filter(|(_, release)| *release != Release::Older);
+    let Some((installed, release)) = installed else {
         return Err(Failure::new(
             FailureKind::Unsupported,
-            "Installed Codex CLI does not match the supported protocol version",
+            "Installed Codex CLI is older than the supported release 0.159.0",
         ));
-    }
-    Ok(())
+    };
+    Ok((installed.to_owned(), release))
 }
 fn signed_in(
     config: &Config,
@@ -186,7 +202,7 @@ fn signed_in(
 }
 pub fn status(config: &Config, timeout: Duration) -> Result<AuthStatus, Failure> {
     let deadline = RUNTIME.deadline(timeout)?;
-    version(config, deadline, None)?;
+    let (installed, release) = version(config, deadline, None)?;
     let authenticated = signed_in(config, deadline, None)?;
     Ok(AuthStatus {
         provider: "chatgpt",
@@ -195,7 +211,8 @@ pub fn status(config: &Config, timeout: Duration) -> Result<AuthStatus, Failure>
         expires_at: None,
         error: (!authenticated)
             .then(|| "Codex CLI is not signed in with a ChatGPT subscription".into()),
-        details: json!({"source":"official_cli","cli_version":CLI_VERSION,"native_adapter":true,"account_identity_available":false}),
+        details: json!({"source":"official_cli","cli_version":installed,"supported_from":CLI_VERSION,
+            "newer_than_verified":release == Release::Newer,"native_adapter":true,"account_identity_available":false}),
     })
 }
 pub fn models(config: &Config, timeout: Duration) -> Result<Vec<Model>, Failure> {
@@ -346,7 +363,10 @@ pub fn complete(config: &Config, request: Request<'_>) -> Result<Completion, Fai
     if image_bytes > IMAGE_LIMIT {
         return Err(limit());
     }
-    version(config, deadline, request.cancel)?;
+    let (installed, release) = version(config, deadline, request.cancel)?;
+    if release == Release::Newer {
+        note_newer_release("Codex", &installed, CLI_VERSION);
+    }
     if !signed_in(config, deadline, request.cancel)? {
         return Err(Failure::new(
             FailureKind::Authentication,

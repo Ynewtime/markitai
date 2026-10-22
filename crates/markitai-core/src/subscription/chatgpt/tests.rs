@@ -195,6 +195,18 @@ fn unknown_version_model_and_mime_fail_without_document_execution() {
     assert!(!f.root.path().join("request.json").exists());
 }
 #[test]
+fn a_newer_codex_release_is_used_and_an_older_one_refused() {
+    let f = Fixture::new("ok");
+    fake_runtime::install(f.root.path(), &json!({"name":"ok","version":"0.172.1"}));
+    let status = status(&f.config, Duration::from_secs(5)).unwrap();
+    assert_eq!(status.details["cli_version"], "0.172.1");
+    assert_eq!(status.details["newer_than_verified"], true);
+    assert!(complete(&f.config, f.request("gpt-5.5", &[])).is_ok());
+    fake_runtime::install(f.root.path(), &json!({"name":"ok","version":"0.158.9"}));
+    let e = complete(&f.config, f.request("gpt-5.5", &[])).unwrap_err();
+    assert_eq!(e.kind, FailureKind::Unsupported);
+}
+#[test]
 fn missing_terminal_errors_and_tool_events_never_publish_partial_text() {
     for (name, kind) in [
         ("truncated", FailureKind::Truncated),

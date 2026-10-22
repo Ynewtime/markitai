@@ -3,7 +3,10 @@
 mod tests;
 
 use super::supervisor::{self, Admission, Messages, ProcessFailure, Runtime};
-use super::{AuthStatus, FailureKind, Model, ObservedCall, Request};
+use super::{
+    AuthStatus, FailureKind, Model, ObservedCall, Release, Request, compare_release,
+    note_newer_release,
+};
 use crate::process_groups::Workspace;
 use base64::Engine;
 use serde::Serialize;
@@ -181,34 +184,17 @@ fn small_command(
     let status = process.finish(cancel)?;
     Ok((output, status))
 }
-/// Whether `version` (`2.1.285` or `2.1.285 (Claude Code)`) is a release this
-/// adapter speaks: the pinned 2.1.284 or a later patch of the 2.1 line. The
-/// official runtime updates itself between patch releases, which keep the
-/// stream-json protocol of their line; a new minor or major line or an older
-/// patch fails explicitly before any request, and the stream itself is still
-/// validated message by message.
-fn supported_version(version: &str) -> bool {
+/// How `version` (`2.1.285` or `2.1.285 (Claude Code)`) compares with the
+/// pinned 2.1.284: a later patch of the 2.1 line is verified (the official
+/// runtime updates itself between patch releases, which keep the stream-json
+/// protocol of their line); a newer line is used with a one-time warning; an
+/// older release fails explicitly before any request. The stream itself is
+/// still validated message by message.
+fn supported_version(version: &str) -> Option<Release> {
     let version = version.strip_suffix(" (Claude Code)").unwrap_or(version);
-    match (release(version), release(CLI_VERSION)) {
-        (Some((major, minor, patch)), Some(pinned)) => {
-            (major, minor) == (pinned.0, pinned.1) && patch >= pinned.2
-        }
-        _ => false,
-    }
-}
-/// `major.minor.patch` of plain decimal numbers.
-fn release(version: &str) -> Option<(u64, u64, u64)> {
-    let mut parts = version.split('.').map(|part| {
-        (!part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
-            .then(|| part.parse::<u64>().ok())
-            .flatten()
-    });
-    match (parts.next(), parts.next(), parts.next(), parts.next()) {
-        (Some(Some(major)), Some(Some(minor)), Some(Some(patch)), None) => {
-            Some((major, minor, patch))
-        }
-        _ => None,
-    }
+    (version.split('.').count() == 3)
+        .then(|| compare_release(version, CLI_VERSION, 2))
+        .filter(|release| *release != Release::Older)
 }
 /// The installed runtime's release, when it is one this adapter speaks.
 fn version(
@@ -218,16 +204,18 @@ fn version(
 ) -> Result<String, Failure> {
     let (bytes, status) = small_command(config, &["--version"], deadline, cancel)?;
     let value = std::str::from_utf8(&bytes).map_err(|_| protocol())?.trim();
-    if !status.success() || !supported_version(value) {
+    let release = supported_version(value).filter(|_| status.success());
+    let Some(release) = release else {
         return Err(Failure::new(
             FailureKind::Unsupported,
-            "Installed Claude CLI does not match the supported protocol version",
+            "Installed Claude CLI is older than the supported release 2.1.284",
         ));
+    };
+    let installed = value.strip_suffix(" (Claude Code)").unwrap_or(value);
+    if release == Release::Newer {
+        note_newer_release("Claude Code", installed, CLI_VERSION);
     }
-    Ok(value
-        .strip_suffix(" (Claude Code)")
-        .unwrap_or(value)
-        .to_owned())
+    Ok(installed.to_owned())
 }
 /// The release the installed runtime reports, to explain a mismatch; nothing when it cannot be asked.
 pub fn reported_version(config: &Config, timeout: Duration) -> Option<String> {
@@ -278,7 +266,9 @@ pub fn status(config: &Config, timeout: Duration) -> Result<AuthStatus, Failure>
             }
             .into()
         }),
-        details: json!({"source":"official_cli","cli_version":installed,"supported_from":CLI_VERSION,"native_adapter":true,"auth_method":method.filter(|m| matches!(*m, "claude.ai" | "apiKey")),"subscription":subscription}),
+        details: json!({"source":"official_cli","cli_version":installed,"supported_from":CLI_VERSION,
+            "newer_than_verified":supported_version(&installed) == Some(Release::Newer),
+            "native_adapter":true,"auth_method":method.filter(|m| matches!(*m, "claude.ai" | "apiKey")),"subscription":subscription}),
     })
 }
 fn private_file(workspace: &Workspace, file: &str, bytes: &[u8]) -> Result<PathBuf, Failure> {
@@ -452,7 +442,7 @@ fn validate_system(value: &Value) -> Result<(), Failure> {
         Some("init") => {
             if value
                 .get("claude_code_version")
-                .is_some_and(|v| !v.as_str().is_some_and(supported_version))
+                .is_some_and(|v| v.as_str().and_then(supported_version).is_none())
             {
                 return Err(protocol());
             }

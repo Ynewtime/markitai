@@ -824,6 +824,7 @@ fn checks(
                 "Install the supported official Copilot CLI; no Python SDK is required",
             );
             adapter.required = true;
+            newer_release(&mut adapter, "Copilot CLI", &auth);
             let mut identity = Check::new(
                 "Copilot authentication", "Configured local provider",
                 if auth.authenticated { "ok" } else { "error" },
@@ -851,6 +852,7 @@ fn checks(
                 "Install the supported official Claude CLI; no Python SDK is required",
             );
             adapter.required = true;
+            newer_release(&mut adapter, "Claude Code", &auth);
             let mut identity=Check::new("Claude subscription authentication", "Configured local provider", if auth.authenticated {"ok"} else {"error"},
                 auth.error.unwrap_or_else(|| "Official runtime reports an authenticated subscription; model access was not probed".into()), "Run markitai auth claude login");
             identity.required = true;
@@ -874,6 +876,7 @@ fn checks(
                 "Install official Codex 0.159.0; this adapter currently supports chatgpt/gpt-5.5",
             );
             adapter.required = true;
+            newer_release(&mut adapter, "Codex", &auth);
             let mut identity = Check::new(
                 "ChatGPT subscription authentication", "Configured local provider",
                 if auth.authenticated { "ok" } else { "error" },
@@ -978,6 +981,21 @@ fn backend(
             "The installed backend could not complete its bounded startup check",
             hint,
         ),
+    }
+}
+
+/// A runtime newer than the release its adapter was verified with is used:
+/// the check stays ready and says so.
+fn newer_release(check: &mut Check, runtime: &str, auth: &markitai_core::subscription::AuthStatus) {
+    let details = &auth.details;
+    if details["newer_than_verified"] == true
+        && let (Some(installed), Some(verified)) = (
+            details["cli_version"].as_str(),
+            details["supported_from"].as_str(),
+        )
+    {
+        check.message =
+            markitai_core::subscription::newer_release_message(runtime, installed, verified);
     }
 }
 

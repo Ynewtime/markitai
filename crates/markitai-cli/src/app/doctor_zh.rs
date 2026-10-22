@@ -259,6 +259,7 @@ pub(super) fn zh(text: &str) -> String {
     }
     portable_ocr(text)
         .or_else(|| unset_keys(text))
+        .or_else(|| newer_runtime(text))
         .or_else(|| {
             with_tail(
                 text,
@@ -275,6 +276,16 @@ pub(super) fn zh(text: &str) -> String {
         })
         .or_else(|| detected_models(text))
         .unwrap_or_else(|| text.to_owned())
+}
+
+/// `{runtime} {installed} is newer than {verified}, the release …`.
+fn newer_runtime(text: &str) -> Option<String> {
+    let (head, verified) = text
+        .strip_suffix(", the release this adapter was verified with; it is used, and every message it sends is still checked")?
+        .rsplit_once(" is newer than ")?;
+    Some(format!(
+        "{head} 比本适配器验证过的 {verified} 更新；仍会使用它，并检查它发来的每条消息"
+    ))
 }
 
 /// The doctor's lines about API keys that are not set.

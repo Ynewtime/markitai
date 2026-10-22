@@ -215,6 +215,49 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_newer_codex_release_is_named_once_in_the_document_warnings() {
+        let root = tempfile::tempdir().unwrap();
+        crate::subscription::fake_runtime::install(
+            root.path(),
+            &json!({"name":"ok","version":"0.171.0"}),
+        );
+        let env = HashMap::from([
+            (
+                "CODEX_CLI_PATH".to_owned(),
+                crate::subscription::fake_runtime::program()
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
+            (
+                "CODEX_HOME".to_owned(),
+                root.path().to_string_lossy().into_owned(),
+            ),
+            ("PATH".to_owned(), std::env::var("PATH").unwrap()),
+        ]);
+        let cfg = crate::config::normalize(&json!({"llm":{"model_list":[{"model_name":"default",
+            "litellm_params":{"model":format!("chatgpt/{}", crate::subscription::chatgpt::MODEL)}}],
+            "router_settings":{"timeout":20}},"cache":{"enabled":false},
+            "prompts":{"dir":"/nonexistent/markitai-test-prompts"}}))
+        .unwrap();
+        let prompts = Prompts {
+            system: "Clean.".into(),
+            user: "Body".into(),
+            image: None,
+            labels: Vec::new(),
+            cache_scope: String::new(),
+        };
+        let scope = DocumentScope::new(&cfg);
+        super::super::run(&prompts, &cfg, &env, &mut |_| {}).unwrap();
+        super::super::run(&prompts, &cfg, &env, &mut |_| {}).unwrap();
+        let warnings = scope.take_warnings();
+        let newer: Vec<_> = warnings
+            .iter()
+            .filter(|warning| warning.starts_with("Codex 0.171.0 is newer than 0.159.0"))
+            .collect();
+        assert_eq!(newer.len(), 1, "{warnings:?}");
+    }
+
+    #[test]
     fn a_failed_codex_turn_is_sent_again_instead_of_failing_the_document() {
         let root = tempfile::tempdir().unwrap();
         crate::subscription::fake_runtime::install(root.path(), &json!({"name":"flaky"}));

@@ -281,6 +281,11 @@ fn cancellation_preflight_and_wrong_version_do_not_dispatch_paid_input() {
     );
     assert_eq!(f.rows().len(), 1);
     f.clean();
+    // A newer line is used.
+    let f = Fixture::new("ok");
+    fake_runtime::install(f.root.path(), &json!({"mode":"ok","version":"2.3.0"}));
+    assert!(complete(&f.config, f.request("body")).is_ok());
+    f.clean();
     let f = Fixture::new("ok");
     let oversized = "x".repeat(TEXT_LIMIT + 1);
     assert_eq!(
@@ -352,20 +357,31 @@ fn advertised_builtin_agent_metadata_does_not_grant_tools_or_background_authorit
 
 #[test]
 fn later_patch_releases_of_the_pinned_line_are_supported() {
+    use crate::subscription::Release;
     for accepted in [
         "2.1.284",
         "2.1.284 (Claude Code)",
         "2.1.285 (Claude Code)",
         "2.1.400",
     ] {
-        assert!(super::supported_version(accepted), "{accepted}");
+        assert_eq!(
+            super::supported_version(accepted),
+            Some(Release::Verified),
+            "{accepted}"
+        );
+    }
+    // A newer line is used, with a one-time warning.
+    for newer in ["2.2.0", "3.1.284", "2.10.0 (Claude Code)"] {
+        assert_eq!(
+            super::supported_version(newer),
+            Some(Release::Newer),
+            "{newer}"
+        );
     }
     for refused in [
         "2.1.283",
         "2.1.283 (Claude Code)",
-        "2.2.0",
         "2.0.999",
-        "3.1.284",
         "1.1.284",
         "2.1",
         "2.1.284.1",
@@ -376,6 +392,6 @@ fn later_patch_releases_of_the_pinned_line_are_supported() {
         "",
         "2.1.284 (Other)",
     ] {
-        assert!(!super::supported_version(refused), "{refused}");
+        assert_eq!(super::supported_version(refused), None, "{refused}");
     }
 }

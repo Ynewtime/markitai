@@ -14,9 +14,10 @@ pub(super) struct Runtime {
     pub name: &'static str,
     /// The variable that selects the executable.
     pub path_variable: &'static str,
-    /// The release the adapter speaks, as a sentence part.
+    /// The releases the adapter speaks, as a sentence part: the verified one
+    /// or a newer one (used with a one-time warning).
     pub required: &'static str,
-    /// Installs a release the adapter speaks (the runtimes update themselves, so the release is named).
+    /// Installs the verified release (the runtimes update themselves, so the release is named).
     pub install: &'static str,
     pub login: &'static str,
 }
@@ -25,7 +26,7 @@ pub(super) const COPILOT: Runtime = Runtime {
     provider: "copilot",
     name: "GitHub Copilot CLI",
     path_variable: "COPILOT_CLI_PATH",
-    required: "1.0.90-2",
+    required: "1.0.90-2 or later",
     install: "npm install -g @github/copilot@1.0.90-2",
     login: "markitai auth copilot login",
 };
@@ -33,7 +34,7 @@ pub(super) const CLAUDE: Runtime = Runtime {
     provider: "claude-agent",
     name: "Claude Code CLI",
     path_variable: "CLAUDE_CLI_PATH",
-    required: "2.1.284 or a later 2.1 patch release",
+    required: "2.1.284 or later",
     install: "npm install -g @anthropic-ai/claude-code@2.1.284",
     login: "markitai auth claude login",
 };
@@ -41,7 +42,7 @@ pub(super) const CODEX: Runtime = Runtime {
     provider: "chatgpt",
     name: "Codex CLI",
     path_variable: "CODEX_CLI_PATH",
-    required: "0.159.0",
+    required: "0.159.0 or later",
     install: "npm install -g @openai/codex@0.159.0",
     login: "markitai auth chatgpt login",
 };

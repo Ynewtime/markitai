@@ -380,7 +380,8 @@ fn copilot(home: &Path, scenario: &Value) -> i32 {
                 );
             }
             Some("status.get") => {
-                respond(&request, json!({"version":"1.0.90-2","protocolVersion":3}));
+                let version = scenario["version"].as_str().unwrap_or("1.0.90-2");
+                respond(&request, json!({"version":version,"protocolVersion":3}));
             }
             Some("auth.getStatus") => respond(
                 &request,
@@ -566,14 +567,14 @@ fn claude(home: &Path, scenario: &Value) -> i32 {
     #[cfg(unix)]
     assert_eq!(permissions(&cwd), 0o700);
     if args == ["--version"] {
-        println!(
-            "{}",
-            if mode == "wrong-version" {
-                "2.1.283 (Claude Code)"
+        let version = scenario["version"]
+            .as_str()
+            .unwrap_or(if mode == "wrong-version" {
+                "2.1.283"
             } else {
-                "2.1.284 (Claude Code)"
-            }
-        );
+                "2.1.284"
+            });
+        println!("{version} (Claude Code)");
         return 0;
     }
     if args == ["auth", "status"] {
@@ -679,7 +680,7 @@ fn claude(home: &Path, scenario: &Value) -> i32 {
     assert_eq!(rest, "");
 
     let mut initial = json!({"type":"system","subtype":"init","session_id":"fixture-session",
-        "claude_code_version":"2.1.284","apiKeySource":"none","tools":[],"mcp_servers":[],
+        "claude_code_version":scenario["version"].as_str().unwrap_or("2.1.284"),"apiKeySource":"none","tools":[],"mcp_servers":[],
         "agents":[],"skills":[],"plugins":[],"permissionMode":"dontAsk"});
     if mode.starts_with("catalog-") {
         initial["agents"] = json!(["claude", "Explore", "general-purpose", "Plan"]);
@@ -814,11 +815,13 @@ fn codex(home: &Path, scenario: &Value) -> i32 {
     if args == ["--version"] {
         println!(
             "codex-cli {}",
-            if name == "version" {
-                "0.158.0"
-            } else {
-                "0.159.0"
-            }
+            scenario["version"]
+                .as_str()
+                .unwrap_or(if name == "version" {
+                    "0.158.0"
+                } else {
+                    "0.159.0"
+                })
         );
         return 0;
     }

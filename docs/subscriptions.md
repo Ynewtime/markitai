@@ -5,18 +5,23 @@ key, using the provider's separately installed official command-line runtime:
 
 | Model | Runtime | Status and login |
 |---|---|---|
-| `copilot/MODEL` | GitHub Copilot CLI `1.0.90-2` | `markitai auth copilot status`, `markitai auth copilot login` |
-| `claude-agent/MODEL` | Claude Code CLI `2.1.284` or a later 2.1 patch release | `markitai auth claude status`, `markitai auth claude login` |
-| `chatgpt/gpt-5.5` | Codex CLI `0.159.0` | `markitai auth chatgpt status`, `markitai auth chatgpt login` |
+| `copilot/MODEL` | GitHub Copilot CLI `1.0.90-2` or later (protocol 3) | `markitai auth copilot status`, `markitai auth copilot login` |
+| `claude-agent/MODEL` | Claude Code CLI `2.1.284` or later | `markitai auth claude status`, `markitai auth claude login` |
+| `chatgpt/gpt-5.5` | Codex CLI `0.159.0` or later | `markitai auth chatgpt status`, `markitai auth chatgpt login` |
 
 `markitai auth` alone reports all three. When the workbench or
 `POST /api/settings/llm/model-discovery` cannot list a runtime's models, the answer names the cause
 (`runtime_missing`, `runtime_unsupported`, `not_signed_in`, `runtime_failed`; see
 [provider management](provider-management.md)) with the command to run: the
-runtimes are installed at the pinned release (`npm install -g @github/copilot@1.0.90-2`,
-`@anthropic-ai/claude-code@2.1.284`, `@openai/codex@0.159.0`) because they update
-themselves and a newer minor line is refused, and signed in with `markitai auth <provider> login`. Other runtime versions fail explicitly
-before a model request. Login is never started during a conversion, and these
+runtimes are installed at the release each adapter was verified with (`npm install -g @github/copilot@1.0.90-2`,
+`@anthropic-ai/claude-code@2.1.284`, `@openai/codex@0.159.0`), and signed in with
+`markitai auth <provider> login`. They update themselves: a newer release is
+used, with a one-time warning in the first document's warnings (`Codex 0.171.0
+is newer than 0.159.0, the release this adapter was verified with; …`), and
+`doctor` says the same. Every message a runtime sends is still validated, so an
+incompatible change fails as a protocol error instead of passing unnoticed. Only
+an older release, or a Copilot runtime that speaks another protocol than 3, is
+refused before a model request. Login is never started during a conversion, and these
 adapters support Unix and Windows process management. A compatible official
 runtime and its own platform prerequisites are still required; fixture coverage
 does not establish authenticated inference. Ordinary document conversion
@@ -28,7 +33,9 @@ from verification with a real subscription; see [Evidence](#evidence-boundaries-
 The adapter targets the official GitHub Copilot CLI `1.0.90-2`, protocol 3, pinned
 against [SDK source f5d9685](https://github.com/github/copilot-sdk/tree/f5d9685f55286061e12763ed15a73c4469609881).
 It uses the Node SDK's actual `--headless --stdio` startup and Content-Length JSON
-RPC framing. An incompatible runtime fails explicitly before a model request.
+RPC framing. A newer CLI release that still speaks protocol 3 is used with a
+one-time warning; another protocol or an older release fails explicitly before
+a model request.
 
 ```text
 markitai auth
@@ -123,9 +130,10 @@ deadline. Stderr is never forwarded, and more than 1 MiB of it fails the request
 ## Claude
 
 `claude-agent/MODEL` runs through the separately installed official Claude Code
-CLI 2.1.284 or a later 2.1 patch release (the runtime updates itself; patch releases
-keep the stream-json protocol of their line, and every message is still validated).
-An older patch or a new minor or major line fails before any request;
+CLI 2.1.284 or later (the runtime updates itself; patch releases keep the
+stream-json protocol of their line, and every message is still validated). A
+new minor or major line is used with a one-time warning; an older release
+fails before any request;
 `markitai auth claude status --json` reports the installed `cli_version` and the
 `supported_from` release. The protocol reference is official TypeScript SDK 0.3.284
 and CLI release `8364969e9f5234ef3d9743cf7c790e9aab0ac3b1`; neither Python nor Node SDK

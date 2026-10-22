@@ -3,6 +3,33 @@ use serde_json::{Value, json};
 use std::io::Cursor;
 
 #[test]
+fn releases_compare_number_by_number_with_a_revision_last() {
+    use super::Release::{Newer, Older, Verified};
+    for (installed, verified, line, expected) in [
+        ("1.0.90-2", "1.0.90-2", 0, Verified),
+        ("1.0.95", "1.0.90-2", 0, Newer),
+        ("1.0.90-3", "1.0.90-2", 0, Newer),
+        ("1.0.90", "1.0.90-2", 0, Older),
+        ("1.0.89", "1.0.90-2", 0, Older),
+        ("0.160.0", "0.159.0", 0, Newer),
+        ("0.159.0", "0.159.0", 0, Verified),
+        ("0.99.0", "0.159.0", 0, Older),
+        ("2.1.300", "2.1.284", 2, Verified),
+        ("2.2.0", "2.1.284", 2, Newer),
+        ("10.0.0", "9.9.9", 0, Newer),
+        ("2.1.284.1", "2.1.284", 2, Older),
+        ("2.x.1", "2.1.284", 2, Older),
+        ("", "2.1.284", 2, Older),
+    ] {
+        assert_eq!(
+            compare_release(installed, verified, line),
+            expected,
+            "{installed}"
+        );
+    }
+}
+
+#[test]
 fn framing_rejects_ambiguity_truncation_and_budgets() {
     for packet in [
         b"Content-Length: 2\r\nContent-Length: 2\r\n\r\n{}".as_slice(),
@@ -387,6 +414,32 @@ mod runtime {
             assert_eq!(failure.kind, kind, "{mode}");
             assert_eq!(failure.usage.calls.len(), 1);
         }
+    }
+    #[test]
+    fn a_newer_cli_release_is_used_and_an_older_one_refused() {
+        let fixture = Fixture::new("normal");
+        let reinstall = |version: &str| {
+            fake_runtime::install(
+                fixture.root.path(),
+                &json!({"mode":"normal","home":std::env::var("HOME").ok(),
+                    "cache_home":fixture.root.path().join("private cache"),"version":version}),
+            );
+        };
+        reinstall("1.0.95");
+        let status = status(&fixture.cfg, Duration::from_secs(10)).unwrap();
+        assert_eq!(status.details["cli_version"], "1.0.95");
+        assert_eq!(status.details["newer_than_verified"], true);
+        assert!(complete(&fixture.cfg, fixture.request("text", None)).is_ok());
+        reinstall("1.0.90-1");
+        let failure = complete(&fixture.cfg, fixture.request("text", None)).unwrap_err();
+        assert_eq!(failure.kind, FailureKind::Unsupported);
+        assert!(
+            failure
+                .error
+                .to_string()
+                .contains("older than the supported release 1.0.90-2")
+        );
+        fixture.assert_private_cwd_removed();
     }
     #[test]
     fn protocol_version_and_response_limits_fail_closed() {

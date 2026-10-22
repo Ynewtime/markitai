@@ -267,6 +267,11 @@ fn copy_usage(value: &ConversionUsage) -> ConversionUsage {
 }
 // Routing notices reach the document whose request produced them; the entry
 // point that publishes an enhancement takes them.
+/// Whether a document's accounting is in place on this thread, so a
+/// document warning would be kept.
+pub(crate) fn document_scoped() -> bool {
+    DOCUMENT_ACCOUNTING.with(|slot| slot.borrow().is_some())
+}
 pub(crate) fn note_document_warning(message: String) {
     DOCUMENT_ACCOUNTING.with(|slot| {
         if let Some(state) = slot.borrow().as_ref() {
