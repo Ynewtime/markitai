@@ -1029,11 +1029,15 @@ impl<'a> LopdfEncodings<'a> {
 
     /// markitai: whether the font `name` names neither an encoding nor a
     /// ToUnicode CMap, so that lopdf reads it through the standard encoding
-    /// it falls back to (see [`mark_undefined_codes`]).
+    /// it falls back to (see [`mark_undefined_codes`]). An entry whose value
+    /// is `null` names nothing, as if it were absent.
     pub(crate) fn reads_by_default(&self, name: &str) -> bool {
+        let names = |font: &lopdf::Dictionary, key: &[u8]| {
+            font.get(key).is_ok_and(|value| !matches!(value, Object::Null))
+        };
         self.fonts
             .get(name)
-            .is_some_and(|font| !font.font.has(b"Encoding") && !font.font.has(b"ToUnicode"))
+            .is_some_and(|font| !names(font.font, b"Encoding") && !names(font.font, b"ToUnicode"))
     }
 }
 
@@ -3306,6 +3310,14 @@ pub(crate) fn extract_text_from_operand(
                             || encoding.blank_codes.contains(b)
                             || encoding.named_codes.contains(b)
                     });
+                // markitai: a control code nothing maps, in a simple font
+                // that names neither an encoding nor a ToUnicode CMap, reads
+                // as U+FFFD (as [`mark_undefined_codes`] does without a
+                // Differences reading), so a run of them is weighed as
+                // undecodable instead of leaving only its punctuation.
+                let marks_controls = !is_type0_cid_font
+                    && encoding.base.is_none()
+                    && encoding_cache.reads_by_default(current_font);
                 if has_diff_match {
                     let decoded: String = bytes
                         .iter()
@@ -3329,6 +3341,8 @@ pub(crate) fn extract_text_from_operand(
                                 // Most PDFs with simple fonts use WinAnsi/PDFDocEncoding
                                 // semantics, not ISO-8859-1 C1 controls.
                                 decode_single_byte_fallback_char(b, use_cp1252_fallback).to_string()
+                            } else if marks_controls && !matches!(b, 0x00 | b'\t' | b'\n' | b'\r') {
+                                "\u{FFFD}".to_string()
                             } else {
                                 return None; // Skip unmapped control characters
                             };
@@ -6281,6 +6295,116 @@ mod tests {
         ])));
         // A defined code, and a tab, read as before.
         assert_eq!(decode(b"Mixed\ttext"), "Mixedtext");
+    }
+
+    /// A symbolic TrueType program of three glyphs addressed through a
+    /// (1,0) `cmap` by the `codes` given (code, glyph): glyph 1 is outlined,
+    /// glyphs 0 and 2 have an advance and no outline.
+    fn sfnt_with_mac_cmap(codes: &[(u8, u8)]) -> Vec<u8> {
+        let mut head = vec![0u8; 54];
+        head[18..20].copy_from_slice(&1000u16.to_be_bytes()); // unitsPerEm
+        head[50..52].copy_from_slice(&1i16.to_be_bytes()); // long loca offsets
+        let mut hhea = vec![0u8; 36];
+        hhea[34..36].copy_from_slice(&3u16.to_be_bytes()); // numberOfHMetrics
+        let mut maxp = vec![0u8; 6];
+        maxp[..4].copy_from_slice(&0x00005000u32.to_be_bytes());
+        maxp[4..6].copy_from_slice(&3u16.to_be_bytes());
+        let hmtx: Vec<u8> = (0..3).flat_map(|_| [0x01, 0xF4, 0, 0]).collect();
+        // Glyph 1: a triangle of three on-curve points in word coordinates.
+        let mut triangle = Vec::new();
+        for value in [1i16, 0, 0, 100, 100] {
+            triangle.extend(value.to_be_bytes());
+        }
+        triangle.extend(2u16.to_be_bytes()); // its last point
+        triangle.extend(0u16.to_be_bytes()); // no instructions
+        triangle.extend([1u8; 3]);
+        for value in [0i16, 100, -100, 0, 0, 100] {
+            triangle.extend(value.to_be_bytes());
+        }
+        triangle.push(0);
+        let end = triangle.len() as u32;
+        let loca: Vec<u8> = [0u32, 0, end, end]
+            .iter()
+            .flat_map(|offset| offset.to_be_bytes())
+            .collect();
+        let mut cmap = Vec::new();
+        cmap.extend(0u16.to_be_bytes()); // version
+        cmap.extend(1u16.to_be_bytes()); // one subtable
+        cmap.extend(1u16.to_be_bytes()); // Macintosh
+        cmap.extend(0u16.to_be_bytes()); // Roman
+        cmap.extend(12u32.to_be_bytes());
+        cmap.extend(0u16.to_be_bytes()); // format 0
+        cmap.extend(262u16.to_be_bytes());
+        cmap.extend(0u16.to_be_bytes());
+        let mut glyphs = [0u8; 256];
+        for &(code, glyph) in codes {
+            glyphs[usize::from(code)] = glyph;
+        }
+        cmap.extend(glyphs);
+        sfnt_from_tables(vec![
+            (*b"head", head),
+            (*b"hhea", hhea),
+            (*b"maxp", maxp),
+            (*b"hmtx", hmtx),
+            (*b"loca", loca),
+            (*b"glyf", triangle),
+            (*b"cmap", cmap),
+        ])
+    }
+
+    /// markitai: the same subset whose program has a blank glyph (its space)
+    /// is read code by code through that program, which skipped the control
+    /// codes it draws its letters with: a Greek paragraph came out as its
+    /// commas and full stops alone, on a page that asked for nothing. Those
+    /// codes read as U+FFFD too, so the run is weighed as undecodable.
+    #[test]
+    fn control_codes_of_a_subset_with_a_blank_glyph_are_marked_not_dropped() {
+        let program = sfnt_with_mac_cmap(&[(0x01, 1), (0x02, 1), (0x20, 2), (0x2E, 1)]);
+        let (mut doc, _, page_id) =
+            simple_font_doc("<21> <0041>", Some(program), None, None, false);
+        // An entry set to null is no ToUnicode either.
+        for (_, object) in doc.objects.iter_mut() {
+            if let Ok(dict) = object.as_dict_mut() {
+                if dict.has(b"ToUnicode") {
+                    dict.set("ToUnicode", Object::Null);
+                }
+            }
+        }
+        let decode = |bytes: &[u8]| -> String {
+            let cmaps = FontCMaps::from_doc(&doc);
+            let fonts = doc.get_page_fonts(page_id).unwrap();
+            let (font_encodings, _) = build_font_encodings(
+                &doc,
+                &fonts,
+                &FontObjectIds::new(),
+                &cmaps,
+                &mut FontStyleCache::new(),
+            );
+            assert!(font_encodings["F1"].blank_codes.contains(&0x20));
+            let encoding_cache = LopdfEncodings::new(&doc, &fonts);
+            let mut font_widths: PageFontWidths = HashMap::new();
+            font_widths.insert("F1".to_string(), make_font_info(&[], 1000, false));
+            extract_text_from_operand(
+                &Object::String(bytes.to_vec(), lopdf::StringFormat::Hexadecimal),
+                "F1",
+                Some("ABCDEF+Subset"),
+                &cmaps,
+                &HashMap::new(),
+                &HashMap::new(),
+                &font_encodings,
+                &encoding_cache,
+                &mut CMapDecisionCache::new(),
+                &font_widths,
+                &build_font_kinds(&fonts),
+            )
+            .expect("text decoded")
+            .0
+        };
+        let word = decode(b"\x01\x02\x01 \x02\x01.");
+        assert_eq!(word, "\u{FFFD}\u{FFFD}\u{FFFD} \u{FFFD}\u{FFFD}.");
+        assert!(crate::text_quality::run_is_undecodable(&word));
+        // A whitespace control still reads as nothing.
+        assert_eq!(decode(b"\x01\t."), "\u{FFFD}.");
     }
 
     /// An odd-length string through a Type0 font is read byte by byte

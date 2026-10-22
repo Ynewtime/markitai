@@ -1,0 +1,9 @@
+{
+  "file": "greek-subset.pdf",
+  "bytes": 24547,
+  "sha256": "9aaa889252050008dee7a0fb94fb32400c4659cbfba1ec1fbd53b1dc4c0b5e15",
+  "content": "invented Greek title and two invented paragraphs, no real data",
+  "authored": "written for these tests in markitai-rust",
+  "generator": "make.py: ReportLab 5.1.0 with an embedded DejaVu Sans subset, then PyMuPDF 2.0 removes the font's ToUnicode entry",
+  "purpose": "a simple TrueType font that names neither an encoding nor a ToUnicode CMap and draws its letters with subset codes 1-31, keeping only the space, comma and full stop as ASCII: its text must not count as readable"
+}

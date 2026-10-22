@@ -701,3 +701,25 @@ fn a_page_read_again_by_ocr_drops_the_kept_layer_warning() {
         json!([{"page": 1, "source": "ocr", "reason": OCR_FORCED}])
     );
 }
+
+#[test]
+fn a_subset_without_encoding_or_tounicode_is_not_readable_for_its_punctuation() {
+    // Greek in a TrueType subset whose ToUnicode map is gone: the letters
+    // are subset codes 1-31, and only the spaces, commas and full stops are
+    // ASCII. Those alone used to stand for the page, with no notice.
+    let bytes = include_bytes!("fixtures/no-tounicode/greek-subset.pdf");
+    let pages = extract_pages(bytes).unwrap();
+    let page = &pages.pages[0];
+    assert!(page.needs_ocr, "{:?}", page.markdown);
+    assert!(
+        !page.markdown.contains(", ") && !page.markdown.contains(" ."),
+        "{:?}",
+        page.markdown
+    );
+    assert_eq!(
+        page.layer_reason(),
+        format!("{FAILED}garbled or enciphered text")
+    );
+    let error = pages.finish().unwrap_err().to_string();
+    assert!(error.contains("run again with --ocr"), "{error}");
+}

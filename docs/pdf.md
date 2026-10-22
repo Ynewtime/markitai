@@ -845,6 +845,14 @@ needs OCR for that alone when 20 readable characters remain. U+FFFD in a run
 that is kept stays in place; the Markdown no longer sends a page to OCR for a
 single replacement character.
 
+A simple font that names neither an encoding nor a ToUnicode CMap (an entry
+set to `null` names nothing) is read through the standard encoding, or code by
+code through its embedded program when that has a blank glyph; a code neither
+defines reads as U+FFFD, a NUL or whitespace control as nothing. A subset whose
+ToUnicode map was lost (ReportLab draws Greek or CJK with codes 1–31 and 128
+up) therefore loses its runs to the rule above and the page needs OCR, instead
+of keeping only the commas and full stops the encoding defines with no notice.
+
 Such a page carries a warning, deferred like the missing-text warnings so that
 OCR removes it:
 

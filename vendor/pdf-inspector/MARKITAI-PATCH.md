@@ -606,6 +606,19 @@ The local changes, each marked `markitai` (or, for sorts, made through
   glyphs nothing identifies (counted by `unidentified_glyphs`) read as
   before. A test in `fonts.rs` covers marked, mixed and defined codes; the
   isolated copy gives 1,726 passed and the same 21 failed.
+- `src/extractor/fonts.rs` (`extract_text_from_operand`'s code-by-code
+  reading through a font's own encoding map,
+  `LopdfEncodings::reads_by_default`): the same kind of font whose embedded
+  TrueType program has a blank glyph (its space) is read code by code
+  through that program, which skipped every control code nothing maps. A
+  ReportLab Greek subset draws its letters with codes 1–31, so a paragraph
+  read as its commas and full stops alone and the page asked for nothing.
+  In a simple font that names neither an encoding nor a ToUnicode CMap,
+  such a code now reads as U+FFFD (a NUL or whitespace control still as
+  nothing), so the run is counted by `drop_undecodable_runs`; an
+  `/Encoding` or `/ToUnicode` entry whose value is `null` names nothing. A
+  test with a three-glyph program covers it; the isolated copy gives 1,733
+  passed and the same 21 failed.
 - `src/tables/detect_lines.rs` (`detect_tables_from_lines_inner`, row
   edges): when a page's columns come from drawn vertical borders, a
   horizontal rule above or below every border's reach (by more than 3 pt) is
