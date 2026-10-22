@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from ._records import ConfigModel, ConversionOutput, ConversionUsage, OutputProfileName
 
 __all__ = [
-    "ConversionError", "ConversionOutput", "ConversionUsage", "FetchError",
+    "ConfigFileError", "ConversionError", "ConversionOutput", "ConversionUsage", "FetchError",
     "NoModelConfiguredError", "OutputProfileName", "aconvert", "convert",
     "enable_worker_processes",
 ]
@@ -79,6 +79,17 @@ class FetchError(Exception):
     usage: ConversionUsage | None = None
 
 
+class ConfigFileError(ValueError):
+    """The configuration is malformed or holds invalid values.
+
+    Python markitai's name for it; a `ValueError`, as this binding raised for
+    a bad configuration before, so either `except` keeps working.
+    """
+
+    code = "config_error"
+    usage: ConversionUsage | None = None
+
+
 class NoModelConfiguredError(ValueError):
     """LLM processing was requested without a configured model."""
 
@@ -102,7 +113,9 @@ def _error(error: Mapping[str, Any]) -> Exception:
         exception = FetchError(message)
     elif code == "no_model_configured":
         exception = NoModelConfiguredError(message)
-    elif code in {"invalid_input", "invalid_json", "config_error"}:
+    elif code == "config_error":
+        exception = ConfigFileError(message)
+    elif code in {"invalid_input", "invalid_json"}:
         exception = ValueError(message)
     elif code == "not_found":
         exception = FileNotFoundError(message)

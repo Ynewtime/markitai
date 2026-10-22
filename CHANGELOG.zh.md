@@ -3,6 +3,7 @@
 ## [1.3.0]
 
 ### 新增
+- Python API：配置有误时抛出 `markitai.ConfigFileError`（也可从 `markitai.api` 导入），即 Python 版 markitai 中的同名错误；它是 `ValueError` 的子类，因此 `except ValueError` 仍然有效。`await markitai.fetch.close_shared_clients()`（无操作）和 `markitai.utils.shutdown.finalize_process(code)`（刷新两个输出流并以 `code` 结束进程）可以像以前一样导入。
 - `--text-only`（`output.text_only`；工作台「其它」中的「仅文字」，任务选项 `text_only`，见 `features.text_only`）把图片或 PDF 只写成其中识别到的文字：没有 frontmatter、标题、图片链接、图片描述和代码围栏。本地 OCR 给出识别文字；视觉模型给出逐字转写（图片分析的 extracted_text，即使未开启 alt 和描述也会请求）；PDF 保留文字的标题和表格，去掉图片和页面截图注释。不会为此发布图片；图片中没有可读文字时得到空文档和一条警告。
 - 以 EMF 或 WMF 图片保存的 Word 或 PowerPoint 图表，在已安装 LibreOffice 时会由它在独立进程中（有时间和大小限制）画成 PNG 并裁到图形范围，因此可以像普通图片一样被压缩和分析；没有 LibreOffice 时文件照旧保留，也没有提示。
 - 工作台的条目菜单新增“JSON”项（服务器声明 `document_json` 时显示，接口契约 v1.19），保存 `markitai -f json` 输出的文档。

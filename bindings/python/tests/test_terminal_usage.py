@@ -19,7 +19,8 @@ class TerminalUsageTests(unittest.TestCase):
             "fetch_error": markitai.FetchError,
             "no_model_configured": markitai.NoModelConfiguredError,
             "invalid_input": ValueError, "invalid_json": ValueError,
-            "config_error": ValueError, "not_found": FileNotFoundError,
+            # Python markitai's name; still a ValueError.
+            "config_error": markitai.ConfigFileError, "not_found": FileNotFoundError,
             "is_directory": IsADirectoryError, "io_error": OSError,
             "conversion_error": markitai.ConversionError,
             "unsupported": markitai.ConversionError,

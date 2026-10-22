@@ -2,6 +2,7 @@
 
 from ._native import __version__
 from .api import (
+    ConfigFileError,
     ConversionError,
     FetchError,
     NoModelConfiguredError,
@@ -20,7 +21,7 @@ if TYPE_CHECKING:
     from .config import MarkitaiConfig
 
 __all__ = [
-    "ConversionError", "ConversionOutput", "ConversionUsage", "FetchError",
+    "ConfigFileError", "ConversionError", "ConversionOutput", "ConversionUsage", "FetchError",
     "NoModelConfiguredError", "OutputProfileName", "__version__", "aconvert",
     "convert", "enable_worker_processes", "MarkitaiConfig",
 ]

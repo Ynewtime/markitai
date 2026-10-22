@@ -3,6 +3,7 @@
 ## [1.3.0]
 
 ### Added
+- Python API: `markitai.ConfigFileError` (also in `markitai.api`), Python markitai's error for a bad configuration, is raised for one; it is a `ValueError` subclass, so `except ValueError` keeps working. `await markitai.fetch.close_shared_clients()` (a no-op) and `markitai.utils.shutdown.finalize_process(code)` (flushes both streams and ends the process with `code`) can be imported as before.
 - `--text-only` (`output.text_only`; the workbench's Text only under Other, `text_only` in job options with `features.text_only`) writes an image or a PDF as only the text recognised in it: no front matter, title heading, picture link, image description or code fence. Local OCR gives its text; a vision model gives its literal transcription (the image analysis's extracted text, requested even without alt or descriptions); a PDF keeps its text's headings and tables and loses its pictures and page-image comments. No picture is published for it, and an image without readable text gives an empty document and a warning.
 - A Word or PowerPoint chart stored as an EMF or WMF picture is now drawn as a PNG by LibreOffice, when it is installed (a separate process with a time limit and size limits, cropped to the drawing), so that it is compressed and analysed like any picture; without LibreOffice the file is kept as before, with no notice.
 - The workbench's item menu has a JSON entry (shown when the server announces `document_json`, contract v1.19) that saves the document `markitai -f json` writes.

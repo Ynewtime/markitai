@@ -218,7 +218,11 @@ asyncio.run(main())
 dataclasses, and filesystem result fields are `pathlib.Path`. Calling
 `convert` from a running event loop raises `RuntimeError` as in the reference.
 `enable_worker_processes` remains an importable compatibility hook; Rust does
-not require Python worker processes.
+not require Python worker processes. So do Python markitai's shutdown helpers:
+`await markitai.fetch.close_shared_clients()` does nothing (no HTTP client stays
+open between calls), and `markitai.utils.shutdown.finalize_process(code)` only
+flushes both streams and ends the process with `code`, as the original did, with
+no native teardown left to avoid.
 
 `MarkitaiConfig` and the 26 nested configuration model classes are available
 from `markitai.config`. They use Rust's shared schema, defaults, coercions and
@@ -248,7 +252,9 @@ behavior and Pydantic internals are not reproduced. Advanced combinations of
 serialization selectors remain a compatibility testing target. JSON
 dictionaries and external objects exposing
 `model_dump(mode="json")` also work. The wrapper never mutates supplied config.
-Native `fetch_error` maps to `FetchError`; input/configuration errors map to
+Native `fetch_error` maps to `FetchError`; a bad configuration (`config_error`)
+to `ConfigFileError`, Python markitai's name, which is a `ValueError` subclass so
+existing `except ValueError` handlers still catch it; other input errors to
 `ValueError`; conversion/unsupported errors and a native panic
 (`internal_error`), in conversion or in the configuration models' native
 normalization, map to `ConversionError` with a `code` attribute. Specific filesystem and missing-model codes map to the
