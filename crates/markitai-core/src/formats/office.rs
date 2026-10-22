@@ -960,7 +960,11 @@ impl Reader<'_> {
                 super::super::text::cell(&cell.child(Ns::Drawing, "txBody").map(|body| linked_text_body(body, rels)).unwrap_or_default())
             }).collect::<Vec<_>>()
         }).collect::<Vec<_>>();
-        format!("\n{}\n", super::super::text::table(&rows, true).trim_end())
+        // A blank line on either side: a line after a table row is one more row.
+        format!(
+            "\n{}\n\n",
+            super::super::text::table(&rows, true).trim_end()
+        )
     }
 
     fn chart(
@@ -1059,8 +1063,8 @@ impl Reader<'_> {
             }
         }
         Ok(format!(
-            "\n\n### Chart{title}\n\n{}",
-            super::super::text::table(&rows, true)
+            "\n\n### Chart{title}\n\n{}\n\n",
+            super::super::text::table(&rows, true).trim_end()
         ))
     }
 
@@ -1802,6 +1806,41 @@ mod tests {
                 .any(|warning| warning.contains("slide 2"))
         );
         assert!(extract_presentation(&package(&[("r", "missing.xml")], vec![])).is_err());
+    }
+
+    #[test]
+    fn a_text_box_after_a_table_or_a_chart_is_not_one_more_row() {
+        let table = r#"<p:graphicFrame><p:xfrm><a:off x="1" y="10"/></p:xfrm><a:graphic><a:graphicData><a:tbl><a:tr><a:tc><a:txBody><a:p><a:r><a:t>h1</a:t></a:r></a:p></a:txBody></a:tc></a:tr><a:tr><a:tc><a:txBody><a:p><a:r><a:t>a</a:t></a:r></a:p></a:txBody></a:tc></a:tr></a:tbl></a:graphicData></a:graphic></p:graphicFrame>"#;
+        let chart_frame = r#"<p:graphicFrame><p:xfrm><a:off x="1" y="30"/></p:xfrm><a:graphic><a:graphicData><c:chart r:id="rC"/></a:graphicData></a:graphic></p:graphicFrame>"#;
+        let chart = format!(
+            r#"<c:chartSpace xmlns:c="{C}" xmlns:a="{A}" xmlns:r="{R}"><c:chart><c:plotArea><c:barChart><c:ser><c:tx><c:v>North</c:v></c:tx><c:cat><c:strLit><c:pt idx="0"><c:v>Q1</c:v></c:pt></c:strLit></c:cat><c:val><c:numLit><c:pt idx="0"><c:v>3.5</c:v></c:pt></c:numLit></c:val></c:ser></c:barChart></c:plotArea></c:chart></c:chartSpace>"#
+        );
+        let bytes = package(
+            &[("rS", "slides/one.xml")],
+            vec![
+                (
+                    "ppt/slides/one.xml",
+                    slide(&format!(
+                        "{}{table}{}{chart_frame}{}",
+                        shape("Before", "", 1),
+                        shape("After the table", "", 20),
+                        shape("After the chart", "", 40)
+                    ))
+                    .into_bytes(),
+                ),
+                (
+                    "ppt/slides/_rels/one.xml.rels",
+                    relationships(&[("rC", "chart", "../charts/one.xml")]).into_bytes(),
+                ),
+                ("ppt/charts/one.xml", chart.into_bytes()),
+            ],
+        );
+        let document = extract_presentation(&bytes).unwrap();
+        assert_eq!(
+            document.markdown,
+            "<!-- Slide number: 1 -->\nBefore\n\n| h1 |\n| --- |\n| a |\n\nAfter the table\n\n\
+             ### Chart\n\n| Category | North |\n| --- | --- |\n| Q1 | 3.5 |\n\nAfter the chart"
+        );
     }
 
     #[test]

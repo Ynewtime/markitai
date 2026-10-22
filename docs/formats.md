@@ -408,7 +408,9 @@ Cached numbers read through their cache's (or point's) format code with the
 spreadsheet readers' engine, so date categories are ISO dates rather than
 serial numbers (`c:date1904` honoured) and `0%` values are percentages; text
 points and General numbers are unchanged.
-Speaker notes follow their slide under `### Notes:`, and its review comments
+A table, and a chart's data table, has a blank line on either side, so a text
+box or a picture placed after it is a block of its own rather than one more
+table row. Speaker notes follow their slide under `### Notes:`, and its review comments
 close it under `### Comments:`, one item per comment or reply, `Author: text`
 on one line: legacy comments (`p:cmLst`, authors from `commentAuthors.xml`) and
 Microsoft 365 threads (`modernComment_*.xml`, authors from `authors.xml`). A
