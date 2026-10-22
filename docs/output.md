@@ -42,9 +42,22 @@ data row or element name is not a reliable document title. See
 
 Ordinary Markdown receives heading spacing, trailing whitespace (a hard break's
 two spaces stay where the next line continues the paragraph) and blank-line
-cleanup, residual placeholder removal, broken-link repair, repeated page-footer
-cleanup and, outside fenced code, removal of a table's repeated delimiter row
-(`| --- | --- |` again after the first one, as a model may write it). It ends with one newline. Existing input YAML remains part of the body
+cleanup, residual placeholder removal, broken-link repair, running header and
+footer cleanup and, outside fenced code, removal of a table's repeated delimiter row
+(`| --- | --- |` again after the first one, as a model may write it). It ends with one newline.
+
+Running headers and footers are found on the pages and slides of output with page
+or slide markers (PDF, Office and presentation pages, written or not), as Python
+markitai 1.2.1 finds them: from four pages on, the first and last two non-empty
+lines of each page are candidates when they are at most 100 characters and no
+heading, table row, picture, HTML, quotation or code; one that is at that edge on
+60% of the pages, and three or more (white space, case and digits ignored, so
+`Page 3 of 9` matches), is removed from those edges. A line that most of its
+pages show more than once is body text (numbered paragraphs or OCR lines), and so
+is a line of more than six words that differs only in its numbers from page to
+page (`Point 3 is made on slide 3.`). The third line inside two removed ones goes
+too (a slide footer of date, text and number), in the same single pass. The same
+words elsewhere on a page, such as a company name in a slide's body, stay. Existing input YAML remains part of the body
 beneath the generated frontmatter, matching the reference workflow.
 
 Pure output bypasses this normalization. Existing YAML is parsed for API metadata,

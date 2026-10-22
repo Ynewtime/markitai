@@ -125,72 +125,220 @@ fn ends_escaped(text: &str) -> bool {
     text.bytes().rev().take_while(|&byte| byte == b'\\').count() % 2 == 1
 }
 
-fn clean_footers(source: String) -> String {
-    let markers: Vec<_> = PAGE.find_iter(&source).collect();
-    if markers.len() < 3 {
-        return source;
+/// Pages under this many are left alone: too few to call a line running.
+const RUNNING_MIN_PAGES: usize = 4;
+/// A running line is on at least this share of the pages, and on at least
+/// [`RUNNING_MIN_COUNT`] of them.
+const RUNNING_MIN_SHARE: f64 = 0.6;
+const RUNNING_MIN_COUNT: usize = 3;
+/// Non-empty lines at each edge of a page that may be running lines.
+const EDGE_LINES: usize = 2;
+/// Longer lines are body text.
+const RUNNING_MAX_CHARS: usize = 100;
+/// A line that differs from page to page in its numbers alone (`Page 3 of
+/// 9`) is running only with at most this many words of letters besides
+/// them: a templated body sentence (`Point 3 is made on slide 3.`) is not.
+const NUMBERED_RUNNING_MAX_WORDS: usize = 6;
+
+/// The key a page's line is matched by across pages: white space
+/// collapsed, lower case, each run of digits `#`. `None` when the line is
+/// no candidate: empty, longer than [`RUNNING_MAX_CHARS`], or Markdown
+/// structure that repeats across pages without being a header or footer:
+/// a heading, a table row, a picture (each page's scan or figure, its
+/// placeholder numbered), HTML or a comment, a quotation, fenced code or a
+/// protected literal block.
+fn running_key(line: &str) -> Option<String> {
+    let line = line.trim();
+    if line.is_empty()
+        || line.starts_with(['#', '|', '<', '>', '`', '~'])
+        || line.starts_with("![")
+        || line.starts_with(|ch| ('\u{fdd0}'..='\u{fdef}').contains(&ch))
+        || line.chars().count() > RUNNING_MAX_CHARS
+    {
+        return None;
     }
-    let mut counts: HashMap<&str, usize> = HashMap::new();
-    let mut pages = 0;
-    for (index, marker) in markers.iter().enumerate() {
-        let end = markers
-            .get(index + 1)
-            .map_or(source.len(), |next| next.start());
-        let lines: Vec<_> = source[marker.end()..end]
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty())
-            .collect();
-        if lines.len() < 2 {
-            continue;
+    let mut key = String::with_capacity(line.len());
+    let mut digits = false;
+    for word in line.split_whitespace() {
+        if !key.is_empty() {
+            key.push(' ');
+            digits = false;
         }
-        let endings: Vec<_> = lines
-            .iter()
-            .rev()
-            .take(4)
-            .copied()
-            // Markdown structure (a table row or its separator, a quote, a
-            // fence, a comment) repeats across pages without being a footer.
-            .filter(|line| {
-                line.chars().count() < 30
-                    && !line.starts_with(['#', '!', '[', '-', '*', '|', '>', '`', '~', '<'])
-            })
-            .collect();
-        if !endings.is_empty() {
-            pages += 1;
-            for line in endings {
-                *counts.entry(line).or_default() += 1;
+        for ch in word.chars().flat_map(char::to_lowercase) {
+            if ch.is_numeric() {
+                if !digits {
+                    key.push('#');
+                }
+                digits = true;
+            } else {
+                key.push(ch);
+                digits = false;
             }
         }
     }
-    if pages < 3 {
-        return source;
-    }
-    let numeric = |line: &str| !line.is_empty() && line.chars().all(|ch| ch.is_numeric());
-    let common: HashSet<_> = counts
-        .into_iter()
-        .filter(|(line, count)| count * 2 >= pages && !numeric(line))
-        .map(|(line, _)| line)
+    Some(key)
+}
+
+/// The indices of a page's first and last [`EDGE_LINES`] non-empty lines.
+fn edge_indices(lines: &[&str]) -> Vec<usize> {
+    let filled: Vec<usize> = (0..lines.len())
+        .filter(|&index| !lines[index].trim().is_empty())
         .collect();
-    if common.is_empty() {
+    let mut edges: Vec<usize> = filled.iter().take(EDGE_LINES).copied().collect();
+    edges.extend(filled.iter().rev().take(EDGE_LINES));
+    edges.sort_unstable();
+    edges.dedup();
+    edges
+}
+
+/// Running headers and footers of the pages of marker-delimited output
+/// (`<!-- Page number: N -->`, `<!-- Slide number: N -->`), as Python
+/// markitai 1.2.1 removes them: a page's first and last two non-empty lines
+/// are candidates when they are at most [`RUNNING_MAX_CHARS`] long and no
+/// heading or table row; one whose key ([`running_key`]) is at that edge on
+/// [`RUNNING_MIN_SHARE`] of the pages, and on [`RUNNING_MIN_COUNT`] or more,
+/// is removed from those edges, unless most of the pages showing it show it
+/// more than once (the shape of numbered body lines) or it differs in its
+/// numbers on longer lines ([`NUMBERED_RUNNING_MAX_WORDS`]). The third line
+/// inside two removed ones is examined in the same pass (a slide footer of
+/// date, text and number), and nothing is looked at again after a removal.
+/// Text before the first marker, and documents of fewer than
+/// [`RUNNING_MIN_PAGES`] pages, are left alone; nothing elsewhere in a page
+/// is removed.
+fn clean_running_lines(source: String) -> String {
+    let markers: Vec<_> = PAGE.find_iter(&source).collect();
+    if markers.len() < RUNNING_MIN_PAGES {
         return source;
     }
-    let lines: Vec<_> = source.split('\n').collect();
-    let mut output = Vec::new();
-    for (index, line) in lines.iter().enumerate() {
-        if common.contains(line.trim())
-            || (numeric(line.trim())
-                && (1..=2).any(|offset| {
-                    index
-                        .checked_sub(offset)
-                        .is_some_and(|before| common.contains(lines[before].trim()))
-                }))
-        {
-            continue;
+    let pages: Vec<&str> = markers
+        .iter()
+        .enumerate()
+        .map(|(index, marker)| {
+            let end = markers
+                .get(index + 1)
+                .map_or(source.len(), |next| next.start());
+            &source[marker.end()..end]
+        })
+        .collect();
+    let lines: Vec<Vec<&str>> = pages.iter().map(|page| page.lines().collect()).collect();
+    let keys: Vec<Vec<Option<String>>> = lines
+        .iter()
+        .map(|lines| lines.iter().map(|line| running_key(line)).collect())
+        .collect();
+    let threshold = RUNNING_MIN_COUNT.max((pages.len() as f64 * RUNNING_MIN_SHARE).ceil() as usize);
+    // The keys at `positions` (per page) that pass the counts.
+    let running = |positions: &[Vec<usize>]| -> HashSet<String> {
+        let mut counts: HashMap<&str, usize> = HashMap::new();
+        let mut repeats: HashMap<&str, usize> = HashMap::new();
+        let mut spellings: HashMap<&str, HashSet<String>> = HashMap::new();
+        for (page, indices) in positions.iter().enumerate() {
+            let mut seen = HashSet::new();
+            for &index in indices {
+                let Some(key) = keys[page][index].as_deref() else {
+                    continue;
+                };
+                spellings.entry(key).or_default().insert(
+                    lines[page][index]
+                        .split_whitespace()
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                        .to_lowercase(),
+                );
+                if !seen.insert(key) {
+                    continue;
+                }
+                *counts.entry(key).or_default() += 1;
+                if keys[page]
+                    .iter()
+                    .flatten()
+                    .filter(|other| *other == key)
+                    .count()
+                    > 1
+                {
+                    *repeats.entry(key).or_default() += 1;
+                }
+            }
         }
-        output.push(*line);
+        counts
+            .into_iter()
+            .filter(|&(key, count)| {
+                let numbered = spellings[key].len() > 1;
+                let words = key
+                    .split_whitespace()
+                    .filter(|word| word.chars().any(char::is_alphabetic))
+                    .count();
+                count >= threshold
+                    && repeats.get(key).copied().unwrap_or(0) * 2 < count
+                    && !(numbered && words > NUMBERED_RUNNING_MAX_WORDS)
+            })
+            .map(|(key, _)| key.to_owned())
+            .collect()
+    };
+    let edges: Vec<Vec<usize>> = lines.iter().map(|lines| edge_indices(lines)).collect();
+    let repeated = running(&edges);
+    if repeated.is_empty() {
+        return source;
     }
-    output.join("\n")
+    // The third line of an edge whose two outer lines both go.
+    let inner: Vec<Vec<usize>> = lines
+        .iter()
+        .zip(&keys)
+        .map(|(lines, keys)| {
+            let filled: Vec<usize> = (0..lines.len())
+                .filter(|&index| !lines[index].trim().is_empty())
+                .collect();
+            let tail: Vec<usize> = filled.iter().rev().copied().collect();
+            [filled.as_slice(), tail.as_slice()]
+                .into_iter()
+                .filter(|run| {
+                    run.len() > EDGE_LINES
+                        && run[..EDGE_LINES].iter().all(|&index| {
+                            keys[index]
+                                .as_ref()
+                                .is_some_and(|key| repeated.contains(key))
+                        })
+                })
+                .map(|run| run[EDGE_LINES])
+                .collect()
+        })
+        .collect();
+    let repeated_inner = running(&inner);
+    let mut output = String::with_capacity(source.len());
+    output.push_str(&source[..markers[0].end()]);
+    for (page, text) in pages.iter().enumerate() {
+        let gone = |index: &usize, set: &HashSet<String>| {
+            keys[page][*index]
+                .as_ref()
+                .is_some_and(|key| set.contains(key))
+        };
+        let drop: HashSet<usize> = edges[page]
+            .iter()
+            .filter(|index| gone(index, &repeated))
+            .chain(
+                inner[page]
+                    .iter()
+                    .filter(|index| gone(index, &repeated_inner)),
+            )
+            .copied()
+            .collect();
+        if drop.is_empty() {
+            output.push_str(text);
+        } else {
+            let kept: Vec<&str> = lines[page]
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| !drop.contains(index))
+                .map(|(_, line)| *line)
+                .collect();
+            output.push_str(&kept.join("\n"));
+            // The line ends that part the page from the next marker.
+            output.push_str(&text[text.trim_end_matches(['\n', '\r']).len()..]);
+        }
+        if let Some(next) = markers.get(page + 1) {
+            output.push_str(next.as_str());
+        }
+    }
+    output
 }
 
 // A fence's source range is retained separately from all prose transformations.
@@ -404,7 +552,7 @@ pub(crate) fn normalize(source: &str) -> String {
         }
         text
     });
-    text = clean_footers(text);
+    text = clean_running_lines(text);
     text = literals.prose(&text, |part| {
         let mut text = part.to_owned();
         if text.contains("__MARKITAI_") {
@@ -472,10 +620,177 @@ mod tests {
             ),
             "[Title](/url)\n\n![b](pic)\n"
         );
-        let input = (1..=3).map(|n| format!("<!-- Page number: {n} -->\n# Page {n}\nLong content for page {n} that must remain.\nFooter\n{n}\n")).collect::<String>();
+        let input = (1..=4).map(|n| format!("<!-- Page number: {n} -->\n# Page {n}\nLong content for page {n} that must remain.\nFooter\n{n}\n")).collect::<String>();
         let output = normalize(&input);
         assert!(!output.contains("Footer"));
         assert!(output.contains("Long content for page 2 that must remain."));
+    }
+
+    fn marker_pages(bodies: &[String], marker: &str) -> String {
+        bodies
+            .iter()
+            .enumerate()
+            .map(|(index, body)| format!("<!-- {marker}: {} -->\n\n{body}", index + 1))
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    }
+
+    const BODIES: [&str; 5] = ["Alpha", "Bravo", "Charlie", "Delta", "Echo"];
+
+    #[test]
+    fn running_headers_and_footers_leave_every_page() {
+        let bodies: Vec<String> = BODIES
+            .iter()
+            .enumerate()
+            .map(|(index, body)| {
+                format!(
+                    "ACME Confidential\n\n{body} opens.\n\n{body} goes on.\n\n{body} ends.\n\nAcme Corp\n{}",
+                    index + 1
+                )
+            })
+            .collect();
+        let output = normalize(&marker_pages(&bodies, "Page number"));
+        assert!(!output.contains("ACME Confidential") && !output.contains("Acme Corp"));
+        for (index, body) in BODIES.iter().enumerate() {
+            assert!(
+                output.contains(&format!("{body} opens.\n\n{body} goes on.\n\n{body} ends.")),
+                "{output}"
+            );
+            assert!(output.contains(&format!("<!-- Page number: {} -->", index + 1)));
+        }
+    }
+
+    #[test]
+    fn a_three_line_slide_footer_goes_and_a_body_line_like_it_stays() {
+        // Date, text and number at the foot of each slide; slide 3 also
+        // names the company in its body.
+        let bodies: Vec<String> = (1..=5)
+            .map(|n| {
+                let extra = if n == 3 { "\n\nAcme Corp" } else { "" };
+                format!("# Topic {n}\n\nBody point {n} discusses the subject at length for slide {n}.{extra}\n\n2026-10-01\n\nAcme Corp\n\n{n}")
+            })
+            .collect();
+        let output = normalize(&marker_pages(&bodies, "Slide number"));
+        assert!(!output.contains("2026-10-01"), "{output}");
+        assert_eq!(output.matches("Acme Corp").count(), 1, "{output}");
+        assert!(output.contains("slide 3.\n\nAcme Corp"), "{output}");
+        // A long body line that differs only in its numbers is no footer.
+        assert_eq!(
+            output.matches("discusses the subject").count(),
+            5,
+            "{output}"
+        );
+        for n in 1..=5 {
+            assert!(output.contains(&format!("# Topic {n}")));
+        }
+    }
+
+    #[test]
+    fn lines_on_half_the_slides_headings_tables_and_short_documents_stay() {
+        let half: Vec<String> = ["Plan", "Risks", "Budget", "Team"]
+            .iter()
+            .enumerate()
+            .map(|(index, topic)| {
+                let ask = if index < 2 { "\n\nQuestions?" } else { "" };
+                format!("# {topic}\n\nAbout {topic}.{ask}")
+            })
+            .collect();
+        let output = normalize(&marker_pages(&half, "Slide number"));
+        assert_eq!(output.matches("Questions?").count(), 2);
+        let tables: Vec<String> = (1..=4)
+            .map(|n| format!("## Totals\n\n| Item | Cost |\n| --- | --- |\n| Item {n} | {n} |\n| Total | n/a |"))
+            .collect();
+        let output = normalize(&marker_pages(&tables, "Page number"));
+        assert_eq!(output.matches("| Total | n/a |").count(), 4);
+        assert_eq!(output.matches("## Totals").count(), 4);
+        let short: Vec<String> = (1..=3)
+            .map(|n| format!("Body {n}.\n\nAcme Corp\n{n}"))
+            .collect();
+        let output = normalize(&marker_pages(&short, "Page number"));
+        assert_eq!(output.matches("Acme Corp").count(), 3);
+    }
+
+    #[test]
+    fn numbered_and_long_body_lines_are_never_running_lines() {
+        // A four-page scan read by OCR: twelve numbered lines a page.
+        let scan: Vec<String> = (1..=4)
+            .map(|page| {
+                (1..=12)
+                    .map(|line| format!("Page {page} line {line}: The quick brown fox jumps over the lazy dog {page}{line:02}."))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+            .collect();
+        let output = normalize(&marker_pages(&scan, "Page number"));
+        assert_eq!(output.matches("The quick brown fox").count(), 48);
+        // A 60-page report of numbered paragraphs.
+        let report: Vec<String> = (1..=60)
+            .map(|page| {
+                let paragraphs = (1..=9)
+                    .map(|k| format!("The committee reviewed section {page}.{k}. The annual plan describes the library, its reading rooms and the budget lines for staff."))
+                    .collect::<Vec<_>>()
+                    .join("\n\n");
+                format!("# Chapter {page}\n\n{paragraphs}")
+            })
+            .collect();
+        let output = normalize(&marker_pages(&report, "Page number"));
+        assert_eq!(output.matches("The committee reviewed").count(), 540);
+        // The same notice of more than 100 characters on every page.
+        let notice = "This report was prepared for the members of the board and is shared with them under the terms of the annual agreement.";
+        let long: Vec<String> = BODIES
+            .iter()
+            .map(|body| format!("{notice}\n\n{body} opens.\n\n{body} ends."))
+            .collect();
+        let output = normalize(&marker_pages(&long, "Page number"));
+        assert_eq!(output.matches(notice).count(), 5);
+    }
+
+    #[test]
+    fn pictures_and_html_at_a_page_edge_are_no_running_lines() {
+        let bodies: Vec<String> = BODIES
+            .iter()
+            .enumerate()
+            .map(|(index, body)| {
+                let n = index + 1;
+                format!("{body} opens.\n\n{body} ends.\n\n![Image on page {n}](\u{5f}_MARKITAI_IMAGE_{n}__)\n\n<!-- note -->")
+            })
+            .collect();
+        let output = marker_pages(&bodies, "Page number");
+        assert_eq!(clean_running_lines(output.clone()), output);
+    }
+
+    #[test]
+    fn running_line_removal_does_not_cascade_into_the_body() {
+        let bodies: Vec<String> = BODIES
+            .iter()
+            .map(|body| format!("Acme Corp\n\nAnnual report\n\nDraft\n\nSee below.\n\n{body} one.\n\n{body} two.\n\n{body} three."))
+            .collect();
+        let output = normalize(&marker_pages(&bodies, "Page number"));
+        for line in ["Acme Corp", "Annual report", "Draft"] {
+            assert!(!output.contains(line), "{output}");
+        }
+        assert_eq!(output.matches("See below.").count(), 5);
+        // A line found anywhere but at a page's edge stays, and a page
+        // number line goes with its footer.
+        let bodies: Vec<String> = (1..=4)
+            .map(|n| {
+                let lead = if n == 1 {
+                    "Intro.\n\nHistory.\n\nAcme Corp\n\nwas founded in 1999.\n\n"
+                } else {
+                    ""
+                };
+                let text = [
+                    "More text.",
+                    "Revenue grew.",
+                    "Costs stayed flat.",
+                    "Outlook is good.",
+                ];
+                format!("{lead}{}\n\nAcme Corp\n{n}", text[n - 1])
+            })
+            .collect();
+        let output = normalize(&marker_pages(&bodies, "Page number"));
+        assert_eq!(output.matches("Acme Corp").count(), 1, "{output}");
+        assert!(output.contains("Acme Corp\n\nwas founded in 1999."));
     }
 
     #[test]
@@ -597,14 +912,14 @@ mod tests {
 
     #[test]
     fn code_page_markers_and_footer_examples_are_not_document_pages() {
-        let pages = (1..=3)
+        let pages = (1..=4)
             .map(|n| format!("<!-- Page number: {n} -->\n# Page {n}\nLong content for page {n} that must remain.\nFooter\n{n}\n"))
             .collect::<String>();
         let block = format!("```markdown\n{pages}```");
         assert_eq!(normalize(&block), format!("{block}\n"));
-        let output = normalize(&format!("{pages}\n{block}\n"));
-        assert!(output.ends_with(&format!("{block}\n")));
-        assert_eq!(output.matches("Footer").count(), 3);
+        let output = normalize(&format!("{block}\n\n{pages}"));
+        assert!(output.starts_with(&format!("{block}\n")));
+        assert_eq!(output.matches("Footer").count(), 4);
         assert!(output.contains("Long content for page 2 that must remain."));
     }
 

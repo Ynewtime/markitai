@@ -396,8 +396,8 @@ plain text-frame contract writes bullets as bare lines. A run's
 `[text](url)` link, runs of one target joined, in text frames, titles and table
 cells; other targets (scripts, files, slide jumps) stay text. Speaker notes are
 plain text without bullets or links, and the presentation's default text style is
-not consulted. Shared normal-mode cleanup remains responsible for repeated
-footers; pure output keeps the extracted text.
+not consulted. Shared normal-mode cleanup removes running slide headers and
+footers ([output](output.md)); pure output keeps the extracted text.
 
 Presentation tables use their first row as the Markdown header. Images remain
 at their shape position, keep normalized description text, and return their
