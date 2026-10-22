@@ -1,9 +1,8 @@
 use lopdf::content::{Content, Operation};
 use lopdf::{Document, Object, Stream, StringFormat, dictionary};
 
-// These ToUnicode CMaps are extracted from a real PDF which I have that have these
-// `0 beginbfrange ... endbfrange` sections. Historically (i.e version 0.38.0) this could trigger parse
-// failures and break text extraction.
+// Taken from a real PDF. The `0 beginbfrange ... endbfrange` sections triggered parse failures
+// and broke text extraction before v0.38.0.
 const FONT1_TOUNICODE: &str = r#"/CIDInit /ProcSet findresource begin
 12 dict begin
 begincmap
@@ -166,13 +165,7 @@ fn build_doc_with_tounicode(tounicode: &str, encoded_text: Vec<u8>) -> Document 
 
 #[test]
 fn extract_text_does_not_error_with_empty_bfrange_font2() {
-    // Sequence of 2-byte character codes (Identity-H):
-    // <0003> -> U+0020 (space)
-    // <0007> -> U+0024 ($)
-    // <000a> -> U+0027 (') via bfrange
-    // <001b> -> U+0038 (8) via bfchar
-    // <0061> -> U+007E (~) via bfchar
-    // <00bc> -> U+20AC (€) via bfchar
+    // 2-byte codes (Identity-H): space, $, ' (bfrange), 8, ~ and € (bfchar).
     let encoded_text = vec![
         0x00, 0x03, // space
         0x00, 0x07, // $
@@ -190,12 +183,8 @@ fn extract_text_does_not_error_with_empty_bfrange_font2() {
 
 #[test]
 fn extract_text_does_not_error_with_empty_bfrange_font1() {
-    // Exercise both bfchar and bfrange sections, and include the initial empty bfrange section.
-    // <0003> -> space
-    // <0006> -> #
-    // <0008> -> % via bfrange (<0008> <0009> <0025>)
-    // <001a> -> 7 via bfchar
-    // <0044> -> a via bfrange (<0044> <004c> <0061>)
+    // Exercises both bfchar and bfrange plus an initial empty bfrange: space, #, % (bfrange
+    // <0008> <0009> <0025>), 7 (bfchar), a (bfrange <0044> <004c> <0061>).
     let encoded_text = vec![
         0x00, 0x03, // space
         0x00, 0x06, // #
@@ -208,4 +197,85 @@ fn extract_text_does_not_error_with_empty_bfrange_font1() {
 
     let text = doc.extract_text(&[1]).expect("extract_text should not error");
     assert_eq!(text.trim_end(), " #%7a");
+}
+
+fn tounicode_with_codespaces(codespaces: &str, mappings: &str) -> String {
+    format!(
+        "/CIDInit /ProcSet findresource begin
+12 dict begin
+begincmap
+/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def
+/CMapName /Test def
+/CMapType 2 def
+{} begincodespacerange
+{codespaces}
+endcodespacerange
+{} beginbfchar
+{mappings}
+endbfchar
+endcmap
+CMapName currentdict /CMap defineresource pop
+end
+end",
+        codespaces.lines().count(),
+        mappings.lines().count(),
+    )
+}
+
+#[test]
+fn extract_text_preserves_characters_after_unmapped_codes() {
+    let cmap = tounicode_with_codespaces("<0000> <FFFF>", "<0001> <0041>\n<0002> <0042>");
+    for (codes, expected) in [
+        (vec![1, 2], "AB"),
+        (vec![0, 1, 2], "\u{fffd}AB"),
+        (vec![1, 0, 2], "A\u{fffd}B"),
+        (vec![1, 3, 2], "A\u{fffd}B"),
+        (vec![1, 0, 0, 2], "A\u{fffd}\u{fffd}B"),
+        (vec![1, 2, 0], "AB\u{fffd}"),
+    ] {
+        let encoded_text = codes.into_iter().flat_map(u16::to_be_bytes).collect();
+        let mut doc = build_doc_with_tounicode(&cmap, encoded_text);
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).unwrap();
+        let loaded = Document::load_mem(&bytes).unwrap();
+        assert_eq!(loaded.extract_text(&[1]).unwrap(), format!("{expected}\n"));
+    }
+}
+
+#[test]
+fn decode_text_preserves_mixed_length_codes_after_unmapped_codes() {
+    let cmap = tounicode_with_codespaces(
+        "<00> <7F>\n<8140> <82FE>\n<820000> <8200FF>\n<83000000> <83FFFFFF>",
+        "<41> <0041>\n<8140> <0042>\n<820001> <0043>\n<83000001> <0044>",
+    );
+    let mut doc = Document::new();
+    let cmap_id = doc.add_object(Stream::new(dictionary! {}, cmap.into_bytes()));
+    let font = dictionary! { "Type" => "Font", "ToUnicode" => cmap_id };
+    let encoding = font.get_font_encoding(&doc).unwrap();
+    let encoded_text = [
+        0x00, 0x41, 0x81, 0x41, 0x81, 0x40, 0x82, 0x00, 0x00, 0x82, 0x00, 0x01, 0x83, 0x00, 0x00, 0x00, 0x83, 0x00,
+        0x00, 0x01,
+    ];
+    assert_eq!(
+        Document::decode_text(&encoding, &encoded_text).unwrap(),
+        "\u{fffd}A\u{fffd}B\u{fffd}C\u{fffd}D"
+    );
+}
+
+#[test]
+fn encoding_dictionary_entries_are_optional() {
+    // ISO 32000-1, Table 114: /Type, /BaseEncoding and /Differences may all be omitted.
+    let doc = Document::new();
+    for (encoding, expected) in [
+        (dictionary! { "Differences" => vec![65.into(), "B".into()] }, "B\u{d8}"),
+        (dictionary! { "BaseEncoding" => "WinAnsiEncoding" }, "A\u{e9}"),
+        (
+            dictionary! { "Type" => "Encoding", "BaseEncoding" => "WinAnsiEncoding" },
+            "A\u{e9}",
+        ),
+    ] {
+        let font = dictionary! { "Type" => "Font", "Encoding" => encoding };
+        let encoding = font.get_font_encoding(&doc).unwrap();
+        assert_eq!(Document::decode_text(&encoding, b"A\xe9").unwrap(), expected);
+    }
 }

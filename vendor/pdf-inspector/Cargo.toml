@@ -13,7 +13,7 @@
 edition = "2021"
 rust-version = "1.88"
 name = "pdf-inspector"
-version = "1.25.1"
+version = "1.25.2"
 authors = ["Firecrawl Team"]
 build = false
 include = [
@@ -148,7 +148,7 @@ optional = true
 default-features = false
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies.lopdf]
-version = "0.45.0"
+version = "0.46.0"
 features = ["rayon"]
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies.oar-ocr]
@@ -180,6 +180,6 @@ optional = true
 default-features = false
 
 [target.'cfg(target_arch = "wasm32")'.dependencies.lopdf]
-version = "0.45.0"
+version = "0.46.0"
 features = ["wasm_js"]
 default-features = false

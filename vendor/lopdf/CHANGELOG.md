@@ -1,3 +1,23 @@
+
+<a name="v0.45.0"></a>
+## [v0.45.0](https://github.com/J-F-Liu/lopdf/compare/v0.44.0...v0.45.0) (2026-09-08)
+* Accept 19-byte cross-reference entries when parsing leniently ([#564](https://github.com/J-F-Liu/lopdf/issues/564))
+* Accept an integral real /Length when resolving deferred streams ([#560](https://github.com/J-F-Liu/lopdf/issues/560))
+* Add option to set FirstChar, LastChar and the Widths array of a custom font ([#557](https://github.com/J-F-Liu/lopdf/issues/557))
+* Bound cross-reference subsection object numbers to u32
+* Bound xref-stream entry count against the decoded stream length
+* Bound object-graph recursion depth (fix [#530](https://github.com/J-F-Liu/lopdf/issues/530))
+* Decode sub-byte-depth PNG and TIFF predictors
+* Decode ASCIIHexDecode and RunLengthDecode streams
+* Default the file encryption key length from V when Length is absent
+* Fix ASCII85 group-value overflow and decode TIFF Predictor 2
+* Fix four crash bugs from crafted PDFs (fix [#532](https://github.com/J-F-Liu/lopdf/issues/532))
+* Recover from slightly miswritten startxref / Prev offsets
+* Silence lints introduced by Rust 1.98
+* Use skrifa instead of unmaintained ttf-parser
+* Write a cross-reference stream when object streams are disabled
+
+
 <a name="v0.44.0"></a>
 ## [v0.44.0](https://github.com/J-F-Liu/lopdf/compare/v0.43.0...v0.44.0) (2026-07-10)
 

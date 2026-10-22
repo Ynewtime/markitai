@@ -1,15 +1,15 @@
 {
   "name": "pdf-inspector",
-  "version": "1.25.1",
+  "version": "1.25.2",
   "repository": "https://github.com/firecrawl/pdf-inspector",
-  "upstream_git_commit": "c48b7cacc7b02794b6d980c6189e7ae896ba9065",
-  "registry_archive_sha256": "57f699112fb551dc3297c9ea0625be2d2c8b3791b070c0d533c6c9f4eee9670c",
+  "upstream_git_commit": "ef52f77850b29189048797a48b24862251f54fe7",
+  "registry_archive_sha256": "ef5970f05a55de82c8d6d6fd5f8ff162b50fc7828cc1fd0abd965abad6fcbc5b",
   "license": "MIT; external/bcmaps/LICENSE retained separately",
   "copied_files": [
     {
       "path": "Cargo.toml",
       "bytes": 3788,
-      "upstream_sha256": "f6973b3fe23812fe5d227809568804912b422ed3af85e4eb8375fc2499a48f38"
+      "upstream_sha256": "d434f7fe0719d86ae740b1ebbbced8b56aabdbbb13d96acbe212f65743f75032"
     },
     {
       "path": "LICENSE",
@@ -1013,8 +1013,8 @@
     },
     {
       "path": "src/extractor/scripts.rs",
-      "bytes": 35421,
-      "upstream_sha256": "c4eb6cbac03728e0ca61a9405ad81a7ea09bcd701dd4ad69f2ca40d9e5a6beea"
+      "bytes": 38381,
+      "upstream_sha256": "9f9c6f31f2982bddf39308e1c384f6b2f973e20b607fd8fa8f371d4a4f099e43"
     },
     {
       "path": "src/extractor/stale_cmap_tests.rs",
@@ -1058,8 +1058,8 @@
     },
     {
       "path": "src/lib.rs",
-      "bytes": 327033,
-      "upstream_sha256": "837de6576d17c81a24e69ac2282113cbe5fcf1bd3cf0a8b27803031a7d72713d"
+      "bytes": 327241,
+      "upstream_sha256": "979127ce750a6bee2c5022acb0bf54607034c9e6bb2be78f1f8ad9e0cb8f8455"
     },
     {
       "path": "src/mac_glyph_order.rs",
@@ -1188,8 +1188,8 @@
     },
     {
       "path": "src/tounicode.rs",
-      "bytes": 199021,
-      "upstream_sha256": "ac91977b5dc7b73898d1a357a79629c6ffb985771d48809510fbbebb050831cf"
+      "bytes": 215384,
+      "upstream_sha256": "3b9180cc2f85da0d8f59488533a5e09bc52d27ddbc97853b0f4db41297b80d31"
     },
     {
       "path": "src/tounicode_mac_order_tests.rs",

@@ -1,6 +1,6 @@
 # Markitai's pinned PDF reader policy
 
-This directory contains the published `pdf-inspector` 1.25.1 package's required
+This directory contains the published `pdf-inspector` 1.25.2 package's required
 source and BCMap data. `UPSTREAM.json` records the original archive checksum,
 upstream commit and every copied file's original checksum. The original MIT
 license and `external/bcmaps/LICENSE` remain in place. No Cargo registry source
@@ -810,3 +810,25 @@ operators and preserved glyph positions; inherited nested Forms; hidden
 The old archived reproduction is retained independently in project validation
 evidence. Build and test results are recorded only after the coordinator runs
 the integrated gates.
+
+## 1.25.2
+
+The copy moved from 1.25.1 to 1.25.2 (2026-10-22) by a three-way merge of
+the changes above onto the new package, without conflicts: upstream changed
+`src/extractor/scripts.rs` (a run of a script is sized by its letters and
+digits, so a symbol-font sign a design size above them does not take it past
+a script's size), `src/tounicode.rs` and a comment in `src/lib.rs`. Two local
+edits go with it:
+
+- `Cargo.toml` requires lopdf 0.46.0, the vendored copy's version, where the
+  package asks for 0.45.0; the API pdf-inspector uses is unchanged.
+- `src/extractor/scripts.rs`: upstream's
+  `a_sign_set_a_size_above_its_digits_keeps_the_run_a_script` expects a lone
+  minus at 0.78 of the text and raised 0.36 em to be no script; within
+  `SCRIPT_MAX_SHIFTED_RATIO` (a browser's `<sup>` size, above) it is one here,
+  so the test expects that, and no script for the same sign at 0.88.
+
+Run in an isolated copy with the vendored lopdf patched in (`cargo test --lib`,
+default features), the crate's unit tests give 1,732 passed and the same 21
+failed by name as the 1.25.1 copy (1,727 passed).
+

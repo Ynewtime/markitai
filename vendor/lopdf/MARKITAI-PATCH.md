@@ -1,11 +1,10 @@
 # Markitai's pinned PDF object library
 
-This directory contains the published `lopdf` 0.45.0 package (`src`, `tests`,
+This directory contains the published `lopdf` 0.46.0 package (`src`, `tests`,
 `examples`, `README.md`, `CHANGELOG.md`, `LICENSE`, `rustfmt.toml`) and its
 package manifest. `UPSTREAM.json` records the original archive checksum, the
-upstream commit the package names (packaged from a work tree with uncommitted
-changes) and every copied file's original checksum. The original MIT license
-remains in place. No Cargo registry source was modified. The workspace
+upstream commit the package names and every copied file's original checksum.
+The original MIT license remains in place. No Cargo registry source was modified. The workspace
 coordinator owns the path patch and lockfile.
 
 The first local change, marked `markitai` in its comments, touches one upstream
@@ -133,21 +132,11 @@ one test to `tests/decryption.rs`:
 The upstream suite, prepared as above: 309 passed (the added test), the same
 33 failed, 3 ignored.
 
-A further change, also marked `markitai`, touches `src/parser/mod.rs` and adds
-one test:
-
-- Content-stream operators and operands may be separated by any PDF
-  white-space character (ISO 32000-1 Table 1), NUL and form feed included, as
-  between objects; only space, tab, CR and LF were, so a content stream whose
-  operators are separated by NUL (iText writes a page it modified that way)
-  stopped at its first NUL and the page read as empty. After an inline image's
-  `ID` the old separators remain, as the image's data, which may start with
-  NUL, follows. `content_with_nul_and_form_feed_separators` covers it.
-
-The library and integration tests (`--lib --tests`, without the examples and
-benchmarks), prepared as above in copies of the unmodified and the patched
-files: 295 and 296 passed (the added test), the same 31 failed by name (all
-read the `assets` directory), 3 ignored.
+An earlier change to `src/parser/mod.rs` let NUL and form feed separate
+content-stream operators (an iText-modified page separates them with NUL).
+lopdf 0.46.0 does the same (`content_treats_nul_and_form_feed_as_white_space`),
+and also reads exactly one white-space character after an inline image's `ID`,
+so that file is upstream's again and the local test is gone.
 
 A further change, also marked `markitai`, adds `src/budget.rs` and touches
 `src/lib.rs`, `src/object.rs` (`decode_filters`) and `src/reader.rs`
@@ -182,3 +171,28 @@ Local example paths are replaced with `input.pdf` and `output.pdf` placeholders
 to avoid distributing developer home paths. `UPSTREAM.json` retains the original
 archive and upstream-file checksums; they describe the unmodified source, not
 these privacy edits.
+
+## 0.46.0
+
+The copy moved from 0.45.0 to 0.46.0 (2026-10-22) by a three-way merge of
+these changes onto the new package: files upstream changed and Markitai did
+not are upstream's; `src/encodings/glyphnames.rs` (upstream changed a
+comment the binary search replaces), `src/document.rs`, `src/parser_aux.rs`
+and `src/object.rs` keep the changes above unchanged. In `src/reader.rs`
+upstream now parses below `MIN_PARALLEL_ENTRIES` objects on the calling
+thread and on rayon above it; the container list and the inserted maps are
+as above, and only the parallel branch hands the workers the calling
+thread's decompression budget (the sequential branch already draws from it).
+`decode_filters_bounded` reads `DecodeParms` per filter, as upstream's
+`decode_filters` now does. The sorted glyph-name table is still current
+(`scripts/sorted_glyph_names.py --check`). The new upstream tests are copied;
+the two performance tests upstream removed are gone. Fourteen examples and
+tests the 0.46.0 archive ships with CRLF line ends are stored with LF, as
+`.gitattributes` stores every text file; `UPSTREAM.json` keeps the archive's
+checksums.
+
+The library and integration tests (`--lib --tests`) were run in copies of the
+unmodified 0.46.0 package and of this one, with registry dependencies and an
+empty `assets/example.pdf`: 333 and 339 passed (the six added tests), the same
+29 failed by name (all read the `assets` directory), none ignored.
+

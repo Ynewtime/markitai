@@ -94,7 +94,7 @@ fn cmap_data(input: ParserInput) -> NomResult<Vec<CMapSection>> {
         tag(&b"CMapName"[..]),
         space1,
         tag(&b"currentdict"[..]),
-        space1,
+        space0,
         tag(&b"/CMap"[..]),
         space1,
         tag(&b"defineresource"[..]),
@@ -129,8 +129,7 @@ fn cid_system_info(input: ParserInput) -> NomResult<()> {
     (
         tag(&b"/CIDSystemInfo"[..]),
         multispace0,
-        alt((dictionary, dict_dup)),
-        multispace1,
+        alt((terminated(dictionary, multispace0), terminated(dict_dup, multispace1))),
         tag(&b"def"[..]),
         multispace1,
     )
@@ -472,15 +471,43 @@ end def
     }
 
     #[test]
-    fn parse_cmap_name() {
-        let data = b"/CMapName /Adobe-Identity-UCS def\n";
-        assert!(cmap_name(test_span(data)).is_ok())
+    fn parse_cid_system_info_without_space_before_def() {
+        let data = b"/CIDSystemInfo << /Registry(Adobe) /Ordering(UCS) /Supplement 0>>def\n";
+        assert!(cid_system_info(test_span(data)).is_ok())
     }
 
     #[test]
-    fn parse_cmap_name2() {
-        let data = b"/CMapName /Adobe-UCS-0 def\n";
-        assert!(cmap_name(test_span(data)).is_ok())
+    fn parse_cmap_without_spaces_around_delimiters() {
+        // Shape emitted by Polaris Office: no white-space before `def` after `>>`,
+        // nor between `currentdict` and `/CMap`.
+        let data = b"/CIDInit/ProcSet findresource begin
+12 dict begin
+begincmap
+/CIDSystemInfo << /Registry(Adobe) /Ordering(UCS) /Supplement 0>>def
+/CMapName /Adobe-Identity-UCS def
+1 begincodespacerange
+<0000> <ffff>
+endcodespacerange
+1 beginbfchar
+<0c6d> <2460>
+endbfchar
+endcmap
+CMapName currentdict/CMap defineresource pop
+end
+end
+";
+        let (_, sections) = cmap_stream(test_span(data)).unwrap();
+        assert!(sections.contains(&CMapSection::BfChar(vec![((0x0c6d, 2), vec![0x2460])])));
+    }
+
+    #[test]
+    fn parse_cmap_name() {
+        for name in [
+            &b"/CMapName /Adobe-Identity-UCS def\n"[..],
+            b"/CMapName /Adobe-UCS-0 def\n",
+        ] {
+            assert!(cmap_name(test_span(name)).is_ok())
+        }
     }
 
     #[test]
@@ -491,14 +518,9 @@ end def
 
     #[test]
     fn parse_cmap_version() {
-        let data = b"/CMapVersion 0 def\n";
-        assert!(cmap_version(test_span(data)).is_ok())
-    }
-
-    #[test]
-    fn parse_cmap_version2() {
-        let data = b"/CMapVersion 10.001 def\n";
-        assert!(cmap_version(test_span(data)).is_ok())
+        for version in [&b"/CMapVersion 0 def\n"[..], b"/CMapVersion 10.001 def\n"] {
+            assert!(cmap_version(test_span(version)).is_ok())
+        }
     }
 
     #[test]
@@ -1118,7 +1140,6 @@ end
 %%EOF
 ";
         let res = cmap_stream(test_span(data));
-        println!("{:#?}", res);
         assert!(res.is_ok())
     }
 

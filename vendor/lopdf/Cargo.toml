@@ -13,7 +13,7 @@
 edition = "2024"
 rust-version = "1.88"
 name = "lopdf"
-version = "0.45.0"
+version = "0.46.0"
 authors = [
     "Junfeng Liu <china.liujunfeng@gmail.com>",
     "Emulator <emulator@hotmail.it>",
@@ -244,16 +244,16 @@ name = "catalog_compression_integration_test"
 path = "tests/catalog_compression_integration_test.rs"
 
 [[test]]
+name = "datetime"
+path = "tests/datetime.rs"
+
+[[test]]
 name = "decompression_bomb"
 path = "tests/decompression_bomb.rs"
 
 [[test]]
 name = "decryption"
 path = "tests/decryption.rs"
-
-[[test]]
-name = "document_load_performance"
-path = "tests/document_load_performance.rs"
 
 [[test]]
 name = "encrypted_object_stream_test"
@@ -272,6 +272,10 @@ name = "incremental_document"
 path = "tests/incremental_document.rs"
 
 [[test]]
+name = "issue_603_608_repro"
+path = "tests/issue_603_608_repro.rs"
+
+[[test]]
 name = "linearized_objstm_test"
 path = "tests/linearized_objstm_test.rs"
 
@@ -288,6 +292,10 @@ name = "modify"
 path = "tests/modify.rs"
 
 [[test]]
+name = "object_id_overflow"
+path = "tests/object_id_overflow.rs"
+
+[[test]]
 name = "object_stream_comprehensive_test"
 path = "tests/object_stream_comprehensive_test.rs"
 
@@ -296,16 +304,28 @@ name = "object_stream_edge_cases_test"
 path = "tests/object_stream_edge_cases_test.rs"
 
 [[test]]
+name = "object_stream_indirect_lengths"
+path = "tests/object_stream_indirect_lengths.rs"
+
+[[test]]
+name = "object_stream_length_cycle"
+path = "tests/object_stream_length_cycle.rs"
+
+[[test]]
 name = "object_stream_methods_test"
 path = "tests/object_stream_methods_test.rs"
 
 [[test]]
-name = "object_stream_performance_test"
-path = "tests/object_stream_performance_test.rs"
-
-[[test]]
 name = "page_content"
 path = "tests/page_content.rs"
+
+[[test]]
+name = "page_images"
+path = "tests/page_images.rs"
+
+[[test]]
+name = "page_tree_broken_kid"
+path = "tests/page_tree_broken_kid.rs"
 
 [[test]]
 name = "save_options_xref_streams_test"
