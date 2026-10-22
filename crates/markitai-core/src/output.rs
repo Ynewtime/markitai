@@ -294,7 +294,29 @@ fn yaml_entry(key: &str, value: &Value) -> Result<String> {
             }
             Ok(entry)
         }
+        // A nested mapping (OKF's `generated`) quotes its own scalars the same way.
+        Value::Object(fields) if plain_key && !fields.is_empty() && holds_implicit(value) => {
+            let mut entry = format!("{key}:\n");
+            for (name, field) in fields {
+                for line in yaml_entry(name, field)?.lines() {
+                    entry.push_str("  ");
+                    entry.push_str(line);
+                    entry.push('\n');
+                }
+            }
+            Ok(entry)
+        }
         _ => yaml_serde::to_string(&json!({key:value})).map_err(failure),
+    }
+}
+
+/// Whether a mapping holds, at any depth, a string a YAML 1.1 loader would not
+/// read back as a string.
+fn holds_implicit(value: &Value) -> bool {
+    match value {
+        Value::String(text) => yaml11_implicit(text),
+        Value::Object(fields) => fields.values().any(holds_implicit),
+        _ => false,
     }
 }
 
@@ -1477,6 +1499,24 @@ mod tests {
             assert!(result.enhancement_source().contains("Slide number:"));
             assert!(root.path().join(target).exists());
         }
+    }
+
+    #[test]
+    fn frontmatter_quotes_implicit_strings_inside_a_nested_mapping() {
+        // OKF's generation time: unquoted, a YAML reader takes it for a timestamp.
+        let mut frontmatter = Map::new();
+        frontmatter.insert(
+            "generated".into(),
+            json!({"at":"2026-10-22T10:49:28Z","by":"markitai/1.3.0","nested":{"mode":"yes","n":2}}),
+        );
+        let rendered = render(&frontmatter, "Body\n").unwrap();
+        assert_eq!(
+            rendered,
+            "---\ngenerated:\n  at: '2026-10-22T10:49:28Z'\n  by: markitai/1.3.0\n  nested:\n    mode: 'yes'\n    n: 2\n---\n\nBody\n"
+        );
+        let (parsed, body) = split_frontmatter(&rendered);
+        assert_eq!(Value::Object(parsed), Value::Object(frontmatter));
+        assert_eq!(body, "Body\n");
     }
 
     #[test]
