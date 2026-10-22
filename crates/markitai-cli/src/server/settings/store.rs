@@ -59,7 +59,7 @@ impl Store {
             v.pointer("/llm/model_list").is_some() || v.pointer("/llm/providers").is_some()
         });
         let detected = if models.is_empty() {
-            markitai_core::provider_management::automatic_deployments()
+            automatic()
         } else {
             Vec::new()
         };
@@ -206,7 +206,7 @@ impl Store {
         let providers = list(&document, "providers")
             .unwrap_or_else(|| list(&base, "providers").unwrap_or_default());
         let detected = if models.is_empty() {
-            markitai_core::provider_management::automatic_deployments()
+            automatic()
         } else {
             Vec::new()
         };
@@ -846,6 +846,18 @@ fn save_bytes_with_sync(
     staged.publish().map_err(|_| failure())?;
     // The rename has committed. A later sync failure cannot truthfully roll back memory.
     Ok(sync(&directory).is_ok())
+}
+
+/// The deployments conversions use while the file lists none: `MODEL`, the
+/// signed-in subscription runtimes, then the API keys. Unit tests see none,
+/// so they do not depend on the keys and runtimes of the machine running
+/// them (a test that needs some sets `Data::detected`).
+fn automatic() -> Vec<Value> {
+    if cfg!(test) {
+        Vec::new()
+    } else {
+        markitai_core::provider_management::automatic_deployments()
+    }
 }
 
 #[cfg(test)]
