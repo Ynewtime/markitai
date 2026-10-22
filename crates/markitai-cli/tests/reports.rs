@@ -914,9 +914,17 @@ fn single_conversion_failures_keep_runtime_envelopes_without_reports() {
     ] {
         let stdout = envelope(invoke(root.path(), &[source, "-o", "out", "--json"]), 1);
         assert_eq!(stdout["ok"], false);
-        assert_eq!(stdout["items"][0]["status"], "failed");
-        assert!(stdout["items"][0]["duration_s"].is_null());
-        assert!(!stdout["items"][0]["error"].as_str().unwrap().is_empty());
+        if matches!(source, "absent.txt" | "bad.unknown") {
+            // No such file, or no reader for it: the run is rejected.
+            assert_eq!(stdout["items"], json!([]));
+            assert!(!stdout["error"].as_str().unwrap().is_empty());
+        } else {
+            assert!(stdout["error"].is_null());
+            assert_eq!(stdout["items"][0]["status"], "failed");
+            // A failure took its time too.
+            assert!(stdout["items"][0]["duration_s"].as_f64().unwrap() >= 0.0);
+            assert!(!stdout["items"][0]["error"].as_str().unwrap().is_empty());
+        }
         assert!(report_paths(&root.path().join("out")).is_empty());
     }
 }

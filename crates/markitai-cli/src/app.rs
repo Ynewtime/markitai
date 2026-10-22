@@ -1337,7 +1337,13 @@ fn execute_conversion(
             ),
         };
         drop(spinner);
-        let item = outcome(&record);
+        let mut item = outcome(&record);
+        if local {
+            // A file is named as the report names it, as Python markitai does.
+            if let Some(name) = Path::new(input).file_name() {
+                item["source"] = json!(name.to_string_lossy());
+            }
+        }
         let failed = result.is_err();
         let report_error = if record.status == ItemStatus::Completed {
             finish_report(
@@ -1354,7 +1360,15 @@ fn execute_conversion(
             eprintln!("Error: {error}");
         }
         if cli.json {
-            emit_json(&[item], report_error.as_deref());
+            match &result {
+                // An input the run cannot take at all (none at that path, or
+                // a format no reader handles) rejects the run: an error and
+                // no item, as Python markitai reports it.
+                Err(failure) if local && rejects_run(&failure.error) => {
+                    emit_json(&[], Some(&failure.to_string()));
+                }
+                _ => emit_json(&[item], report_error.as_deref()),
+            }
         } else {
             match result {
                 Ok(result) => {
@@ -1911,6 +1925,11 @@ fn recorded(
 
 fn outcome(item: &RunItem) -> Value {
     let usage = item.paid_usage();
+    // A failed item took its time too.
+    let duration = match item.status {
+        ItemStatus::Failed => item.conversion_duration_s.or(Some(item.elapsed_s)),
+        _ => item.conversion_duration_s,
+    };
     let mut result = json!({
         "kind": if item.kind == ItemKind::Url { "url" } else { "file" },
         "source": item.display,
@@ -1928,7 +1947,7 @@ fn outcome(item: &RunItem) -> Value {
         "screenshots": item.screenshots,
         "earlier_run": false,
         "cost_usd": round(usage.cost_usd, 1_000_000.0),
-        "duration_s": item.conversion_duration_s.map(|duration| round(duration, 1000.0)),
+        "duration_s": duration.map(|duration| round(duration, 1000.0)),
         "cache_hit": item.llm_cache_hit,
         "fetch_cache_hit": item.fetch_cache_hit,
         "llm_cache_hit": item.llm_cache_hit,
@@ -1979,6 +1998,17 @@ fn finish_report(
         }
     }
     Ok(())
+}
+/// Whether a single file's failure rejects the whole run rather than one
+/// conversion: the file does not exist, or no reader handles its format.
+fn rejects_run(error: &markitai_core::Error) -> bool {
+    match error {
+        markitai_core::Error::NotFound(_) => true,
+        markitai_core::Error::Unsupported(message) => {
+            message.starts_with("Unsupported file format:")
+        }
+        _ => false,
+    }
 }
 fn round(value: f64, factor: f64) -> f64 {
     (value * factor).round() / factor

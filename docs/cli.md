@@ -181,7 +181,8 @@ MARKITAI_LANG=zh markitai doctor
 逐项读取 `items[].status`（completed/failed/skipped/pending）、`output`、`error`、
 `warnings` 与 `skip_reason`；PDF 条目的 `page_sources` 逐页说明文字来源（`text` 文字层、`ocr`、`mixed`，
 见 [PDF](pdf.md#where-each-pages-text-came-from)），续跑时此前已完成的条目为空列表。按字段名解析，不依赖显示顺序。
-失败条目的 `cost_usd` 与 `llm_usage` 是它已付费的请求。
+单个文件的 `source` 是文件名；失败条目的 `duration_s` 是它所用的时间，`cost_usd` 与 `llm_usage`
+是它已付费的请求。输入不存在或格式不受支持时整次运行被拒绝：`error` 说明原因，`items` 为空。
 
 `--resume` 续跑时，`items` 先列出此前运行已完成的条目（`earlier_run: true`，带状态文件记录的输出、
 耗时、警告、费用与用量；旧状态未记录费用时 `cost_usd`、`llm_usage` 为 null，表示未知而非 0），

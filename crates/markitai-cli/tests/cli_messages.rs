@@ -349,7 +349,9 @@ fn missing_or_unreadable_single_inputs_create_no_output_directory() {
     assert!(stderr(&missing).contains("Input file not found: missing.txt"));
     let json = invoke(root.path(), &["missing.txt", "-o", "out", "--json"]);
     let body: Value = serde_json::from_slice(&json.stdout).unwrap();
-    assert_eq!(body["totals"]["failed"], 1);
+    // A rejected run: its error and no item.
+    assert_eq!(body["error"], "Input file not found: missing.txt");
+    assert_eq!(body["items"], json!([]));
     assert!(!root.path().join("out").exists());
 
     #[cfg(unix)]

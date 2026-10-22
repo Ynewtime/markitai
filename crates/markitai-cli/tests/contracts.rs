@@ -92,7 +92,8 @@ fn single_runtime_error_retains_json_and_usage_error_has_none() {
     assert_eq!(output.status.code(), Some(1));
     let body: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(body["ok"], false);
-    assert_eq!(body["totals"]["failed"], 1);
+    assert_eq!(body["error"], "Input file not found: missing.txt");
+    assert_eq!(body["items"].as_array().unwrap().len(), 0);
     let output = invoke(dir.path(), &["note.txt", "--json"]);
     assert_eq!(output.status.code(), Some(2));
     assert!(output.stdout.is_empty());

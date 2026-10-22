@@ -208,6 +208,30 @@ fn init_names_installed_runtimes_that_are_not_signed_in_and_adds_no_model_for_th
 }
 
 #[test]
+fn a_single_file_is_named_by_its_file_name_and_an_unsupported_one_rejects_the_run() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir(root.path().join("in")).unwrap();
+    std::fs::write(root.path().join("in/note.txt"), "Named JSON\n").unwrap();
+    std::fs::write(root.path().join("in/thing.xyz"), "?").unwrap();
+    let result = output(root.path(), &["in/note.txt", "-o", "out", "--json"]);
+    assert!(result.status.success());
+    let parsed: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(parsed["items"][0]["source"], "note.txt");
+    assert_eq!(parsed["items"][0]["earlier_run"], false);
+    assert_eq!(parsed["totals"]["this_run_cost_usd"], 0.0);
+    let result = output(root.path(), &["in/thing.xyz", "-o", "out", "--json"]);
+    assert_eq!(result.status.code(), Some(1));
+    let parsed: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(parsed["items"], serde_json::json!([]));
+    assert!(
+        parsed["error"]
+            .as_str()
+            .unwrap()
+            .starts_with("Unsupported file format: '.xyz'")
+    );
+}
+
+#[test]
 fn conversion_json_orders_success_failure_and_empty_envelopes() {
     let root = tempfile::tempdir().unwrap();
     std::fs::write(root.path().join("note.txt"), "Ordered JSON\n").unwrap();
@@ -228,7 +252,7 @@ fn conversion_json_orders_success_failure_and_empty_envelopes() {
         }
         let parsed: Value = serde_json::from_str(&text).unwrap();
         assert_eq!(parsed["ok"], success);
-        if input != "empty" {
+        if input == "note.txt" {
             assert!(
                 text.contains("\"kind\": \"file\",\n      \"source\":"),
                 "{text}"
