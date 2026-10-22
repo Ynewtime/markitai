@@ -1528,6 +1528,15 @@ mod tests {
         let recognize = |pixels: RgbImage, _: &Value| -> Result<ocr::OcrResult> {
             let now = running.fetch_add(1, Ordering::SeqCst) + 1;
             most.fetch_max(now, Ordering::SeqCst);
+            // Wait (a bounded while) for the pages that may run beside this
+            // one, so on a loaded machine a page that started late still
+            // overlaps the others rather than missing them.
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            while most.load(Ordering::SeqCst) < ocr_pages_at_once()
+                && std::time::Instant::now() < deadline
+            {
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
             let (width, height) = pixels.dimensions();
             let page = (u64::from(pixels.get_pixel(width / 2, height / 2).0[0]) + 20) / 40;
             // Earlier pages take longer, so later ones finish first.
