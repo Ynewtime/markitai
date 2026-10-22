@@ -267,7 +267,7 @@ fn copy_usage(value: &ConversionUsage) -> ConversionUsage {
 }
 // Routing notices reach the document whose request produced them; the entry
 // point that publishes an enhancement takes them.
-fn note_document_warning(message: String) {
+pub(crate) fn note_document_warning(message: String) {
     DOCUMENT_ACCOUNTING.with(|slot| {
         if let Some(state) = slot.borrow().as_ref() {
             let mut state = state.lock().unwrap_or_else(|e| e.into_inner());

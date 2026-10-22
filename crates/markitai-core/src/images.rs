@@ -809,6 +809,75 @@ pub(crate) fn extract(
 /// Prepare every document page for one image-analysis request. Animated image
 /// formats retain their existing first-frame policy when transcoding.
 pub(crate) fn prepare_vision(bytes: &[u8], name: &str, cfg: &Value) -> Result<Vec<VisionImage>> {
+    Ok(prepare_vision_unlimited(bytes, name, cfg)?
+        .into_iter()
+        .map(|image| within_vision_limit(image, name))
+        .collect())
+}
+
+/// The largest picture sent to a model, as Python markitai limits it:
+/// providers refuse one above about 5 MB once base64-encoded (Anthropic's
+/// limit), and `image.compress: false` sends originals.
+const VISION_MAX_BYTES: usize = 3_670_016;
+const VISION_MAX_SIDE: u32 = 2048;
+const VISION_MIN_SIDE: u32 = 512;
+
+/// `image` itself when it is within [`VISION_MAX_BYTES`]; else a smaller
+/// copy: at most 2,048 pixels on its longer side, as PNG when it has
+/// transparency and JPEG otherwise, the JPEG quality lowered from 85 to 55
+/// and then the size by a quarter at a time down to 512 pixels. The smallest
+/// copy is sent with a warning when even that is too large.
+fn within_vision_limit(image: VisionImage, name: &str) -> VisionImage {
+    if image.bytes.len() <= VISION_MAX_BYTES {
+        return image;
+    }
+    let Ok(decoded) = image::load_from_memory(&image.bytes) else {
+        return image;
+    };
+    let alpha = decoded.color().has_alpha() && !opaque_rgba(&decoded.to_rgba8().into());
+    let longest = decoded.width().max(decoded.height());
+    let mut side = longest.min(VISION_MAX_SIDE);
+    let mut quality = 85u8;
+    loop {
+        let scaled = if longest > side {
+            decoded.resize(side, side, image::imageops::FilterType::Triangle)
+        } else {
+            decoded.clone()
+        };
+        let mut bytes = Vec::new();
+        let encoded = if alpha {
+            scaled
+                .write_to(&mut Cursor::new(&mut bytes), ImageFormat::Png)
+                .is_ok()
+        } else {
+            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut bytes, quality)
+                .encode_image(&scaled.to_rgb8())
+                .is_ok()
+        };
+        if !encoded {
+            return image;
+        }
+        let mime = if alpha { "image/png" } else { "image/jpeg" };
+        if bytes.len() <= VISION_MAX_BYTES {
+            return VisionImage { mime, bytes };
+        }
+        if !alpha && quality > 55 {
+            quality -= 15;
+            continue;
+        }
+        if side <= VISION_MIN_SIDE {
+            crate::llm::note_document_warning(format!(
+                "Picture {name} could not be made smaller than {:.1} MB even at {side} pixels; it was sent at {:.1} MB",
+                VISION_MAX_BYTES as f64 / 1_048_576.0,
+                bytes.len() as f64 / 1_048_576.0
+            ));
+            return VisionImage { mime, bytes };
+        }
+        side = (side * 3 / 4).max(VISION_MIN_SIDE);
+    }
+}
+
+fn prepare_vision_unlimited(bytes: &[u8], name: &str, cfg: &Value) -> Result<Vec<VisionImage>> {
     if tiff::signature(bytes) {
         let pages = tiff::Pages::new(bytes)?;
         pages.check_vision_limit(cfg)?;
@@ -1104,6 +1173,43 @@ fn image_document(path: &Path, asset_name: &str, bytes: Vec<u8>) -> Document {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_picture_too_large_for_a_model_is_sent_smaller() {
+        // Noise compresses badly: a 2,100-pixel square is far above 3.5 MiB.
+        let mut state = 0x2545_f491_u32;
+        let mut noise = || {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            state as u8
+        };
+        let opaque = RgbImage::from_fn(2100, 2100, |_, _| Rgb([noise(), noise(), noise()]));
+        let mut png = Vec::new();
+        DynamicImage::ImageRgb8(opaque)
+            .write_to(&mut Cursor::new(&mut png), ImageFormat::Png)
+            .unwrap();
+        assert!(png.len() > VISION_MAX_BYTES);
+        let mut cfg = config::defaults();
+        cfg["image"]["compress"] = json!(false);
+        let sent = prepare_vision(&png, "noise.png", &cfg).unwrap();
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0].mime, "image/jpeg");
+        assert!(sent[0].bytes.len() <= VISION_MAX_BYTES);
+        let decoded = image::load_from_memory(&sent[0].bytes).unwrap();
+        assert!(decoded.width().max(decoded.height()) <= VISION_MAX_SIDE);
+        // Transparency stays: PNG, made smaller by size alone.
+        let clear = image::RgbaImage::from_fn(1500, 1500, |x, _| {
+            image::Rgba([noise(), noise(), noise(), if x % 2 == 0 { 0 } else { 255 }])
+        });
+        let mut png = Vec::new();
+        DynamicImage::ImageRgba8(clear)
+            .write_to(&mut Cursor::new(&mut png), ImageFormat::Png)
+            .unwrap();
+        let sent = prepare_vision(&png, "clear.png", &cfg).unwrap();
+        assert_eq!(sent[0].mime, "image/png");
+        assert!(sent[0].bytes.len() <= VISION_MAX_BYTES);
+    }
     use image::ImageEncoder;
     use serde_json::json;
 

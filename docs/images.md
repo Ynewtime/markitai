@@ -171,8 +171,12 @@ earlier pages as a complete document.
 
 Embedded multi-page TIFF assets are preserved unchanged during ordinary asset
 compression, so that pass cannot flatten them to the first frame. Image analysis
-uses the same all-page vision preparation. No external decoder or Python runtime
-is used. Local OCR follows the same platform and model requirements as
+uses the same all-page vision preparation. A picture image analysis would send
+above 3.5 MiB (with `image.compress: false`, for example) is sent smaller, as
+Python markitai sends it: at most 2,048 pixels on its longer side, PNG with
+transparency or JPEG at a lower quality, then a quarter smaller at a time down
+to 512 pixels, with a warning if even that is too large. No external decoder or
+Python runtime is used. Local OCR follows the same platform and model requirements as
 [single-image OCR](ocr.md).
 
 ## SVG inputs
