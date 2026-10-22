@@ -1135,7 +1135,9 @@ fn model_check(
             variables.join(", ")
         };
         if usable {
+            // The other models still work: a warning, not a blocked check.
             check.status = "warning";
+            check.required = false;
             check.message = format!(
                 "Not set: {named}; {} model(s) left out, {} still used",
                 missing.len(),

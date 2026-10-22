@@ -229,6 +229,44 @@ const KNOWN: &[(&str, &str)] = &[
         "Set weight > 0 on at least one model to enable LLM use",
         "请至少给一个模型设置大于 0 的权重，才能使用 LLM",
     ),
+    // What the official subscription runtimes report about their sign-in.
+    ("Claude CLI is not signed in", "Claude CLI 未登录"),
+    (
+        "Claude CLI is authenticated through a non-subscription or unrecognized method",
+        "Claude CLI 使用的不是订阅登录，或登录方式无法识别",
+    ),
+    (
+        "Codex CLI is not signed in with a ChatGPT subscription",
+        "Codex CLI 未用 ChatGPT 订阅登录",
+    ),
+    (
+        "Copilot is not authenticated; run markitai auth copilot login",
+        "Copilot 未认证；请运行 markitai auth copilot login",
+    ),
+    (
+        "The supported official Claude CLI is not installed",
+        "未安装受支持的官方 Claude CLI",
+    ),
+    (
+        "The supported official Codex CLI is not installed",
+        "未安装受支持的官方 Codex CLI",
+    ),
+    (
+        "Copilot CLI is unavailable; install the supported official runtime",
+        "Copilot CLI 不可用；请安装受支持的官方运行时",
+    ),
+    (
+        "Copilot protocol version is unsupported; the adapter requires protocol 3",
+        "Copilot 协议版本不受支持；适配器需要协议 3",
+    ),
+    (
+        "Official Codex login status could not be verified",
+        "无法确认官方 Codex 的登录状态",
+    ),
+    (
+        "Copilot runtime returned an invalid or unsupported response",
+        "Copilot 运行时返回了无效或不受支持的响应",
+    ),
     (
         "Set litellm_params.api_key on the model or its provider connection",
         "请在模型或其提供商连接上设置 litellm_params.api_key",
@@ -259,6 +297,7 @@ pub(super) fn zh(text: &str) -> String {
     }
     portable_ocr(text)
         .or_else(|| unset_keys(text))
+        .or_else(|| runtime_reports(text))
         .or_else(|| newer_runtime(text))
         .or_else(|| {
             with_tail(
@@ -286,6 +325,53 @@ fn newer_runtime(text: &str) -> Option<String> {
     Some(format!(
         "{head} 比本适配器验证过的 {verified} 更新；仍会使用它，并检查它发来的每条消息"
     ))
+}
+
+/// `N active model(s); M supported API provider(s)` and the runtime reports
+/// that name a runtime or a release.
+fn runtime_reports(text: &str) -> Option<String> {
+    if let Some((active, rest)) = text.split_once(" active model(s); ")
+        && let Some(providers) = rest.strip_suffix(" supported API provider(s)")
+    {
+        return Some(format!(
+            "{active} 个生效模型；{providers} 个受支持的 API 供应商"
+        ));
+    }
+    if let Some((runtime, release)) = text
+        .strip_prefix("Installed ")
+        .and_then(|rest| rest.split_once(" is older than the supported release "))
+    {
+        return Some(format!(
+            "已安装的 {runtime} 比受支持的最低版本 {release} 更旧"
+        ));
+    }
+    for (english, chinese) in [
+        (" executable is unavailable", "可执行文件不可用"),
+        (
+            " executable must be a regular file",
+            "可执行文件必须是普通文件",
+        ),
+        (
+            " runtime deadline exceeded; completion is unknown",
+            "运行时超时；无法确定是否完成",
+        ),
+        (
+            " runtime process communication failed",
+            "运行时进程通信失败",
+        ),
+        (
+            " returned an invalid or conflicting protocol response",
+            "返回了无效或相互矛盾的协议响应",
+        ),
+    ] {
+        if let Some(runtime) = text.strip_suffix(english)
+            && !runtime.is_empty()
+            && runtime.len() <= 40
+        {
+            return Some(format!("{runtime} {chinese}"));
+        }
+    }
+    None
 }
 
 /// The doctor's lines about API keys that are not set.
@@ -430,6 +516,38 @@ mod tests {
         assert_eq!(
             zh("No llm.model_list; the environment names groq/x, but GROQ_API_KEY is not set"),
             "未配置 llm.model_list；环境变量指向 groq/x，但未设置 GROQ_API_KEY"
+        );
+        for english in [
+            "2 active model(s); 1 supported API provider(s)",
+            "Claude CLI is not signed in",
+            "Claude CLI is authenticated through a non-subscription or unrecognized method",
+            "Codex CLI is not signed in with a ChatGPT subscription",
+            "Copilot is not authenticated; run markitai auth copilot login",
+            "The supported official Claude CLI is not installed",
+            "The supported official Codex CLI is not installed",
+            "Copilot CLI is unavailable; install the supported official runtime",
+            "Copilot protocol version is unsupported; the adapter requires protocol 3",
+            "Official Codex login status could not be verified",
+            "Installed Claude CLI is older than the supported release 2.1.284",
+            "Installed Copilot CLI is older than the supported release 1.0.90-2",
+            "Codex executable is unavailable",
+            "Claude runtime deadline exceeded; completion is unknown",
+            "Copilot runtime process communication failed",
+            "Codex returned an invalid or conflicting protocol response",
+            "Codex 0.171.0 is newer than 0.159.0, the release this adapter was verified with; it is used, and every message it sends is still checked",
+            "Install official Codex 0.159.0 or later; chatgpt/<model> takes any model it offers",
+        ] {
+            let chinese = zh(english);
+            assert!(
+                chinese
+                    .chars()
+                    .any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)),
+                "{english} -> {chinese}"
+            );
+        }
+        assert_eq!(
+            zh("2 active model(s); 1 supported API provider(s)"),
+            "2 个生效模型；1 个受支持的 API 供应商"
         );
         // What the table does not know stays as it is.
         assert_eq!(zh("something else"), "something else");
