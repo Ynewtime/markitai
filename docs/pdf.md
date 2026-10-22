@@ -14,26 +14,39 @@ native text supplied to page OCR, screenshots and LLM enhancement:
 - `off` suppresses hidden-text security notices and keeps the native reader's
   existing visibility rules. It does not make invisible `Tr 3`/`Tr 7` text
   visible, and does not disable decoding or reliability warnings.
-- `warn` (the default) keeps that same extracted body and reports suspicious
-  white, transparent, very small or invisible text and inspection limits.
-- `remove` filters suspicious text show operators before page layout, keeping
-  their advances and clipping state so later visible text stays in place.
-  It changes the extracted body in memory; the input PDF, embedded pictures
-  and screenshot pixels keep their original bytes. A matching visible copy
-  of the same words is retained. A shared Form is filtered per invocation,
-  with the nearest complete resources dictionary taking precedence.
+- `warn` (the default) leaves text a reader cannot see out of the extracted
+  body: transparent text, text at one point or smaller, and white text over a
+  white or near-white background. One notice names the pages and quotes the
+  text left out (up to 80 characters, as Python markitai does), since it is a
+  common place for prompt injection. White text whose background could not
+  be checked is kept, with a notice saying so.
+- `remove` does the same, and also leaves out white text whose background
+  could not be checked, and inspects pages whose paint visibility could not
+  be determined (soft masks, blending, unsupported color spaces); each page
+  it filtered is named with the number of runs.
 
-Removal uses effective text size (at most one point), separate fill/stroke
+Both filter the text show operators before page layout, keeping their
+advances and clipping state so later visible text stays in place. They change
+the extracted body in memory; the input PDF, embedded pictures and screenshot
+pixels keep their original bytes. A matching visible copy of the same words
+is retained. A shared Form is filtered per invocation, with the nearest
+complete resources dictionary taking precedence.
+
+Filtering uses effective text size (at most one point), separate fill/stroke
 opacity (at most 0.01 on every active paint channel) and white device-color
-text. White text is only filtered when no path, image, shading or other
-background paint was found on that page; white text on a black panel stays
-visible. Unsupported color spaces, soft masks, blending, malformed resources
-and inspection or rewrite budgets are reported honestly. A page whose initial
+text. For white text, what the page shows under each white run is sampled
+from a low-resolution render: the run is hidden only when that is white or
+near-white too, so white text on a dark panel stays and white text on a white
+box goes, whatever else is painted on the page. A page with no paint at all
+needs no render. Invisible (`Tr 3`/`Tr 7`) text is already left out by the
+reader; on a page read from its text layer it is quoted in the notice too.
+Unsupported color spaces, soft masks, blending, malformed resources and
+inspection or rewrite budgets are reported honestly. A page whose initial
 inspection was incomplete keeps its original body. Other uncertain paint may
-be retained with a notice that removal was incomplete.
+be retained with a notice that filtering was incomplete.
 
 A searchable scan's already accepted OCR layer is retained in all three modes
-under the rules below. Filtering never promotes newly masked text into an
+under the rules below; a page read from its OCR layer is not filtered. Filtering never promotes newly masked text into an
 accepted OCR layer. Normal documents need no filtering or second layout pass;
 a valid direct resources dictionary inherited from a Pages ancestor is
 materialized only in memory to make it readable by the pinned native reader.

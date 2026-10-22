@@ -42,7 +42,7 @@
 - 原生 RST、Org、TeX 和 Outlook MSG 读取，笔记本输出、Numbers 表格及目录包、按 MIME 处理的邮件附件，以及 Office 元数据提取。
 - 使用 macOS Vision 或便携 PaddleOCR 在本地识别图片/PDF，支持指定语言及默认英中日韩路由。便携模型单独安装并校验完整性；`doctor` 检查模型，`doctor --fix` 修复模型。
 - Windows/Linux 通过进程内 hayro 渲染器提供 PDF 截图和扫描页 OCR；macOS 默认使用 CoreGraphics。可选 LibreOffice 导出提供 Office 截图和 OCR，另支持多页 TIFF、SVG 视觉预览及 macOS HEIF/AVIF 解码。
-- PDF 隐藏文本策略 `security.pdf_sanitize` 提供 `off`、`warn`、`remove` 模式，可从提取正文中排除支持识别的可疑文本；保留原始资源，并报告检查不完整的情况。
+- PDF 隐藏文本策略 `security.pdf_sanitize` 提供 `off`、`warn`、`remove` 模式，默认从提取正文中去掉读者看不见的文字并在提示中引用；保留原始资源，并报告检查不完整的情况。
 - 可选的隔离 Chromium 抓取、截图、按来源限定的 Basic/Digest 认证及认证 PDF 下载；支持通过 `doctor --fix` 显式安装浏览器、复用隔离会话和发现系统手动代理。
 - Cloudflare URL/文件转换及 Jina/Defuddle 抓取回退，遵循远程处理授权和仅本地策略。工作台按操作请求授权，隐私提示说明图片和 URL 何时发往远程服务。
 - 加权模型路由、回退组、重试、并发和请求预算、自定义提示词、结构化文档元数据及图片描述。持久化抓取/LLM 缓存和相同请求合并减少重复处理。
@@ -125,6 +125,7 @@
 - 文件夹自带的 `.env` 和 `markitai.json` 不再能让转换反过来对付你。当前目录的 `.env` 仍可提供密钥和选项，但不再接受选择程序、路径、地址、代理、主目录或凭据文件的名称（`*_CLI_PATH`、`*_PATH`、`*_EXECUTABLE`、`*_API_BASE`、`*_BASE_URL`、`HTTP(S)_PROXY`、`AWS_*_FILE`、`GOOGLE_APPLICATION_CREDENTIALS`、`LD_*`、`HOME` 等），被忽略的名称会提示一次。在当前文件夹找到的 `./markitai.json`（未用 `-c` 或 `MARKITAI_CONFIG` 指定）不会把环境中的密钥发往它自带的地址：`api_base` 不是服务商文档地址的模型或连接只使用条目里写明的密钥，其中的 `env:` 密钥引用改为占位密钥 `markitai-no-key`（并提示）。`markitai doctor` 和 `--verbose` 会注明配置文件是在当前文件夹找到的。这类值请放在环境变量或 `~/.markitai/.env` 中，或用 `-c` 指定文件。
 
 ### 修复
+- PDF：在默认的 `security.pdf_sanitize: warn` 下，隐藏文字不再进入 Markdown（以及其后的 LLM）：透明文字、不大于 1 磅的文字，以及白色或近白背景上的白字都会去掉（与 Python markitai 一致），并由一条提示引用这些文字（`PDF hidden text: 3 span(s) on page(s) 1 left out of the Markdown (possible prompt injection; excerpt: "…")`）。对于白字，会从渲染图中采样每段白字下方页面实际显示的内容，因此深色色块上的白字保留，白色方框上的白字去掉；`remove` 不再因为页面上画了任何图形就保留该页所有白字，并且还会去掉无法判断背景的白字（`warn` 保留并提示）。可搜索扫描件的 OCR 层不受影响。
 - PDF：所用字体既未指定编码也没有 ToUnicode 映射（例如丢失了 ToUnicode 映射的中日韩字体子集）的文字不再被悄无声息地丢掉。此前标题和段落消失不见，只留下几个被读成拉丁标点的字符（`¡¢£`），页面也不要求 OCR；现在这类文字计为无法读取，页面需要 OCR，OCR（`--ocr`）可以读出；没有其他可读内容的页面会报告出来，而不是写出乱码。
 - EPUB 的脚注和尾注写成全书统一编号的 Markdown 脚注（`text.[^1]` 和 `[^1]: …`）：此前写成原始的 `<a id=…>` 锚点和指向 `#EPUB/text/ch001.xhtml#fn1` 的链接，还带着回链。链接到注释的正文保留原文。
 - HTML：语言名和「复制」按钮位于下方栏中的代码块（nodejs.org）写成该语言的围栏代码块，后面不再多出一段 `JavaScript`。

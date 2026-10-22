@@ -97,6 +97,13 @@ const FAMILIES: &[(&str, Level, &str, &str, Subject)] = &[
         "",
         Subject::None,
     ),
+    (
+        "pdf.hidden_text",
+        Level::Warning,
+        "PDF hidden text: ",
+        "",
+        Subject::None,
+    ),
     // Local OCR.
     (
         "ocr.no_text",
@@ -483,6 +490,10 @@ mod tests {
         assert_eq!(
             code("No model succeeded for this document; only the base Markdown was kept.").0,
             "llm.no_model_succeeded"
+        );
+        assert_eq!(
+            code("PDF hidden text: 2 span(s) on page(s) 1\u{2013}2 left out of the Markdown (possible prompt injection; excerpt: \"a; b\").").0,
+            "pdf.hidden_text"
         );
     }
 
