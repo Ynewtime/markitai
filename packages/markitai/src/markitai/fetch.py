@@ -554,6 +554,16 @@ async def _dispatch_strategy(
     validators_to_write: tuple[str | None, str | None] | None = None
 
     if strategy.value in EXTERNAL_STRATEGIES:
+        from markitai.fetch_policy import remote_services_refused
+
+        if remote_services_refused.get():
+            # serve refuses the option for a user token; this guards any
+            # other way a remote strategy could reach its fetch
+            raise FetchError(
+                f"{_REMOTE_FALLBACK_LABELS.get(strategy.value, strategy.value)} "
+                "is not available to a user token's conversion: it never sends "
+                "its URL to remote services. Choose auto, static or playwright."
+            )
         await _ensure_external_strategy_allowed(
             url,
             strategy.value,
@@ -1549,9 +1559,9 @@ async def _fetch_with_fallback(
     # The browser met a verification page: a later screenshot capture is
     # then the one retry it gets (see _capture_missing_screenshot)
     browser_challenged = False
-    from markitai.fetch_policy import remote_fallbacks_refused
+    from markitai.fetch_policy import remote_services_refused
 
-    remote_refused = remote_fallbacks_refused.get()
+    remote_refused = remote_services_refused.get()
     remote_skipped = False
     for strat in strategies:
         runner = get_runner(strat)

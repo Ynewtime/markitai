@@ -2135,6 +2135,20 @@ class PlaywrightRenderer:
         policy = EnrichmentPolicy(allow_network=True, allow_async=True)
         if not enricher.should_run(url, policy):
             return "", None, ""
+        from markitai.fetch_policy import remote_services_refused
+
+        if remote_services_refused.get():
+            # A user token's serve job: the page is read from the browser
+            from markitai.notices import user_notice
+            from markitai.utils.url_redaction import redact_url
+
+            user_notice(
+                "[Fetch] {}: the X/Twitter embed lookup (FxTwitter, Twitter "
+                "oEmbed) was skipped: a user token's conversion never sends its "
+                "URL to remote services",
+                redact_url(url),
+            )
+            return "", None, ""
         assessment = await assess_remote_url(
             url, remote_consent, ["fxtwitter", "twitter-oembed"]
         )

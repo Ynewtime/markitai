@@ -742,7 +742,7 @@ class TestExplicitRemoteStrategyIsNotGlobalConsent:
         defuddle.assert_not_awaited()
 
 
-class TestUserTokenJobsSkipRemoteFallbacks:
+class TestUserTokenJobsSkipRemoteServices:
     """Owner decision 2026-10-22: in a user token's serve job the auto chain
     never reaches defuddle.md, Jina or Cloudflare, whatever
     fetch.remote_consent says, and the item is told so when the local
@@ -788,10 +788,34 @@ class TestUserTokenJobsSkipRemoteFallbacks:
             )
         )
 
+    @pytest.mark.asyncio
+    async def test_a_chosen_remote_strategy_is_refused(self) -> None:
+        """serve refuses the option for a user token; the fetch layer also
+        refuses a remote strategy that reaches it in such a job."""
+        from markitai.fetch_policy import remote_services_refused
+
+        remote = self._remote()
+        token = remote_services_refused.set(True)
+        try:
+            with (
+                patch("markitai.fetch_strategies.jina.fetch_with_jina", remote),
+                pytest.raises(FetchError, match="not available to a user token"),
+            ):
+                await fetch_url(
+                    "https://example.com/article",
+                    FetchStrategy.JINA,
+                    FetchConfig(remote_consent="always"),
+                    explicit_strategy=True,
+                    skip_read_cache=True,
+                )
+        finally:
+            remote_services_refused.reset(token)
+        remote.assert_not_awaited()
+
     async def _fetch(self, refused: bool) -> tuple[FetchResult | None, list[str]]:
         from loguru import logger
 
-        from markitai.fetch_policy import remote_fallbacks_refused
+        from markitai.fetch_policy import remote_services_refused
 
         notices: list[str] = []
         sink = logger.add(
@@ -799,7 +823,7 @@ class TestUserTokenJobsSkipRemoteFallbacks:
             level="WARNING",
             filter=lambda r: bool(r["extra"].get("user_notice")),
         )
-        token = remote_fallbacks_refused.set(refused)
+        token = remote_services_refused.set(refused)
         try:
             return (
                 await fetch_url(
@@ -813,7 +837,7 @@ class TestUserTokenJobsSkipRemoteFallbacks:
         except FetchError:
             return None, notices
         finally:
-            remote_fallbacks_refused.reset(token)
+            remote_services_refused.reset(token)
             logger.remove(sink)
 
     @pytest.mark.asyncio

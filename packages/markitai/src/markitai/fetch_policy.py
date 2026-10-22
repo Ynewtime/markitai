@@ -42,12 +42,14 @@ LOCAL_ONLY_STRATEGIES = list(LOCAL_STRATEGIES)
 # Task-local authority, inherited by fetch/image subtasks without changing
 # trusted CLI/API callers or sharing a mutable policy between concurrent jobs.
 public_network_only: ContextVar[bool] = ContextVar("public_network_only", default=False)
-# A user token's serve job never tries the remote fallbacks of the auto chain
-# (defuddle.md, Jina Reader, Cloudflare), whatever fetch.remote_consent says:
-# they would send the user's URL to third parties on the server's behalf
-# (owner decision 2026-10-22). Admin jobs and the CLI follow remote_consent.
-remote_fallbacks_refused: ContextVar[bool] = ContextVar(
-    "remote_fallbacks_refused", default=False
+# A user token's serve job never sends its URL to a remote service, whatever
+# fetch.remote_consent says: not the remote readers (defuddle.md, Jina Reader,
+# Cloudflare), as an auto-chain fallback or as a chosen strategy, and not the
+# X/Twitter embed lookups (FxTwitter, Twitter oEmbed); they would act, and
+# bill keys, on the server's behalf (owner decision 2026-10-22). Admin jobs
+# and the CLI follow remote_consent.
+remote_services_refused: ContextVar[bool] = ContextVar(
+    "remote_services_refused", default=False
 )
 
 

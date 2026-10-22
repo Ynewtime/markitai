@@ -1318,6 +1318,31 @@ def _check_remote_processing(
         )
 
 
+#: Strategies and backends that send a URL or a file to a remote service.
+_REMOTE_STRATEGIES = frozenset({"defuddle", "jina", "cloudflare"})
+
+
+def _refuse_remote_strategy(opts: JobOptions, owner: str | None) -> None:
+    """A user token's job never sends its URLs or files to a remote service.
+
+    Owner decision (2026-10-22): not as a chosen strategy (defuddle.md, Jina
+    Reader, Cloudflare) or backend, whatever ``fetch.remote_consent`` says, so
+    it can neither bill the server's keys nor hand the URL to those services;
+    the auto chain's remote fallbacks are off for it too
+    (``fetch_policy.remote_services_refused``). Checked by the job's owner,
+    so an admin's retry of a user's job follows the same rule.
+    """
+    if owner is None:
+        return
+    if opts.strategy in _REMOTE_STRATEGIES or opts.backend == "cloudflare":
+        raise ApiError(
+            403,
+            "remote_processing_forbidden",
+            "A user token's conversion never uses remote services (defuddle.md, "
+            "Jina Reader, Cloudflare); choose auto, static or playwright",
+        )
+
+
 def _saved_options(opts: JobOptions) -> dict[str, Any]:
     """Options as a job remembers them: the selections, never the consent."""
     return opts.model_dump(exclude={"remote_processing"})
@@ -3591,6 +3616,10 @@ def create_app(
 
     def job_config(conversion: _Conversion, opts: JobOptions) -> MarkitaiConfig:
         cfg = _build_job_config(conversion.config, opts)
+        if conversion.user and cfg.fetch.strategy in _REMOTE_STRATEGIES:
+            # The server's own default strategy (the user's own choice of
+            # one is refused): a user's job reads its URLs locally
+            cfg.fetch.strategy = "auto"
         if conversion.user and not cfg.llm.model_list:
             # No pool: no model processing of any kind, whatever was asked
             cfg.llm.enabled = False
@@ -5286,7 +5315,20 @@ def create_app(
         server = convert_defaults.of_config(state.config)
         if caller.role == "user":
             own = lists.convert_defaults if lists is not None else None
-            return convert_defaults.answer(server, own, scope="user", can_save=True)
+
+            def local(options: dict[str, Any]) -> dict[str, Any]:
+                # A user's conversions read URLs locally (job_config), so a
+                # remote strategy is not what they start from
+                if options.get("strategy") in _REMOTE_STRATEGIES:
+                    return {**options, "strategy": "auto"}
+                return options
+
+            return convert_defaults.answer(
+                local(server),
+                local(own) if own is not None else None,
+                scope="user",
+                can_save=True,
+            )
         return convert_defaults.answer(
             server, None, scope="server", can_save=caller.role == "admin"
         )
@@ -5341,6 +5383,11 @@ def create_app(
             )
         if caller.role == "user" and caller.user_id is not None:
             user_id = caller.user_id
+            if wanted is not None and wanted.get("strategy") in _REMOTE_STRATEGIES:
+                raise convert_defaults.invalid(
+                    "a user token's conversions never use remote services; the "
+                    "default strategy must be auto, static or playwright"
+                )
 
             def change(lists: user_models.Lists) -> None:
                 current = convert_defaults.revision(lists.convert_defaults)
@@ -5522,6 +5569,7 @@ def create_app(
         await _guard_fetch_targets(request, [url for url, _ in url_entries])
         _check_preset(state, opts)
         trusted = _is_trusted_request(request)
+        _refuse_remote_strategy(opts, _caller(request).user_id)
         _check_remote_processing(
             state, opts, trusted=trusted and _caller(request).role == "admin"
         )
@@ -5748,6 +5796,7 @@ def create_app(
             raise ApiError(409, "no_source", "item has no supported original source")
 
         trusted = _is_trusted_request(request)
+        _refuse_remote_strategy(opts, job.owner)
         _check_remote_processing(
             state, opts, trusted=trusted and _caller(request).role == "admin"
         )

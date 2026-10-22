@@ -34,6 +34,7 @@ import httpx
 
 from markitai.config import MarkitaiConfig
 from markitai.serve import create_app
+from tests.unit.serve.test_workbench_contract import check_error
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -311,13 +312,13 @@ class TestUserTokenUrlPolicy:
         """Owner decision 2026-10-22: a user token's job, and its retry by
         anyone, never tries defuddle.md, Jina or Cloudflare, whatever
         fetch.remote_consent says; the admin's job follows remote_consent."""
-        from markitai.fetch_policy import remote_fallbacks_refused
+        from markitai.fetch_policy import remote_services_refused
 
         seen: list[tuple[str, bool]] = []
         fake = _fake_url_converter()
 
         async def recording(url: str, *args: Any, **kwargs: Any):
-            seen.append((url, remote_fallbacks_refused.get()))
+            seen.append((url, remote_services_refused.get()))
             return await fake(url, *args, **kwargs)
 
         monkeypatch.setattr("markitai.serve.jobs.process_url_item", recording)
@@ -396,3 +397,138 @@ class TestUserTokenUrlPolicy:
         assert sorted(seen) == sorted(
             [(PRIVATE_URL, False), (loopback_api, True), (loopback_api, True)]
         )
+
+
+class TestUserTokenRemoteServices:
+    """Owner decision (2026-10-22): a user token's job never sends its URLs
+    or files to a remote service. It may not choose defuddle.md, Jina Reader
+    or Cloudflare (it would bill the server's keys and hand them the URL),
+    the server's own remote default strategy runs as auto for it, and its
+    saved defaults cannot name one. The admin is unchanged."""
+
+    @staticmethod
+    def _app(tmp_path: Path, strategy: str = "auto") -> FastAPI:
+        cfg = MarkitaiConfig()
+        cfg.cache.enabled = False
+        cfg.cache.global_dir = str(tmp_path / "cache")
+        cfg.fetch.strategy = strategy  # type: ignore[assignment]
+        return create_app(
+            static_dir=tmp_path / "no-static",
+            jobs_root=tmp_path / "jobs",
+            config=cfg,
+            configure_logging=False,
+            config_path=tmp_path / "config.json",
+            token="admin-token",  # nosec B106 - a test token
+        )
+
+    ADMIN = {"Authorization": "Bearer admin-token"}
+
+    @staticmethod
+    def _job(options: dict[str, Any]) -> list[tuple[str, Any]]:
+        return [
+            ("urls", (None, json.dumps([PUBLIC_URL]))),
+            ("options", (None, json.dumps(options))),
+        ]
+
+    async def _user(self, client: httpx.AsyncClient) -> dict[str, str]:
+        created = await client.post(
+            "/api/access-tokens", json={"label": "guest"}, headers=self.ADMIN
+        )
+        assert created.status_code == 201, created.text
+        return {"Authorization": f"Bearer {created.json()['token']}"}
+
+    @pytest.mark.parametrize(
+        "options",
+        [
+            {"strategy": "jina"},
+            {"strategy": "defuddle"},
+            {"strategy": "cloudflare", "remote_processing": "cloudflare"},
+            {"backend": "cloudflare", "remote_processing": "cloudflare"},
+        ],
+    )
+    async def test_a_user_may_not_choose_a_remote_service(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, options: dict
+    ) -> None:
+        monkeypatch.setattr(
+            "markitai.serve.jobs.process_url_item", _fake_url_converter()
+        )
+        app = self._app(tmp_path)
+        async with _lifespan(app), _client_for(app, None) as client:
+            user = await self._user(client)
+            refused = await client.post(
+                "/api/jobs", files=self._job(options), headers=user
+            )
+            history = (await client.get("/api/history", headers=user)).json()
+        check_error(refused, 403, "remote_processing_forbidden")
+        assert "never uses remote services" in refused.json()["detail"]
+        assert history == []
+
+    async def test_the_admin_still_may(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            "markitai.serve.jobs.process_url_item", _fake_url_converter()
+        )
+        app = self._app(tmp_path)
+        async with _lifespan(app), _client_for(app, None) as client:
+            created = await client.post(
+                "/api/jobs", files=self._job({"strategy": "jina"}), headers=self.ADMIN
+            )
+            assert created.status_code == 201, created.text
+            await _drain(client, created.json()["job_id"])
+
+    async def test_a_retry_of_a_users_job_may_not_choose_one_either(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            "markitai.serve.jobs.process_url_item", _fake_url_converter()
+        )
+        app = self._app(tmp_path)
+        async with _lifespan(app), _client_for(app, None) as client:
+            user = await self._user(client)
+            created = await client.post("/api/jobs", files=self._job({}), headers=user)
+            assert created.status_code == 201, created.text
+            job_id = created.json()["job_id"]
+            job = await _drain(client, job_id)
+            retry = await client.post(
+                f"/api/jobs/{job_id}/items/{job['items'][0]['item_id']}/retry",
+                json={"options": {"strategy": "jina"}},
+                headers=self.ADMIN,
+            )
+        check_error(retry, 403, "remote_processing_forbidden")
+
+    async def test_the_servers_remote_default_runs_as_auto_for_a_user(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        seen: list[str] = []
+        fake = _fake_url_converter()
+
+        async def recording(url: str, cfg: Any, *args: Any, **kwargs: Any):
+            seen.append(cfg.fetch.strategy)
+            return await fake(url, cfg, *args, **kwargs)
+
+        monkeypatch.setattr("markitai.serve.jobs.process_url_item", recording)
+        app = self._app(tmp_path, strategy="jina")
+        async with _lifespan(app), _client_for(app, None) as client:
+            user = await self._user(client)
+            for headers in (self.ADMIN, user):
+                created = await client.post(
+                    "/api/jobs", files=self._job({}), headers=headers
+                )
+                assert created.status_code == 201, created.text
+                await _drain(client, created.json()["job_id"])
+            view = (await client.get("/api/convert-defaults", headers=user)).json()
+            saved = await client.put(
+                "/api/convert-defaults",
+                json={
+                    "expected_revision": view["revision"],
+                    "defaults": {"strategy": "defuddle"},
+                },
+                headers=user,
+            )
+        assert seen == ["jina", "auto"]
+        assert view["server"]["strategy"] == "auto"
+        assert view["defaults"]["strategy"] == "auto"
+        assert saved.status_code == 422
+        assert saved.json()["reason"] == "invalid_convert_defaults"
+        assert "never use remote services" in saved.json()["detail"]

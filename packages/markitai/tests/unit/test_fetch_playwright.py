@@ -1380,6 +1380,43 @@ class TestTryEnricherFallbackAsync:
         mock_enrich.assert_not_awaited()
 
     @pytest.mark.asyncio
+    async def test_a_user_tokens_job_skips_the_x_lookup_and_says_so(self):
+        """Owner decision (2026-10-22): a user token's serve job never sends
+        its URL to FxTwitter or Twitter oEmbed, even under "always"; the page
+        is read from the browser and the item is told why."""
+        from loguru import logger
+
+        from markitai.fetch_playwright import PlaywrightRenderer
+        from markitai.fetch_policy import remote_services_refused
+        from markitai.webextract.enrichers.x_oembed import XOEmbedEnricher
+
+        notices: list[str] = []
+        sink = logger.add(
+            lambda m: notices.append(m.record["message"]),
+            level="WARNING",
+            filter=lambda r: bool(r["extra"].get("user_notice")),
+        )
+        token = remote_services_refused.set(True)
+        try:
+            with patch.object(
+                XOEmbedEnricher, "enrich", new_callable=AsyncMock
+            ) as mock_enrich:
+                result = await PlaywrightRenderer()._try_enricher_fallback_async(
+                    "https://x.com/user/status/123", "always"
+                )
+        finally:
+            remote_services_refused.reset(token)
+            logger.remove(sink)
+
+        assert result == ("", None, "")
+        mock_enrich.assert_not_awaited()
+        assert len(notices) == 1
+        assert (
+            "X/Twitter embed lookup (FxTwitter, Twitter oEmbed) was skipped"
+            in (notices[0])
+        )
+
+    @pytest.mark.asyncio
     async def test_cached_ask_consent_covers_the_enricher(self):
         """A Yes given for defuddle/jina also authorizes the X services."""
         from markitai.config import FetchConfig
