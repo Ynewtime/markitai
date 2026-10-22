@@ -51,7 +51,10 @@ configuration or the process environment, not in task content or published logs.
 - **Output recovery:** the CLI verifies native ownership evidence before replacing
   earlier batch results. A matching filename or digest alone is insufficient.
   Current-user directory aliases can be accepted; linked document leaves are
-  refused by default. See [ownership](output-ownership.md).
+  refused by default. A folder batch therefore skips the symbolic links in the
+  folder that Python markitai followed, and names them in its summary and
+  `--json` (`skip_reason: "symlink"`); `output.allow_symlinks: true` follows
+  them. See [ownership](output-ownership.md).
 - **Caching:** native entries preserve their own content/model/prompt identity;
   older reference rows can remain inspectable without being reusable as new typed
   answers. Cache hits do not imply a fresh provider request or current model output.

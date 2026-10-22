@@ -1635,6 +1635,10 @@ pub(crate) fn batch_summary_lines(
                 "图片，没有可提取的文字"
             ),
             "exists" => text!(lang => "output already exists", "输出已存在"),
+            "symlink" => text!(
+                lang => "symbolic links, not followed",
+                "符号链接，未跟随"
+            ),
             "pending_batch" => text!(
                 lang => "waiting for a provider batch",
                 "等待供应商批处理"
@@ -1653,6 +1657,10 @@ pub(crate) fn batch_summary_lines(
             "pending_batch" => text!(
                 lang => " Collect it later with --llm-batch-collect or --resume.",
                 "稍后可用 --llm-batch-collect 或 --resume 收取。"
+            ),
+            "symlink" => text!(
+                lang => " Set output.allow_symlinks to true to convert what they point to.",
+                "将 output.allow_symlinks 设为 true 可转换它们指向的内容。"
             ),
             _ => String::new(),
         };

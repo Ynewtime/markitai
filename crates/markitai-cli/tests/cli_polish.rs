@@ -231,6 +231,73 @@ fn a_single_file_is_named_by_its_file_name_and_an_unsupported_one_rejects_the_ru
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn a_folder_batch_names_the_symbolic_links_it_does_not_follow() {
+    use std::os::unix::fs::symlink;
+    let root = tempfile::tempdir().unwrap();
+    let elsewhere = root.path().join("elsewhere");
+    std::fs::create_dir_all(elsewhere.join("folder")).unwrap();
+    std::fs::write(elsewhere.join("target.txt"), "Linked text\n").unwrap();
+    std::fs::write(elsewhere.join("folder/inner.txt"), "Linked folder\n").unwrap();
+    std::fs::write(elsewhere.join("data.bin"), [0u8; 4]).unwrap();
+    let input = root.path().join("in");
+    std::fs::create_dir(&input).unwrap();
+    std::fs::write(input.join("own.txt"), "Own text\n").unwrap();
+    symlink(elsewhere.join("target.txt"), input.join("link.txt")).unwrap();
+    symlink(elsewhere.join("folder"), input.join("linked-folder")).unwrap();
+    // Neither a document by its name nor a folder: not named.
+    symlink(elsewhere.join("data.bin"), input.join("data.bin")).unwrap();
+    symlink(elsewhere.join("absent.txt"), input.join("broken.txt")).unwrap();
+    let result = output(root.path(), &["in", "-o", "out", "--json"]);
+    assert!(result.status.success());
+    let parsed: Value = serde_json::from_slice(&result.stdout).unwrap();
+    let items = parsed["items"].as_array().unwrap();
+    let skipped: Vec<_> = items
+        .iter()
+        .filter(|item| item["skip_reason"] == "symlink")
+        .map(|item| {
+            (
+                item["source"].as_str().unwrap(),
+                item["status"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        skipped,
+        [("link.txt", "skipped"), ("linked-folder", "skipped")]
+    );
+    assert_eq!(parsed["totals"]["completed"], 1);
+    assert_eq!(parsed["totals"]["skipped"], 2);
+    assert!(parsed["ok"].as_bool().unwrap());
+    // Not followed: nothing was written for them.
+    assert!(!root.path().join("out/link.txt.md").exists());
+    assert!(!root.path().join("out/linked-folder").exists());
+    let result = output(root.path(), &["in", "-o", "out2"]);
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert!(
+        stderr.contains("Done: 1 of 3 files converted, 2 skipped"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("Skipped 2 items (symbolic links, not followed): link.txt, linked-folder. Set output.allow_symlinks to true to convert what they point to."),
+        "{stderr}"
+    );
+    // Only links: named, not "nothing found".
+    let only = root.path().join("only");
+    std::fs::create_dir(&only).unwrap();
+    symlink(elsewhere.join("target.txt"), only.join("link.txt")).unwrap();
+    let result = output(root.path(), &["only", "-o", "out3", "--json"]);
+    let parsed: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(parsed["items"][0]["skip_reason"], "symlink");
+    let result = output(root.path(), &["only", "-o", "out3"]);
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert!(
+        stderr.contains("Skipped 1 item (symbolic links, not followed): link.txt."),
+        "{stderr}"
+    );
+}
+
 #[test]
 fn conversion_json_orders_success_failure_and_empty_envelopes() {
     let root = tempfile::tempdir().unwrap();

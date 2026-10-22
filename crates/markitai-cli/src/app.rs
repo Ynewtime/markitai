@@ -1164,8 +1164,13 @@ fn execute_conversion(
         );
     }
     check_llm_keys(&cfg, cli)?;
+    // Symbolic links a folder batch does not follow, named in its summary
+    // and JSON.
+    let mut links = Vec::new();
     let mut tasks = if directory {
-        discover(input_path, output.as_deref().unwrap(), cli, &cfg)?
+        let (tasks, skipped) = discover(input_path, output.as_deref().unwrap(), cli, &cfg)?;
+        links = skipped;
+        tasks
     } else if batch {
         parse_urls(input_path, output.as_deref().unwrap())?
     } else {
@@ -1207,6 +1212,23 @@ fn execute_conversion(
             say_shaped(logging::Shape::verdict(Mark::Info), |lang| {
                 dry_run_summary(&tasks, &previews, input_path, lang)
             });
+        }
+        return Ok(0);
+    }
+    if tasks.is_empty() && !cli.resume && !links.is_empty() {
+        // Only links were found: say so instead of "nothing found".
+        let records = batch_run::link_items(&links, 0);
+        if cli.json {
+            emit_json(&records.iter().map(outcome).collect::<Vec<_>>(), None);
+        } else if !cli.quiet {
+            print_batch_summary(
+                &records,
+                &[],
+                report::Resumed::default(),
+                cli.verbose,
+                std::time::Duration::ZERO,
+                output.as_deref().unwrap(),
+            );
         }
         return Ok(0);
     }
@@ -1459,6 +1481,7 @@ fn execute_conversion(
             mode,
             output: output.as_deref().unwrap(),
             history: history_plan.as_ref(),
+            links: &links,
         },
         report_plan.as_ref(),
         run_clock,
@@ -1470,6 +1493,8 @@ struct BatchDestination<'a> {
     mode: RunMode,
     output: &'a Path,
     history: Option<&'a crate::history::Plan>,
+    /// Symbolic links discovery did not follow (relative names).
+    links: &'a [String],
 }
 
 #[derive(Clone)]
@@ -2464,7 +2489,15 @@ fn writable(directory: &Path) -> bool {
         .is_ok()
 }
 
-fn discover(input: &Path, output: &Path, cli: &Cli, cfg: &Value) -> CliResult<Vec<Task>> {
+/// The documents and `.urls` lists of a folder, and the symbolic links it
+/// did not follow (unless `output.allow_symlinks`): a linked document, list
+/// or folder, by its relative name.
+fn discover(
+    input: &Path,
+    output: &Path,
+    cli: &Cli,
+    cfg: &Value,
+) -> CliResult<(Vec<Task>, Vec<String>)> {
     use globset::{GlobBuilder, GlobSetBuilder};
     let mut positive = GlobSetBuilder::new();
     let mut negative = GlobSetBuilder::new();
@@ -2515,6 +2548,7 @@ fn discover(input: &Path, output: &Path, cli: &Cli, cfg: &Value) -> CliResult<Ve
     let absolute_input = absolute(input);
     let follow = config::enabled(cfg, "/output/allow_symlinks");
     let mut tasks = Vec::new();
+    let mut links = Vec::new();
     let mut entries = walkdir::WalkDir::new(input)
         .follow_links(follow)
         .max_depth(depth.saturating_add(1))
@@ -2540,6 +2574,29 @@ fn discover(input: &Path, output: &Path, cli: &Cli, cfg: &Value) -> CliResult<Ve
         {
             if directory {
                 entries.skip_current_dir();
+            }
+            continue;
+        }
+        if !follow && entry.path_is_symlink() {
+            let relative = path.strip_prefix(input).map_err(runtime)?;
+            let ext = path
+                .extension()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            // A link to a folder, or to what would be converted by its name.
+            let wanted = std::fs::metadata(path).is_ok_and(|target| {
+                target.is_dir()
+                    || (target.is_file()
+                        && (ext == "urls"
+                            || markitai_core::formats::supports_extension(&ext)
+                            || markitai_core::is_image_extension(&ext)))
+            });
+            if wanted
+                && !(has_positive && !positive.is_match(relative))
+                && !negative.is_match(relative)
+            {
+                links.push(relative.to_string_lossy().replace('\\', "/"));
             }
             continue;
         }
@@ -2588,7 +2645,8 @@ fn discover(input: &Path, output: &Path, cli: &Cli, cfg: &Value) -> CliResult<Ve
     crate::sort::by(&mut tasks, |a, b| a.display.cmp(&b.display));
     let mut url_keys = std::collections::HashSet::new();
     tasks.retain(|task| !is_url(&task.source) || url_keys.insert(task.report_key.clone()));
-    Ok(tasks)
+    crate::sort::by(&mut links, |a, b| a.cmp(b));
+    Ok((tasks, links))
 }
 fn absolute(path: &Path) -> PathBuf {
     path.canonicalize().unwrap_or_else(|_| {

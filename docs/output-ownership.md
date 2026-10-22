@@ -78,7 +78,11 @@ paths distinguish directory components from the document's final file entry:
   user. Windows has no corresponding root-owned exception.
 - A document's final file entry remains subject to `output.allow_symlinks`.
   A linked input file or output document is refused by default even when its
-  owner and target are trusted. Broken, cyclic, excessively deep and
+  owner and target are trusted. A folder batch does not follow the symbolic
+  links inside the folder by default: a link to a supported document, a
+  `.urls` list or a folder is skipped, and the closing summary and `--json`
+  name it (`status: "skipped"`, `skip_reason: "symlink"`; not in the report,
+  recovery state or history). `output.allow_symlinks: true` follows them. Broken, cyclic, excessively deep and
   non-directory directory links are refused, as are links whose ownership or
   target cannot be verified. Diagnostics identify the path and reason.
 

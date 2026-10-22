@@ -318,6 +318,43 @@ fn earlier_outcome(kind: ItemKind, key: &str, entry: &Entry, llm: bool) -> Value
     item
 }
 
+/// The symbolic links a folder batch did not follow, as skipped items
+/// (`skip_reason` `symlink`) numbered from `first`, so the summary and
+/// `--json` name them.
+pub(super) fn link_items(links: &[String], first: usize) -> Vec<RunItem> {
+    let now = timestamp();
+    links
+        .iter()
+        .enumerate()
+        .map(|(offset, name)| RunItem {
+            index: first + offset,
+            kind: ItemKind::File,
+            display: name.clone(),
+            report_key: name.clone(),
+            source_file: None,
+            status: ItemStatus::Skipped,
+            output: None,
+            history_output: None,
+            history_eligible: false,
+            error: None,
+            warnings: Vec::new(),
+            skip_reason: Some("symlink".into()),
+            started_at: now.clone(),
+            completed_at: now.clone(),
+            elapsed_s: 0.0,
+            conversion_duration_s: None,
+            images: 0,
+            screenshots: 0,
+            usage: ConversionUsage::default(),
+            diagnostics: None,
+            llm_cache_hit: false,
+            fetch_cache_hit: false,
+            fetch_strategy: None,
+            page_sources: Vec::new(),
+        })
+        .collect()
+}
+
 fn failure(task: &Task, index: usize, error: String) -> RunItem {
     recorded(
         task,
@@ -741,6 +778,7 @@ fn run_with_namespace(
         mode,
         output,
         history,
+        links,
     } = destination;
     let scope = Scope::new(
         if mode == RunMode::Directory {
@@ -1527,6 +1565,9 @@ fn run_with_namespace(
             "Interrupted: 不再派发新任务，等待正在进行的转换完成。"
         );
     }
+    // The links discovery did not follow end the list as skipped items: not
+    // in the report, the state or history, which hold converted work.
+    records.extend(link_items(links, tasks.len()));
     crate::sort::by_key(&mut records, |record| record.index);
     // A resumed batch lists the items its earlier runs finished first, with
     // what their state recorded, so its JSON covers the whole batch.
@@ -2118,6 +2159,7 @@ mod namespace_coordination_tests {
                 mode,
                 output,
                 history: None,
+                links: &[],
             },
             None,
             Instant::now(),
