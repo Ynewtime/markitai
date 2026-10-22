@@ -10,7 +10,7 @@ use std::sync::OnceLock;
 
 /// An empty variable counts as unset: as a path it would name the current
 /// directory, and every path starts with it.
-fn variable(name: &str) -> Option<std::ffi::OsString> {
+pub(crate) fn variable(name: &str) -> Option<std::ffi::OsString> {
     std::env::var_os(name).filter(|value| !value.is_empty())
 }
 

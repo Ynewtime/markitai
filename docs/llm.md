@@ -45,6 +45,18 @@ that deployment unavailable; usable siblings can still serve the request. An
 entirely disabled or unavailable configured pool does not fall back to ambient
 credentials.
 
+A deployment whose provider needs a key that nothing supplies (no `api_key`,
+none of the provider's key variables, an `env:NAME` reference to an unset or
+empty variable) is left out before anything is sent, with one warning per
+process naming the variable to set; with no deployment left, the conversion
+fails with an error naming the variables (code `no_model_configured`, exit 1
+on the command line, before converting). A deployment aimed at an address of
+its own (`api_base` or a base variable) is still tried, since a gateway or a
+local server may check no key; Azure, which has no default address, needs its
+key. `markitai doctor` applies the same rule. A key the provider refuses (HTTP
+401, or Gemini's `API_KEY_INVALID`) is reported with the variable it was read
+from.
+
 With an empty model list, a nonempty `MODEL` selects one model. Otherwise each
 available API credential joins the pool: Anthropic, OpenAI, Gemini, DeepSeek
 and OpenRouter. The model aliases are derived from the reference checkout's

@@ -961,8 +961,13 @@ fn backend(
     }
 }
 
-fn nonempty(value: Option<&Value>) -> Option<&str> {
-    value.and_then(Value::as_str).filter(|s| !s.is_empty())
+/// How to set a key variable, in the user's shell or the `.env` file.
+fn set_hint(variable: &str) -> String {
+    format!(
+        "Set it with: {} (or add {variable}=your_key to {})",
+        markitai_core::llm_keys::set_command(variable),
+        markitai_core::llm_keys::dotenv_file()
+    )
 }
 
 fn model_check(
@@ -987,7 +992,6 @@ fn model_check(
         .collect();
     let mut local = BTreeSet::new();
     let mut providers = BTreeSet::new();
-    let mut missing = BTreeSet::new();
     let mut unsupported = false;
     for model in &active {
         let params = &model["litellm_params"];
@@ -1013,36 +1017,9 @@ fn model_check(
             }
             _ => unsupported = true,
         }
-        let linked = model
-            .pointer("/model_info/provider_id")
-            .and_then(Value::as_str)
-            .and_then(|id| {
-                cfg.pointer("/llm/providers")
-                    .and_then(Value::as_array)
-                    .and_then(|items| {
-                        items
-                            .iter()
-                            .find(|provider| provider["id"].as_str() == Some(id))
-                    })
-            });
-        for field in ["api_key", "api_base"] {
-            if let Some(variable) = nonempty(params.get(field))
-                .or_else(|| nonempty(linked.and_then(|p| p.get(field))))
-                .and_then(|value| value.strip_prefix("env:"))
-                && !env.contains_key(variable)
-            {
-                // A malformed env name can contain terminal control characters;
-                // only expose its safe spelling, never a resolved value.
-                missing.insert(
-                    variable
-                        .chars()
-                        .take(128)
-                        .map(|c| if c.is_control() { ' ' } else { c })
-                        .collect::<String>(),
-                );
-            }
-        }
     }
+    // The rule a conversion applies before sending anything.
+    let (missing, usable) = markitai_core::llm_keys::check_with(cfg, env);
     let mut check = Check::new(
         "LLM API",
         "Content enhancement and image analysis",
@@ -1063,6 +1040,7 @@ fn model_check(
         .filter(|detected| !detected.models.is_empty());
     if let Some(detected) = detected {
         let names = detected.models.join(", ");
+        let unset = missing.first().and_then(|item| item.variable.as_deref());
         if detected.routable {
             check.message = format!(
                 "No llm.model_list; --llm uses {names} detected from MODEL or provider API keys in the environment"
@@ -1070,6 +1048,12 @@ fn model_check(
             check.install_hint =
                 "Optional: run markitai init to save the detected model in a configuration file"
                     .into();
+        } else if let Some(variable) = unset {
+            check.status = "warning";
+            check.message = format!(
+                "No llm.model_list; the environment names {names}, but {variable} is not set"
+            );
+            check.install_hint = set_hint(variable);
         } else {
             check.status = "warning";
             check.message = format!(
@@ -1088,14 +1072,35 @@ fn model_check(
         check.message = "Models are configured, but all have weight 0 (disabled)".into();
         check.install_hint = "Set weight > 0 on at least one model to enable LLM use".into();
     } else if !missing.is_empty() {
-        check.status = "error";
-        check.message = format!(
-            "Missing environment variable(s) used by active models: {}",
-            missing.into_iter().collect::<Vec<_>>().join(", ")
+        let mut variables: Vec<&str> = Vec::new();
+        for variable in missing.iter().filter_map(|item| item.variable.as_deref()) {
+            if !variables.contains(&variable) {
+                variables.push(variable);
+            }
+        }
+        let named = if variables.is_empty() {
+            "an API key".to_owned()
+        } else {
+            variables.join(", ")
+        };
+        if usable {
+            check.status = "warning";
+            check.message = format!(
+                "Not set: {named}; {} model(s) left out, {} still used",
+                missing.len(),
+                active.len().saturating_sub(missing.len())
+            );
+        } else {
+            check.status = "error";
+            check.message = format!(
+                "Not set: {named}; no model can be used without {}",
+                if variables.len() > 1 { "them" } else { "it" }
+            );
+        }
+        check.install_hint = variables.first().map_or_else(
+            || "Set litellm_params.api_key on the model or its provider connection".into(),
+            |variable| set_hint(variable),
         );
-        check.install_hint =
-            "Set the named environment variables or update the selected model/provider connection"
-                .into();
     } else if unsupported {
         check.status = "error";
         check.message = "An active API provider is not implemented in this native runtime".into();

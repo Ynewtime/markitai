@@ -144,7 +144,9 @@ fn doctor_summary_joins_several_blocked_checks() {
         "{text}"
     );
     assert!(
-        text.contains("  ✗ LLM API：活跃模型用到的环境变量未设置：I18N_ABSENT_KEY（配置要求）"),
+        text.contains(
+            "  ✗ LLM API：未设置：I18N_ABSENT_KEY；没有它，任何模型都无法使用（配置要求）"
+        ),
         "{text}"
     );
     let english = stdout(&run(

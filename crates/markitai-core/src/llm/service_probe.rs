@@ -216,8 +216,11 @@ fn missing_key(
     }
     let prefix = model.split_once('/').map_or("openai", |(prefix, _)| prefix);
     let known = providers::find(prefix).filter(|known| !known.key_optional)?;
-    let addressed = nonempty(request, "api_base").is_some()
-        || allow_environment && known.base_vars.iter().any(|name| set(name));
+    // An endpoint that only exists at an address of its own (Azure) needs
+    // its key there too.
+    let addressed = known.base.is_some()
+        && (nonempty(request, "api_base").is_some()
+            || allow_environment && known.base_vars.iter().any(|name| set(name)));
     if addressed || allow_environment && known.key_vars.iter().any(|name| set(name)) {
         return None;
     }

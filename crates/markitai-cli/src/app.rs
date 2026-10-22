@@ -1161,6 +1161,7 @@ fn execute_conversion(
             "Warning: 未启用 --llm（或 standard/rich 预设）时，{names} 不起作用"
         );
     }
+    check_llm_keys(&cfg, cli)?;
     let mut tasks = if directory {
         discover(input_path, output.as_deref().unwrap(), cli, &cfg)?
     } else if batch {
@@ -1467,6 +1468,39 @@ struct Task {
 }
 /// Claim document stems before any worker starts. Disk conflicts use the configured
 /// policy; another item in this run always gets a separate stem.
+/// Before converting with a model: one warning for each model left out
+/// because a key it needs is not set, or, when no model is left, the error
+/// that names the variables (nothing is converted or sent). A preview only
+/// warns.
+fn check_llm_keys(cfg: &Value, cli: &Cli) -> CliResult<()> {
+    if !config::enabled(cfg, "/llm/enabled") {
+        return Ok(());
+    }
+    let (missing, usable) = markitai_core::llm_keys::check(cfg);
+    if missing.is_empty() {
+        return Ok(());
+    }
+    if !usable {
+        let message = markitai_core::llm_keys::no_usable_model_message(&missing);
+        if !cli.dry_run {
+            return Err((1, message));
+        }
+        logging::diagnostic(format_args!("Warning: {message}"));
+    } else if !cli.quiet {
+        for item in &missing {
+            logging::diagnostic(format_args!(
+                "Warning: {}",
+                markitai_core::llm_keys::left_out_message(item)
+            ));
+        }
+    } else {
+        // Quiet: each item's warnings still say it.
+        return Ok(());
+    }
+    markitai_core::llm_keys::mark_reported(&missing);
+    Ok(())
+}
+
 fn reserve_batch_names(tasks: &mut [Task], cfg: &Value) -> CliResult<()> {
     use std::collections::{HashMap, HashSet};
     let mut claimed = HashSet::<(PathBuf, String)>::new();

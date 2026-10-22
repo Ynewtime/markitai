@@ -25,6 +25,11 @@ impl From<ConversionFailure> for Failure {
                 "{}. For this MCP server, set MODEL and a provider API key in the env block of its mcpServers entry, or configure llm.model_list.",
                 failure.error
             )
+        } else if matches!(failure.error, markitai_core::Error::MissingApiKey(_)) {
+            format!(
+                "{}. For this MCP server, the variable can also be set in the env block of its mcpServers entry.",
+                failure.error
+            )
         } else {
             failure.error.to_string()
         };

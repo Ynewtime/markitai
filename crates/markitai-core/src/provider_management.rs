@@ -597,8 +597,9 @@ fn missing_key(
     if entry.key_optional || entry.key_variables.is_empty() {
         return None;
     }
-    let addressed = base.is_some_and(|base| !base.is_empty())
-        || allow_environment && entry.base_variables.iter().any(|name| set(name));
+    let addressed = entry.default_base.is_some()
+        && (base.is_some_and(|base| !base.is_empty())
+            || allow_environment && entry.base_variables.iter().any(|name| set(name)));
     if addressed || allow_environment && entry.key_variables.iter().any(|name| set(name)) {
         return None;
     }
@@ -665,7 +666,14 @@ fn probe_with_environment(
                 (_, _, Error::Unsupported(_)) => {
                     "This model provider is not supported by the native runtime".into()
                 }
-                (_, _, Error::Config(_) | Error::NoModelConfigured | Error::InvalidInput(_)) => {
+                (
+                    _,
+                    _,
+                    Error::Config(_)
+                    | Error::NoModelConfigured
+                    | Error::MissingApiKey(_)
+                    | Error::InvalidInput(_),
+                ) => {
                     "Model credentials or endpoint configuration are invalid or unavailable".into()
                 }
                 (_, _, Error::Conversion(message)) => message.chars().take(300).collect(),

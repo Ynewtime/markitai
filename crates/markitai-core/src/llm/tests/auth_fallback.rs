@@ -274,7 +274,7 @@ fn recognized_refusals_name_a_fixed_cause_but_never_the_provider_wording() {
     assert_eq!(
         result.unwrap_err().to_string(),
         format!(
-            "LLM returned HTTP 401: Incorrect API key provided: [REDACTED] (deployment openai/only at {host})"
+            "LLM returned HTTP 401: the api_key configured for this model was refused; check that key. Provider message: Incorrect API key provided: [REDACTED] (deployment openai/only at {host})"
         )
     );
 }

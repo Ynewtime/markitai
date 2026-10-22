@@ -586,10 +586,17 @@ mod tests {
             let mut cfg = config();
             cfg["llm"]["model_list"][0]["litellm_params"]["api_key"] = key.clone();
             let env = HashMap::from([("OPENAI_API_KEY".to_owned(), String::new())]);
-            let Err(Error::Config(message)) = Session::configured(&cfg, &env) else {
-                panic!("{key}: a batch needs an API key");
+            // Without one, the model is not even in the pool.
+            let message = match Session::configured(&cfg, &env) {
+                Err(Error::Config(message)) if !key.is_null() => message,
+                Err(Error::MissingApiKey(message)) if key.is_null() => message,
+                _ => panic!("{key}: a batch needs an API key"),
             };
-            assert!(message.contains("requires an API key"), "{message}");
+            assert!(
+                message.contains("requires an API key")
+                    || message.contains("OPENAI_API_KEY is not set"),
+                "{message}"
+            );
         }
     }
     #[test]

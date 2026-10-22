@@ -10,6 +10,7 @@ mod degeneration;
 mod diagnosis;
 mod document;
 pub(crate) mod flight;
+pub(crate) mod keys;
 pub(crate) mod providers;
 pub(crate) mod python_batch;
 pub(crate) mod routing;
@@ -899,6 +900,65 @@ pub(crate) fn vision_models(cfg: &Value, env: &HashMap<String, String>) -> Vec<S
 }
 
 fn deployments(cfg: &Value, env: &HashMap<String, String>) -> Result<Vec<Deployment>> {
+    pool(cfg, env).map(|(deployments, _)| deployments)
+}
+
+/// The usable deployments, and those left out because a key they need is
+/// not set. With none usable and some left out, the error names the
+/// variables to set.
+fn pool(
+    cfg: &Value,
+    env: &HashMap<String, String>,
+) -> Result<(Vec<Deployment>, Vec<keys::MissingKey>)> {
+    let Collected {
+        deployments: result,
+        missing,
+        last_error,
+        grouped,
+    } = collect(cfg, env)?;
+    if result.is_empty() && !missing.is_empty() {
+        return Err(Error::MissingApiKey(keys::no_usable_model_message(
+            &missing,
+        )));
+    }
+    if result.is_empty() {
+        return Err(last_error.unwrap_or_else(|| {
+            Error::Config(
+                "All configured LLM models are disabled; set weight > 0 on a model".into(),
+            )
+        }));
+    }
+    if grouped && !result.iter().any(|entry| entry.group == "default") {
+        return Err(Error::Config(
+            "LLM fallbacks require an enabled 'default' model group".into(),
+        ));
+    }
+    Ok((result, missing))
+}
+
+/// The deployments of a configuration before the pool's own checks.
+struct Collected {
+    deployments: Vec<Deployment>,
+    missing: Vec<keys::MissingKey>,
+    /// Why the last deployment that could not be resolved was dropped.
+    last_error: Option<Error>,
+    grouped: bool,
+}
+
+/// The models a conversion would leave out for want of a key, and whether
+/// any model is left, without sending anything. A configuration that has no
+/// model, or another problem, reports none: the conversion names it.
+pub(crate) fn key_check(
+    cfg: &Value,
+    env: &HashMap<String, String>,
+) -> (Vec<keys::MissingKey>, bool) {
+    collect(cfg, env).map_or((Vec::new(), true), |collected| {
+        let usable = !collected.deployments.is_empty() || collected.missing.is_empty();
+        (collected.missing, usable)
+    })
+}
+
+fn collect(cfg: &Value, env: &HashMap<String, String>) -> Result<Collected> {
     let configured = cfg
         .pointer("/llm/model_list")
         .and_then(Value::as_array)
@@ -919,7 +979,9 @@ fn deployments(cfg: &Value, env: &HashMap<String, String>) -> Result<Vec<Deploym
         .is_some_and(|items| !items.is_empty());
     let providers = cfg.pointer("/llm/providers").and_then(Value::as_array);
     let mut result = Vec::new();
+    let mut missing = Vec::new();
     let mut last_error = None;
+    let held = |name: &str| env.get(name).is_some_and(|value| !value.trim().is_empty());
     for entry in entries {
         let params = &entry["litellm_params"];
         let weight = params.get("weight").and_then(Value::as_u64).unwrap_or(1);
@@ -983,6 +1045,22 @@ fn deployments(cfg: &Value, env: &HashMap<String, String>) -> Result<Vec<Deploym
                 })
                 .and_then(Value::as_bool)
                 != Some(false);
+        // An `env:` reference to an unset variable: that variable is missing.
+        let unset_reference = [
+            stored_key,
+            nonempty(params.get("api_base"))
+                .or_else(|| nonempty(saved_provider.and_then(|provider| provider.get("api_base")))),
+        ]
+        .into_iter()
+        .flatten()
+        .find_map(|value| value.strip_prefix("env:").filter(|name| !held(name)));
+        if let Some(name) = unset_reference {
+            missing.push(keys::MissingKey {
+                model: model.into(),
+                variable: keys::variable_name(name).then(|| name.to_owned()),
+            });
+            continue;
+        }
         // The key variable that holds a value; with none set, the first
         // name decides (it may be present but empty).
         let key_var =
@@ -1001,12 +1079,18 @@ fn deployments(cfg: &Value, env: &HashMap<String, String>) -> Result<Vec<Deploym
             true,
         );
         let (key, endpoint_base) = match (key, endpoint_base) {
-            (Ok(key), Ok(base)) => (key, base),
+            (Ok(key), Ok(base)) => (key.filter(|key| !key.trim().is_empty()), base),
             (Err(error), _) | (_, Err(error)) => {
                 last_error = Some(error);
                 continue;
             }
         };
+        // A provider that needs a key gets none: nothing is sent. A model
+        // aimed at an address of its own (a gateway or a local server that
+        // may check no key) is tried; a refusal then names the variable.
+        let addressed = known.base.is_some()
+            && (endpoint_base.is_some()
+                || allow_environment && known.base_vars.iter().any(|name| held(name)));
         let endpoint_base = endpoint_base.or_else(|| {
             known.base_vars.iter().find_map(|name| {
                 allow_environment
@@ -1051,6 +1135,13 @@ fn deployments(cfg: &Value, env: &HashMap<String, String>) -> Result<Vec<Deploym
                 continue;
             }
         };
+        if key.is_none() && !known.key_optional && !addressed {
+            missing.push(keys::MissingKey {
+                model: model.into(),
+                variable: allow_environment.then(|| known.key_vars[0].to_owned()),
+            });
+            continue;
+        }
         if params
             .get("max_tokens")
             .is_some_and(|value| !value.is_null() && value.as_u64().is_none_or(|value| value == 0))
@@ -1097,19 +1188,12 @@ fn deployments(cfg: &Value, env: &HashMap<String, String>) -> Result<Vec<Deploym
             cloud: None,
         });
     }
-    if result.is_empty() {
-        return Err(last_error.unwrap_or_else(|| {
-            Error::Config(
-                "All configured LLM models are disabled; set weight > 0 on a model".into(),
-            )
-        }));
-    }
-    if grouped && !result.iter().any(|entry| entry.group == "default") {
-        return Err(Error::Config(
-            "LLM fallbacks require an enabled 'default' model group".into(),
-        ));
-    }
-    Ok(result)
+    Ok(Collected {
+        deployments: result,
+        missing,
+        last_error,
+        grouped,
+    })
 }
 
 /// The reasoning setting a deployment sends. DeepSeek thinks by default and
@@ -1323,7 +1407,8 @@ fn run_mode(
             .and_then(Value::as_str)
             .unwrap_or("simple-shuffle"),
     )?;
-    let entries = deployments(cfg, env)?;
+    let (entries, left_out) = pool(cfg, env)?;
+    keys::report_left_out(&left_out);
     let groups = fallback_groups(cfg, &entries)?;
     let timeout = cfg
         .pointer("/llm/router_settings/timeout")
@@ -2026,6 +2111,20 @@ fn request_with_mode(
             },
             error: Error::Conversion(match refusal_reason(status, &body) {
                 Some(reason) => format!("LLM returned HTTP {status}: {reason}"),
+                // What to do comes before the provider's words.
+                None if entry.cloud.is_none() && keys::key_refused(status, &body) => {
+                    let said = diagnosis::refusal(status, &bytes, entry, prompts);
+                    let (code, words) = match said.split_once(": ") {
+                        Some((code, words)) => {
+                            (code.to_owned(), format!(". Provider message: {words}"))
+                        }
+                        None => (said, String::new()),
+                    };
+                    format!(
+                        "LLM returned HTTP {status}{code}: {}{words}",
+                        keys::refused_hint(entry)
+                    )
+                }
                 None => diagnosis::http(status, &bytes, entry, prompts),
             }),
             retryable: !fatal && transient,
@@ -2956,7 +3055,8 @@ mod tests {
             {"model_name":"another","litellm_params":{"model":"openai/b","weight":3}}
         ]}}))
         .unwrap();
-        let entries = deployments(&cfg, &HashMap::new()).unwrap();
+        let key = HashMap::from([("OPENAI_API_KEY".to_owned(), "fake-test-key".to_owned())]);
+        let entries = deployments(&cfg, &key).unwrap();
         assert_eq!(entries.len(), 2);
         assert!(entries.iter().all(|entry| entry.group == "default"));
         assert_eq!(
@@ -3249,7 +3349,7 @@ mod tests {
             assert!(!error.contains("fake-test-key"), "{error}");
             if status == 401 {
                 assert!(
-                    error.contains("LLM returned HTTP 401: Incorrect API key provided: [REDACTED] (deployment openai/test at 127.0.0.1:"),
+                    error.contains("LLM returned HTTP 401: the api_key configured for this model was refused; check that key. Provider message: Incorrect API key provided: [REDACTED] (deployment openai/test at 127.0.0.1:"),
                     "{error}"
                 );
             }

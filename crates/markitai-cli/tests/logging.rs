@@ -321,7 +321,7 @@ fn llm_failures_name_their_cause_and_deployment_in_every_channel_without_secrets
         (
             &refusing,
             format!(
-                "LLM returned HTTP 401 (invalid_request_error/invalid_api_key): Incorrect API key provided: [REDACTED]. Rejected request for '…' (deployment openai/test at {refusing})"
+                "LLM returned HTTP 401 (invalid_request_error/invalid_api_key): the api_key configured for this model was refused; check that key. Provider message: Incorrect API key provided: [REDACTED]. Rejected request for '…' (deployment openai/test at {refusing})"
             ),
         ),
     ] {

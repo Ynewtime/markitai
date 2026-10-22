@@ -133,7 +133,9 @@ fn openai_compatible_prefixes_use_their_documented_endpoints_and_key_variables()
         ("lm_studio/m", "http://localhost:1234/v1/chat/completions"),
     ] {
         assert_eq!(
-            resolved(json!({"model":model}), &[]).unwrap().endpoint,
+            resolved(json!({"model":model,"api_key":"fake-test-key"}), &[])
+                .unwrap()
+                .endpoint,
             endpoint
         );
     }

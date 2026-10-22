@@ -158,7 +158,7 @@ fn http_errors_carry_the_provider_message_without_secrets_or_document_text() {
         (
             401,
             json!({"error":{"message":"Incorrect API key provided: fake-test-key. You can find your API key at https://platform.example.test/account/api-keys?token=abc.","type":"invalid_request_error","code":"invalid_api_key"}}),
-            "LLM returned HTTP 401 (invalid_request_error/invalid_api_key): Incorrect API key provided: [REDACTED]. You can find your API key at https://platform.example.test/account/api-keys.",
+            "LLM returned HTTP 401 (invalid_request_error/invalid_api_key): the api_key configured for this model was refused; check that key. Provider message: Incorrect API key provided: [REDACTED]. You can find your API key at https://platform.example.test/account/api-keys.",
         ),
         (
             400,

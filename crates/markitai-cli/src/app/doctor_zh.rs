@@ -230,8 +230,8 @@ const KNOWN: &[(&str, &str)] = &[
         "请至少给一个模型设置大于 0 的权重，才能使用 LLM",
     ),
     (
-        "Set the named environment variables or update the selected model/provider connection",
-        "请设置所列的环境变量，或更新所选模型/提供商的连接",
+        "Set litellm_params.api_key on the model or its provider connection",
+        "请在模型或其提供商连接上设置 litellm_params.api_key",
     ),
     (
         "An active API provider is not implemented in this native runtime",
@@ -258,13 +258,7 @@ pub(super) fn zh(text: &str) -> String {
         return (*chinese).to_owned();
     }
     portable_ocr(text)
-        .or_else(|| {
-            with_tail(
-                text,
-                "Missing environment variable(s) used by active models: ",
-                "活跃模型用到的环境变量未设置：",
-            )
-        })
+        .or_else(|| unset_keys(text))
         .or_else(|| {
             with_tail(
                 text,
@@ -283,6 +277,34 @@ pub(super) fn zh(text: &str) -> String {
         .unwrap_or_else(|| text.to_owned())
 }
 
+/// The doctor's lines about API keys that are not set.
+fn unset_keys(text: &str) -> Option<String> {
+    if let Some(rest) = text.strip_prefix("Set it with: ") {
+        let (command, rest) = rest.split_once(" (or add ")?;
+        let (line, file) = rest.strip_suffix(')')?.split_once(" to ")?;
+        return Some(format!("设置方法：{command}（或把 {line} 写入 {file}）"));
+    }
+    let rest = text.strip_prefix("Not set: ")?;
+    let (named, rest) = rest.split_once("; ")?;
+    let named = if named == "an API key" {
+        "API key"
+    } else {
+        named
+    };
+    if let Some(rest) = rest.strip_prefix("no model can be used without ") {
+        let pronoun = if rest == "them" { "它们" } else { "它" };
+        return Some(format!(
+            "未设置：{named}；没有{pronoun}，任何模型都无法使用"
+        ));
+    }
+    let (left, used) = rest
+        .strip_suffix(" still used")?
+        .split_once(" model(s) left out, ")?;
+    Some(format!(
+        "未设置：{named}；{left} 个模型被忽略，仍有 {used} 个在用"
+    ))
+}
+
 fn with_tail(text: &str, english: &str, chinese: &str) -> Option<String> {
     text.strip_prefix(english)
         .map(|rest| format!("{chinese}{rest}"))
@@ -298,11 +320,16 @@ fn detected_models(text: &str) -> Option<String> {
             "未配置 llm.model_list；--llm 会使用从环境变量 MODEL 或提供商 API 密钥检测到的 {names}"
         ));
     }
-    let names = rest
-        .strip_prefix("the environment names ")
-        .and_then(|rest| rest.strip_suffix(", but its provider API key is not set"))?;
+    let rest = rest.strip_prefix("the environment names ")?;
+    if let Some(names) = rest.strip_suffix(", but its provider API key is not set") {
+        return Some(format!(
+            "未配置 llm.model_list；环境变量指向 {names}，但没有设置它的提供商 API 密钥"
+        ));
+    }
+    let (names, variable) = rest.rsplit_once(", but ")?;
+    let variable = variable.strip_suffix(" is not set")?;
     Some(format!(
-        "未配置 llm.model_list；环境变量指向 {names}，但没有设置它的提供商 API 密钥"
+        "未配置 llm.model_list；环境变量指向 {names}，但未设置 {variable}"
     ))
 }
 
@@ -376,6 +403,22 @@ mod tests {
                 "No llm.model_list; --llm uses openai/gpt-x detected from MODEL or provider API keys in the environment"
             ),
             "未配置 llm.model_list；--llm 会使用从环境变量 MODEL 或提供商 API 密钥检测到的 openai/gpt-x"
+        );
+        assert_eq!(
+            zh("Not set: DEEPSEEK_API_KEY; 1 model(s) left out, 2 still used"),
+            "未设置：DEEPSEEK_API_KEY；1 个模型被忽略，仍有 2 个在用"
+        );
+        assert_eq!(
+            zh("Not set: A_KEY, B_KEY; no model can be used without them"),
+            "未设置：A_KEY, B_KEY；没有它们，任何模型都无法使用"
+        );
+        assert_eq!(
+            zh("Set it with: export A_KEY=your_key (or add A_KEY=your_key to ~/.markitai/.env)"),
+            "设置方法：export A_KEY=your_key（或把 A_KEY=your_key 写入 ~/.markitai/.env）"
+        );
+        assert_eq!(
+            zh("No llm.model_list; the environment names groq/x, but GROQ_API_KEY is not set"),
+            "未配置 llm.model_list；环境变量指向 groq/x，但未设置 GROQ_API_KEY"
         );
         // What the table does not know stays as it is.
         assert_eq!(zh("something else"), "something else");

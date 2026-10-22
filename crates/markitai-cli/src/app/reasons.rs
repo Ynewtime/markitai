@@ -20,6 +20,34 @@ const RULES: &[(&str, &str)] = &[
         "未配置 LLM 模型；请设置 MODEL 和供应商的 API key，或配置 llm.model_list",
     ),
     (
+        "{} is left out of the model pool: {} is not set; set it with: {} (or add {}=your_key to {})",
+        "{} 已移出模型池：未设置 {}；设置方法：{}（或把 {}=your_key 写入 {}）",
+    ),
+    (
+        "{} is left out of the model pool: it has no API key (set litellm_params.api_key)",
+        "{} 已移出模型池：没有 API key（请设置 litellm_params.api_key）",
+    ),
+    (
+        "{} is not set, and {} needs it; set it with: {} (or add {}=your_key to {})",
+        "未设置 {}，{} 需要它；设置方法：{}（或把 {}=your_key 写入 {}）",
+    ),
+    (
+        "{} is not set, and {} need it; set it with: {} (or add {}=your_key to {})",
+        "未设置 {}，{} 需要它；设置方法：{}（或把 {}=your_key 写入 {}）",
+    ),
+    (
+        "No LLM model can be used: {} need an API key; set litellm_params.api_key",
+        "没有可用的 LLM 模型：{} 需要 API key；请设置 litellm_params.api_key",
+    ),
+    (
+        "No LLM model can be used: {} needs an API key; set litellm_params.api_key",
+        "没有可用的 LLM 模型：{} 需要 API key；请设置 litellm_params.api_key",
+    ),
+    (
+        "No LLM model can be used: {}. Set one of them, for example {} (or in {})",
+        "没有可用的 LLM 模型：{}。设置其中一个即可，例如 {}（或写入 {}）",
+    ),
+    (
         "Unsupported file format: {}. Supported extensions: {}.",
         "不支持的文件格式：{}。支持的扩展名：{}。",
     ),

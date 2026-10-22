@@ -10,6 +10,10 @@ pub enum Error {
     IsDirectory(String),
     #[error("No model configured; set MODEL and a provider API key, or llm.model_list")]
     NoModelConfigured,
+    /// No model can be used: the API keys they need are not set. The
+    /// message names the variables; the code is `no_model_configured`.
+    #[error("{0}")]
+    MissingApiKey(String),
     #[error("{0}")]
     InvalidInput(String),
     #[error("{0}")]
@@ -33,7 +37,7 @@ impl Error {
         match self {
             Self::NotFound(_) => "not_found",
             Self::IsDirectory(_) => "is_directory",
-            Self::NoModelConfigured => "no_model_configured",
+            Self::NoModelConfigured | Self::MissingApiKey(_) => "no_model_configured",
             Self::InvalidInput(_) => "invalid_input",
             Self::Unsupported(_) => "unsupported",
             Self::Conversion(_) | Self::ImageOnly(_) => "conversion_error",

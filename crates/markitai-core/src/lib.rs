@@ -178,6 +178,29 @@ pub fn llm_capabilities(config: &Value) -> LlmCapabilities {
     llm::capabilities(config, &config::environment())
 }
 
+/// API keys the configured models need and do not have, checked without
+/// sending anything.
+pub mod llm_keys {
+    pub use crate::llm::keys::{
+        MissingKey, dotenv_file, left_out_message, mark_reported, no_usable_model_message,
+        set_command,
+    };
+
+    /// The models a conversion would leave out because a key they need is
+    /// not set, and whether any model is left.
+    pub fn check(config: &serde_json::Value) -> (Vec<MissingKey>, bool) {
+        crate::llm::key_check(config, &crate::config::environment())
+    }
+
+    /// [`check`] against the given environment.
+    pub fn check_with(
+        config: &serde_json::Value,
+        env: &std::collections::HashMap<String, String>,
+    ) -> (Vec<MissingKey>, bool) {
+        crate::llm::key_check(config, env)
+    }
+}
+
 /// Return the native router's eligible vision model identities without a network probe.
 pub fn llm_vision_models(config: &Value) -> Vec<String> {
     llm::vision_models(config, &config::environment())
@@ -1025,7 +1048,10 @@ fn convert_inner(
                 result.usage = enhancement.usage;
             }
             Err(error) => {
-                if matches!(error, Error::NoModelConfigured | Error::Unsupported(_)) {
+                if matches!(
+                    error,
+                    Error::NoModelConfigured | Error::MissingApiKey(_) | Error::Unsupported(_)
+                ) {
                     return Err(error);
                 }
                 if output_dir.is_none()
@@ -1096,8 +1122,10 @@ fn convert_inner(
     ) {
         Ok(answered) => model_answered |= answered,
         Err(error) => {
-            if matches!(error, Error::NoModelConfigured | Error::Unsupported(_))
-                || output_dir.is_none()
+            if matches!(
+                error,
+                Error::NoModelConfigured | Error::MissingApiKey(_) | Error::Unsupported(_)
+            ) || output_dir.is_none()
             {
                 return Err(error);
             }
