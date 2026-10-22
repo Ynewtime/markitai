@@ -333,6 +333,18 @@ class RequestBudget:
                 f"cost budget exceeded (${spent:.4f} of ${self._cost_limit:.2f})",
             )
 
+    def unknown_cost(self, context: str) -> None:
+        """A request whose price will never be known (it timed out after it
+        was sent): with a cost limit, the document admits no further request,
+        since what it spent is no longer known."""
+        if not context or self._cost_limit <= 0:
+            return
+        self._trip(
+            scoped_usage_key(context),
+            "cost budget can no longer be enforced (a request timed out and "
+            "its cost is unknown)",
+        )
+
     def spend(self, context: str) -> None:
         """Account one request attempt for a context, or refuse it.
 
@@ -537,6 +549,20 @@ def _describe_request_failure(exc: BaseException) -> str:
         if isinstance(status, int) and status >= 400:
             return f"HTTP {status} {format_error_message(nested)}"
     return format_error_message(exc)
+
+
+def _timed_out_after_sending(exc: BaseException) -> bool:
+    """Whether *exc* is a request that timed out once it was sent.
+
+    A connection that could not be opened in time never reached the
+    provider: it retries like any connection failure.
+    """
+    if not isinstance(exc, Timeout):
+        return False
+    return not any(
+        type(nested).__name__ in ("ConnectTimeout", "ConnectTimeoutError")
+        for nested in _iter_exception_chain(exc)
+    )
 
 
 def find_budget_exceeded_error(
@@ -758,6 +784,7 @@ class LLMEngine:
         get_primary_model: Callable[[Any], str | None],
         max_retries: int = DEFAULT_MAX_RETRIES,
         request_budget: RequestBudget | None = None,
+        track_timed_out: Callable[[str, str], None] | None = None,
     ) -> None:
         """Exactly one of ``router`` / ``get_router`` must be provided.
 
@@ -774,6 +801,10 @@ class LLMEngine:
 
         ``request_budget`` is the per-document circuit breaker; every
         request attempt spends from it (None disables budgeting).
+
+        ``track_timed_out`` (``(model, context)``) records a request that
+        timed out after it was sent: the provider may have billed it
+        without reporting its usage, so its cost is unknown.
         """
         if (router is None) == (get_router is None):
             raise ValueError("LLMEngine requires exactly one of router/get_router")
@@ -787,6 +818,7 @@ class LLMEngine:
         self._get_primary_model = get_primary_model
         self.max_retries = max_retries
         self.request_budget = request_budget
+        self.track_timed_out = track_timed_out
         # Content-cache hit/miss counters (moved here from LLMProcessor in
         # Phase 2.3). Plain int increments, same as the previous processor
         # attributes (GIL-safe enough for counters).
@@ -1163,6 +1195,27 @@ class LLMEngine:
 
         return retrying_acompletion
 
+    def _record_timed_out(
+        self,
+        exc: BaseException,
+        model: str,
+        usage_context: str | None,
+        budget_context: str | None,
+    ) -> None:
+        """Account a request that timed out after it was sent.
+
+        The provider may have completed and billed it without a usage
+        report, so it counts as a request of unknown price: the document's
+        cost reads as incomplete, and a dollar budget admits no further
+        request, since what the document spent is no longer known.
+        """
+        timed_out_model = str(getattr(exc, "model", None) or model)
+        record_llm_spend(timed_out_model, 0, 0, None)
+        if self.track_timed_out is not None and usage_context:
+            self.track_timed_out(timed_out_model, usage_context)
+        if budget_context and self.request_budget is not None:
+            self.request_budget.unknown_cost(budget_context)
+
     async def _acompletion_with_retries(
         self,
         *,
@@ -1209,6 +1262,8 @@ class LLMEngine:
         # semaphore when own_semaphore is set (see docstring above)
         retry_delay = 0.0
         semaphore_ctx = self.semaphore if own_semaphore else nullcontext()
+        # A request that timed out is sent again once, never more
+        timeout_resent = False
 
         for attempt in range(max_retries + 1):
             if retry_delay > 0:
@@ -1351,7 +1406,10 @@ class LLMEngine:
                         )
                         raise
 
-                    if attempt == max_retries:
+                    timed_out = _timed_out_after_sending(e)
+                    if timed_out:
+                        self._record_timed_out(e, model, usage_context, budget_context)
+                    if attempt == max_retries or (timed_out and timeout_resent):
                         # Final failure after all retries
                         error_type = type(e).__name__
                         status_code = getattr(e, "status_code", "N/A")
@@ -1362,6 +1420,22 @@ class LLMEngine:
                             f"time={elapsed_ms:.0f}ms"
                         )
                         raise
+
+                    if timed_out and not (
+                        budget_context
+                        and self.request_budget is not None
+                        and self.request_budget.exceeded(budget_context)
+                    ):
+                        timeout_resent = True
+                        from markitai.notices import user_notice
+
+                        user_notice(
+                            "LLM request to {} timed out ({}) and was sent again "
+                            "once; the provider may have billed the first "
+                            "request, so the cost is incomplete",
+                            getattr(e, "model", None) or model,
+                            format_error_message(e),
+                        )
 
                     # Calculate exponential backoff delay
                     retry_delay = min(

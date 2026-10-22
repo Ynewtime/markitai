@@ -120,6 +120,34 @@ class TestTracking:
         assert len(notices) == 1
         assert "my-model" in notices[0] and "unknown" in notices[0]
 
+    def test_timed_out_request_makes_the_cost_incomplete(self) -> None:
+        """A request that timed out after it was sent may have been billed
+        without a usage report: one request of unknown price, and no price
+        notice (the engine warns about the timeout itself)."""
+        processor = LLMProcessor(
+            LLMConfig(
+                enabled=True,
+                model_list=[
+                    ModelConfig(
+                        model_name="default",
+                        litellm_params=LiteLLMParams(
+                            model="openai/gpt-4o-mini", api_key="test-key"
+                        ),
+                    )
+                ],
+            )
+        )
+        assert processor.engine.track_timed_out is not None
+        with capture_task_notices() as notices:
+            processor.engine.track_timed_out("openai/gpt-4o-mini", "a.pdf")
+            processor._track_usage("openai/gpt-4o-mini", 100, 40, 0.0001, "a.pdf")
+
+        usage = processor.get_context_usage("a.pdf")["openai/gpt-4o-mini"]
+        assert usage["requests"] == 2
+        assert usage["unpriced_requests"] == 1
+        assert usage["cost_usd"] == pytest.approx(0.0001)
+        assert notices == []
+
     def test_merge_keeps_the_unpriced_count(self) -> None:
         target: dict[str, dict[str, Any]] = {}
         merge_llm_usage(target, UNPRICED)

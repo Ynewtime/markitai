@@ -381,7 +381,7 @@ markitai 会从 LiteLLM 检测模型的视觉能力。要手动指定，在模�
 | 设置 | 默认值 | 说明 |
 |------|--------|------|
 | `routing_strategy` | `simple-shuffle` | `simple-shuffle`、`least-busy`、`usage-based-routing` 或 `latency-based-routing`。订阅制提供商始终按权重随机 |
-| `num_retries` | `2` | 每个请求的重试次数 |
+| `num_retries` | `2` | 每个请求的重试次数。请求发出后超时的，最多再发一次；服务商可能已经为第一次请求计费却没有报告用量，所以这时文档的费用记为不完整，并给出警告 |
 | `timeout` | `120` | 请求超时（秒） |
 | `fallbacks` | `[]` | 分组回退，如 `[{"default": ["backup"]}]`。不在回退组里的模型只通过回退接收流量 |
 | `concurrency` | `10` | 同时发出的 LLM 请求数 |

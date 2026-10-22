@@ -14,12 +14,12 @@ import asyncio
 from typing import Any
 
 import pytest
-from litellm.exceptions import APIConnectionError, RateLimitError
+from litellm.exceptions import APIConnectionError, RateLimitError, Timeout
 from litellm.types.utils import ModelResponse
 from pydantic import BaseModel
 
 import markitai.llm.engine as engine_module
-from markitai.llm.engine import LLMCall, LLMEngine
+from markitai.llm.engine import LLMCall, LLMEngine, RequestBudget
 from markitai.providers.errors import AuthenticationError
 
 
@@ -121,11 +121,14 @@ class Harness:
         router: FakeRouter,
         *,
         calculated_max_tokens: int = 512,
+        max_retries: int = 2,
+        request_budget: RequestBudget | None = None,
     ) -> None:
         self.router = router
         self.memory = FakeMemoryCache()
         self.persistent = FakePersistentCache()
         self.track_calls: list[tuple[str, int, int, float, str, int]] = []
+        self.timed_out_calls: list[tuple[str, str]] = []
         self.max_tokens_calls: list[dict[str, Any]] = []
         self.calculated_max_tokens = calculated_max_tokens
 
@@ -160,6 +163,11 @@ class Harness:
             track_usage=track_usage,
             calculate_max_tokens=calculate_max_tokens,
             get_primary_model=lambda _router: "openai/gpt-test",
+            max_retries=max_retries,
+            request_budget=request_budget,
+            track_timed_out=lambda model, context: self.timed_out_calls.append(
+                (model, context)
+            ),
         )
 
 
@@ -410,6 +418,119 @@ class TestTransportRetry:
 
         assert result.text == "ok"
         assert len(harness.router.calls) == 2
+
+
+def _read_timeout() -> Timeout:
+    return Timeout(
+        message="Request timed out after 60 seconds",
+        model="openai/gpt-test",
+        llm_provider="openai",
+    )
+
+
+def _connect_timeout() -> Timeout:
+    class ConnectTimeout(Exception):
+        pass
+
+    error = _read_timeout()
+    error.__cause__ = ConnectTimeout("timed out while connecting")
+    return error
+
+
+class TestTimedOutRequests:
+    """A request that timed out after it was sent may have been billed with
+    no usage report: it is sent again once, never more, and the document's
+    cost reads as incomplete with a warning (as markitai-rust d5775a5)."""
+
+    @staticmethod
+    def _notices() -> tuple[list[str], int]:
+        from loguru import logger
+
+        messages: list[str] = []
+        sink = logger.add(
+            lambda m: messages.append(m.record["message"]),
+            level="WARNING",
+            filter=lambda r: bool(r["extra"].get("user_notice")),
+        )
+        return messages, sink
+
+    @pytest.mark.usefixtures("no_retry_delay")
+    async def test_resent_once_and_the_cost_is_incomplete(self) -> None:
+        from loguru import logger
+
+        harness = Harness(FakeRouter([_read_timeout(), make_model_response("answer")]))
+        messages, sink = self._notices()
+        try:
+            response = await harness.engine.complete_text(
+                model="default",
+                messages=[{"role": "user", "content": "hi"}],
+                call_id="t1",
+                context="doc.pdf",
+            )
+        finally:
+            logger.remove(sink)
+
+        assert response.content == "answer"
+        assert len(harness.router.calls) == 2
+        assert harness.timed_out_calls == [("openai/gpt-test", "doc.pdf")]
+        assert messages == [
+            "LLM request to openai/gpt-test timed out (Timeout: Request timed "
+            "out.) and was sent again once; the provider may have billed the "
+            "first request, so the cost is incomplete"
+        ]
+
+    @pytest.mark.usefixtures("no_retry_delay")
+    async def test_never_resent_twice(self) -> None:
+        harness = Harness(FakeRouter([_read_timeout()]), max_retries=5)
+
+        with pytest.raises(Timeout):
+            await harness.engine.complete_text(
+                model="default",
+                messages=[{"role": "user", "content": "hi"}],
+                call_id="t2",
+                context="doc.pdf",
+            )
+
+        assert len(harness.router.calls) == 2
+        assert len(harness.timed_out_calls) == 2
+
+    @pytest.mark.usefixtures("no_retry_delay")
+    async def test_a_connect_timeout_retries_like_a_connection_failure(
+        self,
+    ) -> None:
+        harness = Harness(FakeRouter([_connect_timeout()]), max_retries=3)
+
+        with pytest.raises(Timeout):
+            await harness.engine.complete_text(
+                model="default",
+                messages=[{"role": "user", "content": "hi"}],
+                call_id="t3",
+                context="doc.pdf",
+            )
+
+        assert len(harness.router.calls) == 4
+        assert harness.timed_out_calls == []
+
+    @pytest.mark.usefixtures("no_retry_delay")
+    async def test_a_dollar_budget_admits_no_resend(self) -> None:
+        from markitai.llm.engine import LLMRequestBudgetExceededError
+
+        budget = RequestBudget(limit=0, cost_limit=0.5)
+        harness = Harness(
+            FakeRouter([_read_timeout(), make_model_response("answer")]),
+            request_budget=budget,
+        )
+
+        with pytest.raises(LLMRequestBudgetExceededError, match="timed out"):
+            await harness.engine.complete_text(
+                model="default",
+                messages=[{"role": "user", "content": "hi"}],
+                call_id="t4",
+                context="doc.pdf",
+            )
+
+        assert len(harness.router.calls) == 1
+        assert budget.exceeded("doc.pdf")
 
 
 class TestInstructorIntegration:

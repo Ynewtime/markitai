@@ -381,7 +381,7 @@ markitai detects vision capability from LiteLLM. To override that, set `model_in
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `routing_strategy` | `simple-shuffle` | `simple-shuffle`, `least-busy`, `usage-based-routing` or `latency-based-routing`. Subscription providers always use weighted random |
-| `num_retries` | `2` | Retries per request |
+| `num_retries` | `2` | Retries per request. A request that timed out after it was sent is sent again once at most; the provider may have billed the first one without reporting its usage, so the document's cost is then reported as incomplete, with a warning |
 | `timeout` | `120` | Request timeout in seconds |
 | `fallbacks` | `[]` | Group fallbacks, e.g. `[{"default": ["backup"]}]`. Models not in a fallback group only receive traffic through fallback |
 | `concurrency` | `10` | Concurrent LLM requests |

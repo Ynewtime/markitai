@@ -302,6 +302,7 @@ class LLMProcessor:
                 get_primary_model=self._get_router_primary_model,
                 max_retries=self.config.router_settings.num_retries,
                 request_budget=self._request_budget,
+                track_timed_out=self._track_timed_out,
             )
         return self._engine
 
@@ -990,6 +991,18 @@ class LLMProcessor:
         except Exception as e:
             logger.debug("[LLM] Failed to select highest-weight model: {}", e)
         return None
+
+    def _track_timed_out(self, model: str, context: str) -> None:
+        """Count a request that timed out after it was sent in *context*'s
+        usage: one request of unknown price, so the cost reads as
+        incomplete (unlike an unpriced model, no price notice: the engine
+        warns about the timeout itself)."""
+        if not context:
+            return
+        with self._usage_lock:
+            ctx = self._context_usage[scoped_usage_key(context)][model]
+            ctx["requests"] += 1
+            ctx["unpriced_requests"] = ctx.get("unpriced_requests", 0) + 1
 
     def _track_usage(
         self,
