@@ -76,7 +76,7 @@ Publish wheels only. A source distribution (`maturin sdist`) carries the
 workspace crates the extension needs (the command-line crate included),
 `vendor/rav1d`, `Cargo.lock` and the package's Python files, but not the
 vendored crates the workspace's `[patch.crates-io]` names (`anydoc`, `htmd`,
-`lopdf`, `pdf-inspector`): maturin copies path dependencies, not patches, and
+`iwork`, `lopdf`, `pdf-inspector`): maturin copies path dependencies, not patches, and
 refuses include patterns outside `bindings/python`, so it does not build.
 
 ### Node.js
