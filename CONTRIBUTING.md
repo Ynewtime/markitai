@@ -161,8 +161,8 @@ auto-generated release PR, so you cut a release only when you mean to.
    both `version` fields in the root `server.json` (the MCP Registry entry). A
    unit test fails while any of them disagrees with `__version__`.
 2. Add a `## [X.Y.Z] - YYYY-MM-DD` section to `CHANGELOG.md` (this becomes the
-   GitHub Release notes verbatim) and mirror it in `CHANGELOG.zh.md`. The docs
-   build copies both files in, so the website publishes whatever you write.
+   GitHub Release notes verbatim) and mirror it in `CHANGELOG.zh.md`, in the
+   release commit itself (see below).
 3. Commit and push to `main` (e.g. `chore(release): v X.Y.Z`).
 4. Tag and push:
 
@@ -184,6 +184,15 @@ from the run's page. If the registry refuses the tagged `server.json`, fix it on
 
 To re-publish an existing tag (e.g. after a transient failure), run the
 **Release** workflow manually from the Actions tab with the tag as input.
+
+The CHANGELOG and the website's changelog pages change only with a release.
+`main` carries no unreleased CHANGELOG section (it waits on the release branch),
+and the release commit adds it. The rest of the site (guides, setup scripts)
+still deploys on every push to `main`, but the docs build publishes only the
+sections up to the newest `vX.Y.Z` tag (`website/scripts/changelog.mjs`), and
+it fails rather than guess when it cannot read the tags. When the Release
+workflow succeeds, `deploy-website.yml` rebuilds the site so the new version
+appears; to redeploy by hand, run `gh workflow run deploy-website.yml`.
 Commit type does not affect what gets released, but keep using
 [Conventional Commits](https://www.conventionalcommits.org/): they keep the
 history readable and make the changelog easier to write.

@@ -4,8 +4,9 @@ name: Release
 #   1. bump __version__ in packages/markitai/src/markitai/__init__.py, and the
 #      version in the root pyproject.toml and in server.json (both versions
 #      and the `markitai[mcp]==X.Y.Z` pin of `--from`)
-#   2. date the `## [X.Y.Z] - YYYY-MM-DD` section in CHANGELOG.md and
-#      CHANGELOG.zh.md (the Release notes are the CHANGELOG.md section)
+#   2. add the `## [X.Y.Z] - YYYY-MM-DD` section to CHANGELOG.md and
+#      CHANGELOG.zh.md (the Release notes are the CHANGELOG.md section; main
+#      carries no unreleased section, and the website shows it once tagged)
 #   3. if a newer shared web workbench build should ship, vendor it with
 #      scripts/sync_workbench.py --from <bundle> (the `lint` job below checks
 #      the vendored files against their manifest)

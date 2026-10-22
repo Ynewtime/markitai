@@ -24,7 +24,8 @@ Releases are manual and **tag-driven**: pushing a `vX.Y.Z` tag runs `.github/wor
    - `CHANGELOG.md`: English; this section becomes the GitHub Release notes **verbatim**.
    - `CHANGELOG.zh.md`: the Chinese mirror of the same section.
    - Keep entries short: describe user-visible additions, behavior changes and fixes; keep implementation logs in review notes.
-   - The website copies both files from the repo root at docs build time; rebuild to validate Vue/Markdown rendering.
+   - The sections go into the release commit: `main` carries no unreleased section, because the CHANGELOG and the website's changelog pages change only with a release.
+   - The website copies both files from the repo root at docs build time, keeping only the sections up to the newest `vX.Y.Z` tag (`website/scripts/changelog.mjs`); `deploy-website.yml` rebuilds it once the Release workflow succeeds. Rebuild locally to validate Vue/Markdown rendering (a local build hides the new section until its tag exists; check the rendering in `website/changelog.md` or with a local tag in a scratch clone).
    - Recheck CLI `--help`, both website languages and `skills/` whenever a flag, default, output layout or extra changes.
 
 5. **Commit and push to main**: `chore(release): X.Y.Z`.
