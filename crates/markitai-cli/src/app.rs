@@ -380,8 +380,10 @@ enum Command {
     /// Create or update a configuration file with detected API models.
     #[command(
         long_about = "Create or update a configuration file with detected API models.\n\n\
-            Detects API models from the environment (MODEL and provider API keys) without\n\
-            making requests or saving key values. LLM processing stays disabled in the\n\
+            Detects models from the environment (MODEL and provider API keys) and the\n\
+            subscription runtimes signed in here (Claude Code, Copilot, Codex), asking\n\
+            each runtime only for its sign-in status: no model request is made and no key\n\
+            value is saved. LLM processing stays disabled in the\n\
             generated file; enable it per run with --llm or with\n\
             `markitai config set llm.enabled true`.",
         after_help = "Examples:\n  markitai init                Choose the location and how to treat an existing file\n  markitai init -y             Create or update the user configuration without prompts\n  markitai init --local        Write ./markitai.json for this project\n  markitai init -o cfg.json    Write to a custom path"
@@ -1475,6 +1477,23 @@ struct Task {
 fn check_llm_keys(cfg: &Value, cli: &Cli) -> CliResult<()> {
     if !config::enabled(cfg, "/llm/enabled") {
         return Ok(());
+    }
+    // Several detected providers share the documents, as in Python markitai:
+    // say which, once, so the spread is no surprise.
+    let listed = cfg
+        .pointer("/llm/model_list")
+        .and_then(Value::as_array)
+        .is_some_and(|list| !list.is_empty());
+    if !listed && !cli.quiet {
+        let models = markitai_core::llm_capabilities(cfg).models;
+        if models.len() > 1 {
+            let (count, names) = (models.len(), models.join(", "));
+            say!(
+                logging::Shape::item(Mark::Info);
+                "Auto-detected {count} LLM providers; requests are spread across all of them: {names}",
+                "自动检测到 {count} 个 LLM 供应商；请求会分散到所有这些模型：{names}"
+            );
+        }
     }
     let (missing, usable) = markitai_core::llm_keys::check(cfg);
     if missing.is_empty() {

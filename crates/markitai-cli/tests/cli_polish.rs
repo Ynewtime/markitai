@@ -159,7 +159,7 @@ fn windows_redirected_marks_follow_the_console_code_page() {
 }
 
 #[test]
-fn init_detects_runtime_commands_without_starting_them_or_adding_guessed_models() {
+fn init_names_installed_runtimes_that_are_not_signed_in_and_adds_no_model_for_them() {
     let root = tempfile::tempdir().unwrap();
     let bin = root.path().join("bin");
     std::fs::create_dir(&bin).unwrap();
@@ -169,10 +169,12 @@ fn init_detects_runtime_commands_without_starting_them_or_adding_guessed_models(
         } else {
             name.to_owned()
         });
+        // A runtime that answers nothing: asked for its version or sign-in,
+        // it fails, so it counts as not signed in.
         let script = if cfg!(windows) {
-            "@echo off\r\necho forbidden>runtime-was-started\r\nexit /b 99\r\n"
+            "@echo off\r\nexit /b 99\r\n"
         } else {
-            "#!/bin/sh\nprintf forbidden > runtime-was-started\nexit 99\n"
+            "#!/bin/sh\nexit 99\n"
         };
         std::fs::write(&path, script).unwrap();
         #[cfg(unix)]
@@ -191,12 +193,14 @@ fn init_detects_runtime_commands_without_starting_them_or_adding_guessed_models(
     let hints = String::from_utf8(init.stderr).unwrap();
     for provider in ["copilot", "claude", "chatgpt"] {
         assert!(
-            hints.contains(&format!("markitai auth {provider} status")),
+            hints.contains(&format!("markitai auth {provider} login")),
             "{hints}"
         );
     }
-    assert!(hints.contains("Login and version were not checked"));
-    assert!(!root.path().join("runtime-was-started").exists());
+    assert!(
+        hints.contains("not signed in with a subscription"),
+        "{hints}"
+    );
     let saved: Value =
         serde_json::from_slice(&std::fs::read(root.path().join("markitai.json")).unwrap()).unwrap();
     assert_eq!(saved["llm"]["enabled"], false);

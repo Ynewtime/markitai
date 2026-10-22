@@ -474,7 +474,7 @@ fn init_without_prompts_says_what_it_did_in_chinese() {
     let message = stderr(&created);
     assert_eq!(
         message,
-        "\n后续步骤\n  • 转换文档：\n    markitai FILE -o DIR\n  • 检查模型和可选后端：\n    markitai doctor\n  ! 未检测到 API 模型：请设置供应商的 API key（如 OPENAI_API_KEY），然后这样添加：\n    markitai init -y\n"
+        "\n后续步骤\n  • 转换文档：\n    markitai FILE -o DIR\n  • 检查模型和可选后端：\n    markitai doctor\n  ! 未检测到模型：请登录一个订阅（markitai auth claude login，或 copilot、chatgpt），或设置供应商的 API key（如 OPENAI_API_KEY），然后这样添加：\n    markitai init -y\n"
     );
     let file = std::fs::read(root.path().join("markitai.json")).unwrap();
 
@@ -690,7 +690,7 @@ fn the_init_wizard_asks_and_answers_in_chinese() {
         terminal(root.path(), ZH, &["init", "-o", "markitai.json"], b"2\n");
     assert!(status.success(), "{shown}");
     assert!(
-        shown.contains("未检测到 API 模型，LLM 保持关闭。"),
+        shown.contains("未检测到模型（没有已登录的订阅或 API key），LLM 保持关闭。"),
         "{shown}"
     );
     assert_eq!(printed, "✓ 配置已创建：markitai.json\n");

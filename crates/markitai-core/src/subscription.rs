@@ -275,6 +275,101 @@ pub fn installed_runtimes(env: &HashMap<String, String>) -> Vec<InstalledRuntime
     .collect()
 }
 
+/// A subscription runtime signed in on this machine, with the model automatic
+/// detection and `markitai init` use for it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct SignedIn {
+    pub provider: &'static str,
+    pub label: &'static str,
+    pub model: String,
+}
+
+/// The subscription runtimes signed in on this machine, in Python markitai's
+/// order: Claude Code (`claude-agent/haiku`), Copilot (`copilot/auto`), then
+/// ChatGPT through Codex (`chatgpt/` and the first model Codex lists). Each
+/// official runtime is asked for its own sign-in status, at the same time;
+/// nothing reads a token or credential file. A runtime that is missing, not
+/// signed in, signed in with an API key, too old or failing counts as not
+/// signed in. The answer is kept for the process, per environment.
+pub fn signed_in(env: &HashMap<String, String>) -> Vec<SignedIn> {
+    use sha2::{Digest, Sha256};
+    static KNOWN: std::sync::OnceLock<std::sync::Mutex<HashMap<String, Vec<SignedIn>>>> =
+        std::sync::OnceLock::new();
+    // The variables that choose a runtime, its home or its credential.
+    let mut digest = Sha256::new();
+    for name in [
+        "PATH",
+        "PATHEXT",
+        "HOME",
+        "USERPROFILE",
+        "CLAUDE_CLI_PATH",
+        "CLAUDE_CONFIG_DIR",
+        "COPILOT_CLI_PATH",
+        "COPILOT_HOME",
+        "COPILOT_GITHUB_TOKEN",
+        "GH_TOKEN",
+        "GITHUB_TOKEN",
+        "CODEX_CLI_PATH",
+        "CODEX_HOME",
+    ] {
+        let value = env.get(name).map_or("", String::as_str);
+        digest.update((value.len() as u64).to_le_bytes());
+        digest.update(value.as_bytes());
+    }
+    let key = crate::hex(digest.finalize());
+    let known = KNOWN.get_or_init(Default::default);
+    if let Some(found) = known.lock().unwrap_or_else(|e| e.into_inner()).get(&key) {
+        return found.clone();
+    }
+    let timeout = Duration::from_secs(15);
+    let (claude, copilot, chatgpt) = std::thread::scope(|scope| {
+        let claude = scope.spawn(|| {
+            let config = claude::Config::from_env(env).ok()?;
+            claude::status(&config, timeout)
+                .ok()
+                .filter(|status| status.authenticated)
+                .map(|_| SignedIn {
+                    provider: "claude-agent",
+                    label: "Claude Code",
+                    model: "claude-agent/haiku".into(),
+                })
+        });
+        let copilot = scope.spawn(|| {
+            let config = CopilotConfig::from_env(env).ok()?;
+            status(&config, timeout)
+                .ok()
+                .filter(|status| status.authenticated && status.details["auth_type"] != "api-key")
+                .map(|_| SignedIn {
+                    provider: "copilot",
+                    label: "GitHub Copilot",
+                    model: "copilot/auto".into(),
+                })
+        });
+        let chatgpt = scope.spawn(|| {
+            let config = chatgpt::Config::from_env(env).ok()?;
+            chatgpt::status(&config, timeout)
+                .ok()
+                .filter(|status| status.authenticated)
+                .map(|_| SignedIn {
+                    provider: "chatgpt",
+                    label: "ChatGPT (Codex)",
+                    model: format!("chatgpt/{}", chatgpt::default_model(&config, timeout)),
+                })
+        });
+        (
+            claude.join().ok().flatten(),
+            copilot.join().ok().flatten(),
+            chatgpt.join().ok().flatten(),
+        )
+    });
+    let found: Vec<SignedIn> = [claude, copilot, chatgpt].into_iter().flatten().collect();
+    known
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(key, found.clone());
+    found
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct AuthStatus {
     pub provider: &'static str,

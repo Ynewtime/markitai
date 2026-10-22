@@ -325,10 +325,10 @@ fn with_tail(text: &str, english: &str, chinese: &str) -> Option<String> {
 fn detected_models(text: &str) -> Option<String> {
     let rest = text.strip_prefix("No llm.model_list; ")?;
     if let Some(names) = rest.strip_prefix("--llm uses ").and_then(|rest| {
-        rest.strip_suffix(" detected from MODEL or provider API keys in the environment")
+        rest.strip_suffix(" detected from MODEL, signed-in subscriptions or provider API keys")
     }) {
         return Some(format!(
-            "未配置 llm.model_list；--llm 会使用从环境变量 MODEL 或提供商 API 密钥检测到的 {names}"
+            "未配置 llm.model_list；--llm 会使用从 MODEL、已登录的订阅或提供商 API 密钥检测到的 {names}"
         ));
     }
     let rest = rest.strip_prefix("the environment names ")?;
@@ -411,9 +411,9 @@ mod tests {
         );
         assert_eq!(
             zh(
-                "No llm.model_list; --llm uses openai/gpt-x detected from MODEL or provider API keys in the environment"
+                "No llm.model_list; --llm uses openai/gpt-x detected from MODEL, signed-in subscriptions or provider API keys"
             ),
-            "未配置 llm.model_list；--llm 会使用从环境变量 MODEL 或提供商 API 密钥检测到的 openai/gpt-x"
+            "未配置 llm.model_list；--llm 会使用从 MODEL、已登录的订阅或提供商 API 密钥检测到的 openai/gpt-x"
         );
         assert_eq!(
             zh("Not set: DEEPSEEK_API_KEY; 1 model(s) left out, 2 still used"),

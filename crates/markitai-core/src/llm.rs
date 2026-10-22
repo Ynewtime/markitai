@@ -927,16 +927,27 @@ fn nonempty(value: Option<&Value>) -> Option<&str> {
         .filter(|value| !value.is_empty())
 }
 
-/// The deployments used without `llm.model_list`: `MODEL`, else the defaults
-/// whose API keys are set.
+/// The deployments used without `llm.model_list`: `MODEL`, else, as Python
+/// markitai pools them, the subscription runtimes signed in on this machine
+/// (Claude Code, Copilot, ChatGPT through Codex) and the defaults whose API
+/// keys are set.
 pub(crate) fn automatic_entries(env: &HashMap<String, String>) -> Vec<Value> {
+    automatic_models(env)
+        .into_iter()
+        .map(|model| json!({"model_name":"default","litellm_params":{"model":model}}))
+        .collect()
+}
+
+/// The models of [`automatic_entries`].
+pub(crate) fn automatic_models(env: &HashMap<String, String>) -> Vec<String> {
     if let Some(model) = env.get("MODEL").filter(|model| !model.is_empty()) {
-        vec![json!({"model_name":"default","litellm_params":{"model":model}})]
-    } else {
-        keyed_defaults(env)
-            .map(|(_, model)| json!({"model_name":"default","litellm_params":{"model":model}}))
-            .collect()
+        return vec![model.clone()];
     }
+    crate::subscription::signed_in(env)
+        .into_iter()
+        .map(|found| found.model)
+        .chain(keyed_defaults(env).map(|(_, model)| model.to_owned()))
+        .collect()
 }
 
 pub(crate) fn capabilities(cfg: &Value, env: &HashMap<String, String>) -> crate::LlmCapabilities {

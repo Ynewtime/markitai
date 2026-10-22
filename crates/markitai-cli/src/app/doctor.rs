@@ -1094,7 +1094,7 @@ fn model_check(
         let unset = missing.first().and_then(|item| item.variable.as_deref());
         if detected.routable {
             check.message = format!(
-                "No llm.model_list; --llm uses {names} detected from MODEL or provider API keys in the environment"
+                "No llm.model_list; --llm uses {names} detected from MODEL, signed-in subscriptions or provider API keys"
             );
             check.install_hint =
                 "Optional: run markitai init to save the detected model in a configuration file"

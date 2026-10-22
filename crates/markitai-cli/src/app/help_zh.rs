@@ -258,7 +258,7 @@ fn describe(command: &str) -> Option<Description> {
         "config" => describe_with("查看或编辑配置", "", CONFIG_AFTER),
         "init" => describe_with(
             "创建或更新配置文件，并写入检测到的 API 模型",
-            "创建或更新配置文件，并写入检测到的 API 模型。\n\n从环境变量（MODEL 与各供应商的 API key）检测 API 模型，不发出请求，也不保存 key 的值。生成的配置默认关闭 LLM 处理；需要时可在单次运行中加 --llm 启用，或执行 `markitai config set llm.enabled true`。",
+            "创建或更新配置文件，并写入检测到的 API 模型。\n\n从环境变量（MODEL 与各供应商的 API key）以及本机已登录的订阅运行时（Claude Code、Copilot、Codex）检测模型；对运行时只询问登录状态，不发出模型请求，也不保存 key 的值。生成的配置默认关闭 LLM 处理；需要时可在单次运行中加 --llm 启用，或执行 `markitai config set llm.enabled true`。",
             "示例:\n  markitai init                选择保存位置，以及如何处理已有文件\n  markitai init -y             不提示，创建或更新用户配置\n  markitai init --local        为当前项目写入 ./markitai.json\n  markitai init -o cfg.json    写入自定义路径",
         ),
         "doctor" => describe_with(

@@ -416,6 +416,18 @@ mod runtime {
         }
     }
     #[test]
+    fn auto_lets_copilot_choose_the_model() {
+        let fixture = Fixture::new("normal");
+        let mut request = fixture.request("text", None);
+        request.model = "copilot/auto";
+        let done = complete(&fixture.cfg, request).unwrap();
+        assert_eq!(done.usage.calls[0].model, "fixture");
+        // A named model must still be the one answering.
+        let fixture = Fixture::new("wrong_model");
+        let failure = complete(&fixture.cfg, fixture.request("text", None)).unwrap_err();
+        assert_eq!(failure.kind, FailureKind::Unsupported);
+    }
+    #[test]
     fn a_newer_cli_release_is_used_and_an_older_one_refused() {
         let fixture = Fixture::new("normal");
         let reinstall = |version: &str| {

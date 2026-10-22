@@ -410,7 +410,9 @@ impl Events {
         }
         // Keep only observed counters, not potentially large quota/debug payloads.
         self.event_ids.insert(id, call.clone());
-        if call.model != self.expected_model {
+        // `auto` lets Copilot choose the model, as Python markitai's default
+        // does; any other model must be the one answering.
+        if self.expected_model != "auto" && call.model != self.expected_model {
             return Err(Failure::new(
                 FailureKind::Unsupported,
                 "Copilot switched away from the requested model",

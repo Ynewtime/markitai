@@ -321,3 +321,47 @@ fn a_self_hosted_server_costs_nothing_and_passes_a_dollar_cap() {
     let error = run(&plain(), &cfg, &HashMap::new(), &mut |_| {}).unwrap_err();
     assert!(error.to_string().contains("verified tariff"), "{error}");
 }
+
+#[test]
+fn signed_in_subscriptions_join_the_automatic_pool_before_api_keys() {
+    use crate::subscription::fake_runtime;
+    let homes: Vec<tempfile::TempDir> = (0..3).map(|_| tempfile::tempdir().unwrap()).collect();
+    let home = std::env::var("HOME").unwrap_or_default();
+    fake_runtime::install(homes[0].path(), &json!({"mode":"ok"}));
+    fake_runtime::install(homes[1].path(), &json!({"mode":"normal","home":home}));
+    fake_runtime::install(homes[2].path(), &json!({"name":"ok"}));
+    let program = fake_runtime::program().to_string_lossy().into_owned();
+    let path = |dir: &tempfile::TempDir| dir.path().to_string_lossy().into_owned();
+    let mut env = vars(&[
+        ("CLAUDE_CLI_PATH", &program),
+        ("CLAUDE_CONFIG_DIR", &path(&homes[0])),
+        ("COPILOT_CLI_PATH", &program),
+        ("COPILOT_HOME", &path(&homes[1])),
+        ("COPILOT_GITHUB_TOKEN", "test-only-secret"),
+        ("CODEX_CLI_PATH", &program),
+        ("CODEX_HOME", &path(&homes[2])),
+        ("HOME", &home),
+        ("OPENAI_API_KEY", "fake-test-key"),
+    ]);
+    if let Ok(system_path) = std::env::var("PATH") {
+        env.insert("PATH".into(), system_path);
+    }
+    assert_eq!(
+        automatic_models(&env),
+        [
+            "claude-agent/haiku",
+            "copilot/auto",
+            "chatgpt/gpt-6-luna",
+            "openai/gpt-6-luna"
+        ]
+    );
+    // MODEL still wins outright.
+    env.insert("MODEL".into(), "deepseek/deepseek-flash".into());
+    assert_eq!(automatic_models(&env), ["deepseek/deepseek-flash"]);
+    // A runtime that is not signed in is left out.
+    env.remove("MODEL");
+    let signed_out = tempfile::tempdir().unwrap();
+    fake_runtime::install(signed_out.path(), &json!({"mode":"signed-out"}));
+    env.insert("CLAUDE_CONFIG_DIR".into(), path(&signed_out));
+    assert_eq!(automatic_models(&env)[0], "copilot/auto");
+}

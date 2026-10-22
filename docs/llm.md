@@ -57,17 +57,26 @@ key. `markitai doctor` applies the same rule. A key the provider refuses (HTTP
 401, or Gemini's `API_KEY_INVALID`) is reported with the variable it was read
 from.
 
-With an empty model list, a nonempty `MODEL` selects one model. Otherwise each
-available API credential joins the pool: Anthropic, OpenAI, Gemini, DeepSeek
-and OpenRouter. The model aliases are derived from the reference checkout's
+With an empty model list, a nonempty `MODEL` selects one model. Otherwise, as
+in Python markitai, the [subscription runtimes](subscriptions.md) signed in on
+this machine join the pool first (Claude Code as `claude-agent/haiku`, Copilot
+as `copilot/auto`, ChatGPT through Codex as `chatgpt/` and the first model
+Codex lists), then each available API credential: Anthropic, OpenAI, Gemini,
+DeepSeek and OpenRouter. Each runtime is asked once per process for its own
+sign-in status (`claude auth status`, Copilot's status call, `codex login
+status`); none of their token files is read, and a runtime signed in only with
+an API key does not count. When several providers are detected, a conversion
+says so once (`Auto-detected 3 LLM providers; requests are spread across all of
+them: …`). The model aliases are derived from the reference checkout's
 provider-default table, not an independent assertion about current provider
 availability; DeepSeek's is `deepseek/deepseek-flash`, the id DeepSeek's model
 list names (the reference's `deepseek-v4-flash` is an alias of it). Pin `MODEL` or a configured deployment to control which provider
 receives documents. Keys of the [OpenAI-compatible
 prefixes](#openai-compatible-prefixes) do not join this pool, because no default
 model is known for them; name one with `MODEL` (for example
-`MODEL=groq/<model>`) or in `llm.model_list`. [Subscription providers](subscriptions.md) are never
-auto-detected; configure them explicitly in `llm.model_list`.
+`MODEL=groq/<model>`) or in `llm.model_list`. `markitai init` writes the same
+models, except that an Anthropic key's model is left out when Claude Code serves
+the same Claude Haiku on a subscription.
 
 `simple-shuffle` chooses deployments in proportion to positive integer weights.
 A randomized process seed and an atomic sequence provide independent selection

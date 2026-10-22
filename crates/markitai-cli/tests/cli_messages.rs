@@ -561,7 +561,7 @@ fn configuration_mistakes_point_at_the_available_choices() {
         stderr(&init)
     );
     assert!(
-        stderr(&init).contains("No API model was detected"),
+        stderr(&init).contains("No model was detected"),
         "{}",
         stderr(&init)
     );

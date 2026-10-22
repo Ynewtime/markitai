@@ -165,7 +165,7 @@ MARKITAI_LANG=zh markitai doctor
   其他写入错误仍失败。
 - `config list/get/path/validate/set/edit` 查看、验证或编辑[配置](configuration.md)。
   默认隐藏密钥；`set/edit` 原子保存，不保存临时 `--config-json`。
-  `init --yes` 检测本地环境并生成默认关闭 LLM 的配置，不发模型请求或保存密钥明文。
+  `init --yes` 检测本地环境（已登录的订阅运行时与 API 密钥）并生成默认关闭 LLM 的配置，不发模型请求或保存密钥明文。
 - `doctor [--json]` 检查本地依赖与配置，不发模型请求。
   `doctor --fix` 可下载浏览器与缺少的 Paddle 模型；普通 doctor 不下载。
   缺少可选组件不等于程序不可用；配置要求的组件失败才导致退出 1。

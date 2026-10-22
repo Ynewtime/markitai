@@ -421,8 +421,10 @@ Examples:
 === markitai init --help (exit 0, stderr 0 bytes) ===
 Create or update a configuration file with detected API models.
 
-Detects API models from the environment (MODEL and provider API keys) without
-making requests or saving key values. LLM processing stays disabled in the
+Detects models from the environment (MODEL and provider API keys) and the
+subscription runtimes signed in here (Claude Code, Copilot, Codex), asking
+each runtime only for its sign-in status: no model request is made and no key
+value is saved. LLM processing stays disabled in the
 generated file; enable it per run with --llm or with
 `markitai config set llm.enabled true`.
 

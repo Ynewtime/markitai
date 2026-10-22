@@ -543,14 +543,33 @@ pub(super) fn api_provider(prefix: &str) -> bool {
         .contains(&prefix)
 }
 
-fn detected() -> Value {
+/// The configuration `init` writes: the models `--llm` would detect (the
+/// subscription runtimes signed in on this machine, then the API keys set),
+/// except an Anthropic key's model when Claude Code serves the same Claude
+/// Haiku on a subscription, as Python markitai's `init` leaves it out; and
+/// the notes that say so.
+fn detected(signed_in: &[markitai_core::subscription::SignedIn]) -> (Value, Vec<String>) {
+    let claude = signed_in
+        .iter()
+        .any(|found| found.provider == "claude-agent");
+    let mut notes = Vec::new();
     let models = markitai_core::llm_capabilities(&config::defaults())
         .models
         .into_iter()
         .filter(|model| {
-            model
-                .split_once('/')
-                .is_none_or(|(provider, _)| api_provider(provider))
+            model.split_once('/').is_none_or(|(provider, _)| {
+                api_provider(provider) || matches!(provider, "claude-agent" | "copilot" | "chatgpt")
+            })
+        })
+        .filter(|model| {
+            let duplicate = claude && model.starts_with("anthropic/");
+            if duplicate {
+                notes.push(text!(
+                    "The Anthropic API key is not used: Claude Code serves the same Claude Haiku on your subscription, with no per-token charge.",
+                    "未使用 Anthropic API key：Claude Code 已通过你的订阅提供同样的 Claude Haiku，不按 token 计费。"
+                ));
+            }
+            !duplicate
         })
         .map(|model| json!({"model_name":"default", "litellm_params":{"model":model}}))
         .collect::<Vec<_>>();
@@ -558,7 +577,7 @@ fn detected() -> Value {
     if !models.is_empty() {
         result["llm"]["model_list"] = json!(models);
     }
-    result
+    (result, notes)
 }
 
 fn merge_models(existing: &mut Value, detected: &Value) -> CliResult<usize> {
@@ -625,8 +644,21 @@ pub(super) fn init(yes: bool, output: Option<&Path>, local: bool) -> CliResult<(
     if path.is_dir() {
         path = path.join("markitai.json");
     }
-    let fresh = detected();
-    let runtimes = markitai_core::subscription::installed_runtimes(&config::environment());
+    let environment = config::environment();
+    let signed_in = markitai_core::subscription::signed_in(&environment);
+    let (fresh, notes) = detected(&signed_in);
+    // Installed runtimes whose sign-in was not found: how to use them.
+    let runtimes: Vec<_> = markitai_core::subscription::installed_runtimes(&environment)
+        .into_iter()
+        .filter(|runtime| {
+            let provider = if runtime.provider == "claude" {
+                "claude-agent"
+            } else {
+                runtime.provider
+            };
+            !signed_in.iter().any(|found| found.provider == provider)
+        })
+        .collect();
     let mut input = io::stdin().lock();
     let mut console = io::stderr().lock();
     let style = Style::stderr();
@@ -657,12 +689,16 @@ pub(super) fn init(yes: bool, output: Option<&Path>, local: bool) -> CliResult<(
             style.item(
                 Mark::Info,
                 &text!(
-                    "Installed runtime detected: {label}. Login and version were not checked. Run `markitai auth {provider} status`; see `markitai auth {provider} --help` and the subscription guide to configure a supported model.",
-                    "检测到已安装的运行时：{label}。尚未检查登录状态和版本。请运行 `markitai auth {provider} status`，再查看 `markitai auth {provider} --help` 和订阅指南以配置受支持的模型。"
+                    "Installed runtime detected: {label}, not signed in with a subscription. Run `markitai auth {provider} login`, then `markitai init` again to add it.",
+                    "检测到已安装的运行时：{label}，尚未用订阅登录。请运行 `markitai auth {provider} login`，再重新运行 `markitai init` 添加它。"
                 )
             )
         )
         .map_err(super::runtime)?;
+        said = true;
+    }
+    for note in &notes {
+        writeln!(console, "{}", style.item(Mark::Info, note)).map_err(runtime)?;
         said = true;
     }
     if !yes {
@@ -688,8 +724,8 @@ pub(super) fn init(yes: bool, output: Option<&Path>, local: bool) -> CliResult<(
                 style.item(
                     Mark::Warning,
                     &text!(
-                        "No API model detected. LLM remains disabled.",
-                        "未检测到 API 模型，LLM 保持关闭。"
+                        "No model detected (no signed-in subscription or API key). LLM remains disabled.",
+                        "未检测到模型（没有已登录的订阅或 API key），LLM 保持关闭。"
                     )
                 )
             )
@@ -820,8 +856,8 @@ pub(super) fn init(yes: bool, output: Option<&Path>, local: bool) -> CliResult<(
             (
                 Mark::Warning,
                 text!(
-                    "No API model was detected: set a provider API key such as OPENAI_API_KEY, then add it with:",
-                    "未检测到 API 模型：请设置供应商的 API key（如 OPENAI_API_KEY），然后这样添加："
+                    "No model was detected: sign in to a subscription (markitai auth claude login, or copilot or chatgpt) or set a provider API key such as OPENAI_API_KEY, then add it with:",
+                    "未检测到模型：请登录一个订阅（markitai auth claude login，或 copilot、chatgpt），或设置供应商的 API key（如 OPENAI_API_KEY），然后这样添加："
                 ),
                 "markitai init -y",
             )

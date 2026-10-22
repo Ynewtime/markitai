@@ -9,7 +9,12 @@ key, using the provider's separately installed official command-line runtime:
 | `claude-agent/MODEL` | Claude Code CLI `2.1.284` or later | `markitai auth claude status`, `markitai auth claude login` |
 | `chatgpt/MODEL` | Codex CLI `0.159.0` or later | `markitai auth chatgpt status`, `markitai auth chatgpt login` |
 
-`markitai auth` alone reports all three. When the workbench or
+`markitai auth` alone reports all three. With an empty `llm.model_list` and no
+`MODEL`, a runtime signed in with a subscription joins the automatic model pool
+(`claude-agent/haiku`, `copilot/auto`, `chatgpt/` with Codex's first model),
+and `markitai init` offers it; see [LLM](llm.md#model-selection). `copilot/auto`
+lets Copilot choose the model; any other Copilot model must be the one that
+answers. When the workbench or
 `POST /api/settings/llm/model-discovery` cannot list a runtime's models, the answer names the cause
 (`runtime_missing`, `runtime_unsupported`, `not_signed_in`, `runtime_failed`; see
 [provider management](provider-management.md)) with the command to run: the
