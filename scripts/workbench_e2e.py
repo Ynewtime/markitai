@@ -7,10 +7,10 @@ throwaway HOME and MARKITAI_HOME (your ~/.markitai is never read or written).
 For each viewport width it walks the main flows with Playwright/Chromium and
 screenshots every state:
 
-    convert page, a refused URL as a bottom notice strip, staged files +
+    convert page, a refused URL as a bottom error toast, staged files +
     URLs, live progress, finished list, a conversion in the peek window
-    (centred; full screen on a phone) with its Details, Preview and Compare
-    tabs (original page beside the Markdown, C to switch), the header's
+    (centred; full screen on a phone) opening on Preview, with its Compare and
+    Details tabs (original page beside the Markdown, C to switch), the header's
     Download opening Preview's Files (the original first, Download all (.zip)
     through the item's archive), Up/Down and the header arrows between items,
     a URL item's Compare framing the page as fetched (its style drawn, its
@@ -18,7 +18,7 @@ screenshots every state:
     side outlines both; the Markdown's https picture drawn in Compare and
     Preview, from a local site whose certificate a local test CA issued), the window at full
     screen and back (F; a per-browser choice), retry of a failed item, a failed action reported
-    in the window, New conversion and stop remaining (cancel), download all
+    in one error toast, New conversion and stop remaining (cancel), download all
     from the "⋯" menu (ticket; on a phone Stop from the header of the
     full-screen windows and on its own row under the Conversions title, a
     long URL title cut in the middle), an inline SVG drawing in the preview,
@@ -33,8 +33,9 @@ screenshots every state:
     environment variable", its unreachable list said why), history after a
     reload, token prompt, three conversions deleted in one request (rows and a
     submission header checked, the confirmation), a user token made on
-    Settings → Access token and its own tab (only its conversions, "Admin
-    token needed" on the settings pages), Settings → Edit config (secrets
+    Settings → Access token and its own tab (only its conversions, its own
+    Models and Edit config without the server's file, "Admin token needed" on
+    Access token), Settings → Edit config (secrets
     masked, the JSON check, Review changes, Save writing exactly that change,
     a file changed behind the page refused as stale; a CRLF file without a
     final line break saved with only the changed line different), and Settings → Access
@@ -42,8 +43,9 @@ screenshots every state:
     With ``--axe axe.min.js`` axe-core checks every screenshot's page (the
     page's own policy kept) and a violation fails the run
 
-Notices must be strips at the bottom (never the page-wide banners the UI
-had before) and leave by themselves.
+Notices must be toasts at the bottom (never the page-wide banners or the
+strips the UI had before): errors stay until closed, a failed action on one
+conversion is one toast that trying again replaces.
 
 It fails on a page error, a 5xx answer or a step whose check does not hold.
 
@@ -1127,7 +1129,9 @@ def _peek_title(page: Any) -> str:
 
 
 def _tab(page: Any, name: str) -> Any:
-    return page.locator(".peek-tabs").get_by_role("tab", name=name, exact=True)
+    """A tab of the window's own row (Preview, Compare, Details); Preview's
+    views share the row on a wide screen but are not in this tab list."""
+    return page.locator(".peek-tablist").get_by_role("tab", name=name, exact=True)
 
 
 def _show_tab(page: Any, name: str) -> None:
@@ -1192,14 +1196,24 @@ def _centred_column(page: Any) -> str:
 
 
 def _control_height(locator: Any, phone: bool) -> str:
-    """One control scale: 28 px buttons, 36 px on a phone."""
+    """The Conversions header's buttons: 28 px; on a phone one compact 32 px
+    size whose tap area an invisible margin keeps at 44 px or more."""
     box = locator.bounding_box()
-    expected = 36 if phone else 28
+    expected = 32 if phone else 28
     if box is None or abs(box["height"] - expected) > 1:
         raise AssertionError(
             f"a button is {box and box['height']} px high, not {expected}"
         )
-    return f"{expected} px buttons"
+    if not phone:
+        return f"{expected} px buttons"
+    reach = locator.evaluate(
+        "b => { const s = getComputedStyle(b, '::before');"
+        " return s.content === 'none' ? 0 : b.getBoundingClientRect().height"
+        " - parseFloat(s.top) - parseFloat(s.bottom); }"
+    )
+    if reach < 44:
+        raise AssertionError(f"the button's tap area is {reach} px high, under 44")
+    return f"{expected} px buttons with a {reach:.0f} px tap area"
 
 
 def _header_stop(page: Any) -> Any:
@@ -1314,7 +1328,9 @@ def _phone_stop(page: Any, run: Run) -> str:
 
 #: The notices of the UI before the bundle of 2026-10-11 (rounded boxes with
 #: a bar and a close button, page-wide banners): none may be left
-OLD_NOTICES = ".notice, .notes-region, .note-close"
+OLD_NOTICES = ".notice, .notes-region, .note-close, .note-strip"
+# The notice toasts' close button (en.ts `dismiss`)
+DISMISS = "Dismiss"
 
 
 def _no_banners(page: Any) -> None:
@@ -1324,15 +1340,16 @@ def _no_banners(page: Any) -> None:
 
 
 def _strip(page: Any, tone: str, text: str | re.Pattern[str]) -> Any:
-    """The notice strip of *tone* saying *text*, once it is shown."""
-    strip = page.locator(f".note-strips .note-strip.is-{tone}").filter(has_text=text)
+    """The notice toast of *tone* saying *text*, once it is shown."""
+    strip = page.locator(f".toasts .toast.is-{tone}").filter(has_text=text)
     strip.first.wait_for(timeout=15000)
     return strip.first
 
 
 def _at_the_bottom(page: Any, strip: Any) -> str:
-    """Where a strip sits: full width above the tab bar on a phone, a narrow
-    stack in the bottom-right corner on a wide screen; one line either way."""
+    """Where a toast sits: centred directly above the tab bar on a phone
+    (12 px from each edge, at most 440 px wide), a 380 px card 24 px from
+    the bottom-right corner on a wide screen; a card of a line or two."""
     box, settled = strip.bounding_box(), None
     for _ in range(20):
         page.wait_for_timeout(100)
@@ -1341,24 +1358,69 @@ def _at_the_bottom(page: Any, strip: Any) -> str:
             break
     view = page.viewport_size
     if box is None or view is None:
-        raise AssertionError("the strip has no box")
+        raise AssertionError("the toast has no box")
     width, height = view["width"], view["height"]
     bottom, right = box["y"] + box["height"], box["x"] + box["width"]
-    if box["height"] > 60:
-        raise AssertionError(f"the strip is {box['height']:.0f} px high, not one line")
+    if box["height"] > 90:
+        raise AssertionError(
+            f"the toast is {box['height']:.0f} px high, not a short card"
+        )
     if bottom > height or box["y"] < height * 0.6:
-        raise AssertionError(f"the strip is not at the bottom: {box}")
+        raise AssertionError(f"the toast is not at the bottom: {box}")
     if width < 600:
-        if box["width"] < width - 2:
-            raise AssertionError(f"the strip is not full width: {box}")
+        expected = min(width - 24, 440)
+        if (
+            abs(box["width"] - expected) > 2
+            or abs(box["x"] - (width - box["width"]) / 2) > 2
+        ):
+            raise AssertionError(f"the toast is not centred at full width: {box}")
         bar = _visible(page.get_by_role("navigation"))
         top = bar.bounding_box() if bar is not None else None
-        if top is not None and top["y"] > height * 0.6 and bottom > top["y"] + 1:
-            raise AssertionError(f"the strip covers the tab bar: {box} / {top}")
-        return f"full width at y={box['y']:.0f}, above the tab bar"
-    if right < width - 48 or height - bottom > 48 or box["width"] > 420:
-        raise AssertionError(f"the strip is not in the bottom-right corner: {box}")
+        # The tab bar counts only where it is drawn on top: a full-screen
+        # window covers it, and the toast then sits 12 px above the bottom
+        shown = (
+            top is not None
+            and top["y"] > height * 0.6
+            and page.evaluate(
+                "y => !!document.elementFromPoint(4, y)?.closest('nav')",
+                top["y"] + top["height"] / 2,
+            )
+        )
+        if shown and top is not None:
+            if bottom > top["y"] + 1:
+                raise AssertionError(f"the toast covers the tab bar: {box} / {top}")
+            return f"centred, {box['width']:.0f} px wide at y={box['y']:.0f}, above the tab bar"
+        if abs(height - bottom - 12) > 2:
+            raise AssertionError(f"the toast is not 12 px above the bottom: {box}")
+        return f"centred, {box['width']:.0f} px wide, 12 px above the bottom (tab bar covered)"
+    if (
+        abs(width - right - 24) > 2
+        or abs(height - bottom - 24) > 2
+        or abs(box["width"] - 380) > 2
+    ):
+        raise AssertionError(
+            f"the toast is not the 380 px card in the bottom-right corner: {box}"
+        )
     return f"{box['width']:.0f} px wide, {width - right:.0f} px from the right edge"
+
+
+def _offered_strategies(page: Any, base: str) -> tuple[list[str], bool]:
+    """The fetch strategies the composer's Options → Advanced offers, and
+    whether it offers a files backend at all."""
+    _open(page, lambda: page.goto(f"{base}/"))
+    page.get_by_role("button", name="Options").first.click()
+    advanced = page.get_by_role("button", name="Advanced")
+    advanced.wait_for(timeout=10000)
+    if advanced.get_attribute("aria-expanded") != "true":
+        advanced.click()
+    group = page.get_by_role("group", name="URL", exact=True)
+    group.wait_for(timeout=10000)
+    choices = [
+        " ".join(t.split()) for t in group.get_by_role("button").all_inner_texts()
+    ]
+    files = page.get_by_role("group", name="Files", exact=True).count() > 0
+    page.keyboard.press("Escape")
+    return choices, files
 
 
 def _google_auth() -> bool:
@@ -1552,12 +1614,20 @@ def browse(
             _no_banners(page)
             if run.saw("POST", r"^/api/jobs$"):
                 raise AssertionError("the refused URL was sent")
-            # A strip stays while the pointer is on it: move away, then it
-            # leaves after its 6 s
+            # An error stays until it is closed (done and warning notices
+            # leave after 5 s): still there well after that, pointer away
             page.mouse.move(1, 1)
-            strip.wait_for(state="detached", timeout=12000)
+            page.wait_for_timeout(6500)
+            if not strip.is_visible():
+                raise AssertionError(
+                    "the error left by itself; errors stay until closed"
+                )
+            strip.get_by_role("button", name=DISMISS).click()
+            strip.wait_for(state="detached", timeout=5000)
             box.fill("")
-            return f"ftp:// refused in a bottom strip ({where}) that left by itself"
+            return (
+                f"ftp:// refused in a bottom toast ({where}) that stayed until closed"
+            )
 
         run.step(page, "notice-strip", notice)
 
@@ -1641,7 +1711,8 @@ def browse(
 
         run.step(page, "finished", finished)
 
-        # 4. The PDF opens in the peek window on Details
+        # 4. The PDF opens in the peek window on its document (Preview first,
+        # Details last); Details holds the sizes, cost and result excerpt
         def peek() -> str:
             _dismiss(page)
             before = len(run.api)
@@ -1650,18 +1721,31 @@ def browse(
             page.get_by_role("dialog", name=_spaced("quarterly-report.pdf")).wait_for()
             tabs = [
                 " ".join(t.split())
-                for t in page.locator(".peek-tabs [role=tab]").all_inner_texts()
+                for t in page.locator(".peek-tablist [role=tab]").all_inner_texts()
             ]
-            if tabs != ["Details", "Preview", "Compare"]:
+            if tabs != ["Preview", "Compare", "Details"]:
                 raise AssertionError(f"tabs: {tabs}")
-            if _tab(page, "Details").get_attribute("aria-selected") != "true":
-                raise AssertionError("the window did not open on Details")
+            if _tab(page, "Preview").get_attribute("aria-selected") != "true":
+                raise AssertionError("the window did not open on Preview")
+            _show_tab(page, "Details")
             page.locator(".peek").get_by_text("No model used").first.wait_for()
+            # Details starts the result from what Preview already loaded (the
+            # bundle asks for a 16 KiB excerpt only when it has nothing yet):
+            # its start is shown, and the result was read once
+            excerpt = page.locator(".peek .excerpt-body")
+            excerpt.wait_for(timeout=15000)
             _wait(
                 page,
-                lambda: run.saw("GET", r"/result\?max_bytes=16384", 200, since=before),
-                what="the result excerpt",
+                lambda: bool((excerpt.text_content() or "").strip()),
+                what="the start of the result in Details",
             )
+            reads = [
+                call
+                for call in run.api[before:]
+                if call[0] == "GET" and re.search(r"/items/i\d+/result(\?|$)", call[1])
+            ]
+            if len(reads) != 1 or reads[0][2] != 200:
+                raise AssertionError(f"the result was read as {reads}")
             where = _window_placement(page, phone)
             position = page.locator(".peek-pos")
             shown = (
@@ -1669,7 +1753,7 @@ def browse(
                 if position.count()
                 else ""
             )
-            return f"window {where} on Details (sizes, cost, excerpt){shown}"
+            return f"window {where} opened on Preview; Details has sizes, cost, excerpt{shown}"
 
         run.step(page, "peek-details", peek)
 
@@ -1849,11 +1933,13 @@ def browse(
         # Markdown's own https picture shows beside it
         def compare_page() -> str:
             row = _items(page).filter(has_text=re.compile("alpha", re.IGNORECASE)).first
-            row.click()
-            _peek(page).wait_for()
+            # The window reads the original's descriptor as it opens (it
+            # decides whether Compare is offered), before Compare is shown
+            before = len(run.api)
             asked = len(PAGE_REQUESTS)
             assets_asked = len(ASSET_REQUESTS)
-            before = len(run.api)
+            row.click()
+            _peek(page).wait_for()
             _show_tab(page, "Compare")
             _wait(
                 page,
@@ -2074,17 +2160,41 @@ def browse(
                 lambda: run.saw("POST", r"/items/i\d+/retry$", 404, since=before),
                 what="the refused retry",
             )
-            line = page.locator(".action-error-line").filter(has_text="Retry failed")
-            line.first.wait_for(timeout=10000)
+            # A failed action on one conversion is one error toast that stays
+            # until closed, naming the action and the server's reason; trying
+            # again replaces it instead of stacking a second one
+            line = _strip(page, "error", "Retry failed")
+            where = _at_the_bottom(page, line)
+            text = " ".join(line.inner_text().split())
+            if "no longer part of the job" not in text:
+                raise AssertionError(f"the toast does not say why: {text!r}")
             run.shot(page, "inspector-error-line")
-            if page.locator(".note-strip").filter(has_text="Retry failed").count():
-                raise AssertionError("the failed retry also raised a notice")
             _no_banners(page)
-            text = " ".join(line.first.inner_text().split())
+            if not _heading(page, "damaged.pdf").is_visible():
+                raise AssertionError("the window left its conversion")
+            again = len(run.api)
+            _click_visible(
+                page.get_by_role("button", name=re.compile(r"^(Retry|Run again)$"))
+            )
+            _wait(
+                page,
+                lambda: run.saw("POST", r"/items/i\d+/retry$", 404, since=again),
+                what="the second refused retry",
+            )
+            page.wait_for_timeout(500)
+            shown = (
+                page.locator(".toasts .toast").filter(has_text="Retry failed").count()
+            )
+            if shown != 1:
+                raise AssertionError(
+                    f"{shown} 'Retry failed' toasts after trying again"
+                )
+            line.get_by_role("button", name=DISMISS).click()
+            line.wait_for(state="detached", timeout=5000)
             # The list still shows the deleted row until it is read again
             _open(page, page.reload)
             _items(page).first.wait_for()
-            return f"inspector says {text!r}; no notice raised"
+            return f"one error toast ({where}) says {text!r}; trying again replaced it"
 
         run.step(page, "inspector-error", action_error)
 
@@ -2200,6 +2310,7 @@ def browse(
             _dismiss(page)
             _item(page, "page/llm.html").click()
             _heading(page, "llm.html").wait_for()
+            _show_tab(page, "Details")  # the window opens on Preview
             cost = page.locator(
                 "xpath=//dt[normalize-space()='Cost']/following-sibling::dd[1]"
             )
@@ -2334,15 +2445,32 @@ def browse(
                         raise AssertionError(f"{model}: the server answered {answer}")
                     if not answer["detail"].startswith(words):
                         raise AssertionError(f"{model}: detail {answer['detail']!r}")
-                    block = page.locator(".test-failure")
-                    block.get_by_text(title, exact=True).wait_for(timeout=15000)
-                    if f"Test of {model}" not in block.inner_text():
-                        raise AssertionError(f"{model}: the block names another model")
-                    shown = block.locator(".test-failure-detail p").text_content() or ""
+                    # One error toast per test (a new test replaces it): the
+                    # translated reason and the model as its title, what to do
+                    # as its text, the server's detail folded under Details
+                    block = _strip(page, "error", f"Test of {model}")
+                    # the bold title ends with the language's lead (". ")
+                    heading = " ".join(
+                        (
+                            block.locator(".toast-text strong").text_content() or ""
+                        ).split()
+                    ).removesuffix(".")
+                    if heading != f"{title} · Test of {model}":
+                        raise AssertionError(
+                            f"{model}: the toast is titled {heading!r}"
+                        )
+                    shown = block.locator(".toast-detail p").text_content() or ""
                     if shown != answer["detail"]:
                         raise AssertionError(
                             f"{model}: the provider's message shows {shown!r}"
                         )
+                    if (
+                        page.locator(".toasts .toast")
+                        .filter(has_text="Test of")
+                        .count()
+                        != 1
+                    ):
+                        raise AssertionError(f"{model}: an earlier test's toast stayed")
                     if reason == "no_key":
                         if answer.get("key_variable") != "MISTRAL_API_KEY":
                             raise AssertionError(f"{model}: {answer}")
@@ -3146,7 +3274,7 @@ def browse(
                 ) as answered:
                     dialog.get_by_role("button", name="Delete", exact=True).click()
                 body = answered.value.json()
-                page.locator(".note-strips .note-strip").filter(
+                page.locator(".toasts .toast").filter(
                     has_text="3 conversions deleted"
                 ).first.wait_for(timeout=15000)
                 page.wait_for_timeout(500)
@@ -3204,6 +3332,12 @@ def browse(
             user.update(token=created["token"], id=created["id"])
             page.get_by_text(created["token"], exact=True).first.wait_for(timeout=10000)
             page.get_by_text(f"Token for “{USER_LABEL}” created").first.wait_for()
+            # The list waits for Done while the new token is shown; after it
+            # the token is gone from the page (shown once)
+            page.get_by_role("button", name="Done", exact=True).click()
+            page.get_by_text(created["token"], exact=True).first.wait_for(
+                state="detached", timeout=10000
+            )
             listed = page.locator(".token-list li").filter(has_text=USER_LABEL)
             listed.first.wait_for(timeout=10000)
             hint = created["token"][-4:]
@@ -3252,22 +3386,82 @@ def browse(
                 )
                 if hidden.status != 404:
                     raise AssertionError(f"another's job answered {hidden.status}")
+                # Its own Models (contract v1.15) and Edit config (v1.16):
+                # the user's models and the admin's shared ones, never the
+                # server's configuration file; Access token stays the admin's
+                # The admin shares none of its models here: the user's page
+                # is its own empty one, without the admin's private models
                 _open(other, lambda: other.goto(f"{base}/settings/models"))
-                other.get_by_text("Admin token needed").first.wait_for(timeout=15000)
+                other.get_by_text(
+                    "Add a model with your own API key to use LLM features"
+                ).first.wait_for(timeout=15000)
+                leaked = [
+                    name
+                    for name in ("openai/fake-model", "e2e-hand", "e2e-deepseek")
+                    if other.get_by_text(name).count()
+                ]
+                if leaked or other.get_by_text("config.json").count():
+                    raise AssertionError(
+                        f"the user's Models page shows the admin's {leaked or 'file'}"
+                    )
                 run.shot(other, "user-settings")
                 _open(other, lambda: other.goto(f"{base}/settings/config"))
+                other.get_by_text(
+                    "Your models, their connections and your weights for shared models."
+                ).first.wait_for(timeout=15000)
+                area = other.locator("#config-text")
+                area.wait_for(timeout=15000)
+                if "url_concurrency" in area.input_value():
+                    raise AssertionError(
+                        "the user's Edit config shows the server's file"
+                    )
+                if (
+                    other.get_by_role("link", name="Access token").count()
+                    or other.get_by_role("button", name="Access token").count()
+                ):
+                    raise AssertionError("the user's tab offers Access token")
+                _open(other, lambda: other.goto(f"{base}/settings/access"))
                 other.get_by_text("Admin token needed").first.wait_for(timeout=15000)
                 _open(other, lambda: other.goto(f"{base}/settings/appearance"))
                 other.get_by_text(
                     f"This tab uses the user token “{USER_LABEL}”"
                 ).first.wait_for(timeout=15000)
                 run.shot(other, "user-appearance")
+                # Owner decision 3: a user token's conversions never use a
+                # remote service, so its composer offers only the local
+                # strategies and no files backend (the server refuses the
+                # rest with 403 remote_processing_forbidden); the admin's
+                # composer still offers all six
+                offered, files = _offered_strategies(other, base)
+                if offered != ["Auto", "Static", "Playwright"] or files:
+                    raise AssertionError(
+                        f"the user's composer offers {offered}, files backend: {files}"
+                    )
+                run.shot(other, "user-strategies")
+                admin_offered, admin_files = _offered_strategies(page, base)
+                if (
+                    admin_offered
+                    != [
+                        "Auto",
+                        "Static",
+                        "Playwright",
+                        "Defuddle",
+                        "Jina",
+                        "Cloudflare",
+                    ]
+                    or not admin_files
+                ):
+                    raise AssertionError(
+                        f"the admin's composer offers {admin_offered}, files: {admin_files}"
+                    )
             finally:
                 fresh.close()
             return (
                 f"the user sees 1 row (its own job {own}), another's job is 404, "
-                "Models and Edit config say 'Admin token needed', Appearance names "
-                "the token"
+                "Models and Edit config are its own (no server file), Access token "
+                "says 'Admin token needed', Appearance names the token; its composer "
+                "offers only Auto/Static/Playwright and no files backend (the "
+                "admin's all six)"
             )
 
         run.step(page, "user-session", user_session)
@@ -3331,9 +3525,8 @@ def browse(
                 page.get_by_role("button", name="Save config").click()
             if answered.value.status != 200:
                 raise AssertionError(f"save answered {answered.value.status}")
-            page.locator(".config-note.is-done").filter(
-                has_text="restart the server for the other changes"
-            ).first.wait_for(timeout=10000)
+            # A save that needs a restart says so in a warning toast
+            _strip(page, "warning", "restart the server for the other changes")
             after = config.read_text(encoding="utf-8")
             expected = before.replace('"url_concurrency": 1', '"url_concurrency": 2', 1)
             if after != expected:
@@ -3435,7 +3628,7 @@ def browse(
                 page.get_by_role("button", name="Save config").click()
             if answered.value.status != 200:
                 raise AssertionError(f"save answered {answered.value.status}")
-            page.locator(".config-note.is-done").first.wait_for(timeout=10000)
+            _strip(page, "warning", "restart the server for the other changes")
             after = config.read_bytes()
             expected = crlf.replace(b'"url_concurrency": 3', b'"url_concurrency": 4', 1)
             if after != expected:
