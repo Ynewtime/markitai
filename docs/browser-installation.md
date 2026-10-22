@@ -4,6 +4,11 @@ The CLI includes its browser control code. Dynamic webpages still require a
 Chrome-compatible executable. `markitai doctor` checks a private browser launch (a browser inside a macOS
 `.app` bundle is only asked for `--version`, because starting it from a terminal can make macOS
 report that the terminal tried to modify an app);
+The launch may take a minute, then half a minute more on a second try: a first
+launch after installing can be that slow on Windows while antivirus scans the
+new executable. A browser that starts in neither try is reported as installed
+but slow to start (a warning that blocks no browser workflow), with
+`markitai doctor` to run again in a minute; `--fix` installs nothing for it.
 `markitai doctor --fix` installs the official Chrome for Testing headless shell
 when no discovered browser can start. A healthy browser needs no download.
 Normal conversions and diagnostics never install software implicitly.

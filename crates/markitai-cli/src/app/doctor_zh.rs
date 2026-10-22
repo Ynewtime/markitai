@@ -74,6 +74,14 @@ const KNOWN: &[(&str, &str)] = &[
         "没有找到已安装的可执行文件",
     ),
     (
+        "Chromium is installed but slow to start (no headless launch within 90 s, in two tries); a first launch after installing can be that slow while antivirus scans it, so run markitai doctor again",
+        "Chromium 已安装但启动缓慢（两次尝试共 90 秒内都没有完成无头启动）；安装后的首次启动可能因杀毒软件扫描而这么慢，请再次运行 markitai doctor",
+    ),
+    (
+        "Run markitai doctor again in a minute",
+        "请一分钟后再次运行 markitai doctor",
+    ),
+    (
         "The installed backend could not complete its bounded startup check",
         "已安装的后端没能完成有时限的启动检查",
     ),

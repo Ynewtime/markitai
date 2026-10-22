@@ -218,7 +218,8 @@ pub fn available() -> bool {
 }
 
 /// Launch a private blank page and verify its protocol connection without user settings.
-/// Startup is bounded to 15 seconds, followed by a five-second protocol deadline.
+/// Startup is bounded as [`DIAGNOSTIC_STARTS`] says, followed by a five-second
+/// protocol deadline.
 /// A browser inside a macOS application bundle is not launched: running it from
 /// a terminal can make macOS report that the terminal tried to modify an app, so
 /// it is only asked for its version (see [`diagnostic_leaves_app_untouched`]).
@@ -283,19 +284,47 @@ fn version_probe(executable: &Path) -> Result<()> {
     }
 }
 
+/// How long the diagnostic lets Chromium start: a first launch after an
+/// install can take tens of seconds while antivirus scans the new executable
+/// (Windows Defender), so it is given a minute, then once more half a minute.
+const DIAGNOSTIC_STARTS: [Duration; 2] = [Duration::from_secs(60), Duration::from_secs(30)];
+
+/// The diagnostic's failure when Chromium started in neither try.
+pub(crate) const SLOW_TO_START: &str = "Chromium is installed but slow to start (no headless launch within 90 s, in two tries); a first launch after installing can be that slow while antivirus scans it, so run markitai doctor again";
+
 pub(crate) fn diagnostic_with(executable: &Path) -> Result<()> {
-    let run = || -> Result<()> {
-        let mut browser = cdp::Browser::launch(executable, &options::Options::diagnostic())?;
-        if browser.evaluate("location.href")?.as_str() != Some("about:blank") {
-            return Err(Error::Fetch(
-                "Browser diagnostic did not open a blank page".into(),
-            ));
+    diagnostic_within(executable, &DIAGNOSTIC_STARTS)
+}
+
+fn diagnostic_within(executable: &Path, starts: &[Duration]) -> Result<()> {
+    for startup in starts {
+        let run = || -> Result<()> {
+            let mut options = options::Options::diagnostic();
+            options.startup = *startup;
+            let mut browser = cdp::Browser::launch(executable, &options)?;
+            if browser.evaluate("location.href")?.as_str() != Some("about:blank") {
+                return Err(Error::Fetch(
+                    "Browser diagnostic did not open a blank page".into(),
+                ));
+            }
+            Ok(())
+        };
+        match run() {
+            Ok(()) => return Ok(()),
+            // Slow, not broken: try once more.
+            Err(Error::Fetch(message)) if message == cdp::STARTUP_TIMED_OUT => {}
+            // Fixed texts that name no path or output.
+            Err(Error::Fetch(message)) if message == ROOT_SANDBOX_REFUSED => {
+                return Err(Error::Fetch(message));
+            }
+            Err(_) => {
+                return Err(Error::Fetch(
+                    "Chromium diagnostic could not initialize a private blank page".into(),
+                ));
+            }
         }
-        Ok(())
-    };
-    run().map_err(|_| {
-        Error::Fetch("Chromium diagnostic could not initialize a private blank page".into())
-    })
+    }
+    Err(Error::Fetch(SLOW_TO_START.into()))
 }
 
 /// Presence determines routing; full validation runs before browser discovery/launch.

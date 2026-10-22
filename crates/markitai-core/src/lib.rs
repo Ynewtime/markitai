@@ -140,6 +140,9 @@ pub fn office_render_available() -> bool {
 /// The browser startup failure [`browser_diagnostic`] reports when Chromium
 /// refuses to run as root, a fixed text that names no path or output.
 pub const BROWSER_ROOT_SANDBOX_REFUSED: &str = browser::ROOT_SANDBOX_REFUSED;
+/// The failure [`browser_diagnostic`] reports when Chromium did not start in
+/// a minute nor in half a minute more: installed, but slow to start.
+pub const BROWSER_SLOW_TO_START: &str = browser::SLOW_TO_START;
 
 pub fn browser_diagnostic() -> Result<Option<PathBuf>> {
     browser::diagnostic()

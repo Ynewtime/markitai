@@ -9,6 +9,8 @@ pub(super) struct Options {
     pub session_ttl: std::time::Duration,
     pub credentials: Option<super::auth::Credentials>,
     pub timeout: u64,
+    /// How long Chromium may take to start and name its debugging port.
+    pub startup: std::time::Duration,
     pub wait_for: String,
     pub extra_wait: u64,
     pub selector: Option<String>,
@@ -182,6 +184,7 @@ impl Options {
             session_ttl: std::time::Duration::from_secs(600),
             credentials: None,
             timeout: 5000,
+            startup: std::time::Duration::from_secs(15),
             wait_for: "domcontentloaded".into(),
             extra_wait: 0,
             selector: None,
@@ -305,6 +308,7 @@ impl Options {
             session_ttl: std::time::Duration::from_secs(session_ttl),
             credentials,
             timeout,
+            startup: std::time::Duration::from_secs(15),
             wait_for,
             extra_wait: unsigned(&settings, "extra_wait_ms", 3000, 0, 30_000)?,
             selector: settings

@@ -149,7 +149,9 @@ pub(super) fn run(
     });
     let mut browser = browser.map_err(|_| runtime("Browser diagnostic did not complete"))?;
     let office = office.map_err(|_| runtime("Office diagnostic did not complete"))?;
-    let repair_missing = fix && !matches!(&browser, Ok(Some(_)));
+    // Slow to start is not missing: nothing to install.
+    let slow = matches!(&browser, Err(error) if error.to_string().contains(markitai_core::BROWSER_SLOW_TO_START));
+    let repair_missing = fix && !slow && !matches!(&browser, Ok(Some(_)));
     let mut repair_failed = Vec::new();
     if fix {
         logging::blank();
@@ -180,6 +182,12 @@ pub(super) fn run(
                 );
             }
         }
+    } else if fix && slow {
+        say!(
+            Shape::item(Mark::Warning);
+            "Chromium is installed but slow to start; nothing to install. Run markitai doctor again in a minute.",
+            "Chromium 已安装但启动缓慢，无需安装。请一分钟后再次运行 markitai doctor。"
+        );
     } else if fix {
         say!(
             Shape::item(Mark::Success);
@@ -753,9 +761,14 @@ fn checks(
                     .is_some_and(|value| !value.is_empty())))
         || config::enabled(cfg, "/screenshot/enabled")
         || config::enabled(cfg, "/screenshot/screenshot_only");
+    // Installed and launching, only slowly the first time: a configured
+    // browser workflow is not blocked by it, and doctor is run again.
+    if browser.message == markitai_core::BROWSER_SLOW_TO_START {
+        browser.required = false;
+        browser.fix = vec![Fix::text(SLOW_START_HINT), Fix::command("markitai doctor")];
     // An explicit executable replaces discovery, and --fix will not replace it,
     // so a failed check must point at the variable rather than suggest --fix.
-    if browser.status != "ok"
+    } else if browser.status != "ok"
         && let Some(explicit) = std::env::var_os("MARKITAI_BROWSER_EXECUTABLE")
     {
         if browser.status == "missing" {
@@ -939,6 +952,9 @@ fn checks(
     result
 }
 
+/// The remedy for a Chromium that started too slowly to answer in time.
+const SLOW_START_HINT: &str = "Run markitai doctor again in a minute";
+
 fn backend(
     name: &'static str,
     description: &'static str,
@@ -972,6 +988,19 @@ fn backend(
                 "warning",
                 markitai_core::BROWSER_ROOT_SANDBOX_REFUSED,
                 hint,
+            )
+        }
+        Err(error)
+            if error
+                .to_string()
+                .contains(markitai_core::BROWSER_SLOW_TO_START) =>
+        {
+            Check::new(
+                name,
+                description,
+                "warning",
+                markitai_core::BROWSER_SLOW_TO_START,
+                SLOW_START_HINT,
             )
         }
         Err(_) => Check::new(
@@ -1196,6 +1225,34 @@ mod tests {
                 .values()
                 .all(|check| check.get("required").is_none())
         );
+    }
+
+    /// A Chromium that did not start in either try is installed but slow to
+    /// start: a warning that says to run doctor again, which no browser
+    /// workflow fails on.
+    #[test]
+    fn a_browser_slow_to_start_is_a_warning_to_run_doctor_again() {
+        let cfg = config::normalize(&json!({"fetch":{"strategy":"playwright"}})).unwrap();
+        let named = checks(
+            &cfg,
+            None,
+            &HashMap::new(),
+            Err(markitai_core::Error::Fetch(
+                markitai_core::BROWSER_SLOW_TO_START.into(),
+            )),
+            Ok(None),
+            Vec::new(),
+        );
+        let browser = &named["playwright"];
+        assert_eq!(browser.status, "warning");
+        assert_eq!(browser.message, markitai_core::BROWSER_SLOW_TO_START);
+        assert_eq!(
+            browser.install_hint,
+            "Run markitai doctor again in a minute"
+        );
+        assert!(!browser.failed());
+        assert_eq!(browser.fix.last(), Some(&Fix::command("markitai doctor")));
+        assert!(super::doctor_zh::zh(&browser.message).starts_with("Chromium 已安装但启动缓慢"));
     }
 
     /// Chromium run as root exits at once; doctor names that cause (a fixed

@@ -281,6 +281,11 @@ On Linux, Chromium refuses to start as root while its sandbox is on, and markita
 keeps the sandbox on. Run markitai as a regular user; in a container, set a
 non-root `USER`. `markitai doctor` reports the same cause for the browser.
 
+**`! Chromium is installed but slow to start …; run markitai doctor again`.**
+The browser did not start within a minute, nor within half a minute on a second
+try. The first launch after installing can be that slow on Windows while
+antivirus scans the new executable; run `markitai doctor` again a minute later.
+
 **A page's text is garbled, or a warning says its encoding could not be determined.**
 The server's `Content-Type` and the page's `<meta>` agree with the bytes in nearly
 every case. When neither fits, as with a GBK page labelled `utf-8` or one with no

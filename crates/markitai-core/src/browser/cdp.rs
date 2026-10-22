@@ -13,6 +13,9 @@ use url::Url;
 const MAX_MESSAGE: usize = 140 * 1024 * 1024;
 const ACCEPT_LANGUAGE: &str = "en-US,en;q=0.9";
 
+/// The failure of a Chromium that did not name its debugging port in time.
+pub(super) const STARTUP_TIMED_OUT: &str = "Chromium startup timed out";
+
 fn failure(message: &str) -> Error {
     Error::Fetch(message.into())
 }
@@ -196,7 +199,7 @@ impl Process {
             group,
             _profile: profile,
         };
-        let deadline = Instant::now() + Duration::from_secs(15);
+        let deadline = Instant::now() + options.startup;
         loop {
             if process.group.try_reap(&mut process.child)?.is_some() {
                 return Err(failure(early_exit(running_as_root())));
@@ -217,7 +220,7 @@ impl Process {
                 }
             }
             if Instant::now() >= deadline {
-                return Err(failure("Chromium startup timed out"));
+                return Err(failure(STARTUP_TIMED_OUT));
             }
             std::thread::sleep(Duration::from_millis(25));
         }

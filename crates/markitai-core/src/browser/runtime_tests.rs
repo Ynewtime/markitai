@@ -1036,15 +1036,55 @@ mod bounded_fixture_io {
 
 #[cfg(unix)]
 mod app_bundle_diagnostic {
-    use super::super::{inside_app_bundle, version_probe};
+    use super::super::{SLOW_TO_START, diagnostic_within, inside_app_bundle, version_probe};
     use std::os::unix::fs::PermissionsExt;
     use std::path::Path;
+    use std::time::{Duration, Instant};
 
     fn script(dir: &Path, name: &str, body: &str) -> std::path::PathBuf {
         let path = dir.join(name);
         std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
         path
+    }
+
+    /// A browser that never names its debugging port is tried twice and
+    /// called slow to start; one that exits at once is not retried.
+    #[test]
+    fn a_launch_that_stays_slow_is_tried_twice_and_called_slow() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("launches");
+        let slow = script(
+            dir.path(),
+            "slow",
+            &format!("echo x >> '{}'; exec sleep 30", log.display()),
+        );
+        let started = Instant::now();
+        let error = diagnostic_within(&slow, &[Duration::from_millis(300); 2]).unwrap_err();
+        assert_eq!(error.to_string(), SLOW_TO_START);
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "{:?}",
+            started.elapsed()
+        );
+        assert_eq!(std::fs::read_to_string(&log).unwrap().lines().count(), 2);
+        let broken = script(
+            dir.path(),
+            "broken",
+            &format!(
+                "echo x >> '{}'; exit 1",
+                dir.path().join("broken-launches").display()
+            ),
+        );
+        let error = diagnostic_within(&broken, &[Duration::from_secs(5); 2]).unwrap_err();
+        assert!(!error.to_string().contains("slow to start"), "{error}");
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("broken-launches"))
+                .unwrap()
+                .lines()
+                .count(),
+            1
+        );
     }
 
     #[test]
