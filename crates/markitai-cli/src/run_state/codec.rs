@@ -14,6 +14,42 @@ fn invalid(message: &str) -> Error {
     Error::Invalid(message.into())
 }
 
+/// What a finished item cost, took and produced, kept with its entry so a
+/// resumed batch reports the items an earlier run finished. The first eleven
+/// are Python markitai's names (its state stores them the same way); the
+/// last two are this implementation's.
+pub(crate) const ACCOUNTING: [&str; 13] = [
+    "started_at",
+    "completed_at",
+    "duration",
+    "images",
+    "screenshots",
+    "cost_usd",
+    "llm_usage",
+    "cache_hit",
+    "fetch_strategy",
+    "warnings",
+    "skip_reason",
+    "fetch_cache_hit",
+    "conversion_duration",
+];
+
+/// Whether `value` has the type its accounting `name` needs.
+fn accounting_value(name: &str, value: &Value) -> bool {
+    let number = |value: &Value| value.as_f64().is_some_and(|n| n.is_finite() && n >= 0.0);
+    match name {
+        "started_at" | "completed_at" | "fetch_strategy" | "skip_reason" => value.is_string(),
+        "duration" | "conversion_duration" | "cost_usd" => number(value),
+        "images" | "screenshots" => value.is_u64(),
+        "cache_hit" | "fetch_cache_hit" => value.is_boolean(),
+        "llm_usage" => value.is_object(),
+        "warnings" => value
+            .as_array()
+            .is_some_and(|warnings| warnings.iter().all(Value::is_string)),
+        _ => false,
+    }
+}
+
 fn foreign(message: &str) -> Error {
     Error::ForeignScope(message.into())
 }
@@ -431,19 +467,7 @@ fn decode_entry(
     if let ItemKey::Url(key) = key {
         entry.url = Some(url_identity(key, entry.url.as_deref())?);
     }
-    for name in [
-        "started_at",
-        "completed_at",
-        "duration",
-        "images",
-        "screenshots",
-        "cost_usd",
-        "llm_usage",
-        "cache_hit",
-        "fetch_strategy",
-        "warnings",
-        "skip_reason",
-    ] {
+    for name in ACCOUNTING {
         if let Some(value) = data.get(name) {
             entry.observations.insert(name.into(), value.clone());
         }
@@ -573,6 +597,8 @@ struct WireEntry<'a> {
     url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     diagnostics: Option<crate::diagnostics::AttemptDiagnostics>,
+    #[serde(flatten)]
+    accounting: BTreeMap<&'static str, &'a Value>,
 }
 
 fn wire_entry<'a>(
@@ -616,8 +642,23 @@ fn wire_entry<'a>(
     } else {
         None
     };
+    // A native checkpoint keeps a finished item's accounting; legacy
+    // encoding stays minimal.
+    let finished = matches!(entry.status, Status::Completed | Status::Failed);
+    let accounting = ACCOUNTING
+        .into_iter()
+        .filter(|_| native && finished)
+        .filter_map(|name| {
+            entry
+                .observations
+                .get(name)
+                .filter(|value| accounting_value(name, value))
+                .map(|value| (name, value))
+        })
+        .collect();
     Ok(WireEntry {
         diagnostics,
+        accounting,
         status: entry.status,
         source_file: is_url.then_some(entry.source_file.as_deref()),
         url,
@@ -902,6 +943,22 @@ fn updated_entry(
             }
             None => {
                 entry.observations.remove("diagnostics");
+            }
+        }
+    }
+    // Each native event carries the whole accounting of the attempt it
+    // reports (none for one that starts or reserves): it replaces, never
+    // adds to, the previous attempt's.
+    if snapshot.checkpoint.is_some() {
+        for name in ACCOUNTING {
+            match data.get(name).filter(|value| !value.is_null()) {
+                Some(value) if accounting_value(name, value) => {
+                    entry.observations.insert(name.into(), value.clone());
+                }
+                Some(_) => return Err(invalid("invalid native item accounting")),
+                None => {
+                    entry.observations.remove(name);
+                }
             }
         }
     }
@@ -1290,6 +1347,78 @@ mod tests {
             done
         );
         assert_eq!(again.checkpoint.unwrap().applied_sequence, 4);
+    }
+
+    #[test]
+    fn native_accounting_round_trips_and_each_event_replaces_it() {
+        let (_root, scope) = fixture(Mode::Directory);
+        let mut snapshot = document_snapshot(&scope);
+        tag(&mut snapshot, &scope, 0);
+        let accounting = json!({"started_at":"2026-10-22T10:00:00+08:00",
+            "completed_at":"2026-10-22T10:00:02+08:00","duration":2.5,"conversion_duration":2.25,
+            "images":2,"screenshots":0,"cost_usd":0.0125,
+            "llm_usage":{"openai/m":{"requests":1,"input_tokens":7,"output_tokens":3,"cost_usd":0.0125}},
+            "cache_hit":false,"fetch_cache_hit":true,"warnings":["kept the base"]});
+        let mut data =
+            json!({"status":"completed","error":null,"output":scope.output.join("note.txt.md")});
+        data.as_object_mut()
+            .unwrap()
+            .extend(accounting.as_object().unwrap().clone());
+        apply_event(
+            &mut snapshot,
+            &event("note.txt", data, Some(1)),
+            &scope,
+            false,
+        )
+        .unwrap();
+        let encoded = encode(&snapshot, &scope, false, Limits::default()).unwrap();
+        let raw: Value = serde_json::from_slice(&encoded).unwrap();
+        for (name, value) in accounting.as_object().unwrap() {
+            assert_eq!(&raw["documents"]["note.txt"][name], value, "{name}");
+        }
+        let recovered = decode(&encoded, &scope, false, Limits::default()).unwrap();
+        assert_eq!(
+            recovered.documents["note.txt"].observations,
+            *accounting.as_object().unwrap()
+        );
+        // A new attempt starts without the old one's accounting.
+        let mut again = recovered.clone();
+        apply_event(
+            &mut again,
+            &event(
+                "note.txt",
+                json!({"status":"in_progress","diagnostics":null}),
+                Some(2),
+            ),
+            &scope,
+            false,
+        )
+        .unwrap();
+        assert!(again.documents["note.txt"].observations.is_empty());
+        // A wrong type is refused before anything changes.
+        let before = again.clone();
+        for (name, bad) in [
+            ("cost_usd", json!(-1)),
+            ("images", json!("two")),
+            ("warnings", json!([1])),
+        ] {
+            let error = apply_event(
+                &mut again,
+                &event("note.txt", json!({"status":"failed",name:bad}), Some(3)),
+                &scope,
+                false,
+            )
+            .unwrap_err();
+            assert!(error.to_string().contains("invalid native item accounting"));
+            assert_eq!(again, before);
+        }
+        // Legacy encoding stays minimal.
+        let mut legacy = recovered;
+        legacy.checkpoint = None;
+        let raw: Value =
+            serde_json::from_slice(&encode(&legacy, &scope, false, Limits::default()).unwrap())
+                .unwrap();
+        assert!(raw["documents"]["note.txt"].get("cost_usd").is_none());
     }
 
     #[test]

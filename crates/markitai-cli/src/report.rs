@@ -64,6 +64,64 @@ pub(crate) struct RunItem {
     pub(crate) page_sources: Vec<markitai_core::PageSource>,
 }
 
+/// At most this many warnings of an item, each cut to this many bytes, are
+/// kept in the recovery state.
+const SAVED_WARNINGS: usize = 16;
+const SAVED_WARNING_BYTES: usize = 1024;
+
+impl RunItem {
+    /// What the item was charged: a failed item's last attempt was paid all
+    /// the same.
+    pub(crate) fn paid_usage(&self) -> &ConversionUsage {
+        match (&self.status, &self.diagnostics) {
+            (ItemStatus::Failed, Some(diagnostics)) => &diagnostics.last_attempt.usage,
+            _ => &self.usage,
+        }
+    }
+
+    /// The item's accounting for the recovery state (the names of
+    /// [`crate::run_state::codec::ACCOUNTING`]), so a resumed batch can
+    /// report it without converting it again.
+    pub(crate) fn accounting(&self) -> Map<String, Value> {
+        let usage = self.paid_usage();
+        let warnings: Vec<String> = self
+            .warnings
+            .iter()
+            .take(SAVED_WARNINGS)
+            .map(|warning| {
+                let mut end = warning.len().min(SAVED_WARNING_BYTES);
+                while !warning.is_char_boundary(end) {
+                    end -= 1;
+                }
+                warning[..end].to_owned()
+            })
+            .collect();
+        let mut fields = json!({
+            "started_at": self.started_at,
+            "completed_at": self.completed_at,
+            "duration": finite(self.elapsed_s),
+            "images": self.images,
+            "screenshots": self.screenshots,
+            "cost_usd": finite(usage.cost_usd),
+            "llm_usage": usage.by_model,
+            "cache_hit": self.llm_cache_hit,
+            "fetch_cache_hit": self.fetch_cache_hit,
+            "fetch_strategy": self.fetch_strategy,
+            "warnings": warnings,
+            "skip_reason": self.skip_reason,
+            "conversion_duration": self.conversion_duration_s.and_then(finite),
+        });
+        let fields = fields.as_object_mut().unwrap();
+        fields.retain(|_, value| !value.is_null());
+        std::mem::take(fields)
+    }
+}
+
+/// A measurement the state can keep: finite and not negative.
+fn finite(value: f64) -> Option<f64> {
+    (value.is_finite() && value >= 0.0).then_some(value)
+}
+
 #[derive(Debug)]
 pub(crate) struct ReportOptions {
     llm: bool,
@@ -326,6 +384,13 @@ fn totals(records: &Map<String, Value>) -> Result<(u64, u64, u64), String> {
 }
 
 fn usage_block(records: &Map<String, Value>, cost: f64) -> Result<Ordered, String> {
+    Ok(object(usage_fields(records, cost)?))
+}
+
+fn usage_fields(
+    records: &Map<String, Value>,
+    cost: f64,
+) -> Result<Vec<(&'static str, Ordered)>, String> {
     let (requests, input, output) = totals(records)?;
     let mut fields = vec![
         ("models", models(records)),
@@ -337,18 +402,23 @@ fn usage_block(records: &Map<String, Value>, cost: f64) -> Result<Ordered, Strin
     if let Some(pricing) = Pricing::from_models(records) {
         fields.push(("pricing", value(json!(pricing))));
     }
-    Ok(object(fields))
+    Ok(fields)
 }
 
+/// The usage of `items`, failed ones included: their spend was paid. A URL
+/// list counts no skipped or pending item, as Python markitai's does.
 fn aggregate(items: &[&RunItem], mode: RunMode) -> Result<(Map<String, Value>, f64), String> {
     let mut combined = Map::<String, Value>::new();
     let mut cost = 0.0;
     for item in items {
-        if mode == RunMode::UrlList && item.status != ItemStatus::Completed {
+        if mode == RunMode::UrlList
+            && !matches!(item.status, ItemStatus::Completed | ItemStatus::Failed)
+        {
             continue;
         }
-        cost += item.usage.cost_usd;
-        pricing::merge_models(&mut combined, &item.usage.by_model)?;
+        let usage = item.paid_usage();
+        cost += usage.cost_usd;
+        pricing::merge_models(&mut combined, &usage.by_model)?;
     }
     if !cost.is_finite() {
         return Err("Report usage total is not finite".into());
@@ -373,12 +443,18 @@ fn status(item: &RunItem, mode: RunMode) -> &'static str {
     }
 }
 
+fn warnings(item: &RunItem) -> Ordered {
+    value(json!(item.warnings))
+}
+
 fn directory_entry(item: &RunItem) -> Ordered {
+    let usage = item.paid_usage();
     let mut fields = vec![
         ("status", value(status(item, RunMode::Directory))),
         ("cache_hit", value(item.llm_cache_hit)),
         ("output", path_value(item.output.as_deref())),
         ("error", option_string(item.error.as_deref())),
+        ("warnings", warnings(item)),
     ];
     if item.kind == ItemKind::Url {
         fields.push((
@@ -392,10 +468,10 @@ fn directory_entry(item: &RunItem) -> Ordered {
         ("duration", duration(item.elapsed_s)),
         ("images", value(item.images)),
         ("screenshots", value(item.screenshots)),
-        ("cost_usd", value(item.usage.cost_usd)),
-        ("llm_usage", models(&item.usage.by_model)),
+        ("cost_usd", value(usage.cost_usd)),
+        ("llm_usage", models(&usage.by_model)),
     ]);
-    if let Some(pricing) = Pricing::from_usage(&item.usage) {
+    if let Some(pricing) = Pricing::from_usage(usage) {
         fields.push(("pricing", value(json!(pricing))));
     }
     object(fields)
@@ -407,6 +483,7 @@ fn single_file_entry(item: &RunItem) -> Result<Ordered, String> {
         ("status", value(status(item, RunMode::SingleFile))),
         ("output", path_value(item.output.as_deref())),
         ("error", option_string(item.error.as_deref())),
+        ("warnings", warnings(item)),
         ("duration", duration(item.elapsed_s)),
         ("images", value(item.images)),
         ("screenshots", value(item.screenshots)),
@@ -441,6 +518,7 @@ fn single_url_entry(item: &RunItem) -> Ordered {
         ),
         ("output", path_value(item.output.as_deref())),
         ("error", option_string(item.error.as_deref())),
+        ("warnings", warnings(item)),
         (
             "fetch_strategy",
             option_string(item.fetch_strategy.as_deref()),
@@ -466,7 +544,7 @@ fn list_entry(item: &RunItem) -> Ordered {
         ]);
     }
     if item.status != ItemStatus::Completed {
-        return object([
+        let mut fields = vec![
             ("status", value(status(item, RunMode::UrlList))),
             (
                 "error",
@@ -476,12 +554,17 @@ fn list_entry(item: &RunItem) -> Ordered {
                     option_string(item.error.as_deref())
                 },
             ),
-        ]);
+        ];
+        if item.status == ItemStatus::Failed {
+            fields.push(("warnings", warnings(item)));
+        }
+        return object(fields);
     }
     object([
         ("status", value("completed")),
         ("output", path_value(item.output.as_deref())),
         ("error", option_string(item.error.as_deref())),
+        ("warnings", warnings(item)),
         (
             "fetch_strategy",
             option_string(item.fetch_strategy.as_deref()),
@@ -987,7 +1070,20 @@ fn saved_usage(entry: &crate::run_state::Entry) -> Result<SavedUsage<'_>, String
     Ok((records, cost))
 }
 
-fn resumed_entry(view: &ResumedView<'_>, mode: RunMode) -> Result<Ordered, String> {
+/// Whether an item an earlier run converted has no recorded cost: a state
+/// written before costs were kept, in a batch that used a model. Its cost is
+/// unknown, not zero (a skipped item sent nothing).
+pub(crate) fn usage_unknown(entry: &crate::run_state::Entry, llm: bool) -> bool {
+    llm && entry.status == crate::run_state::Status::Completed
+        && entry.output.is_some()
+        && !entry.observations.contains_key("cost_usd")
+}
+
+fn saved_warnings(entry: &crate::run_state::Entry) -> Ordered {
+    saved_value(entry, "warnings", json!([]))
+}
+
+fn resumed_entry(view: &ResumedView<'_>, mode: RunMode, llm: bool) -> Result<Ordered, String> {
     let entry = match view.entry {
         ResumedEntry::Observed(item) => {
             return Ok(if mode == RunMode::UrlList {
@@ -998,17 +1094,24 @@ fn resumed_entry(view: &ResumedView<'_>, mode: RunMode) -> Result<Ordered, Strin
         }
         ResumedEntry::Recovered(entry) => entry,
     };
+    let earlier = entry.status == crate::run_state::Status::Completed;
     if mode == RunMode::UrlList {
         if view.status(mode) != "completed" {
-            return Ok(object([
+            let mut fields = vec![
                 ("status", value(view.status(mode))),
                 ("error", option_string(entry.error.as_deref())),
-            ]));
+            ];
+            if entry.status == crate::run_state::Status::Failed {
+                fields.push(("warnings", saved_warnings(entry)));
+            }
+            return Ok(object(fields));
         }
         return Ok(object([
             ("status", value("completed")),
+            ("earlier_run", value(true)),
             ("output", path_value(entry.output.as_deref())),
             ("error", value(Value::Null)),
+            ("warnings", saved_warnings(entry)),
             (
                 "fetch_strategy",
                 saved_value(entry, "fetch_strategy", Value::Null),
@@ -1017,12 +1120,16 @@ fn resumed_entry(view: &ResumedView<'_>, mode: RunMode) -> Result<Ordered, Strin
             ("screenshots", saved_value(entry, "screenshots", json!(0))),
         ]));
     }
-    let mut fields = vec![
-        ("status", value(view.status(mode))),
+    let mut fields = vec![("status", value(view.status(mode)))];
+    if earlier {
+        fields.push(("earlier_run", value(true)));
+    }
+    fields.extend([
         ("cache_hit", saved_value(entry, "cache_hit", json!(false))),
         ("output", path_value(entry.output.as_deref())),
         ("error", option_string(entry.error.as_deref())),
-    ];
+        ("warnings", saved_warnings(entry)),
+    ]);
     if view.kind == ItemKind::Url {
         fields.push((
             "fetch_strategy",
@@ -1030,6 +1137,7 @@ fn resumed_entry(view: &ResumedView<'_>, mode: RunMode) -> Result<Ordered, Strin
         ));
     }
     let (usage, cost) = saved_usage(entry)?;
+    let unknown = usage_unknown(entry, llm);
     fields.extend([
         ("started_at", saved_value(entry, "started_at", Value::Null)),
         (
@@ -1044,8 +1152,22 @@ fn resumed_entry(view: &ResumedView<'_>, mode: RunMode) -> Result<Ordered, Strin
         ),
         ("images", saved_value(entry, "images", json!(0))),
         ("screenshots", saved_value(entry, "screenshots", json!(0))),
-        ("cost_usd", value(cost)),
-        ("llm_usage", usage.map(models).unwrap_or_else(|| object([]))),
+        (
+            "cost_usd",
+            if unknown {
+                value(Value::Null)
+            } else {
+                value(cost)
+            },
+        ),
+        (
+            "llm_usage",
+            if unknown {
+                value(Value::Null)
+            } else {
+                usage.map(models).unwrap_or_else(|| object([]))
+            },
+        ),
     ]);
     if let Some(pricing) = usage.and_then(Pricing::from_models) {
         fields.push(("pricing", value(json!(pricing))));
@@ -1053,7 +1175,11 @@ fn resumed_entry(view: &ResumedView<'_>, mode: RunMode) -> Result<Ordered, Strin
     Ok(object(fields))
 }
 
-fn resumed_usage(views: &[ResumedView<'_>], mode: RunMode) -> Result<Ordered, String> {
+/// The whole batch's usage, earlier runs' recorded spend included, with the
+/// items this run processed under `this_run` and the earlier items whose
+/// cost is unknown counted in `usage_unknown_items`, as Python markitai
+/// reports a resumed batch.
+fn resumed_usage(views: &[ResumedView<'_>], mode: RunMode, llm: bool) -> Result<Ordered, String> {
     let observed: Vec<_> = views
         .iter()
         .filter_map(|view| match view.entry {
@@ -1061,14 +1187,20 @@ fn resumed_usage(views: &[ResumedView<'_>], mode: RunMode) -> Result<Ordered, St
             ResumedEntry::Recovered(_) => None,
         })
         .collect();
-    let (mut combined, mut cost) = aggregate(&observed, mode)?;
+    let (this_run, this_cost) = aggregate(&observed, mode)?;
+    let (mut combined, mut cost) = (this_run.clone(), this_cost);
+    let mut unknown = 0;
     for view in views {
-        if mode == RunMode::UrlList && view.status(mode) != "completed" {
-            continue;
-        }
         let ResumedEntry::Recovered(entry) = view.entry else {
             continue;
         };
+        if mode == RunMode::UrlList && !matches!(view.status(mode), "completed" | "failed") {
+            continue;
+        }
+        if usage_unknown(entry, llm) {
+            unknown += 1;
+            continue;
+        }
         let (records, saved_cost) = saved_usage(entry)?;
         cost += saved_cost;
         if let Some(records) = records {
@@ -1078,7 +1210,12 @@ fn resumed_usage(views: &[ResumedView<'_>], mode: RunMode) -> Result<Ordered, St
     if !cost.is_finite() {
         return Err("Report usage total is not finite".into());
     }
-    usage_block(&combined, cost)
+    let mut fields = usage_fields(&combined, cost)?;
+    if unknown > 0 {
+        fields.push(("usage_unknown_items", value(unknown)));
+    }
+    fields.push(("this_run", usage_block(&this_run, this_cost)?));
+    Ok(object(fields))
 }
 
 fn resumed_summary(
@@ -1201,12 +1338,13 @@ pub(crate) fn render_resumed(
         fields.push(("options", options));
     }
     fields.push(("summary", resumed_summary(mode, &views, finished)?));
-    fields.push(("llm_usage", resumed_usage(&views, mode)?));
+    let llm = plan.run.options.llm;
+    fields.push(("llm_usage", resumed_usage(&views, mode, llm)?));
     if mode == RunMode::Directory {
         let mut documents = views
             .iter()
             .filter(|view| view.kind == ItemKind::File)
-            .map(|view| Ok((view.key.to_owned(), resumed_entry(view, mode)?)))
+            .map(|view| Ok((view.key.to_owned(), resumed_entry(view, mode, llm)?)))
             .collect::<Result<Vec<_>, String>>()?;
         crate::sort::by(&mut documents, |left, right| left.0.cmp(&right.0));
         fields.push(("documents", Ordered::Object(documents)));
@@ -1220,7 +1358,7 @@ pub(crate) fn render_resumed(
         .map(|(source, views)| {
             let urls = views
                 .iter()
-                .map(|view| Ok((view.key.to_owned(), resumed_entry(view, mode)?)))
+                .map(|view| Ok((view.key.to_owned(), resumed_entry(view, mode, llm)?)))
                 .collect::<Result<Vec<_>, String>>()?;
             Ok((
                 source.to_owned(),
@@ -1284,6 +1422,11 @@ pub(crate) struct Resumed {
     pub(crate) converted: usize,
     /// Finished without one (skipped).
     pub(crate) skipped: usize,
+    /// What their state recorded they cost.
+    pub(crate) cost_usd: f64,
+    /// How many of them, in a batch that used a model, have no recorded
+    /// cost (a state written before costs were kept).
+    pub(crate) cost_unknown: usize,
 }
 
 /// A batch's closing lines on the terminal: what was converted out of how
@@ -1343,14 +1486,28 @@ pub(crate) fn batch_summary_lines(
         Lang::En => ", ",
         Lang::Zh => "，",
     };
-    let cost: f64 = records.iter().map(|record| record.usage.cost_usd).sum();
-    if cost > 0.0 {
+    let cost: f64 = records
+        .iter()
+        .map(|record| record.paid_usage().cost_usd)
+        .sum();
+    if resumed.cost_usd > 0.0 {
+        // A resumed batch: the whole batch's spend, then this run's.
+        let total = cost + resumed.cost_usd;
+        detail.push_str(
+            &text!(lang => "{detail_separator}${total:.3} total, ${cost:.3} this run",
+            "{detail_separator}共 ${total:.3}，本次 ${cost:.3}"),
+        );
+    } else if cost > 0.0 {
         detail.push_str(&format!("{detail_separator}${cost:.3}"));
     }
-    if records
-        .iter()
-        .any(|record| record.usage.requests > 0 && !record.usage.cost_complete())
-    {
+    if resumed.cost_unknown > 0 {
+        detail.push_str(detail_separator);
+        detail.push_str(&text!(lang => "cost of earlier runs unknown", "之前运行的费用未知"));
+    }
+    if records.iter().any(|record| {
+        let usage = record.paid_usage();
+        usage.requests > 0 && !usage.cost_complete()
+    }) {
         detail.push_str(detail_separator);
         detail.push_str(&text!(lang => "cost incomplete", "费用不完整"));
     }
@@ -1961,6 +2118,7 @@ mod tests {
         let earlier = Resumed {
             converted: 8,
             skipped: 0,
+            ..Resumed::default()
         };
         assert_eq!(
             summary(&records, earlier, false, Lang::En)[0],
@@ -1974,6 +2132,7 @@ mod tests {
         let with_skips = Resumed {
             converted: 6,
             skipped: 2,
+            ..Resumed::default()
         };
         assert_eq!(
             summary(&records, with_skips, false, Lang::En)[0],
@@ -1983,6 +2142,7 @@ mod tests {
         let all = Resumed {
             converted: 34,
             skipped: 0,
+            ..Resumed::default()
         };
         assert_eq!(
             summary(&[], all, false, Lang::En)[0],
@@ -1993,6 +2153,44 @@ mod tests {
             summary(&records, Resumed::default(), false, Lang::En)[0],
             "Done: 2 files (0:03)"
         );
+        // What the earlier run spent: the batch's total, then this run's.
+        let mut paid = records;
+        paid[0].usage.cost_usd = 0.067;
+        let spent = Resumed {
+            converted: 8,
+            cost_usd: 0.027,
+            ..Resumed::default()
+        };
+        assert_eq!(
+            summary(&paid, spent, false, Lang::En)[0],
+            "Done: 10 of 10 files converted (0:03, $0.094 total, $0.067 this run)"
+        );
+        assert_eq!(
+            summary(&paid, spent, false, Lang::Zh)[0],
+            "完成：10 个文件中已转换 10 个（0:03，共 $0.094，本次 $0.067）"
+        );
+        // An earlier state that kept no cost: unknown, not zero.
+        let unknown = Resumed {
+            converted: 8,
+            cost_unknown: 8,
+            ..Resumed::default()
+        };
+        assert_eq!(
+            summary(&paid, unknown, false, Lang::En)[0],
+            "Done: 10 of 10 files converted (0:03, $0.067, cost of earlier runs unknown)"
+        );
+        // A failed item's paid attempt counts.
+        paid[1].status = ItemStatus::Failed;
+        paid[1].diagnostics = crate::diagnostics::AttemptDiagnostics::failed(
+            crate::diagnostics::Operation::Convert,
+            "refused",
+            ConversionUsage {
+                cost_usd: 0.01,
+                requests: 1,
+                ..ConversionUsage::default()
+            },
+        );
+        assert!(summary(&paid, Resumed::default(), false, Lang::En)[0].contains("$0.077"));
     }
 
     #[test]
@@ -2040,7 +2238,7 @@ mod tests {
             history_output: None,
             history_eligible: true,
             error: None,
-            warnings: vec!["not in reports".into()],
+            warnings: vec!["an item warning".into()],
             skip_reason: None,
             started_at: "2026-09-28T12:00:00+08:00".into(),
             completed_at: "2026-09-28T12:00:01+08:00".into(),
@@ -2178,7 +2376,10 @@ mod tests {
         assert_eq!(body["llm_usage"]["requests"], 2);
         assert_eq!(body["summary"]["duration"], "1.2s");
         assert!(body.get("options").is_none() && body.get("url_sources").is_none());
-        assert!(body["documents"]["notes.txt"].get("warnings").is_none());
+        assert_eq!(
+            body["documents"]["notes.txt"]["warnings"],
+            json!(["an item warning"])
+        );
         let keys = [
             "\"version\"",
             "\"generated_at\"",
@@ -2266,7 +2467,16 @@ mod tests {
             text.find("https://example.test/z name").unwrap()
                 < text.find("https://example.test/a name.md").unwrap()
         );
-        assert!(!text.contains("secret") && !text.contains("not in reports"));
+        assert!(!text.contains("secret"));
+        // Each entry lists its warnings, as --json does.
+        assert_eq!(
+            body["documents"]["z/bad.txt"]["warnings"],
+            json!(["an item warning"])
+        );
+        assert_eq!(
+            body["url_sources"]["links.urls"]["urls"]["https://example.test/z name"]["warnings"],
+            json!(["an item warning"])
+        );
     }
 
     #[test]
@@ -2301,7 +2511,7 @@ mod tests {
         );
         assert_eq!(
             urls["https://example.test/b"],
-            json!({"status":"failed","error":"failed fetch"})
+            json!({"status":"failed","error":"failed fetch","warnings":["an item warning"]})
         );
         for key in [
             "duration",
@@ -2521,7 +2731,7 @@ mod tests {
         assert_eq!(urls[first]["screenshots"], 0);
         assert_eq!(
             urls[second],
-            json!({"status":"failed","error":"current failure"})
+            json!({"status":"failed","error":"current failure","warnings":["an item warning"]})
         );
         assert!(urls.get(removed).is_none());
         assert!(
@@ -2551,8 +2761,8 @@ mod tests {
         assert_eq!(
             body["url_sources"]["unknown.urls"]["urls"][key],
             json!({
-                "status":"completed", "output":null, "error":null,
-                "fetch_strategy":null,"images":0,"screenshots":0,
+                "status":"completed", "earlier_run":true, "output":null, "error":null,
+                "warnings":[], "fetch_strategy":null,"images":0,"screenshots":0,
             })
         );
         assert!(
@@ -2586,9 +2796,20 @@ mod tests {
                     recovered(crate::run_state::Status::Pending, json!({})),
                 );
             }
+            // The same bytes, but for the resumed report's `this_run` block,
+            // which repeats the whole usage when this run did everything.
+            let resumed =
+                String::from_utf8(render_resumed(&plan, &items, &state, &keys, &finish()).unwrap())
+                    .unwrap();
+            let start = resumed.find(",\n    \"this_run\": {").unwrap();
+            let end = start + resumed[start..].find("\n    }").unwrap() + "\n    }".len();
+            let body: Value = serde_json::from_str(&resumed).unwrap();
+            let mut whole = body["llm_usage"].clone();
+            whole.as_object_mut().unwrap().remove("this_run");
+            assert_eq!(body["llm_usage"]["this_run"], whole);
             assert_eq!(
-                render(&plan, &items, &finish()).unwrap(),
-                render_resumed(&plan, &items, &state, &keys, &finish()).unwrap()
+                String::from_utf8(render(&plan, &items, &finish()).unwrap()).unwrap(),
+                format!("{}{}", &resumed[..start], &resumed[end..])
             );
         }
     }

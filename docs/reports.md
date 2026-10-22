@@ -75,8 +75,13 @@ Mode-specific fields retain their reference ordering, including nested maps.
 |---|---|
 | Single file | One completed entry in `documents`, keyed by basename; no `options` or `url_sources`. Item `llm_usage` contains only `cost_usd,input_tokens,output_tokens`. |
 | Single URL | `options` contains `llm,cache,alt,desc,fetch_strategy`; zero documents and one URL grouped under `url_sources.cli`. The entry has duration, asset counts, per-model usage and cache details. |
-| URL list | No `options` or `documents`; entries are grouped under `url_sources["unknown.urls"]`, preserving a reference quirk. Completed entries contain `status,output,error,fetch_strategy,images,screenshots`; failures contain `status,error`; skipped entries contain `status:"skipped",error:"Output exists"`. No per-item duration, usage or cache fields are added. |
+| URL list | No `options` or `documents`; entries are grouped under `url_sources["unknown.urls"]`, preserving a reference quirk. Completed entries contain `status,output,error,warnings,fetch_strategy,images,screenshots`; failures contain `status,error,warnings`; skipped entries contain `status:"skipped",error:"Output exists"`. No per-item duration, usage or cache fields are added. |
 | Directory | Adds `started_at,updated_at,options,documents,url_sources`. Entries retain status, output/error, timing, asset counts and usage. Successful skips count as completed; failed items also count as pending. Summary includes URL-source count, URL cache hits and summed `processing_time`. |
+
+Every entry but a URL list's skip has `warnings` after `error`: the item's
+warnings as `--json` lists them (an enhancement that failed and kept the base
+output, an image analysis that failed), empty when there are none, as Python
+markitai's reports have them.
 
 Document keys and source groups are sorted; URLs within a group retain task
 input order. Directory document keys are relative to the input directory, and
@@ -100,8 +105,9 @@ Cache fields intentionally differ by interface:
 Top-level `llm_usage` contains `models,requests,input_tokens,output_tokens,cost_usd`.
 Models are sorted; request/token totals come from their records, while total cost
 comes from item usage. Both directory and URL-list aggregate model records
-initialize and sum `cached_input_tokens`. URL-list aggregation includes completed
-items only. Reports use original usage values, not the rounded stdout projection;
+initialize and sum `cached_input_tokens`. A failed item's last attempt was paid
+all the same, so its usage counts in the totals and in its own entry, as in
+Python markitai; URL-list aggregation leaves out skipped and pending items. Reports use original usage values, not the rounded stdout projection;
 they cannot recover usage that the conversion runtime did not return.
 
 Timestamps use local-offset ISO strings. Durations are strings: one decimal plus
@@ -165,3 +171,16 @@ that attempt has no known usage. They never add old failed work to the new
 attempt. A known request with zero tokens is retained; absent observations remain
 unknown. This is neither lifetime spend nor a crash-safe billing ledger. Existing
 legacy reports and minimal states have no backfilled measurements.
+
+## Resumed batches
+
+A `--resume` run's report covers the whole batch, as Python markitai's does. An
+entry an earlier run finished is listed with what the recovery state kept for it
+(times, duration, asset counts, warnings, cost and per-model usage) and
+`earlier_run: true` after its `status`. `llm_usage` totals every item, and its
+`this_run` block (the same shape) covers the items this run processed. An item
+of a batch with a model enabled whose state kept no cost (a state written before
+costs were kept) has `cost_usd` and `llm_usage` null, unknown rather than zero,
+and is counted in `llm_usage.usage_unknown_items` instead of the totals. The
+closing line says the same: `Done: 10 of 10 files converted (0:03, $0.094 total,
+$0.067 this run)`, or `cost of earlier runs unknown`.

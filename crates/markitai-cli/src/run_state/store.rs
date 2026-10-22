@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 
 /// Bytes an unfinished entry may still gain before the final compaction: its
 /// output path and the usage diagnostics of its attempt.
-const ENTRY_GROWTH: usize = 512;
+const ENTRY_GROWTH: usize = 1024;
 
 /// The open lock descriptor owns one checkpoint for the lifetime of this store.
 /// Buffered mutations require an explicit flush before work may rely on them.

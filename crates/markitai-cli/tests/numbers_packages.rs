@@ -441,9 +441,13 @@ fn resume_keeps_completed_packages_atomic_and_retries_only_the_repaired_package(
         invoke(root.path(), &["input", "-o", "out", "--resume", "--json"]),
         0,
     );
-    assert_eq!(resumed["items"].as_array().unwrap().len(), 1);
-    assert_eq!(resumed["items"][0]["source"], "retry.numbers");
-    assert_eq!(resumed["items"][0]["status"], "completed");
+    // The package the first run finished comes first, from the state.
+    assert_eq!(resumed["items"].as_array().unwrap().len(), 2);
+    assert_eq!(resumed["items"][0]["source"], "done.numbers");
+    assert_eq!(resumed["items"][0]["earlier_run"], true);
+    assert_eq!(resumed["items"][1]["source"], "retry.numbers");
+    assert_eq!(resumed["items"][1]["status"], "completed");
+    assert_eq!(resumed["items"][1]["earlier_run"], false);
     assert_eq!(
         std::fs::read(root.path().join("out/done.numbers.md")).unwrap(),
         old_output
@@ -468,7 +472,9 @@ fn resume_keeps_completed_packages_atomic_and_retries_only_the_repaired_package(
         invoke(root.path(), &["input", "-o", "out", "--resume", "--json"]),
         0,
     );
-    assert_eq!(no_work["items"], json!([]));
+    let earlier = no_work["items"].as_array().unwrap();
+    assert_eq!(earlier.len(), 2);
+    assert!(earlier.iter().all(|item| item["earlier_run"] == true));
     assert_eq!(inventory(&root.path().join("home/serve/jobs")), new_history);
 }
 

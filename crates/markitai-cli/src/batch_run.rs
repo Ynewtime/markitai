@@ -270,6 +270,54 @@ fn owner(scope: &Scope, generation: &str, task: &Task) -> Owner {
         key: task.report_key.clone(),
     }
 }
+/// The `--json` item of an entry an earlier run of this batch completed:
+/// what the state recorded for it, marked `earlier_run`. Its cost and usage
+/// are null when that run kept none in a batch that used a model (unknown,
+/// not zero), as Python markitai reports them.
+fn earlier_outcome(kind: ItemKind, key: &str, entry: &Entry, llm: bool) -> Value {
+    let saved = |name: &str| entry.observations.get(name).cloned().unwrap_or(Value::Null);
+    let unknown = report::usage_unknown(entry, llm);
+    let skip_reason = saved("skip_reason");
+    let usage = saved("llm_usage");
+    let mut item = json!({
+        "kind": if kind == ItemKind::Url { "url" } else { "file" },
+        "source": match kind {
+            ItemKind::Url => entry.url.as_deref().unwrap_or(key),
+            ItemKind::File => key,
+        },
+        "status": if entry.output.is_none() && !skip_reason.is_null() { "skipped" } else { "completed" },
+        "output": entry.output,
+        "error": null,
+        "warnings": entry.observations.get("warnings").cloned().unwrap_or_else(|| json!([])),
+        "skip_reason": skip_reason,
+        "images": entry.observations.get("images").cloned().unwrap_or(json!(0)),
+        "screenshots": entry.observations.get("screenshots").cloned().unwrap_or(json!(0)),
+        "earlier_run": true,
+        "cost_usd": if unknown { Value::Null } else {
+            json!(round(saved("cost_usd").as_f64().unwrap_or(0.0), 1_000_000.0))
+        },
+        "duration_s": entry.observations.get("conversion_duration")
+            .or_else(|| entry.observations.get("duration"))
+            .and_then(Value::as_f64)
+            .map(|duration| round(duration, 1000.0)),
+        "cache_hit": saved("cache_hit").as_bool().unwrap_or(false),
+        "fetch_cache_hit": saved("fetch_cache_hit").as_bool().unwrap_or(false),
+        "llm_cache_hit": saved("cache_hit").as_bool().unwrap_or(false),
+        "fetch_strategy": saved("fetch_strategy"),
+        "source_file": entry.source_file.as_deref().filter(|source| !source.is_empty()),
+        "llm_usage": if unknown { Value::Null } else if usage.is_object() { usage.clone() } else { json!({}) },
+        "page_sources": [],
+    });
+    if let Some(pricing) = usage
+        .as_object()
+        .filter(|_| !unknown)
+        .and_then(crate::pricing::Pricing::from_models)
+    {
+        item["pricing"] = json!(pricing);
+    }
+    item
+}
+
 fn failure(task: &Task, index: usize, error: String) -> RunItem {
     recorded(
         task,
@@ -280,11 +328,10 @@ fn failure(task: &Task, index: usize, error: String) -> RunItem {
     )
 }
 fn terminal(store: &mut StateStore, task: &Task, record: &RunItem) -> Result<(), run_state::Error> {
-    store.record(
-        item_key(task),
-        json!({"status":if record.status==ItemStatus::Failed {"failed"} else {"completed"},
-        "output":record.output,"error":record.error,"diagnostics":record.diagnostics}),
-    )?;
+    let mut data = json!({"status":if record.status==ItemStatus::Failed {"failed"} else {"completed"},
+        "output":record.output,"error":record.error,"diagnostics":record.diagnostics});
+    data.as_object_mut().unwrap().extend(record.accounting());
+    store.record(item_key(task), data)?;
     Ok(())
 }
 struct Work {
@@ -295,14 +342,17 @@ struct Work {
 }
 
 fn restore_unsent(work: Work, store: &mut StateStore, fatal: &mut Option<String>) {
-    if let Err(error) = store.record(
-        item_key(&work.task),
-        json!({
-            "status":work.previous.status, "target":work.previous.target,
-            "output":work.previous.output, "error":work.previous.error,
-            "diagnostics":work.previous.observations.get("diagnostics")
-        }),
-    ) {
+    let mut data = json!({
+        "status":work.previous.status, "target":work.previous.target,
+        "output":work.previous.output, "error":work.previous.error,
+        "diagnostics":work.previous.observations.get("diagnostics")
+    });
+    for name in run_state::codec::ACCOUNTING {
+        if let Some(value) = work.previous.observations.get(name) {
+            data[name] = value.clone();
+        }
+    }
+    if let Err(error) = store.record(item_key(&work.task), data) {
         fatal.get_or_insert_with(|| error.to_string());
     }
     drop(work);
@@ -909,6 +959,7 @@ fn run_with_namespace(
     // up and its closing line counts every item, not only this run's.
     let mut resumed = report::Resumed::default();
     if continued {
+        let llm = config::enabled(cfg, "/llm/enabled");
         for entry in snapshot
             .documents
             .values()
@@ -920,6 +971,11 @@ fn run_with_namespace(
                 resumed.converted += 1;
             } else {
                 resumed.skipped += 1;
+            }
+            if report::usage_unknown(entry, llm) {
+                resumed.cost_unknown += 1;
+            } else if let Some(cost) = entry.observations.get("cost_usd").and_then(Value::as_f64) {
+                resumed.cost_usd += cost;
             }
         }
         if !cli.quiet && !cli.json {
@@ -1472,7 +1528,35 @@ fn run_with_namespace(
         );
     }
     crate::sort::by_key(&mut records, |record| record.index);
-    let items: Vec<_> = records.iter().map(outcome).collect();
+    // A resumed batch lists the items its earlier runs finished first, with
+    // what their state recorded, so its JSON covers the whole batch.
+    let mut items: Vec<_> = if continued {
+        let processed: BTreeSet<_> = records
+            .iter()
+            .map(|record| (record.kind == ItemKind::Url, record.report_key.as_str()))
+            .collect();
+        let llm = config::enabled(cfg, "/llm/enabled");
+        let saved = store.snapshot().unwrap();
+        saved
+            .documents
+            .iter()
+            .map(|(key, entry)| (ItemKind::File, key, entry))
+            .chain(
+                saved
+                    .urls
+                    .iter()
+                    .map(|(key, entry)| (ItemKind::Url, key, entry)),
+            )
+            .filter(|(kind, key, entry)| {
+                entry.status == Status::Completed
+                    && !processed.contains(&(*kind == ItemKind::Url, key.as_str()))
+            })
+            .map(|(kind, key, entry)| earlier_outcome(kind, key, entry, llm))
+            .collect()
+    } else {
+        Vec::new()
+    };
+    items.extend(records.iter().map(outcome));
     let failed = records
         .iter()
         .filter(|record| record.status == ItemStatus::Failed)

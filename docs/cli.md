@@ -180,8 +180,13 @@ MARKITAI_LANG=zh markitai doctor
 转换 `--json` 顶层为 `version`、`ok`、`error`、`batch`、`items`、`totals`。
 逐项读取 `items[].status`（completed/failed/skipped/pending）、`output`、`error`、
 `warnings` 与 `skip_reason`；PDF 条目的 `page_sources` 逐页说明文字来源（`text` 文字层、`ocr`、`mixed`，
-见 [PDF](pdf.md#where-each-pages-text-came-from)），续跑时此前已完成的条目为空列表。按字段名解析，不依赖显示顺序。普通批量中断/续跑
-只列本次已经结束的条目，未启动项不会凭空出现在 `items`，也不应把它当全历史。
+见 [PDF](pdf.md#where-each-pages-text-came-from)），续跑时此前已完成的条目为空列表。按字段名解析，不依赖显示顺序。
+失败条目的 `cost_usd` 与 `llm_usage` 是它已付费的请求。
+
+`--resume` 续跑时，`items` 先列出此前运行已完成的条目（`earlier_run: true`，带状态文件记录的输出、
+耗时、警告、费用与用量；旧状态未记录费用时 `cost_usd`、`llm_usage` 为 null，表示未知而非 0），
+再列本次处理的条目（`earlier_run: false`）。`totals.cost_usd` 覆盖整个批次，
+`totals.this_run_cost_usd` 只算本次。中断时未启动的条目不会出现在 `items`。
 
 退出码：0 成功或正常跳过；1 单项/运行错误；2 用法错误或供应商 Batch 尚未完成；
 10 普通批量有失败项；130 中断（Ctrl-C，Windows 也含 Ctrl-Break）；143 终止（SIGTERM，Windows 为关闭控制台）。参数错误只有 stderr，没有 JSON envelope。

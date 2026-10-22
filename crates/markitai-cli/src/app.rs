@@ -1910,14 +1910,7 @@ fn recorded(
 }
 
 fn outcome(item: &RunItem) -> Value {
-    let usage = if item.status == ItemStatus::Failed {
-        item.diagnostics
-            .as_ref()
-            .map(|value| &value.last_attempt.usage)
-            .unwrap_or(&item.usage)
-    } else {
-        &item.usage
-    };
+    let usage = item.paid_usage();
     let mut result = json!({
         "kind": if item.kind == ItemKind::Url { "url" } else { "file" },
         "source": item.display,
@@ -1933,6 +1926,7 @@ fn outcome(item: &RunItem) -> Value {
         "skip_reason": item.skip_reason,
         "images": item.images,
         "screenshots": item.screenshots,
+        "earlier_run": false,
         "cost_usd": round(usage.cost_usd, 1_000_000.0),
         "duration_s": item.conversion_duration_s.map(|duration| round(duration, 1000.0)),
         "cache_hit": item.llm_cache_hit,
@@ -1998,7 +1992,14 @@ fn envelope(items: &[Value], error: Option<&str>) -> Value {
             .filter_map(|i| i[field].as_f64())
             .fold(0.0, |sum, value| sum + value)
     };
-    let mut value = json!({"version":"1.0","ok":count("failed")==0 && count("pending")==0 && error.is_none(),"error":error,"batch":null,"items":items,"totals":{"total":items.len(),"completed":count("completed"),"failed":count("failed"),"skipped":count("skipped"),"pending":count("pending"),"cost_usd":round(total("cost_usd"),1_000_000.0),"duration_s":round(total("duration_s"),1000.0)}});
+    // This run's spend: the items an earlier run of a resumed batch finished
+    // are counted in `cost_usd` only.
+    let this_run = items
+        .iter()
+        .filter(|i| i["earlier_run"] != true)
+        .filter_map(|i| i["cost_usd"].as_f64())
+        .fold(0.0, |sum, value| sum + value);
+    let mut value = json!({"version":"1.0","ok":count("failed")==0 && count("pending")==0 && error.is_none(),"error":error,"batch":null,"items":items,"totals":{"total":items.len(),"completed":count("completed"),"failed":count("failed"),"skipped":count("skipped"),"pending":count("pending"),"cost_usd":round(total("cost_usd"),1_000_000.0),"this_run_cost_usd":round(this_run,1_000_000.0),"duration_s":round(total("duration_s"),1000.0)}});
     let pricing = items
         .iter()
         .filter_map(|item| item.get("pricing"))

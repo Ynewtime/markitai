@@ -1278,8 +1278,11 @@ fn a_failed_bare_url_adopts_a_named_key_and_reuses_its_owned_base() {
         ),
         0,
     );
-    assert_eq!(resumed["items"].as_array().unwrap().len(), 1);
-    assert_eq!(resumed["items"][0]["status"], "completed");
+    // The URL the first run finished, then the retried one.
+    assert_eq!(resumed["items"].as_array().unwrap().len(), 2);
+    assert_eq!(resumed["items"][0]["earlier_run"], true);
+    assert_eq!(resumed["items"][1]["status"], "completed");
+    assert_eq!(resumed["items"][1]["earlier_run"], false);
     let key = format!("{retry} renamed.md");
     let after = snapshot(&out);
     assert!(after["urls"].get(&retry).is_none());
@@ -1628,7 +1631,12 @@ fn a_completed_bare_url_can_adopt_a_named_key_without_rewriting_external_edits()
         ),
         0,
     );
-    assert_eq!(result["items"], json!([]));
+    // Nothing to convert again: the one item, as its first run recorded it.
+    let items = result["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["earlier_run"], true);
+    assert_eq!(items[0]["status"], "completed");
+    assert_eq!(items[0]["source"], url.as_str());
     let after = snapshot(&out);
     assert!(after["urls"].get(&url).is_none());
     assert_eq!(after["urls"].as_object().unwrap().len(), 1);

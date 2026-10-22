@@ -76,7 +76,8 @@ and named entries retain the underlying URL. Missing URL provenance and explicit
 null stay distinct when serialized. Detailed legacy measurements are retained
 as optional in-memory observations; missing values are not fabricated as newly
 measured usage or time. Legacy encoding remains minimal; native checkpoints may
-add the explicitly observed attempt diagnostics described below.
+add the explicitly observed attempt diagnostics and the item accounting
+described below.
 
 Merging preserves stored entries and adds discoveries. Legacy bare-URL adoption
 moves one old entry to the first eligible named entry in explicit discovery
@@ -275,16 +276,30 @@ fence; it does not close the window between a provider response and that sync.
 Unstarted work, hard kills and unparseable provider responses cannot supply known
 usage merely because a task or output path exists.
 
+## Native item accounting
+
+A finished (completed or failed) native entry also keeps what its attempt
+cost, took and produced, under Python markitai's state names: `started_at`,
+`completed_at`, `duration` (seconds), `images`, `screenshots`, `cost_usd`,
+`llm_usage` (per model; a failed attempt's paid usage), `cache_hit`,
+`fetch_strategy`, `warnings` (at most 16, each cut to 1 KiB) and `skip_reason`,
+plus `fetch_cache_hit` and `conversion_duration`. A resumed batch reports its
+earlier items from them (see [reports](reports.md#resumed-batches)). Each native
+event carries the whole accounting of the attempt it reports, so admitting a
+new attempt clears the old one and a job prepared but not sent restores it; a
+value of the wrong type is refused like malformed diagnostics. Legacy encoding
+leaves these out.
+
 ## Limits and failures
 
-Default limits are 64 MiB per base, 64 MiB per journal, 1 MiB per event line and
+Default limits are 128 MiB per base, 128 MiB per journal, 1 MiB per event line and
 100,000 combined document/URL entries; the base is written as compact JSON, so
 the entry limit is reachable with per-item usage diagnostics. Files are bounded
 before unrestricted reads; serialization uses a bounded writer. Journal capacity
 triggers compaction, and an oversized snapshot fails instead of becoming
 unreadable on the next run. Because entries grow as items finish, a batch begins
-only if its state still fits when every unfinished entry gains 512 bytes (its
-output path and usage); otherwise it stops before any conversion with `Recovery
+only if its state still fits when every unfinished entry gains 1 KiB (its
+output path, usage and accounting); otherwise it stops before any conversion with `Recovery
 state projected base bytes limit exceeded`. Split such a batch.
 Diagnostics do not dump raw state lines, provider configuration or document data.
 

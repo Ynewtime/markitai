@@ -386,7 +386,7 @@ fn early_failure_has_no_invented_measurement() {
 }
 
 #[test]
-fn mixed_directory_reports_keep_success_totals_separate_from_terminal_observations() {
+fn mixed_directory_reports_count_the_paid_usage_of_a_failed_item() {
     let root = tempfile::tempdir().unwrap();
     let model = Model::new();
     configure(root.path(), &model);
@@ -400,12 +400,20 @@ fn mixed_directory_reports_keep_success_totals_separate_from_terminal_observatio
     assert!(items[1]["source"].as_str().unwrap().ends_with("b.md"));
     usage(&items[0]["diagnostics"], "done", 1, 7, 5);
     assert_failed(&items[1], 1, 11, 3);
+    // The failed item's request was paid: the totals count it, as Python
+    // markitai's do.
     let report = report(root.path());
-    assert_eq!(report["llm_usage"]["requests"], 1);
-    assert_eq!(report["llm_usage"]["input_tokens"], 7);
-    assert_eq!(report["llm_usage"]["output_tokens"], 5);
-    assert_eq!(report["documents"]["b.md"]["llm_usage"], json!({}));
-    assert_eq!(report["documents"]["b.md"]["cost_usd"], 0.0);
+    assert_eq!(report["llm_usage"]["requests"], 2);
+    assert_eq!(report["llm_usage"]["input_tokens"], 18);
+    assert_eq!(report["llm_usage"]["output_tokens"], 8);
+    assert_eq!(
+        report["documents"]["b.md"]["llm_usage"],
+        items[1]["llm_usage"]
+    );
+    assert_eq!(
+        report["documents"]["b.md"]["cost_usd"],
+        items[1]["cost_usd"]
+    );
     assert_eq!(
         report["terminal_diagnostics"]["documents"]["a.md"],
         items[0]["diagnostics"]
@@ -439,18 +447,40 @@ fn resumed_missing_source_clears_prior_paid_failure_without_rewriting_old_histor
     std::fs::remove_file(root.path().join("input/b.md")).unwrap();
     let result = run(root.path(), "input", true, 10);
     assert_eq!(model.count(), 2);
-    assert_eq!(result["items"].as_array().unwrap().len(), 1);
+    // a.md as the first run finished it, then b.md's new attempt.
+    assert_eq!(result["items"].as_array().unwrap().len(), 2);
+    assert_eq!(result["items"][0]["source"], "a.md");
+    assert_eq!(result["items"][0]["earlier_run"], true);
+    assert_eq!(
+        result["items"][0]["llm_usage"]["openai/terminal-fixture"]["requests"],
+        1
+    );
     assert!(
-        result["items"][0]["source"]
+        result["items"][1]["source"]
             .as_str()
             .unwrap()
             .ends_with("b.md")
     );
-    assert!(result["items"][0].get("diagnostics").is_none());
-    assert_eq!(result["items"][0]["llm_usage"], json!({}));
+    assert!(result["items"][1].get("diagnostics").is_none());
+    assert_eq!(result["items"][1]["llm_usage"], json!({}));
+    assert_eq!(result["totals"]["this_run_cost_usd"], 0.0);
     let saved = state(root.path());
     assert!(saved["documents"]["b.md"].get("diagnostics").is_none());
     let report = report(root.path());
+    // The whole batch, the earlier run's item with its own times and usage,
+    // and this run apart.
+    let earlier = &report["documents"]["a.md"];
+    assert_eq!(earlier["earlier_run"], true);
+    assert!(earlier["started_at"].is_string() && earlier["completed_at"].is_string());
+    assert!(earlier["duration"].is_string());
+    assert_eq!(
+        earlier["llm_usage"]["openai/terminal-fixture"]["requests"],
+        1
+    );
+    assert_eq!(report["llm_usage"]["requests"], 1);
+    assert_eq!(report["llm_usage"]["this_run"]["requests"], 0);
+    assert!(report["llm_usage"].get("usage_unknown_items").is_none());
+    assert!(report["documents"]["b.md"].get("earlier_run").is_none());
     usage(
         &report["terminal_diagnostics"]["documents"]["a.md"],
         "done",
@@ -497,7 +527,7 @@ fn url_list_retry_replaces_paid_failure_and_compaction_preserves_latest_identity
     assert_eq!(result["items"][1]["source"], bad);
     assert_failed(&result["items"][1], 1, 11, 3);
     let initial = report(root.path());
-    assert_eq!(initial["llm_usage"]["requests"], 1);
+    assert_eq!(initial["llm_usage"]["requests"], 2);
     assert_eq!(
         initial["terminal_diagnostics"]["urls"][&bad_key],
         result["items"][1]["diagnostics"]
@@ -506,13 +536,15 @@ fn url_list_retry_replaces_paid_failure_and_compaction_preserves_latest_identity
     model.recovered.store(true, Ordering::Release);
     let retried = run(root.path(), "pages.urls", true, 0);
     assert_eq!(model.count(), 3);
-    assert_eq!(retried["items"].as_array().unwrap().len(), 1);
-    assert_eq!(retried["items"][0]["source"], bad);
-    usage(&retried["items"][0]["diagnostics"], "done", 1, 7, 5);
+    assert_eq!(retried["items"].as_array().unwrap().len(), 2);
+    assert_eq!(retried["items"][0]["source"], good);
+    assert_eq!(retried["items"][0]["earlier_run"], true);
+    assert_eq!(retried["items"][1]["source"], bad);
+    usage(&retried["items"][1]["diagnostics"], "done", 1, 7, 5);
     let saved = state(root.path());
     assert_eq!(
         saved["urls"][&bad_key]["diagnostics"],
-        retried["items"][0]["diagnostics"]
+        retried["items"][1]["diagnostics"]
     );
     assert_eq!(saved["urls"][&bad_key]["status"], "completed");
     assert!(root.path().join("out/retry-name.llm.md").is_file());
@@ -522,7 +554,10 @@ fn url_list_retry_replaces_paid_failure_and_compaction_preserves_latest_identity
         assert_eq!(jobs.get(&path), Some(&bytes));
     }
     let quiet = run(root.path(), "pages.urls", true, 0);
-    assert_eq!(quiet["items"], json!([]));
+    let earlier = quiet["items"].as_array().unwrap();
+    assert_eq!(earlier.len(), 2);
+    assert!(earlier.iter().all(|item| item["earlier_run"] == true));
+    assert_eq!(quiet["totals"]["this_run_cost_usd"], 0.0);
     assert_eq!(model.count(), 3);
     assert_eq!(history(root.path()), jobs);
     let recovered = report(root.path());
@@ -542,7 +577,7 @@ fn url_list_retry_replaces_paid_failure_and_compaction_preserves_latest_identity
     );
     assert_eq!(
         state(root.path())["urls"][&bad_key]["diagnostics"],
-        retried["items"][0]["diagnostics"]
+        retried["items"][1]["diagnostics"]
     );
 }
 

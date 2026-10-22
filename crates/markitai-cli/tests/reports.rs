@@ -426,6 +426,7 @@ fn single_file_report_keeps_basename_exact_target_types_and_order() {
             "status",
             "output",
             "error",
+            "warnings",
             "duration",
             "images",
             "screenshots",
@@ -567,6 +568,7 @@ fn directory_partial_failure_preserves_relative_paths_timestamps_and_pending_cou
                 "cache_hit",
                 "output",
                 "error",
+                "warnings",
                 "started_at",
                 "completed_at",
                 "duration",
@@ -704,6 +706,7 @@ fn single_url_report_combines_fetch_cache_but_stdout_retains_llm_only_cache() {
                 "cache_details",
                 "output",
                 "error",
+                "warnings",
                 "fetch_strategy",
                 "duration",
                 "images",
@@ -777,6 +780,7 @@ fn url_list_preserves_raw_named_identity_deduplicates_exact_pairs_and_records_re
                 "status",
                 "output",
                 "error",
+                "warnings",
                 "fetch_strategy",
                 "images",
                 "screenshots",
@@ -821,7 +825,7 @@ fn url_list_partial_failure_keeps_sparse_error_and_single_json_envelope() {
     assert_eq!(group["failed"], 1);
     assert_eq!(saved["summary"]["failed_urls"], 1);
     let failed = &group["urls"][format!("{bad} bad")];
-    keys(failed, &["status", "error"]);
+    keys(failed, &["status", "error", "warnings"]);
     assert_eq!(failed["status"], "failed");
     assert!(!failed["error"].as_str().unwrap().is_empty());
     assert_eq!(

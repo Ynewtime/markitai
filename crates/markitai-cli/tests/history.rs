@@ -1024,7 +1024,20 @@ fn resume_records_only_newly_observed_items_and_no_job_for_an_all_complete_run()
             ),
             0,
         );
-        assert_eq!(cli["items"].as_array().unwrap().len(), 2);
+        // The items the first run finished are listed first, from the state.
+        let items = cli["items"].as_array().unwrap();
+        let earlier = if directory { 2 } else { 1 };
+        assert_eq!(items.len(), earlier + 2);
+        assert!(
+            items[..earlier]
+                .iter()
+                .all(|item| item["earlier_run"] == true)
+        );
+        assert!(
+            items[earlier..]
+                .iter()
+                .all(|item| item["earlier_run"] == false)
+        );
         let all = jobs(root.path());
         assert_eq!(all.len(), 2);
         let second = all.iter().find(|p| **p != first_job).unwrap();
@@ -1051,7 +1064,10 @@ fn resume_records_only_newly_observed_items_and_no_job_for_an_all_complete_run()
             ),
             0,
         );
-        assert_eq!(empty["items"], json!([]));
+        // Nothing converted: every item as an earlier run finished it.
+        let earlier = empty["items"].as_array().unwrap();
+        assert_eq!(earlier.len(), if directory { 4 } else { 3 });
+        assert!(earlier.iter().all(|item| item["earlier_run"] == true));
         assert_eq!(jobs(root.path()), all);
     }
 }
