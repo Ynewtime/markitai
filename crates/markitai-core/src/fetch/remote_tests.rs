@@ -325,6 +325,8 @@ fn an_explicit_always_falls_back_in_order_with_the_configured_options_and_disclo
     let page = PageServer::new(vec![
         Reply::text("no").status(403),
         Reply::text("no").status(403),
+        Reply::text("no").status(403),
+        Reply::text("no").status(403),
     ]);
     let service = Mock::new(vec![
         Answer::text(503, "busy"),
@@ -391,7 +393,7 @@ fn an_explicit_always_falls_back_in_order_with_the_configured_options_and_disclo
     );
     assert_eq!(markdown(&second.unwrap()), "# Second\n\nAgain.");
     assert_eq!(terminal.notices.lock().unwrap().len(), 1);
-    assert_eq!(page.requests().len(), 2);
+    assert_eq!(page.requests().len(), 4); // each refusal is asked twice
     // Remote readings are not stored in the page cache.
     assert!(!directory.path().join("fetch_cache.db").exists());
 }
@@ -407,7 +409,7 @@ fn the_default_always_and_never_keep_auto_local_and_the_default_says_how_to_allo
         if let Some(consent) = consent {
             cfg["fetch"]["remote_consent"] = json!(consent);
         }
-        let page = PageServer::new(vec![Reply::text("no").status(403)]);
+        let page = PageServer::new(vec![Reply::text("no").status(403); 2]);
         let service = Mock::new(Vec::new());
         let terminal = Arc::new(Terminal::default());
         // The configuration's `always` is the default unless the host says
@@ -441,6 +443,8 @@ fn the_default_always_and_never_keep_auto_local_and_the_default_says_how_to_allo
         Reply::text("gone").status(404),
         Reply::text("no").status(403),
         Reply::text("no").status(403),
+        Reply::text("no").status(403),
+        Reply::text("no").status(403),
     ]);
     let service = Mock::new(Vec::new());
     let terminal = Arc::new(Terminal::default());
@@ -458,7 +462,7 @@ fn the_default_always_and_never_keep_auto_local_and_the_default_says_how_to_allo
     assert!(!failure("/b", &services).contains("remote"));
     let hostless = Fixture::new(Gate::new(None, None));
     let services = hostless.services(&service.origin);
-    let page = PageServer::new(vec![Reply::text("no").status(403)]);
+    let page = PageServer::new(vec![Reply::text("no").status(403); 2]);
     let message = fetch_with_services(&page.url("/c"), &cfg, None, true, None, false, &services)
         .err()
         .unwrap()
@@ -475,6 +479,7 @@ fn a_user_tokens_conversion_never_reaches_a_remote_service() {
     let (_directory, mut cfg) = auto_settings();
     cfg["fetch"]["remote_consent"] = json!("always");
     let page = PageServer::new(vec![
+        Reply::text("no").status(403),
         Reply::text("no").status(403),
         Reply::text("gone").status(404),
     ]);
@@ -525,7 +530,7 @@ fn a_user_tokens_conversion_never_reaches_a_remote_service() {
         }
     }
     assert!(service.requests().is_empty());
-    assert_eq!(page.requests().len(), 2);
+    assert_eq!(page.requests().len(), 3); // the refusal is asked twice
     assert_eq!(terminal.asked.load(Ordering::SeqCst), 0);
     assert!(terminal.notices.lock().unwrap().is_empty());
 }
@@ -540,6 +545,7 @@ fn a_chosen_remote_strategy_that_fails_is_read_locally_and_no_other_service_is_a
     cfg["fetch"]["strategy"] = json!("jina");
     let page = PageServer::new(vec![
         Reply::text("Local words of the page."),
+        Reply::text("no").status(403),
         Reply::text("no").status(403),
     ]);
     let service = Mock::new(vec![
@@ -660,6 +666,7 @@ fn ask_asks_once_per_process_and_a_no_keeps_every_later_page_local() {
     cfg["fetch"]["remote_consent"] = json!("ask");
     let page = PageServer::new(vec![
         Reply::text("no").status(403),
+        Reply::text("no").status(403),
         Reply::text("no").status(429),
     ]);
     let service = Mock::new(Vec::new());
@@ -679,6 +686,8 @@ fn ask_asks_once_per_process_and_a_no_keeps_every_later_page_local() {
 
     // Yes: the services are tried for this and every later page.
     let page = PageServer::new(vec![
+        Reply::text("no").status(403),
+        Reply::text("no").status(403),
         Reply::text("no").status(403),
         Reply::text("no").status(403),
     ]);
@@ -709,6 +718,8 @@ fn ask_without_a_terminal_skips_remote_services_with_one_hint() {
     let (_directory, mut cfg) = auto_settings();
     cfg["fetch"]["remote_consent"] = json!("ask");
     let page = PageServer::new(vec![
+        Reply::text("no").status(403),
+        Reply::text("no").status(403),
         Reply::text("no").status(403),
         Reply::text("no").status(403),
     ]);
@@ -746,7 +757,7 @@ fn a_missing_page_local_only_patterns_and_private_names_never_reach_a_service() 
     assert!(message.starts_with("HTTP 404 for "), "{message}");
 
     cfg["fetch"]["policy"]["local_only_patterns"] = json!(["127.0.0.1"]);
-    let page = PageServer::new(vec![Reply::text("no").status(403)]);
+    let page = PageServer::new(vec![Reply::text("no").status(403); 2]);
     assert!(
         fetch_with_services(&page.url("/a"), &cfg, None, true, None, false, &services).is_err()
     );
@@ -756,7 +767,7 @@ fn a_missing_page_local_only_patterns_and_private_names_never_reach_a_service() 
         vars: vars(&[("NO_PROXY", "localhost, 127.0.0.1")]),
         ..fixture.services(&service.origin)
     };
-    let page = PageServer::new(vec![Reply::text("no").status(403)]);
+    let page = PageServer::new(vec![Reply::text("no").status(403); 2]);
     assert!(
         fetch_with_services(&page.url("/a"), &cfg, None, true, None, false, &services).is_err()
     );
@@ -765,7 +776,7 @@ fn a_missing_page_local_only_patterns_and_private_names_never_reach_a_service() 
         private_name: policy::private_name,
         ..fixture.services(&service.origin)
     };
-    let page = PageServer::new(vec![Reply::text("no").status(403)]);
+    let page = PageServer::new(vec![Reply::text("no").status(403); 2]);
     assert!(
         fetch_with_services(&page.url("/a"), &cfg, None, true, None, false, &services).is_err()
     );
@@ -780,7 +791,7 @@ fn a_missing_page_local_only_patterns_and_private_names_never_reach_a_service() 
         },
         ..fixture.services(&service.origin)
     };
-    let page = PageServer::new(vec![Reply::text("no").status(403)]);
+    let page = PageServer::new(vec![Reply::text("no").status(403); 2]);
     let Err(Error::Fetch(message)) =
         fetch_with_services(&page.url("/a"), &cfg, None, true, None, false, &services)
     else {
@@ -866,7 +877,7 @@ fn remote_failures_follow_the_local_one_without_tokens_or_account_ids() {
     let (_directory, mut cfg) = auto_settings();
     cfg["fetch"]["remote_consent"] = json!("always");
     cfg["fetch"]["cloudflare"]["account_id"] = json!("env:TEST_CF_ACCOUNT");
-    let page = PageServer::new(vec![Reply::text("no").status(403)]);
+    let page = PageServer::new(vec![Reply::text("no").status(403); 2]);
     let service = Mock::new(vec![
         Answer::text(429, "slow down"),
         Answer::json(

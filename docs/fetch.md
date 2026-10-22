@@ -84,6 +84,14 @@ replacement characters and no detection.
 
 ## Failures, retries and redirects
 
+The static fetch, and the download of a page's pictures, identify themselves as
+`markitai/<version> (+https://github.com/Ynewtime/markitai)`: the name, the
+version and a contact address, as sites with a User-Agent policy (Wikimedia)
+ask of automated clients. A page answered with 401 or 403 is asked once more
+with a desktop Chrome's `User-Agent`, `Accept` and `Accept-Language` (some sites
+serve browsers only), before `auto` would start the local browser; that second
+answer is the page's, and no other status is asked again.
+
 A failed status reads `HTTP <status> for <URL>` and, for the common ones, a hint:
 404 and 410 "the page may have been removed or is not public", 401 and 403 "the
 site refused access; it may block automated clients or need a login", 429 "rate

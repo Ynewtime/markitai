@@ -401,7 +401,7 @@ fn download(mut url: Url, allow_private: bool) -> Result<Vec<u8>> {
             .timeout(Duration::from_secs(30))
             .connect_timeout(Duration::from_secs(10))
             .resolve_to_addrs(host, &addresses)
-            .user_agent(concat!("markitai/", env!("CARGO_PKG_VERSION")))
+            .user_agent(crate::fetch::USER_AGENT)
             .build()
             .map_err(|_| failure("cannot initialize image HTTP client"))?;
         let response = client

@@ -21,11 +21,35 @@ use remote::{Service, Services};
 
 const MAX_RESPONSE: u64 = 100 * 1024 * 1024;
 
+/// The User-Agent of markitai's own requests: name, version and the contact
+/// address Wikimedia's User-Agent policy asks automated clients for. The
+/// project page is the contact because Akamai (npr.org) resets connections
+/// from agents that name other addresses.
+pub(crate) const USER_AGENT: &str = concat!(
+    "markitai/",
+    env!("CARGO_PKG_VERSION"),
+    " (+https://github.com/Ynewtime/markitai)"
+);
+
+/// The headers of a desktop Chrome request, for the one repeat of a page
+/// request a site refused with 401 or 403: some sites serve browsers only.
+const BROWSER_HEADERS: [(reqwest::header::HeaderName, &str); 3] = [
+    (
+        reqwest::header::USER_AGENT,
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    ),
+    (
+        reqwest::header::ACCEPT,
+        "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    ),
+    (reqwest::header::ACCEPT_LANGUAGE, "en-US,en;q=0.9"),
+];
+
 pub(crate) fn client(timeout: u64) -> Result<Client> {
     let builder = crate::trust::client_builder()
         .timeout(Duration::from_secs(timeout))
         .connect_timeout(Duration::from_secs(15))
-        .user_agent(concat!("markitai/", env!("CARGO_PKG_VERSION")));
+        .user_agent(USER_AGENT);
     // A restricted fetch reaches public addresses only, with every redirect
     // target checked: a user token's job connects directly, any other fetch
     // whose requested host is public keeps the proxy (each target checked
@@ -1479,14 +1503,7 @@ fn fetch_static(
     }
     let mut page = match fresh {
         Some(page) => page,
-        None => decode_static(
-            send(
-                client
-                    .get(url.clone())
-                    .header(reqwest::header::ACCEPT, STATIC_ACCEPT),
-            )?,
-            defer_pdf(cfg),
-        )?,
+        None => decode_static(get_page(&client, url)?, defer_pdf(cfg))?,
     };
     follow_meta_refresh(&client, &mut page, defer_pdf(cfg))?;
     let html_url = page.html.as_ref().map(|_| page.final_url.clone());
@@ -1715,6 +1732,27 @@ enum StaticKind {
     Other,
 }
 
+/// GET a page as markitai, and once more with a desktop browser's headers when
+/// the site refuses the client (401 or 403): one more request costs far less
+/// than the browser `auto` would start next. The second answer, refused or
+/// not, is the page's.
+fn get_page(client: &Client, url: &Url) -> Result<Response> {
+    let response = send(
+        client
+            .get(url.clone())
+            .header(reqwest::header::ACCEPT, STATIC_ACCEPT),
+    )?;
+    if !matches!(response.status().as_u16(), 401 | 403) {
+        return Ok(response);
+    }
+    drop(response);
+    let mut request = client.get(url.clone());
+    for (name, value) in BROWSER_HEADERS {
+        request = request.header(name, value);
+    }
+    send(request)
+}
+
 /// Auto capture must inspect the response before invoking a browser: extensions
 /// and cached HTML cannot identify an opaque URL that now downloads a PDF.
 fn probe_pdf(
@@ -1724,11 +1762,7 @@ fn probe_pdf(
     explicit_strategy: Option<&str>,
     inspect_learning: bool,
 ) -> Result<(Option<FetchOutcome>, bool)> {
-    let response = StaticResponse::read(send(
-        client(30)?
-            .get(url.clone())
-            .header(reqwest::header::ACCEPT, STATIC_ACCEPT),
-    )?)?;
+    let response = StaticResponse::read(get_page(&client(30)?, url)?)?;
     if !response.is_pdf() {
         let needs_javascript = inspect_learning
             && response.kind() == StaticKind::Html
@@ -2753,6 +2787,70 @@ mod cache_tests {
             assert!(run(&server, &cfg).cache_hit);
             assert_eq!(server.requests().len(), 1);
         }
+    }
+
+    #[test]
+    fn a_page_is_asked_for_as_markitai_and_a_refusal_once_more_as_a_browser() {
+        let (_directory, cfg) = settings();
+        let server = Server::new(vec![Reply::html("<p>Served to markitai.</p>")]);
+        assert!(
+            run(&server, &cfg)
+                .document()
+                .markdown
+                .contains("Served to markitai.")
+        );
+        let requests = server.requests();
+        let agent = header(&requests[0], "User-Agent").unwrap();
+        assert!(
+            agent.starts_with("markitai/")
+                && agent.ends_with(" (+https://github.com/Ynewtime/markitai)"),
+            "{agent}"
+        );
+        // 401 and 403 are asked once more with a browser's headers.
+        for status in [401, 403] {
+            let (_directory, cfg) = settings();
+            let server = Server::new(vec![
+                Reply::html("<p>No robots.</p>").status(status),
+                Reply::html("<p>Served to browsers.</p>"),
+            ]);
+            assert!(
+                run(&server, &cfg)
+                    .document()
+                    .markdown
+                    .contains("Served to browsers.")
+            );
+            let requests = server.requests();
+            assert_eq!(requests.len(), 2);
+            assert!(
+                header(&requests[0], "User-Agent")
+                    .unwrap()
+                    .starts_with("markitai/")
+            );
+            assert!(
+                header(&requests[1], "User-Agent")
+                    .unwrap()
+                    .contains("Chrome/")
+            );
+            assert_eq!(
+                header(&requests[1], "Accept-Language").as_deref(),
+                Some("en-US,en;q=0.9")
+            );
+        }
+        // A second refusal is the answer; any other failed status is not repeated.
+        let (_directory, cfg) = settings();
+        let server = Server::new(vec![
+            Reply::html("<p>No.</p>").status(403),
+            Reply::html("<p>Still no.</p>").status(403),
+        ]);
+        let error = fetch_with_context(&server.url("/page"), &cfg, None, true)
+            .err()
+            .unwrap();
+        assert!(error.to_string().contains("403"), "{error}");
+        assert_eq!(server.requests().len(), 2);
+        let (_directory, cfg) = settings();
+        let server = Server::new(vec![Reply::html("<p>Gone.</p>").status(404)]);
+        assert!(fetch_with_context(&server.url("/page"), &cfg, None, true).is_err());
+        assert_eq!(server.requests().len(), 1);
     }
 
     /// Bot checks of DataDome, PerimeterX, Incapsula, AWS WAF, Fastly (as

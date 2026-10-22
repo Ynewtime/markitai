@@ -68,7 +68,8 @@ fn http_failures_name_the_page_and_say_what_to_try() {
         (503, "the site had a server error"),
     ] {
         let (_directory, cfg) = settings();
-        let server = Server::new(vec![Reply::text("no").status(status)]);
+        // A refusal is asked once more as a browser (see `get_page`).
+        let server = Server::new(vec![Reply::text("no").status(status); 2]);
         let message = failure(run(&server, "/gone/page?id=5&view=full", &cfg));
         // The web interface recognizes the message by its leading status.
         assert!(
@@ -188,7 +189,9 @@ fn a_json_refusal_body_and_a_cloudflare_challenge_are_reported_from_the_answer()
     let (_directory, cfg) = settings();
     let refusal = r#"{"error":{"message":"Access is temporarily limited.","code":40362}}"#;
     let server = Server::new(vec![
-        Reply::bytes("application/json", refusal.as_bytes()).status(403),
+        Reply::bytes("application/json", refusal.as_bytes())
+            .status(403);
+        2
     ]);
     let message = failure(run(&server, "/api/page", &cfg));
     assert!(
@@ -202,14 +205,15 @@ fn a_json_refusal_body_and_a_cloudflare_challenge_are_reported_from_the_answer()
         "{message}"
     );
     // An ordinary refusal body is no JSON: nothing is quoted.
-    let server = Server::new(vec![Reply::text("Forbidden").status(403)]);
+    let server = Server::new(vec![Reply::text("Forbidden").status(403); 2]);
     let message = failure(run(&server, "/plain", &cfg));
     assert!(!message.contains("the site said"), "{message}");
     // A Cloudflare bot check says so, whatever the site.
     let server = Server::new(vec![
         Reply::html("<title>Just a moment...</title>")
             .status(403)
-            .header("cf-mitigated", "challenge"),
+            .header("cf-mitigated", "challenge");
+        2
     ]);
     let message = failure(run(&server, "/q", &cfg));
     assert!(
@@ -288,10 +292,20 @@ fn a_tls_handshake_that_ends_early_is_retried() {
 #[test]
 fn statuses_refusals_clean_closes_resets_after_the_request_and_timeouts_are_never_retried() {
     let (_directory, cfg) = settings();
-    for status in [400, 403, 404, 410, 429, 500, 502, 503] {
+    for status in [400, 404, 410, 429, 500, 502, 503] {
         let server = Server::new(vec![Reply::text("no").status(status), Reply::text("yes")]);
         failure(run(&server, "/once", &cfg));
         assert_eq!(server.requests().len(), 1, "{status}");
+    }
+    // A refusal of the client is asked once more as a browser, and only once.
+    for status in [401, 403] {
+        let server = Server::new(vec![
+            Reply::text("no").status(status),
+            Reply::text("no").status(status),
+            Reply::text("yes"),
+        ]);
+        failure(run(&server, "/once", &cfg));
+        assert_eq!(server.requests().len(), 2, "{status}");
     }
     // A server that reads the request and closes the connection cleanly
     // without answering is reported at once.
