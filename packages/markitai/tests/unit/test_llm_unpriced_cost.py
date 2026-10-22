@@ -6,7 +6,8 @@ with no price at all, for which ``completion_cost`` answers $0. Both used to
 reach ``--json`` as ``cost_usd: 0.0`` (``deepseek/deepseek-flash`` in the live
 benchmark: 4 requests, ~9.9k tokens, "0.0"), with no warning and nothing to
 tell them from a free model. ``cost_usd`` stays a number (the priced
-subtotal, as in markitai 1.3); ``unpriced_requests`` marks the unknown part.
+subtotal, as markitai-rust reports it); ``unpriced_requests`` marks the
+unknown part.
 """
 
 from __future__ import annotations
