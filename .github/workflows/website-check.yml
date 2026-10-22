@@ -11,6 +11,7 @@ on:
       - 'CHANGELOG.zh.md'
       - 'scripts/setup.sh'
       - 'scripts/setup.ps1'
+      - 'scripts/check_changelog.py'
       - '.github/workflows/website-check.yml'
   pull_request:
     paths:
@@ -21,6 +22,7 @@ on:
       - 'CHANGELOG.zh.md'
       - 'scripts/setup.sh'
       - 'scripts/setup.ps1'
+      - 'scripts/check_changelog.py'
       - '.github/workflows/website-check.yml'
   workflow_dispatch:
 
@@ -40,6 +42,11 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+
+      # main may correct a released CHANGELOG section, never add an unreleased
+      # one; the full history brings the tags the guard compares against.
+      - name: Check the CHANGELOG has released versions only
+        run: python3 scripts/check_changelog.py
 
       - name: Check whether README packaging needs validation
         id: readme

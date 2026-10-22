@@ -40,6 +40,8 @@ ENV/
 # AI agent local state (session memory, task locks — never commit upstream)
 .claude/
 AGENTS.local.md
+# Unreleased changelog notes; the release commit moves them into CHANGELOG*.md
+.local/
 
 # IDE
 .idea/
