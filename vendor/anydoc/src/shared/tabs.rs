@@ -23,7 +23,8 @@
 //! - a column no row fills is dropped: a tab before every row's text
 //!   indents it (a verse, a quotation) and makes no column;
 //! - two columns only at tab stops the author set, and not after a list
-//!   label (`1.`, `a)`) or a field label (`Date:`); three or more at any;
+//!   label (`1.`, `a)`, or bullets among them) or a field label (`Date:`);
+//!   three or more at any;
 //! - not a list typed by hand (a first column of bullets, which
 //!   [`crate::shared::typed_lists`] reads as a list), a table of
 //!   contents (a tab stop with a leader, or page numbers counting up in the
@@ -281,9 +282,12 @@ fn table(mut rows: Vec<Vec<Vec<Inline>>>, stops: Stops) -> Option<Table> {
     if column(0).all(is_bullet) {
         return None;
     }
+    // markitai: a list typed by hand may mix numbered items and bullets
+    // (pandoc's RTF writes every list item as `1.<Tab>text` or `•<Tab>text`
+    // at a tab stop it sets).
     if width == 2
         && (stops.default_only()
-            || column(0).all(is_number_label)
+            || column(0).all(|text| is_number_label(text) || is_bullet(text))
             || column(0).all(|text| text.ends_with([':', '：'])))
     {
         return None;

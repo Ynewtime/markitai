@@ -578,6 +578,28 @@ fn parse_list(
         }
         first_item = false;
         let label = item_label(ctx, style_name, depth, &chain);
+        // markitai: an item that is a heading (LibreOffice numbers headings
+        // through a list style) is a heading with its number, not a list
+        // item holding one (`1. ## Title`). The number is the list's, unless
+        // the heading has its own.
+        if matches!(item_blocks.first(), Some(Block::Heading { .. })) {
+            let following = number.saturating_add(1);
+            flush(&mut current, &mut out, following);
+            let own = item
+                .child_elems()
+                .find(|child| child.is(ns::TEXT, "h"))
+                .is_some_and(|heading| heading_numbered(heading, ctx));
+            if ordered
+                && !own
+                && let Some(Block::Heading { content, .. }) = item_blocks.first_mut()
+            {
+                let shown = label.unwrap_or_else(|| format!("{number}."));
+                content.insert(0, Inline::Text { text: format!("{shown} "), style: Style::PLAIN });
+            }
+            out.extend(item_blocks);
+            next = following;
+            continue;
+        }
         current.items.push(ListItem { blocks: item_blocks, marker_label: label });
         next = current.start.saturating_add(current.items.len() as u64);
     }
@@ -612,6 +634,20 @@ fn item_label(ctx: &Ctx, style_name: Option<&str>, depth: usize, chain: &[u64]) 
 /// ODF heading numbering: the `text:outline-style` level formats with the
 /// heading's `restart-numbering`/`start-value`/`is-list-header` controls.
 /// Advances the outline sequence; `None` for unnumbered headings.
+/// markitai: whether a heading shows a number of its own: the outline
+/// style numbers its level (see [`heading_label`]) or it holds the number as
+/// shown (`text:number`).
+fn heading_numbered(elem: &Element, ctx: &Ctx) -> bool {
+    let level = elem
+        .attr(ns::TEXT, "outline-level")
+        .and_then(|v| v.parse::<u8>().ok())
+        .unwrap_or(1);
+    let idx = (level.max(1) as usize - 1).min(LIST_LEVELS - 1);
+    let outline = ctx.styles.outline_levels().is_some_and(|levels| levels[idx].marker.ordered())
+        && elem.attr(ns::TEXT, "is-list-header") != Some("true");
+    outline || elem.find(ns::TEXT, "number").is_some_and(|n| !n.text().trim().is_empty())
+}
+
 fn heading_label(elem: &Element, level: u8, ctx: &Ctx) -> Option<String> {
     let levels = ctx.styles.outline_levels()?;
     let idx = (level.max(1) as usize - 1).min(LIST_LEVELS - 1);

@@ -62,6 +62,18 @@ upstream files:
   else the image item EPUB 2's `<meta name="cover">` names by id) comes
   first, after the title, as `![Cover]`, when no page shows it
   (`AssetSink::contains_part`); upstream left it out.
+- `src/formats/rtf/tables.rs`: a list level without `\levelnumbers`
+  (pandoc writes none) reads every `\leveltext` byte up to 8 as a number
+  placeholder, as Word does; upstream wrote it as nothing (` . First`).
+- `src/shared/tabs.rs`: two tab-set columns whose first column mixes list
+  numbers and bullets (pandoc's RTF list items, `1.<Tab>text`,
+  `•<Tab>text`) are a list typed by hand, not a table.
+- `src/formats/docx/styles.rs`: `Title` makes a level-1 heading only as a
+  paragraph's own style; a style based on it (pandoc's `Author`, `Date`,
+  `Subtitle`) is a paragraph.
+- `src/formats/odf/text.rs`: a list item that is a heading is a heading,
+  out of the list, with the list's number unless it shows its own (an
+  outline-numbered level or `text:number`); upstream wrote `1. ## Title`.
 - `src/shared/html.rs`: a text node's whitespace collapses as CSS Text 3
   collapses it: a run of HTML whitespace (space, tab, line feed, form feed,
   carriage return) is one space, nothing when it holds a line break between

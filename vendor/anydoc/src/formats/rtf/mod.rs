@@ -2095,6 +2095,39 @@ mod tests {
         crate::to_markdown_bytes(src.as_bytes(), crate::Format::Rtf).unwrap()
     }
 
+    /// markitai: pandoc writes each list item as a paragraph with a hanging
+    /// indent and its label before a tab stop it sets; a list table without
+    /// `\levelnumbers` places the number at its placeholder byte.
+    #[test]
+    fn pandoc_lists_and_levels_without_levelnumbers_are_lists() {
+        let item = |indent: u32, label: &str, text: &str| {
+            format!(
+                r"{{\pard \ql \f0 \sa0 \li{indent} \fi-360 {label}\tx{indent}\tab {text}\par}}"
+            )
+        };
+        let src = format!(
+            r"{{\rtf1\ansi {{\pard \ql \f0 \sa180 Intro.\par}}{}{}{}{}{}{{\pard \ql \f0 \sa180 After.\par}}}}",
+            item(360, "1.", "First item"),
+            item(360, "2.", "Second item"),
+            item(720, r"\endash", "Nested bullet"),
+            item(360, "3.", "Third item"),
+            item(360, r"\bullet", "A bullet"),
+        );
+        let md = markdown(&src);
+        assert!(!md.contains('|'), "{md}");
+        assert!(md.contains("1. First item"), "{md}");
+        assert!(md.contains("3. Third item"), "{md}");
+        let outline = concat!(
+            r"{\rtf1\ansi{\*\listtable{\list{\listlevel\levelnfc0{\leveltext\'02\'00.;}}\listid1}}",
+            r"{\*\listoverridetable{\listoverride\listid1\listoverridecount0\ls1}}",
+            r"{\listtext 1.\tab}\pard\plain\outlinelevel0\ls1 Introduction\par",
+            r"\pard\plain Body.\par\pard\plain\ls1 One\par\pard\plain\ls1 Two\par}"
+        );
+        let md = markdown(outline);
+        assert!(md.starts_with("# 1. Introduction\n"), "{md}");
+        assert!(!md.contains(" . "), "{md}");
+    }
+
     fn cell_blocks(block: &Block, row: usize, column: usize) -> &[Block] {
         let Block::Table(table) = block else { panic!("expected a table: {block:?}") };
         let crate::model::CellSlot::Origin(cell) = &table.grid[row][column] else {

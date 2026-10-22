@@ -166,7 +166,8 @@ since authors press Tab until the text lines up; at stops the author set each
 tab moves to the next column, so a cell may be empty. A column no row fills,
 such as a tab that indents every row, is dropped. Three columns are enough; two
 need stops the author set and a first column that is not a list label (`1.`,
-`a)`) or a field label (`Date:`). A first column of bullets is a list typed by
+`a)`, bullets among them, as pandoc's RTF writes every list) or a field label
+(`Date:`). A first column of bullets is a list typed by
 hand (below), not a table; a tab stop with a leader or a
 table-of-contents or index style, or a last column of page numbers counting up
 with no header above them (a contents page) keeps the paragraphs as text. The
@@ -336,6 +337,13 @@ in Word documents; LibreOffice's Unicode OpenSymbol does not. Not read: a
 section hidden by a condition (conditions are not evaluated) and paragraphs
 hidden by a `text:hidden-paragraph` field (shown, as LibreOffice can be set to
 show them); form controls show nothing.
+
+A Word `Title` paragraph is a level-1 heading; a style only based on it is
+not (pandoc's `Author`, `Date` and `Subtitle` lines are paragraphs). An ODT
+list item that is a heading (LibreOffice numbering headings through a list
+style) is a heading with the list's number (`## 2. Methods`), and an RTF list
+level without `\levelnumbers` (pandoc) still shows its number (`1.`), not
+` . `.
 
 A DOCX, ODT, RTF or Word 97 document with no heading style or outline level
 anywhere often still shows its headings as short bold paragraphs set above the

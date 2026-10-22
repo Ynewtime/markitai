@@ -28,6 +28,9 @@ impl Default for ListLevelDef {
 /// Build a number pattern from a `\leveltext` payload (first byte = length,
 /// then the characters) and the 1-based placeholder positions listed in
 /// `\levelnumbers` (each placeholder byte is a zero-based level index).
+/// markitai: without `\levelnumbers` (writers that leave it out, such as
+/// pandoc), every byte up to 8 is a placeholder, as Word reads it: such a
+/// byte is never text, and upstream wrote it as nothing (` . First`).
 fn build_pattern(
     text: &[u8],
     positions: &[u8],
@@ -47,7 +50,7 @@ fn build_pattern(
         }
     };
     for (i, &b) in chars.iter().enumerate() {
-        if b <= 8 && positions.contains(&((i + 1) as u8)) {
+        if b <= 8 && (positions.is_empty() || positions.contains(&((i + 1) as u8))) {
             flush(&mut literal, &mut out);
             out.push(NumberText::Level(b));
         } else {
@@ -630,6 +633,22 @@ mod tests {
         let mut found: Vec<i32> = found.into_iter().collect();
         found.sort_unstable();
         found
+    }
+
+    #[test]
+    fn level_placeholders_without_levelnumbers_are_numbers() {
+        // markitai: `\'02\'00.` with `{\levelnumbers\'01;}`, and without it.
+        let enc = encoding_rs::WINDOWS_1252;
+        for positions in [&[1u8][..], &[]] {
+            let pattern = build_pattern(&[2, 0, b'.'], positions, enc);
+            assert!(
+                matches!(&pattern[..], [NumberText::Level(0), NumberText::Literal(dot)] if dot == "."),
+                "{positions:?}: {pattern:?}"
+            );
+        }
+        // A listed position names only its own byte.
+        let pattern = build_pattern(&[3, 0, b'.', 1], &[1], enc);
+        assert!(matches!(&pattern[..], [NumberText::Level(0), NumberText::Literal(_)]), "{pattern:?}");
     }
 
     #[test]

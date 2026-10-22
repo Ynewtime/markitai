@@ -1076,6 +1076,26 @@ mod tests {
         assert_eq!(markdown(&content), "Typed αβγ, stored μm, tick ✓, unicode →, plain abg.\n");
     }
 
+    // markitai: LibreOffice numbers headings through a list style too.
+    #[test]
+    fn a_heading_in_a_numbered_list_is_a_heading_with_its_number() {
+        let styles = r#"<text:list-style style:name="L1">
+              <text:list-level-style-number text:level="1" style:num-format="1" style:num-suffix="."/>
+            </text:list-style>"#;
+        let body = r#"<text:list text:style-name="L1">
+              <text:list-item><text:p>An item.</text:p></text:list-item>
+              <text:list-item><text:h text:outline-level="2">A numbered heading</text:h></text:list-item>
+              <text:list-item><text:p>Another item.</text:p></text:list-item>
+            </text:list>
+            <text:list text:style-name="L1">
+              <text:list-item><text:h text:outline-level="2"><text:number>7.</text:number>Its own</text:h></text:list-item>
+            </text:list>"#;
+        assert_eq!(
+            markdown(&text_doc(styles, body)),
+            "1. An item.\n\n## 2. A numbered heading\n\n3. Another item.\n\n## 7. Its own\n"
+        );
+    }
+
     // markitai: a heading's number as shown.
     #[test]
     fn a_headings_shown_number_is_its_label() {

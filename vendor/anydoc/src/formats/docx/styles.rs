@@ -188,8 +188,15 @@ impl<'a> Styles<'a> {
     /// (`heading N`, `Title`) or an `outlineLvl`, inherited through
     /// `basedOn`. Tri-state: `Some(None)` when the nearest specification is
     /// the explicit off value (`outlineLvl` 9), which stops inheritance.
+    ///
+    /// markitai: `Title` is a heading only as the paragraph's own style. A
+    /// style based on it borrows its look, not its role: pandoc's `Author`,
+    /// `Date` and `Subtitle` are the title block's other lines, which
+    /// upstream made level-1 headings like the title.
     pub fn heading_level(&self, id: &str) -> Result<Option<Option<u8>>, ConvertError> {
+        let mut own = true;
         self.chains.walk(id, |style| {
+            let first = std::mem::replace(&mut own, false);
             let name = style
                 .find(ns::W, "name")
                 .and_then(|e| e.attr(ns::W, "val"))
@@ -201,7 +208,7 @@ impl<'a> Styles<'a> {
                 return Some(Some(level));
             }
             if name == "title" {
-                return Some(Some(1));
+                return Some(first.then_some(1));
             }
             let level = style
                 .find(ns::W, "pPr")?
@@ -338,6 +345,26 @@ mod tests {
         let flip = Toggles { bold: true, ..Default::default() };
         assert!(!flip.apply_over(base).bold);
         assert!(flip.xor(flip).apply_over(base).bold);
+    }
+
+    #[test]
+    fn title_is_a_heading_only_as_a_paragraphs_own_style() {
+        // markitai: pandoc's title block, whose Author and Date are based on Title.
+        let styles_xml = r#"<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+            <w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/></w:style>
+            <w:style w:type="paragraph" w:styleId="Author"><w:name w:val="Author"/><w:basedOn w:val="Title"/></w:style>
+            <w:style w:type="paragraph" w:styleId="Part"><w:name w:val="Part"/><w:basedOn w:val="Title"/><w:pPr><w:outlineLvl w:val="0"/></w:pPr></w:style>
+            <w:style w:type="paragraph" w:styleId="H2"><w:name w:val="heading 2"/></w:style>
+            <w:style w:type="paragraph" w:styleId="H2x"><w:name w:val="Custom"/><w:basedOn w:val="H2"/></w:style>
+        </w:styles>"#;
+        let root = parse(styles_xml);
+        let styles = Styles::parse(root.find(ns::W, "styles").unwrap());
+        assert_eq!(styles.heading_level("Title").unwrap(), Some(Some(1)));
+        assert_eq!(styles.heading_level("Author").unwrap(), Some(None));
+        // Its own outline level still makes one a heading.
+        assert_eq!(styles.heading_level("Part").unwrap(), Some(Some(1)));
+        // A heading's level is inherited as before.
+        assert_eq!(styles.heading_level("H2x").unwrap(), Some(Some(2)));
     }
 
     #[test]
