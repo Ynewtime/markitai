@@ -9,6 +9,28 @@ description = "Native Rust document conversion for Python"
 requires-python = ">=3.10"
 license = "MIT"
 
+# The command-line program, which runs in the native extension.
+[project.scripts]
+markitai = "markitai._cli:markitai"
+mkai = "markitai._cli:mkai"
+markitai-mcp = "markitai._cli:markitai_mcp"
+
+# Python markitai's extras, kept as names so that an existing
+# `pip install "markitai[serve]"` still resolves. They add nothing: the wheel
+# needs no other Python package.
+[project.optional-dependencies]
+all = []
+browser = []
+claude-agent = []
+copilot = []
+extra-fetch = []
+heif = []
+legacy = []
+mcp = []
+ocr = []
+serve = []
+svg = []
+
 [tool.maturin]
 manifest-path = "../../crates/markitai-python/Cargo.toml"
 module-name = "markitai._native"

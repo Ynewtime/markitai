@@ -602,8 +602,7 @@ pub(crate) fn erase_status_line() {
     progress::erase();
 }
 
-pub fn run() -> i32 {
-    let mut arguments: Vec<_> = std::env::args_os().collect();
+pub fn run(mut arguments: Vec<std::ffi::OsString>) -> i32 {
     // A distribution may expose this executable through the existing MCP name.
     // Select the subcommand before the no-argument help path, so stdout remains
     // the protocol stream even when a client starts the alias without flags.

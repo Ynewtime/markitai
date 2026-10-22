@@ -6,11 +6,18 @@ rust-version.workspace = true
 publish.workspace = true
 license.workspace = true
 
+# The program is a library so the Python wheel's native extension runs it too.
+[lib]
+name = "markitai_cli"
+path = "src/lib.rs"
+doctest = false
+
 [[bin]]
 name = "markitai"
 path = "src/main.rs"
+test = false
 
-# mkai includes main.rs, so its unit tests are markitai's; run them once.
+# mkai includes main.rs; the unit tests are the library's.
 [[bin]]
 name = "mkai"
 path = "src/mkai.rs"

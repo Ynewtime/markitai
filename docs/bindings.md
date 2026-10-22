@@ -60,6 +60,17 @@ py -3 -m venv .local\py
 During development `maturin develop --release --locked` (inside an activated
 environment, from `bindings/python`) installs the package in place.
 
+The wheel installs the commands `markitai`, `mkai` and `markitai-mcp`, as the
+Python markitai package did: each runs the command-line program, which the
+wheel's native extension carries, in its own process (the same program as the
+`markitai` executable; `markitai-mcp` is `markitai mcp`). Python markitai's
+extras (`ocr`, `serve`, `mcp`, `claude-agent`, `copilot`, `browser`,
+`extra-fetch`, `svg`, `heif`, `legacy`, `all`) are kept as names that add
+nothing, so an existing `pip install "markitai[serve]"` still resolves: the
+wheel needs no other Python package (Chromium and the subscription runtimes
+are installed as [browser installation](browser-installation.md) and
+[subscriptions](subscriptions.md) describe).
+
 ### Node.js
 
 ```sh
@@ -260,7 +271,8 @@ existing `except ValueError` handlers still catch it; other input errors to
 normalization, map to `ConversionError` with a `code` attribute. Specific filesystem and missing-model codes map to the
 existing named exception types when supplied by the core.
 
-The wheel contains the extension and small typed Python wrapper; see
+The wheel contains the extension (with the command-line program) and a small
+typed Python wrapper; see
 [installation](#python). Run the package tests against an installed wheel with
 private state (create those directories first; preserve toolchain/cache paths
 explicitly when changing `HOME`):

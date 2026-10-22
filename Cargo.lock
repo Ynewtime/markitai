@@ -2239,6 +2239,7 @@ dependencies = [
 name = "markitai-python"
 version = "1.3.0-dev"
 dependencies = [
+ "markitai-cli",
  "markitai-core",
  "pyo3",
  "pyo3-build-config",

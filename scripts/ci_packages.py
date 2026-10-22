@@ -862,6 +862,13 @@ def main():
         run("python-environment", [sys.executable, "-m", "venv", venv])
         python = venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
         run("python-install", [python, "-m", "pip", "install", "--no-index", "--no-deps", wheel])
+        # The commands Python markitai installed run the wheel's program.
+        scripts = venv / ("Scripts" if os.name == "nt" else "bin")
+        for name in ["markitai", "mkai", "markitai-mcp"]:
+            command = scripts / (name + (".exe" if os.name == "nt" else ""))
+            reported = run(f"python-command-{name}", [command, "--version"], cwd=work).strip()
+            if reported.split()[-1:] != [version]:
+                raise RuntimeError(f"The wheel's {name} reported a different version")
         python_probe = """import hashlib, importlib.metadata, json, pathlib, sys, markitai
 from markitai import _native
 distribution = importlib.metadata.distribution('markitai')

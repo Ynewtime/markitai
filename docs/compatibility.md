@@ -8,7 +8,10 @@ complete format fidelity.
 
 ## Commands and configuration
 
-The entry points remain `markitai`, `mkai` and `markitai-mcp` (`markitai mcp`).
+The entry points remain `markitai`, `mkai` and `markitai-mcp` (`markitai mcp`),
+from the executables and from the Python wheel, whose extras (`ocr`, `serve`,
+`mcp`, `claude-agent` and the rest) remain as names that add nothing (see
+[bindings](bindings.md#python)).
 Existing public option spellings and configuration keys are retained where
 implemented; unavailable requests return an explicit error. See the current
 [CLI guide](cli.md), [configuration](configuration.md), and `markitai --help`
