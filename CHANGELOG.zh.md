@@ -15,7 +15,7 @@
 ### 变更
 
 - **长 PDF 用上所有核提取，也不再拖住同时转换的其他 PDF。** 提取用的工作进程（CLI、`markitai serve`、MCP）原来是 CPU 核数减二：4 核的机器只用两个核提取，主进程只是等待工作进程，另外两个核就空着。现在每个本进程可用的核一个工作进程（taskset 和容器的 CPU 集合都算在内），仍然最多 12 个，合计不超过可用内存的四分之一，所以 14 核及以上的机器不变。文档以每任务四页交给工作进程，同一时刻每个工作进程一个任务（外加一个排队），原来是每个工作进程一整段、一次全部提交：同时转换的 PDF（例如工作台的第二个任务、批处理的下一个文件）只需等一个任务，而不是等整篇文档。页面截图（`--screenshot`，以及 `--ocr --llm` 发给模型的页面）在工作进程运行时由它们渲染；PyMuPDF 渲染时持有 Python 的 GIL，原来在主进程里渲染的多个线程只能轮流进行。输出逐字节相同。在 4 核 Linux 机器上（409 页的文字 PDF，冷启动 CLI）：53–55 秒 → 29–32 秒，CPU 时间不变，约 100 秒，峰值内存 0.8 GB → 1.3 GB（四个工作进程，每个约 380 MB）。在它开始 3 秒后启动的 5 页 PDF 原来 55–65 秒后才完成，现在 1.4–4.7 秒。166 页、带图片并开启 `--screenshot` 的 PDF 在主进程里只花 1.0 秒 CPU，原来是 6.3 秒。
-- **在现有约束内更新依赖**（CI 和开发使用的锁文件）。Pillow 13.0.0 修复 24 个 CVE（其中包括不可信图片的解码器）；certifi 2026.10.19 移除被攻破的 emSign 中间证书；virtualenv（开发用）修复 4 个。PyMuPDF 2.0 现在把版面引擎和 pymupdf4llm 放进 `pymupdf` 本身（同样的 AGPL/商业双许可；样本集上的 PDF 输出不变），RapidOCR 3.10、MarkItDown 0.1.9、starlette 1.9 / FastAPI 0.159 和 Playwright 1.64（会下载自己的 Chromium 156）已更新。LiteLLM 保持 1.104.2，Anthropic SDK 保持 1.12.1：更新的 LiteLLM 版本会改变 markitai 依赖的 OpenRouter 模型上限和价格，Anthropic 2.x 改用 Bearer 令牌发送密钥，会让读取 `X-Api-Key` 的网关失效。
+- **在现有约束内更新依赖**（CI 和开发使用的锁文件）。Pillow 13.0.0 修复 24 个 CVE（其中包括不可信图片的解码器）；certifi 2026.10.19 移除被攻破的 emSign 中间证书；virtualenv（开发用）修复 4 个。PyMuPDF 2.0 现在把版面引擎和 pymupdf4llm 放进 `pymupdf` 本身（同样的 AGPL/商业双许可；样本集上的 PDF 输出不变），RapidOCR 3.10、MarkItDown 0.1.9、starlette 1.9 / FastAPI 0.159 和 Playwright 1.64（会下载自己的 Chromium 156）已更新。LiteLLM 保持 1.104.2，Anthropic SDK 保持 1.12.1，安装包现在也这样要求（`<1.105`、`<2`；见 1.2.1 的说明）。
 
 ### 修复
 
@@ -100,6 +100,7 @@
 - `markitai serve` 的 LLM 设置接口（`/api/settings/llm…`，包括已存凭据）对所有客户端都要求访问令牌，本机也不例外：本机任何程序、另一个 `localhost` 端口上的网页同样经回环地址连入。启动时打开的浏览器和打印出的令牌 URL 都带有令牌；使用 `--no-auth` 时，本机仍可不带令牌访问设置。没有客户端地址的请求不再被当作来自本机。
 - **`markitai serve --no-auth` 只为本机抓取 URL**：其他机器提交带 URL 的任务或重试会收到 403 `remote_url_forbidden`，公网地址和内网地址一样，与共享工作台的 API 约定一致。此前其他机器只是限于公网地址，任何能连上服务器的人仍可借它抓取网页。本机仍可提交任意 URL，其他机器仍可上传文件；启用令牌认证（默认）时，持有令牌的机器保有全部权限。
 - 升级须知：LLM 缓存键现在覆盖全文和图片字节，所以已有的 `cache.db` 条目在升级后首次运行时都不会命中，已处理过的文档第一次重跑会重新调用 LLM。`markitai serve` 的历史改为从任务完成时间起算，不再看目录修改时间，所以完成超过七天的历史会在首次启动时删除，即使其目录最近被改动过。
+- **安装包现在要求 `litellm>=1.83.0,!=1.92.0,<1.105` 和 `anthropic>=1.0.0,<2`。** 全新安装会拿到最新版本，而它们改变了 markitai 依赖的东西：LiteLLM 1.105 把 Claude Sonnet 5.5 的缓存读取按公布价格的两倍计价，1.106.0 和 1.106.1 把 OpenRouter 的 `~anthropic/claude-haiku-latest`（OpenRouter 默认模型）改成了别的上限和价格，1.106.2 删掉了所有 OpenRouter 模型的条目，导致它们的视觉支持和上限信息丢失；Anthropic SDK 2.0 改用 Bearer 令牌发送 API 密钥，读取 `X-Api-Key` 的网关会拒绝 `--llm-batch`。现在全新安装会得到 LiteLLM 1.104.x 和 Anthropic SDK 1.x。
 
 ### 修复
 

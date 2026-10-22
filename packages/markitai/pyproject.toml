@@ -28,16 +28,18 @@ classifiers = [
 ]
 dependencies = [
     "pymupdf4llm>=1.28.2",  # >=1.28.2 is a licence floor, not a feature floor: pymupdf4llm hard-depends on a pinned pymupdf-layout, and 1.28.0 shipped that layout engine as "Polyform Noncommercial or Artifex Commercial" — a non-commercial licence inside an MIT tool. 1.28.2 restored AGPL-3.0 dual licensing (see NOTICE). Never pin back: 1.27.2.x pins pymupdf_layout==1.27.2.3, which has the same problem. From 2.0 the layout and 4llm code ship inside pymupdf itself (same dual licence) and pymupdf4llm/pymupdf-layout are empty packages
-    "anthropic>=1.0.0",  # Message Batches API only: litellm implements the retrieve
+    "anthropic>=1.0.0,<2",  # Message Batches API only: litellm implements the retrieve
                          # half for Anthropic and raises NotImplementedError on create.
-                         # Pure Python; httpx2/pydantic/anyio already come with litellm
+                         # Pure Python; httpx2/pydantic/anyio already come with litellm.
+                         # <2: 2.0 sends the key as a Bearer token (a gateway reading
+                         # X-Api-Key refuses --llm-batch) and moves to Apache-2.0
     "markitdown[docx,pptx,xlsx,xls,outlook]>=0.1.5",  # office formats only; pdf handled by pymupdf4llm, audio/youtube/azure unused
     "markdownify>=1.2.3,<2",  # native HTML renderer uses the parent_tags API
     "mammoth>=1.11,<2",  # direct DOCX path; OMML still uses markitdown fallback
     "python-pptx>=1.0.2,<2",  # direct PPTX reader and local geometry resolution
     "httpx>=0.27.0",  # unconditional imports: providers/chatgpt.py, image.py, fetch_http.py default backend
     "lxml>=5.0.0",  # webextract/dom.py fast parser
-    "litellm>=1.83.0,!=1.92.0",  # >=1.83.0 excludes compromised 1.82.7/1.82.8 (March 2026 supply-chain attack); !=1.92.0 shipped manylinux-only wheels — macOS/Windows installs fall back to building its Rust extension from sdist (fails without cargo, or with pyo3-unsupported default Pythons)
+    "litellm>=1.83.0,!=1.92.0,<1.105",  # >=1.83.0 excludes compromised 1.82.7/1.82.8 (March 2026 supply-chain attack); !=1.92.0 shipped manylinux-only wheels — macOS/Windows installs fall back to building its Rust extension from sdist (fails without cargo, or with pyo3-unsupported default Pythons); <1.105: 1.105.x prices claude-sonnet-5-5 cache reads at $0.20 (published: $0.10), 1.106.0/1.106.1 move OpenRouter's ~anthropic/claude-haiku-latest to Haiku 5.5 limits and prices, 1.106.2 drops every OpenRouter row (vision flags and limits lost); model_catalog only fills in names LiteLLM lacks
     "instructor>=1.14.5",
     "click>=8.3.0",
     "rich-click>=1.9.4",
