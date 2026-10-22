@@ -381,9 +381,10 @@ does. The first rule that applies wins:
    userinfo), or that `fetch.policy.local_only_patterns` names, uses the local
    steps only. With `fetch.policy.inherit_no_proxy` (the default) the entries
    of `NO_PROXY` (or `no_proxy`) count as local-only patterns too. Patterns use
-   the `NO_PROXY` grammar: `*`, `.name` and `*.name` (subdomains only), CIDR
-   blocks (`10.0.0.0/8`, `192.168.1.0/255.255.255.0`, `fd00::/8`), and exact
-   hosts or addresses. A Unicode name such as `bücher.de` matches its punycode
+   the `NO_PROXY` grammar: `*`, `.name` and `*.name` (subdomains only), a name
+   (`corp.example`: it and its subdomains, such as `api.corp.example`, as curl
+   and Go read it), CIDR blocks (`10.0.0.0/8`, `192.168.1.0/255.255.255.0`,
+   `fd00::/8`), and exact addresses. A Unicode name such as `bücher.de` matches its punycode
    host.
 2. `fetch.domain_profiles."<host[:port]>".strategy_priority` (the exact
    authority, as the browser profile is looked up) replaces the order.
@@ -865,7 +866,8 @@ all setting subprocesses, whose output is limited and process group reaped.
 
 `NO_PROXY` (or `no_proxy` when it is unset or empty) always applies; a system
 exception list applies only with its system proxy. `*` matches everything,
-`.name`/`*.name` match subdomains only, other names and addresses match exactly,
+`.name`/`*.name` match subdomains only, another name matches itself and its
+subdomains (`corp.example` covers `api.corp.example`), addresses match exactly,
 and CIDR blocks (a prefix length or an IPv4 netmask) match addresses; this is
 the grammar of `fetch.policy.local_only_patterns` too. Each unsupported entry, such as `<local>`, a
 port-qualified host, another wildcard or malformed CIDR, is ignored on its own,

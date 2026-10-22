@@ -93,7 +93,10 @@ fn system_settings_are_read_only_when_needed_and_merge_only_their_own_exceptions
     assert!(decide(&settings, "https://other.test/", || None).is_none());
     let (server, bypass) = settings.browser(os).unwrap();
     assert_eq!(server.as_deref(), Some("http://sys.test:3128"));
-    assert!(bypass.ends_with(";env.test;os.test"), "{bypass}");
+    assert!(
+        bypass.ends_with(";env.test;.env.test;os.test;.os.test"),
+        "{bypass}"
+    );
     // With an environment proxy, the system exception list never applies.
     let env_proxy = Settings::resolve(&env(&[("HTTP_PROXY", "http://env.proxy:1")])).unwrap();
     assert_eq!(
@@ -137,7 +140,8 @@ fn bypass_rules_follow_reference_matching_and_ignore_unsupported_entries() {
     .unwrap();
     let cases = [
         ("http://exact.test/", true),
-        ("http://sub.exact.test/", false),
+        ("http://sub.exact.test/", true),
+        ("http://notexact.test/", false),
         ("http://a.suffix.test/", true),
         ("http://suffix.test/", false),
         ("http://a.b.star.test/", true),
@@ -229,7 +233,7 @@ fn chromium_projection_keeps_loopback_and_supported_rules_only() {
     assert_eq!(server.as_deref(), Some("http://proxy.test:8080"));
     assert_eq!(
         bypass,
-        "localhost;*.localhost;127.0.0.0/8;[::1];a.test;.b.test;10.0.0.0/8;[::9]"
+        "localhost;*.localhost;127.0.0.0/8;[::1];a.test;.a.test;.b.test;10.0.0.0/8;[::9]"
     );
 }
 

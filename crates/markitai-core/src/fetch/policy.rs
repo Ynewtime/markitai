@@ -681,7 +681,8 @@ mod tests {
         .into();
         for (address, local) in [
             ("https://intranet.example/a", true),
-            ("https://www.intranet.example/a", false),
+            ("https://www.intranet.example/a", true),
+            ("https://notintranet.example/a", false),
             ("https://wiki.corp.example/a", true),
             ("https://corp.example/a", false),
             ("http://10.1.2.3/a", true),

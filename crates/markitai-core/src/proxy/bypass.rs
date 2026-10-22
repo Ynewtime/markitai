@@ -1,6 +1,7 @@
 //! `NO_PROXY`-style exceptions with the reference matcher's semantics:
 //! `*` matches everything, `.example.com` and `*.example.com` match
-//! subdomains only, other names and IP addresses match exactly, and CIDR
+//! subdomains only, another name matches itself and its subdomains (as curl,
+//! Go and Python read `NO_PROXY`), IP addresses match exactly, and CIDR
 //! blocks (a prefix length or an IPv4 netmask) match addresses. Names are
 //! compared as the URL parser spells them, so Unicode names match punycode.
 //! `fetch.policy.local_only_patterns` uses the same grammar. Unsupported rules such as `<local>`, port-qualified
@@ -15,7 +16,8 @@ use url::Url;
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum Rule {
     All,
-    Exact(String),
+    /// A name and its subdomains.
+    Domain(String),
     Suffix(String),
     Address(IpAddr),
     Network(IpAddr, u8),
@@ -91,7 +93,7 @@ fn rule(raw: &str) -> Option<Rule> {
     if let Some(suffix) = raw.strip_prefix("*.").or_else(|| raw.strip_prefix('.')) {
         return domain(suffix).map(Rule::Suffix);
     }
-    domain(raw).map(Rule::Exact)
+    domain(raw).map(Rule::Domain)
 }
 
 fn host(url: &Url) -> (String, Option<IpAddr>) {
@@ -159,7 +161,12 @@ impl Bypass {
         let (name, address) = host(url);
         self.rules.iter().any(|rule| match rule {
             Rule::All => true,
-            Rule::Exact(value) => name == *value,
+            Rule::Domain(value) => {
+                name == *value
+                    || name
+                        .strip_suffix(value.as_str())
+                        .is_some_and(|prefix| prefix.ends_with('.'))
+            }
             Rule::Suffix(value) => name
                 .strip_suffix(value.as_str())
                 .is_some_and(|prefix| prefix.ends_with('.')),
@@ -171,8 +178,8 @@ impl Bypass {
     }
 
     /// The same rules in Chromium's documented `--proxy-bypass-list` grammar:
-    /// a plain host is exact, `.name` means subdomains only, IPv6 hosts are
-    /// bracketed and IPv6 CIDR blocks are not.
+    /// a plain host is exact there, so a name is given with `.name` for its
+    /// subdomains; IPv6 hosts are bracketed and IPv6 CIDR blocks are not.
     pub(super) fn chromium(&self) -> String {
         let mut rules = vec![
             "localhost".to_owned(),
@@ -182,16 +189,18 @@ impl Bypass {
         ];
         let mut seen: HashSet<String> = rules.iter().cloned().collect();
         for rule in &self.rules {
-            let value = match rule {
-                Rule::All => "*".into(),
-                Rule::Exact(name) => name.clone(),
-                Rule::Suffix(name) => format!(".{name}"),
-                Rule::Address(IpAddr::V4(ip)) => ip.to_string(),
-                Rule::Address(IpAddr::V6(ip)) => format!("[{ip}]"),
-                Rule::Network(ip, bits) => format!("{ip}/{bits}"),
+            let values = match rule {
+                Rule::All => vec!["*".into()],
+                Rule::Domain(name) => vec![name.clone(), format!(".{name}")],
+                Rule::Suffix(name) => vec![format!(".{name}")],
+                Rule::Address(IpAddr::V4(ip)) => vec![ip.to_string()],
+                Rule::Address(IpAddr::V6(ip)) => vec![format!("[{ip}]")],
+                Rule::Network(ip, bits) => vec![format!("{ip}/{bits}")],
             };
-            if seen.insert(value.clone()) {
-                rules.push(value);
+            for value in values {
+                if seen.insert(value.clone()) {
+                    rules.push(value);
+                }
             }
         }
         rules.join(";")
