@@ -174,9 +174,14 @@ an existing connection without sending its secret through a list response.
 
 Collection responses show only credential-presence flags and HTTP(S) origin; they
 omit userinfo, URL paths, query and fragments. The explicit credentials endpoint
-returns the raw stored fields, including an `env:NAME` reference rather than its
-resolved value. `api_base_placeholder` is separate, so editing a key does not
-accidentally persist a default endpoint as an override.
+never returns a stored key: `api_key` and `api_key_masked` are its masked form
+(`sk…7890`; an `env:NAME` reference is shown as it is, never resolved, and a
+connection the environment serves reads `env:NAME` with `api_key_source:
+"environment"`), and `api_base` keeps its text without userinfo or secret query
+values (`https://…@gw.example/v1?api_key=…`). Sending either back unchanged keeps
+the stored value; an update without `api_key` keeps the key.
+`api_base_placeholder` is separate, so editing a key does not accidentally
+persist a default endpoint as an override.
 
 All settings responses, including errors, use `Cache-Control: no-store`. Every
 client, including loopback and same-host reverse proxies, needs the server token.

@@ -43,7 +43,11 @@ configuration or the process environment, not in task content or published logs.
   See [PDF](pdf.md), [OCR](ocr.md) and [Office rendering](office-rendering.md).
 - **Service authentication:** the startup token is required for all API clients,
   including loopback, unless the operator explicitly chooses `--no-auth`.
-  Workbench connection IDs can reuse server credentials only under the
+  Python markitai let a client on the same computer call the API without it; a
+  local script now sends `Authorization: Bearer <token>` (or `?token=`), with the
+  token printed at startup or fixed through `MARKITAI_SERVE_TOKEN` (see
+  [serve](serve.md#network-and-file-boundaries)). Workbench connection IDs can reuse server
+  credentials only under the
   [settings endpoint restrictions](service-settings.md#credentials-and-partial-updates).
 - **Cloud processing:** `serve` requires fresh request authorization for selected
   Cloudflare work; a saved selection is not consent. Known model cost excludes
@@ -77,6 +81,43 @@ configuration or the process environment, not in task content or published logs.
 - **Bindings:** Python, Node and Go share the conversion envelope but their
   convenience functions and error types differ. Windows Go/cgo packages are not
   delivered. See [bindings](bindings.md) and [MCP](mcp.md).
+
+## Coming from Python markitai 1.2
+
+Besides the differences above, scripts written for Python markitai notice these:
+
+- **Page and slide markers:** Python always wrote `<!-- Page number: N -->` (PDF)
+  and `<!-- Slide number: N -->` (presentations), with no switch. They are left
+  out by default here; `--page-markers` or `"output": {"page_markers": true}`
+  keeps them, for scripts that split a document by page. The `rag` profile
+  writes its own `<!-- page: N -->` either way. See [formats](formats.md).
+- **Exit status and streams:** a usage error (unknown option, missing value)
+  exits 2, where Python exited 0 or 1. An image converted without `--ocr` or
+  `--llm` is skipped with a warning and exit 0 (Python: 1). `--llm` with no
+  usable model stops with exit 1 before converting (Python wrote the base
+  Markdown and exited 0); `--dry-run` warns about it. The `✓ Wrote out/a.md`
+  line goes to stderr, so stdout holds only document output (Python printed
+  the written path on stdout). See [troubleshooting](troubleshooting.md#exit-status).
+- **Asset names:** extracted pictures are named by their content
+  (`.markitai/assets/510f5d9476ab159c03ccda77.jpg`, so a picture used twice is
+  stored once) instead of numbered `<document>.0001.<ext>` names, and with
+  `image.compress` on (the default) PNG and HEIC pictures are written as `.jpg`. Presentation
+  screenshots are `<deck>.pptx.page0001.jpg`, not `slide0001`. Read the names
+  from the Markdown, `images.json` or `-f json` rather than guessing them.
+- **Slide and page images of Office files:** only an installed LibreOffice
+  draws them, on every system; Python could also drive an installed Microsoft
+  Office (PowerPoint through COM on Windows, through AppleScript on macOS with
+  `office.macos_fallback`, which is accepted here with a warning that it has no
+  effect). Without LibreOffice the text is converted and a warning says to
+  install it. See [Office rendering](office-rendering.md).
+- **Knobs that are gone:** `markitai doctor --timings` and `doctor
+  --suggest-extras` (there are no extras to install; `doctor` names what is
+  missing), `MARKITAI_PDF_WORKERS` (PDFs are read in process, without worker
+  processes), `MARKITAI_STATIC_HTTP` (one static HTTP client), inline terminal
+  images (`image.stdout_fetch_external` has no effect; pictures on stdout are
+  kept as files, see [images](images.md#images-on-stdout)) and
+  `batch.heavy_task_limit` (warned as having no effect; use `-j`/
+  `batch.concurrency`). See [configuration](configuration.md).
 
 ## Limits and validation
 
