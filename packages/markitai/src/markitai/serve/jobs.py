@@ -258,8 +258,11 @@ class Job:
     options: dict[str, Any]
     cfg: MarkitaiConfig
     items: list[JobItem] = field(default_factory=list)
-    status: str = "running"  # running | done
+    status: str = "running"  # running | done | error (history not saved)
     finished_at: str | None = None  # set when the job reaches its terminal state
+    # Why the finished job could not be saved to history (status "error");
+    # its results stay downloadable until the server stops.
+    persistence_error: str | None = None
     dir_size_bytes: int | None = None  # cached at terminal state (see meta.json)
     task: asyncio.Task[None] | None = None  # the initial run
     retry_task: asyncio.Task[None] | None = None  # the retry-queue drainer
@@ -334,12 +337,15 @@ class Job:
 
     def progress_payload(self) -> dict[str, Any]:
         """Return the job event payload (contract: ``event: job``)."""
-        return {
+        payload: dict[str, Any] = {
             "status": self.status,
             "done": self.done_count,
             "failed": self.failed_count,
             "total": len(self.items),
         }
+        if self.persistence_error is not None:
+            payload["persistence_error"] = self.persistence_error
+        return payload
 
     def item_payload(self, item: JobItem) -> dict[str, Any]:
         """One item as clients see it, with its saved (public) options."""
@@ -361,6 +367,11 @@ class Job:
             "total": len(self.items),
             "items": [self.item_payload(i) for i in self.items],
             "label": self.label,
+            **(
+                {"persistence_error": self.persistence_error}
+                if self.persistence_error is not None
+                else {}
+            ),
         }
 
 
@@ -1501,6 +1512,14 @@ def _job_is_idle(job: Job) -> bool:
     return job.runners == 0 and job.retry_queue.empty() and not job.retry_pending
 
 
+#: ``persistence_error`` of a job whose history could not be saved (Rust's
+#: wording, contract ``JobSnapshot.persistence_error``).
+PERSISTENCE_ERROR = (
+    "history could not be persisted; completed artifacts remain available "
+    "until shutdown"
+)
+
+
 async def finalize_job(registry: JobRegistry, job: Job) -> None:
     """Persist and publish a job after its initial run or retry queue drains."""
     finished_at = now_iso()
@@ -1530,12 +1549,15 @@ async def finalize_job(registry: JobRegistry, job: Job) -> None:
     job.finished_at = finished_at
     job.dir_size_bytes = size
     job.status = "done"
+    job.persistence_error = None
     try:
         write_job_meta(job, refresh_size=False)
-    except OSError as e:  # history is best effort; the job itself succeeded
-        logger.warning(
-            "[Serve] Failed to write meta.json for job {}: {}", job.job_id, e
-        )
+    except OSError as e:
+        # Not "done": without meta.json the job is gone from history after a
+        # restart. Its results stay downloadable until then (as in Rust).
+        logger.error("[Serve] History persistence failed for job {}: {}", job.job_id, e)
+        job.status = "error"
+        job.persistence_error = PERSISTENCE_ERROR
     registry.publish_job(job)
     logger.info(
         "[Serve] Job {} finished: {} done, {} failed, {} total",

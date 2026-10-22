@@ -279,6 +279,48 @@ class TestRehydrate:
 
         assert snapshot["items"][0]["finished_at"] == finished_at
 
+    async def test_a_failed_history_save_is_reported_not_done(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A job whose meta.json could not be written was reported "done"
+        and vanished from history at the next start. Like Rust it now ends
+        with status "error" and ``persistence_error``, its results stay
+        downloadable, and it is not listed as saved history."""
+        import markitai.serve.jobs as jobs_module
+
+        app = _make_app(tmp_path)
+        monkeypatch.setattr("markitai.serve.jobs.process_file_item", _fake_converter())
+
+        def refuse(job: Any, refresh_size: bool = True) -> None:
+            raise OSError("disk full")
+
+        monkeypatch.setattr(jobs_module, "write_job_meta", refuse)
+        async with _serve_client(app) as client:
+            created = await client.post(
+                "/api/jobs", files=_multipart([("doc.txt", b"hello")])
+            )
+            job_id = created.json()["job_id"]
+            deadline = time.monotonic() + 30
+            while True:
+                data = (await client.get(f"/api/jobs/{job_id}")).json()
+                if data["status"] != "running" or time.monotonic() > deadline:
+                    break
+                await asyncio.sleep(0.05)
+            events = _parse_sse((await client.get(f"/api/jobs/{job_id}/events")).text)
+            output = await client.get(
+                f"/api/jobs/{job_id}/files/{data['items'][0]['output']}"
+            )
+            history = (await client.get("/api/history")).json()
+
+        assert data["status"] == "error"
+        assert data["persistence_error"] == jobs_module.PERSISTENCE_ERROR
+        assert data["done"] == 1
+        snapshot = next(payload for name, payload in events if name == "snapshot")
+        assert snapshot["status"] == "error"
+        assert snapshot["persistence_error"] == jobs_module.PERSISTENCE_ERROR
+        assert output.status_code == 200
+        assert job_id not in [entry["job_id"] for entry in history]
+
     async def test_rehydrate_skips_dirs_without_valid_terminal_meta(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

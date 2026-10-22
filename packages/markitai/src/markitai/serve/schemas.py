@@ -785,10 +785,13 @@ class JobPayload(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    status: str  # "running" | "done"
+    status: str  # "running" | "done" | "error" (history not saved)
     done: int
     failed: int
     total: int
+    # With status "error": why the finished job could not be saved to
+    # history (its results stay downloadable until the server stops)
+    persistence_error: str | None = None
 
 
 class JobSnapshot(JobPayload):

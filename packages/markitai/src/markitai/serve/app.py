@@ -5848,6 +5848,8 @@ def create_app(
             item.skip_reason = None
             item.warnings = []
             job.status = "running"
+            # A failed history save is tried again when the retry finishes
+            job.persistence_error = None
             job.generation += 1
             job.finished_at = None
             job.retry_pending.add(item_id)
@@ -6716,10 +6718,14 @@ def create_app(
         # a job finished in this process is one entry, and startup rehydrate
         # never overwrites a live registry entry. A user sees only its own.
         caller = _caller(request)
+        # A job whose history could not be saved is not saved history
         jobs = [
             job
             for job in registry.jobs.values()
-            if job.status != "running" and not job_expired(job) and caller.sees(job)
+            if job.status != "running"
+            and job.persistence_error is None
+            and not job_expired(job)
+            and caller.sees(job)
         ]
 
         def entry(job: Job) -> dict[str, Any]:

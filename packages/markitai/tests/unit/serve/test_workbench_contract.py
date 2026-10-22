@@ -208,6 +208,9 @@ SHAPES: dict[str, dict[str, F]] = {
         "done": F("int"),
         "failed": F("int"),
         "total": F("int"),
+        # The SSE `job` event carries it too (contract §SSE: JobProgress
+        # + persistence_error?)
+        "persistence_error": opt("str"),
     },
     "JobSnapshot": {
         "status": F(frozenset({"running", "done", "error"})),
