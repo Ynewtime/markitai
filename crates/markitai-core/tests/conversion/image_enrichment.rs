@@ -29,6 +29,10 @@ fn isolated(name: &str) -> bool {
         .env_clear()
         .env("MARKITAI_IMAGE_ENRICHMENT_TEST", &exact)
         .env("MARKITAI_HOME", &home)
+        // No subscription runtime signed in on this machine joins the pool.
+        .env("CLAUDE_CLI_PATH", dir.path().join("absent"))
+        .env("COPILOT_CLI_PATH", dir.path().join("absent"))
+        .env("CODEX_CLI_PATH", dir.path().join("absent"))
         .env("TMPDIR", &tmp)
         .current_dir(dir.path())
         .stdout(Stdio::from(std::fs::File::create(&stdout).unwrap()))

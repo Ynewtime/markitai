@@ -28,6 +28,10 @@ fn isolated(name: &str) -> bool {
         .env_clear()
         .env("MARKITAI_TERMINAL_USAGE_TEST", &exact)
         .env("MARKITAI_HOME", state)
+        // No subscription runtime signed in on this machine joins the pool.
+        .env("CLAUDE_CLI_PATH", dir.path().join("absent"))
+        .env("COPILOT_CLI_PATH", dir.path().join("absent"))
+        .env("CODEX_CLI_PATH", dir.path().join("absent"))
         .current_dir(dir.path())
         .stdout(Stdio::from(std::fs::File::create(&out).unwrap()))
         .stderr(Stdio::from(std::fs::File::create(&err).unwrap()));

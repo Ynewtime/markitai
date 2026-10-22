@@ -17,7 +17,11 @@ fn command(root: &Path) -> Command {
     command
         .current_dir(root)
         .env("MARKITAI_HOME", root.join("home"))
-        .env("NO_PROXY", "127.0.0.1,localhost");
+        .env("NO_PROXY", "127.0.0.1,localhost")
+        // No subscription runtime signed in on this machine is offered.
+        .env("CLAUDE_CLI_PATH", root.join("absent"))
+        .env("COPILOT_CLI_PATH", root.join("absent"))
+        .env("CODEX_CLI_PATH", root.join("absent"));
     command
 }
 
