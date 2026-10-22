@@ -15,7 +15,7 @@
 // unchanged stretches. A document with enough headings gets its contents.
 import type { ComponentChildren } from "preact";
 import { createPortal } from "preact/compat";
-import type { MutableRef } from "preact/hooks";
+import type { RefObject } from "preact";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { fetchBlob, fetchText, filePath, imagePath, ticketDownloads } from "../api/client.ts";
 import { hasToken } from "../api/token.ts";
@@ -174,7 +174,7 @@ export function MarkdownView({
   onTab: (tab: Tab) => void;
   /** Compare: only Rendered and Source, no notices. */
   compact?: boolean;
-  rendered?: MutableRef<RenderedState>;
+  rendered?: RefObject<RenderedState>;
   /** The window's tab row lends this element to the view switch (and says when it must be compact). */
   barHost?: HTMLElement | null;
   compactBar?: boolean;

@@ -8,7 +8,7 @@ import { jsonTokens } from "../lib/json-tokens.ts";
 /** Above this size the text is shown plain: colouring it on every keystroke would lag. */
 const MAX_HIGHLIGHT = 256 * 1024;
 
-export function JsonHighlight({ text, editor }: { text: string; editor: RefObject<HTMLTextAreaElement> }) {
+export function JsonHighlight({ text, editor }: { text: string; editor: RefObject<HTMLTextAreaElement | null> }) {
   const layer = useRef<HTMLPreElement>(null);
   useLayoutEffect(() => {
     const target = layer.current;

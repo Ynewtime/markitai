@@ -2,7 +2,8 @@
 // the dialog, Tab cycles inside it, and Escape closes it, unless a smaller
 // layer (a confirmation, the PDF settings card, an open "⋯" menu or the
 // contents sheet) is on top and owns both.
-import { useEffect, useRef, type MutableRef } from "preact/hooks";
+import type { RefObject } from "preact";
+import { useEffect, useRef } from "preact/hooks";
 
 const FOCUSABLE = 'button, [href], input, select, textarea, summary, [tabindex]:not([tabindex="-1"])';
 
@@ -12,7 +13,7 @@ export const topLayer = (): HTMLElement | null =>
   document.querySelector<HTMLElement>(".menu") ??
   document.querySelector<HTMLElement>(".toc-sheet");
 
-export function useModal(dialog: MutableRef<HTMLElement | null>, onEscape: () => void): void {
+export function useModal(dialog: RefObject<HTMLElement | null>, onEscape: () => void): void {
   const escape = useRef(onEscape);
   escape.current = onEscape;
 

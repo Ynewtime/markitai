@@ -3,6 +3,7 @@
 // provider's page the same way. Escape steps back one level.
 // Every write carries the revision this draft started from; a conflict keeps
 // the draft and reloads the lists, and the person decides to use the new revision.
+import type { TargetedInputEvent } from "preact";
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { isRevisionConflict, modelsApi, openConfig, type ModelsScope } from "../api/client.ts";
 import type { Deployment, DiscoveryResult, ModelShare, NewDeployment, ProviderCard, SettingsView, SharedModel, UserModelsView } from "../api/types.ts";
@@ -55,6 +56,16 @@ function Secret({
 }) {
   const [shown, setShown] = useState(false);
   const toggle = shown ? t.concealField(label) : t.revealField(label);
+  const field = {
+    id,
+    required,
+    value,
+    placeholder,
+    disabled,
+    autoComplete: "off",
+    spellcheck: false,
+    onInput: (event: TargetedInputEvent<HTMLInputElement>) => onInput(event.currentTarget.value),
+  };
   return (
     <div class="field">
       <label class="field-label" for={id}>
@@ -62,17 +73,9 @@ function Secret({
         {required && <span class="field-required">{t.requiredField}</span>}
       </label>
       <div class="secret">
-        <input
-          id={id}
-          type={shown ? "text" : "password"}
-          required={required}
-          value={value}
-          placeholder={placeholder}
-          disabled={disabled}
-          autoComplete="off"
-          spellcheck={false}
-          onInput={(event) => onInput(event.currentTarget.value)}
-        />
+        {/* One input either way (Preact patches its type in place, so focus and
+            caret stay); a branch per type, as Preact types an input's roles by it. */}
+        {shown ? <input type="text" {...field} /> : <input type="password" {...field} />}
         <button type="button" class="secret-toggle" aria-label={toggle} title={toggle} disabled={disabled} onClick={() => setShown((value) => !value)}>
           <Icon name={shown ? "EyeSlash" : "Eye"} size={16} />
         </button>

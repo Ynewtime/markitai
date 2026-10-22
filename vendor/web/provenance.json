@@ -141,9 +141,9 @@
   {
     "file": "preact-LICENSE",
     "package": "preact",
-    "version": "10.29.8",
-    "source": "https://registry.npmjs.org/preact/-/preact-10.29.8.tgz",
-    "package_integrity": "sha512-ej2aVZ+vZ8WO7tvlQWRM9N63A0KzF9q4mWJfDUHgYaIofWY9hu74QdnQrjoPMmZi2/nZ5gN0bJCQF49xQqx09Q==",
+    "version": "11.0.1",
+    "source": "https://registry.npmjs.org/preact/-/preact-11.0.1.tgz",
+    "package_integrity": "sha512-TNNwEq++jYNHy747LziCjPRVgEwnLSOIOAw/oYcjI3Tdnubx2EXtt76I0an8PATvUWtx/DX1kFIg1eFN+O/fkw==",
     "member": "package/LICENSE",
     "bytes": 1087,
     "sha256": "1fe6958409c8c257a70c587a18b6f7f412b179b456630790d30b2ec9a8e4b7d4",

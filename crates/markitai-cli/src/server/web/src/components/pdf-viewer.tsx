@@ -903,7 +903,9 @@ function OutlinePanel({
             : t.pdfSourcePdf
           : t.pdfSourceHeadings;
   // A phone's sheet is a dialog (a div: an aside may not take that role); beside or over the pages, a complementary region.
-  const Panel = sheet ? "div" : "aside";
+  // Typed as the div: Preact's types allow role="dialog" on it, and the aside
+  // never takes that role.
+  const Panel = (sheet ? "div" : "aside") as "div";
   const content = (
     <Panel
       ref={(node: HTMLElement | null) => {
