@@ -190,8 +190,9 @@ func TestPaidNativeFailuresKeepDocumentScopesSeparate(t *testing.T) {
 		tokens := map[string][2]int{"TERMALPHA": {11, 3}, "TERMBETA": {29, 7}, "TERMZERO": {0, 0}}[name]
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnauthorized)
+		// The refusal echoes the key; its message is shown without it.
 		if err := json.NewEncoder(w).Encode(map[string]any{
-			"error": map[string]any{"message": "PRIVATE RESPONSE SECRET"}, "model": name,
+			"error": map[string]any{"message": "Incorrect API key provided: synthetic-key"}, "model": name,
 			"usage": map[string]any{"prompt_tokens": tokens[0], "completion_tokens": tokens[1]},
 		}); err != nil {
 			t.Error(err)
@@ -229,7 +230,7 @@ func TestPaidNativeFailuresKeepDocumentScopesSeparate(t *testing.T) {
 		if !errors.As(result.err, &failure) {
 			t.Fatalf("%s: existing ConversionError category lost: %v", result.name, result.err)
 		}
-		if failure.Code != "conversion_error" || !strings.Contains(failure.Message, "HTTP 401") || strings.Contains(failure.Message, "PRIVATE RESPONSE SECRET") {
+		if failure.Code != "conversion_error" || !strings.Contains(failure.Message, "HTTP 401") || strings.Contains(failure.Message, "synthetic-key") {
 			t.Fatalf("%s: unexpected public diagnostic: %+v", result.name, failure)
 		}
 		tokens := map[string][2]uint64{"TERMALPHA": {11, 3}, "TERMBETA": {29, 7}, "TERMZERO": {0, 0}}[result.name]
