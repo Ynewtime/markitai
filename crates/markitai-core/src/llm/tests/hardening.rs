@@ -496,6 +496,7 @@ fn a_looping_visual_batch_is_salvaged_and_not_cached() {
                 kind: VisionKind::PagedDocument,
                 frames: &frames,
                 unread_pages: &[],
+                screenshot_only: false,
             },
             &cfg,
             None,

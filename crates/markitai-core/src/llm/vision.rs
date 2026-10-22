@@ -31,6 +31,9 @@ pub(crate) struct VisionRequest<'a> {
     /// Pages (as frame numbers) whose text no reader recovered: their text
     /// is the model's to transcribe from the page image.
     pub unread_pages: &'a [usize],
+    /// `--screenshot-only`: the frames are the only source, and a
+    /// `prompts.dir` `screenshot_extract_*.md` template is preferred.
+    pub screenshot_only: bool,
 }
 #[derive(Debug)]
 pub(crate) struct VisionFailure {
@@ -136,15 +139,7 @@ pub(crate) fn process_vision_with_runtime(
         let unread = frames
             .iter()
             .any(|f| request.unread_pages.contains(&f.number));
-        let prompts = visual_prompts(
-            &protected.text,
-            request.source_label,
-            request.kind,
-            frames,
-            request.unread_pages,
-            index == 0 || unread,
-            cfg,
-        )?;
+        let prompts = visual_prompts(&protected.text, &request, frames, index == 0 || unread, cfg)?;
         let key = cache.as_ref().filter(|_| pool != "pool:none").map(|_| {
             llm_cache::vision_key(
                 &protected.text,
@@ -466,19 +461,30 @@ fn unread_rule(pages: &[usize]) -> String {
     )
 }
 
+/// The prompts of one batch: `source` is its share of the request's text,
+/// `frames` its share of the request's frames.
 fn visual_prompts(
     source: &str,
-    label: &str,
-    kind: VisionKind,
+    request: &VisionRequest<'_>,
     frames: &[VisionFrame<'_>],
-    unread_pages: &[usize],
     first: bool,
     cfg: &Value,
 ) -> Result<Prompts> {
-    let system = load_prompt("document_vision_system", cfg)?.unwrap_or_else(|| {
+    let (label, kind, unread_pages) = (request.source_label, request.kind, request.unread_pages);
+    // Screenshot-only extraction reads Python markitai's `screenshot_extract_*`
+    // templates first, then the visual document's own.
+    let template = |part: &str| -> Result<Option<String>> {
+        if request.screenshot_only
+            && let Some(text) = load_prompt(&format!("screenshot_extract_{part}"), cfg)?
+        {
+            return Ok(Some(text));
+        }
+        load_prompt(&format!("document_vision_{part}"), cfg)
+    };
+    let system = template("system")?.unwrap_or_else(|| {
         "Process this visual document faithfully. Source: {source}\n{mode_rules}".into()
     });
-    let user = load_prompt("document_vision_user", cfg)?.unwrap_or_else(|| "{content}".into());
+    let user = template("user")?.unwrap_or_else(|| "{content}".into());
     let rules = if first { JSON_RULES } else { CLEAN_RULES };
     let kind = if kind == VisionKind::WebCapture {
         "web-capture"
@@ -806,6 +812,51 @@ mod tests {
             })
             .collect()
     }
+    #[test]
+    fn screenshot_only_prefers_the_screenshot_extract_templates_of_the_prompts_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut cfg = crate::config::defaults();
+        cfg["prompts"]["dir"] = json!(dir.path());
+        let write = |name: &str, text: &str| std::fs::write(dir.path().join(name), text).unwrap();
+        write("document_vision_system.md", "vision system {source}");
+        write("document_vision_user.md", "vision user");
+        let frames = frames(1);
+        let select = |screenshot_only| {
+            let request = VisionRequest {
+                markdown: "",
+                source_label: "https://example.test/page",
+                cache_context: "https://example.test/page",
+                kind: VisionKind::WebCapture,
+                frames: &frames,
+                unread_pages: &[],
+                screenshot_only,
+            };
+            visual_prompts("", &request, &frames, true, &cfg).unwrap()
+        };
+        // Without its own templates, screenshot-only reads the visual ones.
+        let fallback = select(true);
+        assert!(
+            fallback
+                .system
+                .starts_with("vision system https://example.test/page")
+        );
+        assert_eq!(fallback.user, "vision user");
+        write("screenshot_extract_system.md", "extract {source}");
+        write("screenshot_extract_user.md", "extract everything");
+        let extract = select(true);
+        assert!(
+            extract
+                .system
+                .starts_with("extract https://example.test/page")
+        );
+        assert_eq!(extract.user, "extract everything");
+        // The typed contract still follows a custom template.
+        assert!(extract.system.contains("frames in this exact order: 1"));
+        let ordinary = select(false);
+        assert!(ordinary.system.starts_with("vision system"));
+        assert_ne!(ordinary.cache_scope, extract.cache_scope);
+    }
+
     #[test]
     fn page_and_slide_partition_keep_preamble_tail_and_ignore_code_examples() {
         for kind in ["Page", "Slide"] {

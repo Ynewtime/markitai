@@ -766,7 +766,9 @@ not recover unobserved provider usage.
 
 The caller supplies a source label separately from the document. Text requests
 choose `cleaner_*` in pure mode, `url_enhance_*` for HTTP(S) sources, and
-`document_process_*` for files. Image requests choose `document_vision_*`.
+`document_process_*` for files. Image requests choose `document_vision_*`;
+with `--screenshot-only`, `prompts.dir/screenshot_extract_system.md` and
+`screenshot_extract_user.md` (Python markitai's names) come first when present.
 The root conversion layer can redact source labels before passing them here.
 
 For each system/user template, precedence is its explicit `prompts.<name>` path,
