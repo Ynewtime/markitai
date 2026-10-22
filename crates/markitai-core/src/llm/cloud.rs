@@ -1039,7 +1039,7 @@ pub(super) fn deployment(
             )
         }
     };
-    let reasoning_effort = reasoning_effort(provider, protocol, params)?;
+    let reasoning_effort = reasoning_effort(provider, protocol, params, model)?;
     Ok(Deployment {
         id: format!("{provider}/{model}"),
         explicit_id: nonempty(entry.pointer("/model_info/id")).map(str::to_owned),

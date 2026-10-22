@@ -474,18 +474,21 @@ environment; nor does one with `use_environment_credentials: false`. Azure requi
 encodes the Azure deployment name as one URL segment.
 
 `litellm_params.max_tokens`, followed by explicit `model_info.max_tokens`, sets
-the output cap. OpenAI/Azure GPT-5 and o1/o3/o4 names use
-`max_completion_tokens`; other chat requests use `max_tokens`. Anthropic
-requires a cap and defaults to 8192 when none is supplied. Without a configured
-cap, Gemini and DeepSeek models in the reviewed [price catalog](pricing.md) are
-asked for their listed output limit within the room their context window leaves
-after the prompt, as Python markitai does (an estimate of the prompt plus 1,600
-tokens per image and a fifth, at least 2,000, of headroom; at most 128,000 and at
-least 1,000): Gemini Flash gets 65,536 instead of a provider default that cut a
-ten-page visual batch off mid-answer. OpenAI and other providers use their own
-default (OpenAI's is the model's limit; OpenAI and Anthropic count the cap against
-per-minute rate limits). Nonpositive explicit deployment caps fail before a
-request. A truncated answer names its output token count and
+the output cap; a cap above a reviewed model's output limit is lowered to that
+limit. Requests to OpenAI itself, and GPT-5-or-later and o-series names at other
+OpenAI or Azure addresses, name it `max_completion_tokens` (OpenAI deprecated
+`max_tokens`, and its reasoning models refuse it); other chat requests use
+`max_tokens`. Without a configured cap, Gemini, DeepSeek and Anthropic models in
+the reviewed [price catalog](pricing.md) are asked for their listed output limit
+within the room their context window leaves after the prompt, as Python
+markitai does (an estimate of the prompt plus 1,600 tokens per image and a
+fifth, at least 2,000, of headroom; at most 128,000 and at least 1,000, or
+4,000 for a prompt with more than 20 table rows): Gemini Flash gets 65,536
+instead of a provider default that cut a ten-page visual batch off mid-answer.
+Anthropic requires a cap; a model not in the catalog gets 8,192. OpenAI and
+other providers use their own default (OpenAI's is the model's limit, and
+OpenAI counts the cap against its per-minute token limit). Nonpositive explicit
+deployment caps fail before a request. A truncated answer names its output token count and
 `litellm_params.max_tokens`. This implementation does not ship LiteLLM's
 tokenizer; a declared `model_info.max_input_tokens` sizes document chunks (see
 [below](#structured-documents-and-complete-long-text)).
@@ -501,8 +504,9 @@ litellm_params.reasoning_effort or raise max_tokens`.
 | Deployment | Without the setting | With a value |
 |---|---|---|
 | `deepseek/` | `thinking: {"type": "disabled"}`: clean-up, transcription and descriptions need no reasoning | `none` disables thinking; other values enable it and send `reasoning_effort`, which DeepSeek maps to `low`, `high` or `max` |
-| Other OpenAI-compatible endpoints (`openai/`, `gemini/`, `openrouter/`, `azure/`, …) | nothing; the model's own default applies | sent as `reasoning_effort`; the provider decides which values a model accepts and rejects others with HTTP 400 |
-| `anthropic/` | nothing; extended thinking stays off | only `none` is accepted; other values are a configuration error |
+| `openai/` models that accept `none` (GPT-5.1 to GPT-5.6, `gpt-6-luna`, `gpt-6-sol`, as LiteLLM 1.104.2 lists them) | `reasoning_effort: "none"`: they reason by default | sent as `reasoning_effort` |
+| Other OpenAI-compatible endpoints (other `openai/` models, `gemini/`, `openrouter/`, `azure/`, …) | nothing; the model's own default applies | sent as `reasoning_effort`; the provider decides which values a model accepts and rejects others with HTTP 400 |
+| `anthropic/` | Claude Haiku 5.5, which thinks unless told not to: `thinking: {"type": "disabled"}` (not on a forced tool call, which does not think). Other models: nothing (Opus 5.5 and Fable refuse the switch; older models do not think by default; Sonnet 5.5's own switch, `between_tools`, is not verified here) | only `none` is accepted; other values are a configuration error |
 | `copilot/`, `claude-agent/`, `chatgpt/` | the runtime's default | not accepted, like `max_tokens` |
 
 ```json

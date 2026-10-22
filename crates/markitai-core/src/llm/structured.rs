@@ -133,6 +133,11 @@ impl Wire {
         let name = self.schema.name();
         match (self.mode, entry.protocol) {
             (Mode::Tools, Protocol::Anthropic) => {
+                // A forced tool call does not think; the switch is left off,
+                // as in the requests recorded against the live API.
+                if let Some(body) = body.as_object_mut() {
+                    body.remove("thinking");
+                }
                 body["tools"] = json!([{"name":name,"description":"Return the complete validated document data.","input_schema":schema,"strict":true}]);
                 body["tool_choice"] =
                     json!({"type":"tool","name":name,"disable_parallel_tool_use":true});

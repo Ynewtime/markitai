@@ -1158,7 +1158,7 @@ fn collect(cfg: &Value, env: &HashMap<String, String>) -> Result<Collected> {
                     .pointer("/model_info/max_tokens")
                     .and_then(Value::as_u64)
             });
-        let reasoning_effort = reasoning_effort(provider, protocol, params)?;
+        let reasoning_effort = reasoning_effort(provider, protocol, params, model_name)?;
         result.push(Deployment {
             id: model.into(),
             explicit_id: nonempty(entry.pointer("/model_info/id")).map(str::to_owned),
@@ -1196,19 +1196,83 @@ fn collect(cfg: &Value, env: &HashMap<String, String>) -> Result<Collected> {
     })
 }
 
-/// The reasoning setting a deployment sends. DeepSeek thinks by default and
-/// can spend the whole output budget on it before cleaning a document, so
-/// its default is no thinking; other providers keep their own default.
-fn reasoning_effort(provider: &str, protocol: Protocol, params: &Value) -> Result<Option<String>> {
+/// OpenAI models that accept `reasoning_effort: "none"` (LiteLLM 1.104.2's
+/// `supports_none_reasoning_effort`), with or without a dated suffix.
+const OPENAI_EFFORT_NONE: [&str; 13] = [
+    "gpt-5.1",
+    "gpt-5.2",
+    "gpt-5.3-codex",
+    "gpt-5.4",
+    "gpt-5.4-mini",
+    "gpt-5.4-nano",
+    "gpt-5.5",
+    "gpt-5.6",
+    "gpt-5.6-luna",
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-6-luna",
+    "gpt-6-sol",
+];
+
+/// Whether `model` is `name` or `name` with a dated suffix (`-2026-04-23`).
+fn named(model: &str, name: &str) -> bool {
+    model.strip_prefix(name).is_some_and(|rest| {
+        rest.is_empty()
+            || rest
+                .strip_prefix("-20")
+                .is_some_and(|date| date.bytes().all(|b| b.is_ascii_digit() || b == b'-'))
+    })
+}
+
+/// The reasoning setting a deployment sends. Cleaning, transcription and
+/// image descriptions need no reasoning, and a model that reasons by default
+/// can spend much of the output budget on it: DeepSeek, and the OpenAI
+/// models that accept `none`, are asked not to (Claude Haiku 5.5 in
+/// [`payload`]); other providers keep their own default.
+fn reasoning_effort(
+    provider: &str,
+    protocol: Protocol,
+    params: &Value,
+    model: &str,
+) -> Result<Option<String>> {
     let configured = params.get("reasoning_effort").and_then(Value::as_str);
     if protocol == Protocol::Anthropic && configured.is_some_and(|effort| effort != "none") {
         return Err(Error::Unsupported(
             "Anthropic deployments do not accept reasoning_effort; only none (the default) is supported".into(),
         ));
     }
-    Ok(configured
-        .or((provider == "deepseek").then_some("none"))
-        .map(str::to_owned))
+    let off = provider == "deepseek"
+        || provider == "openai" && OPENAI_EFFORT_NONE.iter().any(|name| named(model, name));
+    Ok(configured.or(off.then_some("none")).map(str::to_owned))
+}
+
+/// Whether an Anthropic model thinks unless asked not to and accepts
+/// `thinking: {"type": "disabled"}` at its default effort: Claude Haiku 5.5.
+/// Opus 5.5 and Fable refuse it, Sonnet 5.5 too (its own switch is not
+/// verified here), and older models do not think by default.
+fn anthropic_thinking_off(model: &str) -> bool {
+    named(model, "claude-haiku-5-5")
+}
+
+/// Whether an OpenAI request names its cap `max_completion_tokens`: always at
+/// OpenAI itself (`max_tokens` is deprecated there, and reasoning models
+/// refuse it), and for the GPT-5 and later and o-series names elsewhere.
+fn completion_tokens_field(entry: &Deployment) -> bool {
+    if !matches!(entry.provider.as_str(), "openai" | "azure") {
+        return false;
+    }
+    let at_openai =
+        url::Url::parse(&entry.endpoint).is_ok_and(|url| url.host_str() == Some("api.openai.com"));
+    let model = entry.model.rsplit('/').next().unwrap_or(&entry.model);
+    let gpt = model
+        .strip_prefix("gpt-")
+        .and_then(|rest| rest.split(['.', '-']).next())
+        .and_then(|major| major.parse::<u32>().ok())
+        .is_some_and(|major| major >= 5);
+    let o_series = model
+        .strip_prefix('o')
+        .is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_digit()));
+    at_openai || gpt || o_series
 }
 
 fn endpoint(base: &str, model: &str, protocol: Protocol, version: Option<&str>) -> Result<String> {
@@ -1843,15 +1907,15 @@ fn payload(entry: &Deployment, prompts: &Prompts) -> Value {
         } else {
             json!(prompts.system)
         };
-        json!({"model":entry.model,"max_tokens":output_cap(entry, prompts).unwrap_or(8192),"system":system,"messages":[{"role":"user","content":content}]})
+        let mut payload = json!({"model":entry.model,"max_tokens":output_cap(entry, prompts).unwrap_or(8192),"system":system,"messages":[{"role":"user","content":content}]});
+        if entry.cloud.is_none() && anthropic_thinking_off(&entry.model) {
+            payload["thinking"] = json!({"type":"disabled"});
+        }
+        payload
     } else {
         let mut payload = json!({"model":entry.model,"messages":[{"role":"system","content":prompts.system},{"role":"user","content":content}]});
         if let Some(max_tokens) = output_cap(entry, prompts) {
-            let field = if matches!(entry.provider.as_str(), "openai" | "azure")
-                && ["gpt-5", "o1", "o3", "o4"]
-                    .iter()
-                    .any(|prefix| entry.model.starts_with(prefix))
-            {
+            let field = if completion_tokens_field(entry) {
                 "max_completion_tokens"
             } else {
                 "max_tokens"
@@ -1872,29 +1936,48 @@ fn payload(entry: &Deployment, prompts: &Prompts) -> Value {
     }
 }
 
-/// The output cap a request asks for: the configured `max_tokens`, else for
-/// Gemini and DeepSeek the reviewed model's output limit within the room its
+/// The output cap a request asks for: the configured `max_tokens`, lowered to
+/// the reviewed model's output limit when it is above it; else for Gemini,
+/// DeepSeek and Anthropic the model's output limit within the room its
 /// context leaves after the prompt, as Python markitai computes it (input
 /// estimate plus 1,600 tokens per image and a buffer of a fifth, at least
-/// 2,000; at most 128,000 and at least 1,000, never above the model's limit).
-/// Their defaults are small or unstated, and a long visual batch was cut off
-/// mid-answer under one. OpenAI's default already is the model's limit, and
-/// OpenAI and Anthropic count the cap against per-minute rate limits, so
-/// they keep theirs (Anthropic, which requires one, gets 8,192).
+/// 2,000; at most 128,000 and at least 1,000, or 4,000 for a prompt with more
+/// than 20 table rows; never above the model's limit). Their defaults are
+/// small (Anthropic requires a cap; it gets 8,192 for a model not reviewed)
+/// or unstated, and a long answer was cut off under one. OpenAI's default
+/// already is the model's limit, and OpenAI counts the cap against its
+/// per-minute token limit, so it is sent only when configured.
 fn output_cap(entry: &Deployment, prompts: &Prompts) -> Option<u64> {
+    let limits = crate::pricing::token_limits(&entry.provider, &entry.model);
     if let Some(configured) = entry.max_tokens {
-        return Some(configured);
+        return Some(limits.map_or(configured, |(output, _)| configured.min(output)));
     }
-    if !matches!(entry.provider.as_str(), "gemini" | "deepseek") {
+    if !matches!(entry.provider.as_str(), "gemini" | "deepseek" | "anthropic") {
         return None;
     }
-    let (output, context) = crate::pricing::token_limits(&entry.provider, &entry.model)?;
+    let (output, context) = limits?;
     let images = prompts.image.as_ref().map_or(0, Vec::len) as u64;
     let input = (chunks::estimate_tokens(&prompts.system) + chunks::estimate_tokens(&prompts.user))
         as u64
         + 1_600 * images;
     let room = context.saturating_sub(input + (input / 5).max(2_000));
-    Some(output.min(room).clamp(1_000, 128_000).min(output))
+    let floor = if table_rows(&prompts.user) > 20 {
+        4_000
+    } else {
+        1_000
+    };
+    Some(output.min(room).min(128_000).max(floor).min(output))
+}
+
+/// The table rows of a prompt, counted as Python markitai counts them
+/// (`|cell|` runs).
+fn table_rows(text: &str) -> usize {
+    text.lines()
+        .filter(|line| {
+            let line = line.trim();
+            line.len() > 2 && line.starts_with('|') && line[1..].contains('|')
+        })
+        .count()
 }
 
 /// A user model's request refused before it left: its address is not public.
@@ -3472,12 +3555,15 @@ mod tests {
         assert_eq!(cap("deepseek/deepseek-flash")["max_tokens"], 128_000);
         // A model the catalog does not know keeps the provider's default.
         assert!(cap("gemini/gemini-unreviewed").get("max_tokens").is_none());
-        // OpenAI's default is the model's limit; Anthropic keeps 8,192.
+        // OpenAI's default is the model's limit; Anthropic, which requires
+        // a cap, asks for its model's limit, 8,192 for one not reviewed.
         let openai = cap("openai/gpt-5.6");
         assert!(
             openai.get("max_completion_tokens").is_none() && openai.get("max_tokens").is_none()
         );
-        assert_eq!(cap("anthropic/claude-haiku-4-5")["max_tokens"], 8_192);
+        assert_eq!(cap("anthropic/claude-haiku-4-5")["max_tokens"], 64_000);
+        assert_eq!(cap("anthropic/claude-sonnet-5-5")["max_tokens"], 128_000);
+        assert_eq!(cap("anthropic/claude-unreviewed")["max_tokens"], 8_192);
     }
 
     #[test]

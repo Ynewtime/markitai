@@ -745,7 +745,7 @@ mod tests {
         assert_eq!(row.as_object().unwrap().len(), 2);
         let params = &row["params"];
         assert_eq!(params["model"], "claude-haiku-5-5");
-        assert_eq!(params["max_tokens"], 8192);
+        assert_eq!(params["max_tokens"], 128_000);
         assert!(params["system"].is_string());
         assert_eq!(params["tool_choice"]["name"], "MarkitaiDocument");
         let protected = chunks::Protected::new(text);
