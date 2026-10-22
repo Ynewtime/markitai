@@ -246,6 +246,11 @@ documented article heuristic; ordinary hidden descendants remain hidden.
   position as the reference's `![alt](data:<type>...)` placeholder; the payload
   is never retained. `data:text/html`, `data:image/svg+xml` and
   `data:text/javascript` images are removed, and links never accept `data:`.
+- Control characters in text are cleaned outside code blocks. A table cell
+  makes a vertical tab, next line, U+2028 or U+2029 a `<br>`; elsewhere these,
+  a form feed and the file, group, record and unit separators are one space
+  between the words (a soft line break would render the same, without risking
+  a new block), and the other C0 and C1 controls are left out.
 - URL attributes with control characters or unsafe schemes are removed. Event
   handlers and arbitrary styles are not emitted. Script, frame, template, hidden
   and navigation content, controls, entry-box forms and the page's own footer

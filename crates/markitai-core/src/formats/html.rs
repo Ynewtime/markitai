@@ -4306,10 +4306,70 @@ fn render_cleaned(write: &dyn Fn(&mut Out) -> Result<()>) -> Result<String> {
         }
     };
     hoist_edge_breaks(&mut document);
-    Ok(converter()
-        .tree_to_markdown(document.tree.root())
-        .trim()
-        .to_owned())
+    Ok(without_controls(converter().tree_to_markdown(document.tree.root()).trim()).into_owned())
+}
+
+/// Text with the control characters a page's text may carry cleaned outside
+/// code blocks. A table cell has already made its line breaks `<br>`; what is
+/// left of a line or record separator (vertical tab, the file, group, record
+/// and unit separators, next line, U+2028, U+2029) separates words and is a
+/// space, which a soft line break would render as too, without starting a
+/// block, and so is a form feed; the other C0 and C1 controls (and DEL) show
+/// nothing and are left out. Tabs and line ends are text.
+fn without_controls(markdown: &str) -> std::borrow::Cow<'_, str> {
+    let separator = |ch: char| {
+        matches!(
+            ch,
+            '\u{0b}' | '\u{0c}' | '\u{1c}'..='\u{1f}' | '\u{85}' | '\u{2028}' | '\u{2029}'
+        )
+    };
+    let control =
+        |ch: char| separator(ch) || (ch.is_control() && !matches!(ch, '\t' | '\n' | '\r'));
+    if !markdown.contains(control) {
+        return std::borrow::Cow::Borrowed(markdown);
+    }
+    let mut output = String::with_capacity(markdown.len());
+    // The opening fence of the code block the line is in.
+    let mut fence: Option<(char, usize)> = None;
+    for line in markdown.split_inclusive('\n') {
+        let marker = line.trim_start_matches([' ', '>']);
+        let run = |mark: char| marker.chars().take_while(|&ch| ch == mark).count();
+        let opened = ['`', '~']
+            .into_iter()
+            .map(|mark| (mark, run(mark)))
+            .find(|&(_, length)| length >= 3);
+        match (fence, opened) {
+            (Some((mark, length)), Some((close, run)))
+                if close == mark && run >= length && marker[run..].trim().is_empty() =>
+            {
+                fence = None;
+            }
+            (None, Some(open)) => fence = Some(open),
+            _ => {}
+        }
+        if fence.is_some() || !line.contains(control) {
+            output.push_str(line);
+            continue;
+        }
+        let mut chars = line.chars().peekable();
+        while let Some(ch) = chars.next() {
+            if separator(ch) {
+                let before = output.chars().next_back().is_none_or(char::is_whitespace);
+                let after = chars
+                    .peek()
+                    .is_none_or(|next| next.is_whitespace() || separator(*next));
+                if !before && !after {
+                    output.push(' ');
+                } else if before {
+                    // One space between the words, not the two around it.
+                    while chars.next_if_eq(&' ').is_some() {}
+                }
+            } else if !control(ch) {
+                output.push(ch);
+            }
+        }
+    }
+    std::borrow::Cow::Owned(output)
 }
 
 /// The Markdown of cleaned markup, parsed (the code block tests' path).
@@ -8423,6 +8483,25 @@ map(callbackFn, thisArg)
             body("<ul><li>a<br>b</li></ul><blockquote>c<br>d<br><br>e</blockquote>"),
             "* a  \n  b\n\n> c  \n> d\n>\n> e"
         );
+    }
+
+    #[test]
+    fn control_characters_in_text_separate_words_or_are_left_out() {
+        let markdown = body(
+            "<h1>One\u{2028}heading</h1>\
+             <p>Rake\u{0b}bag, form\u{0c}feed, file\u{1c}group\u{1d}record\u{1e}unit\u{1f}next\u{85}line \u{2028} spaced\u{2029}end; bell\u{07}less, null\u{1}less.</p>\
+             <table><tr><th>A</th></tr><tr><td>Rake\u{0b}bag</td></tr></table>\
+             <pre><code>keep\u{0b}this</code></pre>",
+        );
+        assert_eq!(
+            markdown,
+            "# One heading\n\n\
+             Rake bag, form feed, file group record unit next line spaced end; bellless, nullless.\n\n\
+             | A |\n| --- |\n| Rake<br>bag |\n\n\
+             ```\nkeep\u{0b}this\n```"
+        );
+        // A fragment (an email's or a book's HTML) is cleaned the same way.
+        assert_eq!(fragment("<p>a\u{1e}b</p>").unwrap(), "a b");
     }
 
     #[test]
