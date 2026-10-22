@@ -502,8 +502,8 @@ providers or read user configuration. Old-producer envelopes are tested separate
 from actual compiled-native error paths. Run each suite against newly rebuilt
 artifacts after core or ABI changes.
 
-Implementation references: [PyO3 function and module interface](https://pyo3.rs/v0.27.2/module.html),
-[PyO3 GIL release](https://pyo3.rs/v0.27.2/parallelism.html), and
+Implementation references: [PyO3 function and module interface](https://pyo3.rs/v0.30.1/module.html),
+[PyO3 GIL release](https://pyo3.rs/v0.30.1/parallelism.html), and
 [NAPI-RS native async tasks](https://napi.rs/docs/concepts/async-task).
 
 ## Verified evidence

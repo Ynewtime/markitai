@@ -17,7 +17,7 @@ doctest = false
 markitai-core.workspace = true
 # The wheel's `markitai`, `mkai` and `markitai-mcp` entry points run it.
 markitai-cli = { path = "../markitai-cli" }
-pyo3 = { version = "0.29", features = ["extension-module", "abi3-py310"] }
+pyo3 = { version = "0.30.1", features = ["extension-module", "abi3-py310"] }
 
 [build-dependencies]
-pyo3-build-config = "0.29"
+pyo3-build-config = "0.30.1"
