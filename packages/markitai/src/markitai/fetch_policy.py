@@ -42,6 +42,13 @@ LOCAL_ONLY_STRATEGIES = list(LOCAL_STRATEGIES)
 # Task-local authority, inherited by fetch/image subtasks without changing
 # trusted CLI/API callers or sharing a mutable policy between concurrent jobs.
 public_network_only: ContextVar[bool] = ContextVar("public_network_only", default=False)
+# A user token's serve job never tries the remote fallbacks of the auto chain
+# (defuddle.md, Jina Reader, Cloudflare), whatever fetch.remote_consent says:
+# they would send the user's URL to third parties on the server's behalf
+# (owner decision 2026-10-22). Admin jobs and the CLI follow remote_consent.
+remote_fallbacks_refused: ContextVar[bool] = ContextVar(
+    "remote_fallbacks_refused", default=False
+)
 
 
 def _extract_host(domain: str) -> str:

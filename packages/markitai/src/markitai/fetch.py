@@ -468,6 +468,14 @@ def _merge_screenshot_result(result: FetchResult, pw_result: Any) -> FetchResult
     )
 
 
+#: The remote readers of the auto chain, as a notice names them.
+_REMOTE_FALLBACK_LABELS = {
+    "defuddle": "defuddle.md",
+    "jina": "Jina Reader",
+    "cloudflare": "Cloudflare",
+}
+
+
 async def _ensure_external_strategy_allowed(
     url: str,
     strategy_name: str,
@@ -1541,9 +1549,21 @@ async def _fetch_with_fallback(
     # The browser met a verification page: a later screenshot capture is
     # then the one retry it gets (see _capture_missing_screenshot)
     browser_challenged = False
+    from markitai.fetch_policy import remote_fallbacks_refused
+
+    remote_refused = remote_fallbacks_refused.get()
+    remote_skipped = False
     for strat in strategies:
         runner = get_runner(strat)
         if runner is None:
+            continue
+
+        if runner.requires_remote_consent and remote_refused:
+            # A user token's serve job: the remote readers are off for it
+            errors.append(
+                f"{strat}: skipped (remote fallbacks are off for user tokens)"
+            )
+            remote_skipped = True
             continue
 
         attempt_started = time.perf_counter()
@@ -1637,6 +1657,21 @@ async def _fetch_with_fallback(
             )
 
     # All strategies failed
+    if remote_skipped:
+        # Said where it mattered: the local strategies did not get the page
+        from markitai.notices import user_notice
+        from markitai.utils.url_redaction import redact_url
+
+        user_notice(
+            "[Fetch] {}: the remote fallback ({}) was skipped: a user token's "
+            "conversion never sends its URL to remote services",
+            redact_url(url),
+            ", ".join(
+                _REMOTE_FALLBACK_LABELS.get(s, s)
+                for s in strategies
+                if s in EXTERNAL_STRATEGIES
+            ),
+        )
     detail = "\n".join(f"  - {e}" for e in errors) or (
         "  - no strategy was applicable (all were skipped)"
     )

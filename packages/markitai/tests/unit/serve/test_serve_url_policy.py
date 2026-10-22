@@ -305,6 +305,55 @@ class TestUserTokenUrlPolicy:
             token="admin-token",  # nosec B106 - a test token
         )
 
+    async def test_user_jobs_never_use_the_remote_fallbacks(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Owner decision 2026-10-22: a user token's job, and its retry by
+        anyone, never tries defuddle.md, Jina or Cloudflare, whatever
+        fetch.remote_consent says; the admin's job follows remote_consent."""
+        from markitai.fetch_policy import remote_fallbacks_refused
+
+        seen: list[tuple[str, bool]] = []
+        fake = _fake_url_converter()
+
+        async def recording(url: str, *args: Any, **kwargs: Any):
+            seen.append((url, remote_fallbacks_refused.get()))
+            return await fake(url, *args, **kwargs)
+
+        monkeypatch.setattr("markitai.serve.jobs.process_url_item", recording)
+        admin = {"Authorization": "Bearer admin-token"}
+        app = self._tokened_app(tmp_path)
+        async with _lifespan(app), _client_for(app, None) as client:
+            created = await client.post(
+                "/api/access-tokens", json={"label": "guest"}, headers=admin
+            )
+            assert created.status_code == 201, created.text
+            user = {"Authorization": f"Bearer {created.json()['token']}"}
+            own = await client.post(
+                "/api/jobs", files=_url_job([PUBLIC_URL]), headers=admin
+            )
+            theirs = await client.post(
+                "/api/jobs", files=_url_job([PUBLIC_URL + "?user"]), headers=user
+            )
+            assert own.status_code == theirs.status_code == 201, theirs.text
+            await _drain(client, own.json()["job_id"])
+            job_id = theirs.json()["job_id"]
+            job = await _drain(client, job_id)
+            retried = await client.post(
+                f"/api/jobs/{job_id}/items/{job['items'][0]['item_id']}/retry",
+                json={},
+                headers=admin,
+            )
+            assert retried.status_code == 202, retried.text
+            await _drain(client, job_id)
+        assert sorted(seen) == sorted(
+            [
+                (PUBLIC_URL, False),
+                (PUBLIC_URL + "?user", True),
+                (PUBLIC_URL + "?user", True),
+            ]
+        )
+
     async def test_user_jobs_and_their_retries_are_public_only(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

@@ -1412,10 +1412,15 @@ async def run_job(
                     if stoppable(item):
                         stop(item)
                         return
-                    from markitai.fetch_policy import public_network_only
+                    from markitai.fetch_policy import (
+                        public_network_only,
+                        remote_fallbacks_refused,
+                    )
                     from markitai.public_connect import restricted_hosts
 
                     token = public_network_only.set(job.public_network_only)
+                    # A user token's job never falls back to remote readers
+                    refused = remote_fallbacks_refused.set(job.owner is not None)
                     try:
                         with contextlib.ExitStack() as scope:
                             # Only a run that may call a model is held to the
@@ -1442,6 +1447,7 @@ async def run_job(
                                 require_llm=require_llm,
                             )
                     finally:
+                        remote_fallbacks_refused.reset(refused)
                         public_network_only.reset(token)
             except asyncio.CancelledError:
                 # Cancelled while waiting for its slot by a stop request: end

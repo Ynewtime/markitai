@@ -740,3 +740,118 @@ class TestExplicitRemoteStrategyIsNotGlobalConsent:
             )
 
         defuddle.assert_not_awaited()
+
+
+class TestUserTokenJobsSkipRemoteFallbacks:
+    """Owner decision 2026-10-22: in a user token's serve job the auto chain
+    never reaches defuddle.md, Jina or Cloudflare, whatever
+    fetch.remote_consent says, and the item is told so when the local
+    strategies did not get the page. Admin jobs and the CLI are unchanged."""
+
+    @pytest.fixture(autouse=True)
+    def _fresh_consent(self):
+        from markitai.fetch_consent import reset_remote_consent
+
+        reset_remote_consent()
+        yield
+        reset_remote_consent()
+
+    @staticmethod
+    def _patches(static: object, remote: AsyncMock):
+        from contextlib import ExitStack
+
+        stack = ExitStack()
+        stack.enter_context(
+            patch("markitai.fetch_strategies.static.StaticRunner.fetch", static)
+        )
+        stack.enter_context(
+            patch(
+                "markitai.fetch_strategies.playwright.PlaywrightRunner.fetch",
+                AsyncMock(side_effect=FetchError("browser failed")),
+            )
+        )
+        stack.enter_context(
+            patch("markitai.fetch_strategies.defuddle.fetch_with_defuddle", remote)
+        )
+        stack.enter_context(
+            patch("markitai.fetch_strategies.jina.fetch_with_jina", remote)
+        )
+        return stack
+
+    @staticmethod
+    def _remote() -> AsyncMock:
+        return AsyncMock(
+            return_value=FetchResult(
+                content="# Article\n\n" + "Body text. " * 40,
+                strategy_used="defuddle",
+                url="https://example.com/article",
+            )
+        )
+
+    async def _fetch(self, refused: bool) -> tuple[FetchResult | None, list[str]]:
+        from loguru import logger
+
+        from markitai.fetch_policy import remote_fallbacks_refused
+
+        notices: list[str] = []
+        sink = logger.add(
+            lambda m: notices.append(m.record["message"]),
+            level="WARNING",
+            filter=lambda r: bool(r["extra"].get("user_notice")),
+        )
+        token = remote_fallbacks_refused.set(refused)
+        try:
+            return (
+                await fetch_url(
+                    "https://example.com/article",
+                    FetchStrategy.AUTO,
+                    FetchConfig(remote_consent="always"),
+                    skip_read_cache=True,
+                ),
+                notices,
+            )
+        except FetchError:
+            return None, notices
+        finally:
+            remote_fallbacks_refused.reset(token)
+            logger.remove(sink)
+
+    @pytest.mark.asyncio
+    async def test_a_user_job_skips_them_and_says_so(self) -> None:
+        remote = self._remote()
+        with self._patches(AsyncMock(side_effect=FetchError("static failed")), remote):
+            result, notices = await self._fetch(refused=True)
+
+        assert result is None
+        remote.assert_not_awaited()
+        assert len(notices) == 1
+        assert "the remote fallback (defuddle.md, Jina Reader" in notices[0]
+        assert "was skipped" in notices[0]
+
+    @pytest.mark.asyncio
+    async def test_no_notice_when_a_local_strategy_gets_the_page(self) -> None:
+        remote = self._remote()
+        local = AsyncMock(
+            return_value=FetchResult(
+                content="<html><body><article><h1>Article</h1>"
+                + "<p>Body text of a static page that is long enough.</p>" * 20
+                + "</article></body></html>",
+                strategy_used="static",
+                url="https://example.com/article",
+            )
+        )
+        with self._patches(local, remote):
+            result, notices = await self._fetch(refused=True)
+
+        assert result is not None and result.strategy_used == "static"
+        assert notices == []
+
+    @pytest.mark.asyncio
+    async def test_an_admin_job_still_follows_remote_consent(self) -> None:
+        remote = self._remote()
+        with self._patches(AsyncMock(side_effect=FetchError("static failed")), remote):
+            result, notices = await self._fetch(refused=False)
+
+        assert result is not None
+        remote.assert_awaited()
+        assert not any("was skipped" in n for n in notices)
