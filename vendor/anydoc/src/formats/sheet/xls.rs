@@ -87,21 +87,23 @@ pub(super) fn parse(bytes: &[u8]) -> Result<Document, ConvertError> {
     // One budget for the workbook, so sheets cannot multiply the cap.
     let mut slots = 0u64;
     let mut pictures = crate::formats::ppt::pictures::Bank::read(&globals.drawing_group, &[])?;
+    let mut hidden = super::xlsx::HiddenCells::default();
     for sheet in &visible {
         let Some(content) = read_sheet(&data, &globals, sheet.offset, &mut records)? else {
             log::warn!("skipping unreadable sheet {:?}", sheet.name);
             failed += 1;
             continue;
         };
-        let figures = super::drawings::binary(&content.drawings, &content, &mut pictures)?;
+        let figures = super::drawings::binary(&content.drawings, &mut pictures)?;
         push_sheet_images(
             &mut doc,
             &if sheet.visible { sheet.name.clone() } else { super::hidden_name(&sheet.name) },
             multi_sheet,
-            build_table(content, &mut slots)?,
+            hidden.count(build_table(content, &mut slots)?),
             figures,
         );
     }
+    hidden.warn(&mut doc);
     if !visible.is_empty() && failed == visible.len() {
         return Err(ConvertError::malformed("no sheet in the workbook could be read"));
     }
@@ -1418,7 +1420,7 @@ mod tests {
     }
 
     #[test]
-    fn hidden_rows_and_columns_are_omitted_and_hidden_sheets_marked() {
+    fn hidden_rows_columns_and_sheets_are_converted() {
         let mut records = label(0, 0, 0, "a");
         records.extend(label(0, 1, 0, "hidden col"));
         records.extend(label(0, 2, 0, "c"));
@@ -1442,7 +1444,17 @@ mod tests {
         assert_eq!(doc.blocks.len(), 4, "two headings and two tables");
         let blocks = format!("{:?}", doc.blocks);
         assert!(blocks.contains("Secret (hidden sheet)") && blocks.contains("secret"), "{blocks}");
-        assert_eq!(texts(first_table(&doc)), vec![vec!["a", "c"], vec!["d", ""]]);
+        // markitai: hidden rows and columns are written like visible ones.
+        assert_eq!(
+            texts(first_table(&doc)),
+            vec![vec!["a", "hidden col", "c"], vec!["hidden row", "", ""], vec!["d", "", ""]]
+        );
+        assert_eq!(
+            doc.warnings,
+            [
+                "The workbook includes 1 hidden row and 1 hidden column holding content; they are converted like the visible ones."
+            ]
+        );
     }
 
     #[test]

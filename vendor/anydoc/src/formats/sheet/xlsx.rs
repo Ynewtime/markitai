@@ -86,6 +86,7 @@ pub(super) fn parse(pkg: &mut Package, wb_part: &str) -> Result<Document, Conver
     let mut uncached = 0usize;
     let mut people = None;
     let mut assets = AssetSink::new();
+    let mut hidden = HiddenCells::default();
     for (name, part) in &sheets {
         // markitai: the sheet's rows are read as the parser closes each one,
         // so its cells never stand as one XML tree.
@@ -113,14 +114,15 @@ pub(super) fn parse(pkg: &mut Package, wb_part: &str) -> Result<Document, Conver
             worksheet,
             part,
             &sheet_rels,
-            &content,
             &mut assets,
             &mut doc.warnings,
         )?;
         // markitai: the sheet's XML tree is read; the grid is built without it.
         drop(tree);
-        push_sheet_images(&mut doc, name, multi_sheet, build_table(content, &mut slots)?, pictures);
+        let built = hidden.count(build_table(content, &mut slots)?);
+        push_sheet_images(&mut doc, name, multi_sheet, built, pictures);
     }
+    hidden.warn(&mut doc);
     if !sheets.is_empty() && failed == sheets.len() {
         return Err(ConvertError::malformed("no sheet in the workbook could be read"));
     }
@@ -135,8 +137,8 @@ pub(super) fn parse(pkg: &mut Package, wb_part: &str) -> Result<Document, Conver
     Ok(doc)
 }
 
-/// markitai: a built sheet: its grid, the notes of its visible cells, and how
-/// many hidden rows and columns held content.
+/// markitai: a built sheet: its grid, the notes of its cells, and how many
+/// hidden rows and columns held content.
 #[derive(Default)]
 pub(super) struct Built {
     pub(super) table: Option<Table>,
@@ -145,12 +147,49 @@ pub(super) struct Built {
     pub(super) hidden_cols: usize,
 }
 
+/// markitai: the hidden rows and columns that held content in a workbook's
+/// sheets, for its one warning.
+#[derive(Default)]
+pub(super) struct HiddenCells {
+    rows: usize,
+    cols: usize,
+}
+
+impl HiddenCells {
+    /// Add `built`'s, and pass it on.
+    pub(super) fn count(&mut self, built: Built) -> Built {
+        self.rows += built.hidden_rows;
+        self.cols += built.hidden_cols;
+        built
+    }
+
+    /// The workbook's warning, when any hidden row or column held content:
+    /// they are converted like the visible ones, as hidden sheets are.
+    pub(super) fn warn(self, doc: &mut Document) {
+        let count = |n: usize, what: &str| match n {
+            0 => None,
+            1 => Some(format!("1 hidden {what}")),
+            n => Some(format!("{n} hidden {what}s")),
+        };
+        let parts: Vec<String> =
+            [count(self.rows, "row"), count(self.cols, "column")].into_iter().flatten().collect();
+        if parts.is_empty() {
+            return;
+        }
+        let pronoun = if self.rows + self.cols == 1 { "it is" } else { "they are" };
+        doc.warnings.push(format!(
+            "The workbook includes {} holding content; {pronoun} converted like the visible ones.",
+            parts.join(" and ")
+        ));
+    }
+}
+
 /// markitai: append a built sheet to the workbook document, as every
 /// container does: the sheet's name heading when the workbook shows several,
 /// its table, then its cell notes as a list under a `Notes` heading, each
 /// item led by the cell's reference (`B3: text`). Hidden rows and columns
-/// that held content are omitted as hidden sheets are, with a warning naming
-/// how many.
+/// are part of the table, as hidden sheets are part of the workbook; the
+/// caller counts them ([`HiddenCells`]).
 pub(super) fn push_sheet(doc: &mut Document, name: &str, multi_sheet: bool, built: Built) {
     push_sheet_images(doc, name, multi_sheet, built, Vec::new());
 }
@@ -162,23 +201,7 @@ pub(super) fn push_sheet_images(
     built: Built,
     pictures: Vec<Inline>,
 ) {
-    let Built { table, notes, hidden_rows, hidden_cols } = built;
-    if hidden_rows + hidden_cols > 0 {
-        let count = |n: usize, what: &str| match n {
-            0 => None,
-            1 => Some(format!("1 hidden {what}")),
-            n => Some(format!("{n} hidden {what}s")),
-        };
-        let parts: Vec<String> = [count(hidden_rows, "row"), count(hidden_cols, "column")]
-            .into_iter()
-            .flatten()
-            .collect();
-        let pronoun = if hidden_rows + hidden_cols == 1 { "it is" } else { "they are" };
-        doc.warnings.push(format!(
-            "Worksheet {name:?} has {} holding content; {pronoun} omitted by the native spreadsheet reader.",
-            parts.join(" and ")
-        ));
-    }
+    let Built { table, notes, .. } = built;
     if table.is_none() && notes.is_empty() && pictures.is_empty() {
         return;
     }
@@ -574,14 +597,16 @@ pub(super) fn format_as_text(fmt: &CellFormat, text: &str) -> String {
     }
 }
 
-/// Materialize a sheet's grid: visibility filtering, the populated extent
-/// widened to cover intersecting merge regions (a merge anchored on the
-/// only populated cell must survive at full size), and merges remapped onto
-/// the surviving rows and columns.
+/// Materialize a sheet's grid: the populated extent widened to cover
+/// intersecting merge regions (a merge anchored on the only populated cell
+/// must survive at full size), and merges placed on it. markitai: hidden
+/// rows and columns are written like visible ones, as Python markitai
+/// writes them and as hidden sheets are; those holding content are counted
+/// for the workbook's one warning.
 pub(super) fn build_table(mut sheet: SheetContent, slots: &mut u64) -> Result<Built, ConvertError> {
-    // Hidden coordinates as sorted lists: lookups and first-visible scans
-    // stay logarithmic, so an adversarial pile of hidden rows or column
-    // ranges cannot force quadratic work.
+    // Hidden coordinates as sorted lists: lookups stay logarithmic, so an
+    // adversarial pile of hidden rows or column ranges cannot force
+    // quadratic work.
     let hidden_rows = {
         let mut rows: Vec<u32> = sheet.hidden_rows.iter().copied().collect();
         rows.sort_unstable();
@@ -613,25 +638,8 @@ pub(super) fn build_table(mut sheet: SheetContent, slots: &mut u64) -> Result<Bu
         }
         cells.insert(at, inlines);
     }
-    // A merge with no surviving row or column disappears with its content.
-    // One whose origin is hidden keeps its content at the first surviving
-    // position it covers, so the value is not lost.
-    sheet.merges.retain(|&(r1, c1, r2, c2)| {
-        let vr = first_visible(&hidden_rows, r1, r2);
-        let vc = first_visible(&hidden_cols, c1, c2);
-        let (Some(vr), Some(vc)) = (vr, vc) else {
-            return false;
-        };
-        if (vr, vc) != (r1, c1)
-            && let Some(text) = cells.remove(&(r1, c1))
-        {
-            cells.insert((vr, vc), text);
-        }
-        true
-    });
-
     // markitai: the hidden rows and columns that hold content, which the
-    // caller reports, and the notes of the cells that stay visible.
+    // caller reports.
     let mut built = Built::default();
     {
         let mut rows = HashSet::new();
@@ -647,17 +655,11 @@ pub(super) fn build_table(mut sheet: SheetContent, slots: &mut u64) -> Result<Bu
         built.hidden_rows = rows.len();
         built.hidden_cols = cols.len();
     }
-    built.notes = std::mem::take(&mut sheet.notes)
-        .into_iter()
-        .filter(|&(r, c, _)| !hidden_row(r) && !hidden_col(c))
-        .collect();
+    built.notes = std::mem::take(&mut sheet.notes);
 
-    // Populated extent over visible cells only.
+    // Populated extent.
     let mut bounds: Option<(u32, u32, u32, u32)> = None;
     for &(r, c) in cells.keys() {
-        if hidden_row(r) || hidden_col(c) {
-            continue;
-        }
         bounds = Some(match bounds {
             None => (r, c, r, c),
             Some((r1, c1, r2, c2)) => (r1.min(r), c1.min(c), r2.max(r), c2.max(c)),
@@ -674,8 +676,8 @@ pub(super) fn build_table(mut sheet: SheetContent, slots: &mut u64) -> Result<Bu
         (r1, c1, r2, c2) = (r1.min(mr1), c1.min(mc1), r2.max(mr2), c2.max(mc2));
     }
 
-    let row_map: Vec<u32> = (r1..=r2).filter(|&r| !hidden_row(r)).collect();
-    let col_map: Vec<u32> = (c1..=c2).filter(|&c| !hidden_col(c)).collect();
+    let row_map: Vec<u32> = (r1..=r2).collect();
+    let col_map: Vec<u32> = (c1..=c2).collect();
     if row_map.is_empty() || col_map.is_empty() {
         return Ok(built);
     }
@@ -690,7 +692,7 @@ pub(super) fn build_table(mut sheet: SheetContent, slots: &mut u64) -> Result<Bu
         });
     }
 
-    // Remap merges onto the surviving coordinates. The covered-position set
+    // Place merges on the grid's coordinates. The covered-position set
     // is charged against the expansion budget up front, before any
     // insertion work, mirroring what placement would charge.
     let visible_span = |map: &[u32], lo: u32, hi: u32| {
@@ -785,26 +787,6 @@ fn expand_ranges(ranges: &mut [(u32, u32)]) -> Vec<u32> {
         next = next.max(b.saturating_add(1));
     }
     out
-}
-
-/// First coordinate in `lo..=hi` absent from the sorted hidden list. The
-/// consecutive hidden run starting at `lo` is measured by binary search, so
-/// a long run cannot force a linear scan per query.
-fn first_visible(hidden: &[u32], lo: u32, hi: u32) -> Option<u32> {
-    let tail = &hidden[hidden.partition_point(|&h| h < lo)..];
-    // `tail[j] - j` never decreases, so "the run still holds at j" is a
-    // prefix property.
-    let (mut a, mut b) = (0usize, tail.len());
-    while a < b {
-        let mid = (a + b) / 2;
-        if tail[mid] == lo + mid as u32 {
-            a = mid + 1;
-        } else {
-            b = mid;
-        }
-    }
-    let first = lo.checked_add(u32::try_from(a).ok()?)?;
-    (first <= hi).then_some(first)
 }
 
 /// Render a date/time serial the way the crate always has: elapsed formats
@@ -1287,8 +1269,8 @@ line two</t></is></c><c r="B2" t="inlineStr"><is><t>example.com</t></is></c><c r
         let CellSlot::Origin(lines) = &table.grid[1][0] else { panic!() };
         assert!(matches!(&lines.blocks[0], Block::Paragraph(i)
             if matches!(i.as_slice(), [Inline::Text { .. }, Inline::LineBreak, Inline::Text { .. }])));
-        // The hidden row's note goes with it; the rest follow the table in
-        // reading order, on one line each.
+        // markitai: the hidden row is written, its note too; the notes
+        // follow the table in reading order, on one line each.
         let Some(Block::List(notes)) = doc.blocks.last() else { panic!("{:?}", doc.blocks) };
         let notes: Vec<String> = notes
             .items
@@ -1298,12 +1280,14 @@ line two</t></is></c><c r="B2" t="inlineStr"><is><t>example.com</t></is></c><c r
                 _ => String::new(),
             })
             .collect();
-        assert_eq!(notes, ["A1: First", "B2: Ann: Check this value"]);
+        assert_eq!(notes, ["A1: First", "B2: Ann: Check this value", "C3: On a hidden row"]);
         assert!(matches!(&doc.blocks[doc.blocks.len() - 2], Block::Heading { level: 3, .. }));
+        assert_eq!(texts(table)[0][5], "secret");
+        assert_eq!(texts(table)[2][2], "hidden");
         assert_eq!(
             doc.warnings,
             [
-                "Worksheet \"S\" has 1 hidden row and 1 hidden column holding content; they are omitted by the native spreadsheet reader."
+                "The workbook includes 1 hidden row and 1 hidden column holding content; they are converted like the visible ones."
             ]
         );
     }
@@ -1468,10 +1452,11 @@ line two</t></is></c><c r="B2" t="inlineStr"><is><t>example.com</t></is></c><c r
     }
 
     #[test]
-    fn hidden_rows_and_columns_are_omitted_and_hidden_sheets_marked() {
-        // Hidden rows and columns are left out. markitai: a hidden sheet is
-        // converted, as Python markitai converts it, under a heading that
-        // says it is hidden.
+    fn hidden_rows_columns_and_sheets_are_converted() {
+        // markitai: hidden rows and columns are written like visible ones,
+        // and a hidden sheet is converted under a heading that says it is
+        // hidden, as Python markitai converts them; the workbook gets one
+        // warning counting the rows and columns.
         let visible = r#"<cols><col min="2" max="2" hidden="1"/></cols><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>a</t></is></c><c r="B1" t="inlineStr"><is><t>hidden col</t></is></c><c r="C1" t="inlineStr"><is><t>c</t></is></c></row><row r="2" hidden="1"><c r="A2" t="inlineStr"><is><t>hidden row</t></is></c></row><row r="3"><c r="A3" t="inlineStr"><is><t>d</t></is></c></row></sheetData>"#;
         let secret = r#"<sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>secret</t></is></c></row></sheetData>"#;
         let wb = Wb {
@@ -1482,13 +1467,22 @@ line two</t></is></c><c r="B2" t="inlineStr"><is><t>example.com</t></is></c><c r
         assert_eq!(doc.blocks.len(), 4, "two headings and two tables");
         let blocks = format!("{:?}", doc.blocks);
         assert!(blocks.contains("Secret (hidden sheet)") && blocks.contains("secret"), "{blocks}");
-        assert_eq!(texts(first_table(&doc)), vec![vec!["a", "c"], vec!["d", ""]]);
+        assert_eq!(
+            texts(first_table(&doc)),
+            vec![vec!["a", "hidden col", "c"], vec!["hidden row", "", ""], vec!["d", "", ""]]
+        );
+        assert_eq!(
+            doc.warnings,
+            [
+                "The workbook includes 1 hidden row and 1 hidden column holding content; they are converted like the visible ones."
+            ]
+        );
     }
 
     #[test]
-    fn merges_remap_across_hidden_columns() {
-        // Dropping a hidden column renumbers the grid: a merge spanning it
-        // comes out one column narrower, not applied at stale indices.
+    fn merges_keep_their_hidden_columns() {
+        // markitai: a hidden column stays in the grid, so a merge spanning
+        // it keeps its full width.
         let wb = one_sheet(
             r#"<cols><col min="2" max="2" hidden="1"/></cols><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>m</t></is></c><c r="D1" t="inlineStr"><is><t>x</t></is></c></row></sheetData><mergeCells count="1"><mergeCell ref="A1:C1"/></mergeCells>"#,
         );
@@ -1497,14 +1491,16 @@ line two</t></is></c><c r="B2" t="inlineStr"><is><t>example.com</t></is></c><c r
         let CellSlot::Origin(cell) = &table.grid[0][0] else {
             panic!("expected the merge origin at (0,0)");
         };
-        assert_eq!((cell.col_span, cell.row_span), (2, 1));
-        assert_eq!(table.grid[0].len(), 3);
+        assert_eq!((cell.col_span, cell.row_span), (3, 1));
+        assert_eq!(table.grid[0].len(), 4);
+        // An empty hidden column holds no content and is not counted.
+        assert!(doc.warnings.is_empty(), "{:?}", doc.warnings);
     }
 
     #[test]
     fn merge_origin_in_a_hidden_row_keeps_its_content() {
-        // The origin row is hidden but the merge survives: its value moves
-        // to the first surviving position it covers instead of being lost.
+        // The origin row is hidden and written with the merge, at its own
+        // place.
         let wb = one_sheet(
             r#"<sheetData><row r="1" hidden="1"><c r="A1" t="inlineStr"><is><t>kept</t></is></c></row><row r="2"/><row r="3"><c r="B3" t="inlineStr"><is><t>x</t></is></c></row></sheetData><mergeCells count="1"><mergeCell ref="A1:A3"/></mergeCells>"#,
         );
@@ -1513,7 +1509,7 @@ line two</t></is></c><c r="B2" t="inlineStr"><is><t>example.com</t></is></c><c r
         let CellSlot::Origin(cell) = &table.grid[0][0] else {
             panic!("expected the merge origin at (0,0)");
         };
-        assert_eq!(cell.row_span, 2);
+        assert_eq!(cell.row_span, 3);
         assert_eq!(texts(table)[0][0], "kept");
     }
 

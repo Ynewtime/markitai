@@ -663,10 +663,13 @@ grid assembly, so a workbook saved in any container converts the same:
   markitai converts them, under a heading that says so (`## Notes (hidden
   sheet)`); there is no warning. ODS sheets with `table:display="false"` are
   marked the same way.
-- Hidden rows and columns are omitted, and a warning names how many held
-  content (`Worksheet "Data" has 1 hidden row and 1
-  hidden column holding content; …`); hidden empty rows and columns are not
-  counted.
+- Hidden rows and columns are written like visible ones, with their notes
+  and pictures, as Python markitai writes them and as hidden sheets are; the
+  item gets one warning counting those that hold content (`The workbook
+  includes 1 hidden row and 2 hidden columns holding content; they are
+  converted like the visible ones.`). Hidden empty rows and columns are not
+  counted (XLSX, XLSM, XLSB, XLS; ODS writes hidden rows and columns without
+  a warning).
 - A cell's hyperlink to an `http`, `https` or `mailto` address is a
   `[text](url)` link (XLSX, XLSM). Links into the workbook (`#Sheet2!A1`) and
   other schemes keep the text.
@@ -674,8 +677,8 @@ grid assembly, so a workbook saved in any container converts the same:
   order, each led by its cell (`* B3: text`), on one line. A legacy note's text
   is what the note box shows, which Excel begins with the author's name; a
   threaded comment (Microsoft 365) is one item per message, `Author: text`,
-  and replaces the placeholder Excel writes for it into the legacy part. Notes
-  of hidden rows and columns are omitted with them (XLSX, XLSM). Word and
+  and replaces the placeholder Excel writes for it into the legacy part
+  (XLSX, XLSM). Word and
   OpenDocument text comments stay out of the Markdown with a count warning:
   they annotate a span of text rather than a cell.
 - A line break inside a cell (Alt+Enter) is `<br>` (see

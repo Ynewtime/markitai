@@ -507,12 +507,14 @@ upstream files:
   `push_sheet`, and `build_table` returns the grid with what it left out. A
   formula cell whose `<v>` is absent, or empty for a non-string result (openpyxl
   writes `<v></v>`), shows `=formula` as code and is counted in one workbook
-  warning; hidden rows and columns that hold content are counted in a warning
-  per sheet; an `http`, `https` or `mailto` cell hyperlink (`hyperlinks`,
+  warning; hidden rows and columns are written like visible ones (as Python
+  markitai and the hidden sheets below), with their notes and pictures, and
+  those that hold content are counted in one workbook warning
+  (`HiddenCells`); an `http`, `https` or `mailto` cell hyperlink (`hyperlinks`,
   through the worksheet's relationships) becomes a link; legacy notes
   (`comments`) and threaded comments (`threadedComment`, authors from the
   workbook's `person` part, replacing their legacy placeholder) follow the
-  table as a list under a `Notes` heading, notes of hidden cells left out; and
+  table as a list under a `Notes` heading; and
   a cell's line breaks stay `LineBreak`s (`shared::text::clean_cell_text`).
   Upstream dropped all four silently and turned line breaks into spaces.
 - `src/formats/sheet/numfmt.rs`, `xlsx.rs`: the built-in currency (5-8) and

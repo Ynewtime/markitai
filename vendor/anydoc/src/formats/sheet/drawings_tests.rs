@@ -6,7 +6,6 @@ fn xml_figures(
     anchor: &str,
     rel_type: &str,
     rel_mode: &str,
-    content: SheetContent,
 ) -> (Vec<Inline>, AssetSink) {
     let drawing = format!(
         r#"<xdr:wsDr xmlns:xdr="{XDR}" xmlns:a="{}" xmlns:r="{}">{anchor}</xdr:wsDr>"#,
@@ -52,7 +51,6 @@ fn xml_figures(
         worksheet,
         "xl/worksheets/sheet.xml",
         &rels,
-        &content,
         &mut assets,
         &mut Vec::new(),
     )
@@ -75,50 +73,40 @@ fn typed_visible_sheet_picture_keeps_original_bytes_and_each_reference() {
     let (images, assets) = xml_figures(
         &anchor(&[pic(false), pic(false)].concat()),
         IMAGE,
-        "",
-        SheetContent::default(),
-    );
+        "");
     assert_eq!(images.len(), 2);
     assert_eq!(assets.assets.len(), 1);
     assert_eq!(assets.assets[0].bytes, b"raw image bytes");
 }
 #[test]
-fn hidden_shape_anchor_or_group_does_not_load_image_bytes() {
-    let (images, assets) = xml_figures(&anchor(&pic(true)), IMAGE, "", SheetContent::default());
+fn hidden_shape_or_group_does_not_load_image_bytes() {
+    let (images, assets) = xml_figures(&anchor(&pic(true)), IMAGE, "");
     assert!(images.is_empty() && assets.assets.is_empty());
-    let mut content = SheetContent::default();
-    content.hidden_rows.insert(1);
-    assert!(xml_figures(&anchor(&pic(false)), IMAGE, "", content).0.is_empty());
-    let mut content = SheetContent::default();
-    content.hidden_cols.push((3, 3));
-    assert!(xml_figures(&anchor(&pic(false)), IMAGE, "", content).0.is_empty());
     let group = format!(
         r#"<xdr:grpSp><xdr:nvGrpSpPr><xdr:cNvPr hidden="true"/></xdr:nvGrpSpPr>{}</xdr:grpSp>"#,
         pic(false)
     );
-    assert!(xml_figures(&anchor(&group), IMAGE, "", SheetContent::default()).0.is_empty());
+    assert!(xml_figures(&anchor(&group), IMAGE, "").0.is_empty());
 }
 #[test]
 fn wrong_relationship_type_and_out_of_grid_anchor_cannot_publish_orphans() {
-    assert!(xml_figures(&anchor(&pic(false)), DRAWING, "", SheetContent::default()).0.is_empty());
+    assert!(xml_figures(&anchor(&pic(false)), DRAWING, "").0.is_empty());
     let bad = anchor(&pic(false)).replace("<xdr:col>3</xdr:col>", "<xdr:col>16384</xdr:col>");
-    assert!(xml_figures(&bad, IMAGE, "", SheetContent::default()).0.is_empty());
+    assert!(xml_figures(&bad, IMAGE, "").0.is_empty());
 }
 #[test]
 fn external_image_is_a_link_and_never_a_downloaded_asset() {
     let (images, assets) = xml_figures(
         &anchor(&pic(false)),
         IMAGE,
-        r#"TargetMode="External""#,
-        SheetContent::default(),
-    );
+        r#"TargetMode="External""#);
     assert!(matches!(&images[..], [Inline::Image { source: ImageSource::External(_), .. }]));
     assert!(assets.assets.is_empty());
 }
 #[test]
 fn absolute_anchor_and_image_only_sheet_are_kept_without_an_empty_grid() {
     let a = format!("<xdr:absoluteAnchor>{}</xdr:absoluteAnchor>", pic(false));
-    let (images, _) = xml_figures(&a, IMAGE, "", SheetContent::default());
+    let (images, _) = xml_figures(&a, IMAGE, "");
     let mut doc = crate::model::Document::default();
     super::super::xlsx::push_sheet_images(
         &mut doc,
@@ -244,17 +232,11 @@ fn binary_parts(hidden_group: bool) -> (Vec<u8>, Vec<u8>) {
 fn binary_figure_is_anchored_and_hidden_group_or_cell_suppresses_the_actual_bank_load() {
     let (group, drawing) = binary_parts(false);
     let mut bank = Bank::read(&group, &[]).unwrap();
-    assert_eq!(binary(&drawing, &SheetContent::default(), &mut bank).unwrap().len(), 1);
+    assert_eq!(binary(&drawing, &mut bank).unwrap().len(), 1);
     assert_eq!(bank.assets.assets[0].bytes, b"binary diagram");
     let (group, drawing) = binary_parts(true);
     let mut bank = Bank::read(&group, &[]).unwrap();
-    assert!(binary(&drawing, &SheetContent::default(), &mut bank).unwrap().is_empty());
-    assert!(bank.assets.assets.is_empty());
-    let (group, drawing) = binary_parts(false);
-    let mut bank = Bank::read(&group, &[]).unwrap();
-    let mut content = SheetContent::default();
-    content.hidden_rows.insert(1);
-    assert!(binary(&drawing, &content, &mut bank).unwrap().is_empty());
+    assert!(binary(&drawing, &mut bank).unwrap().is_empty());
     assert!(bank.assets.assets.is_empty());
 }
 

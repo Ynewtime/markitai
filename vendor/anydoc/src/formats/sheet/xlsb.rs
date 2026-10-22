@@ -77,6 +77,7 @@ pub(super) fn parse(pkg: &mut Package, wb_part: &str) -> Result<Document, Conver
     let mut failed = 0usize;
     // One budget for the workbook, so sheets cannot multiply the cap.
     let mut slots = 0u64;
+    let mut hidden = super::xlsx::HiddenCells::default();
     for (name, part) in &sheets {
         let content =
             pkg.optional_part(part)?.map(|bytes| read_sheet(&bytes, &shared, &xfs, date1904));
@@ -95,8 +96,9 @@ pub(super) fn parse(pkg: &mut Package, wb_part: &str) -> Result<Document, Conver
             }
         };
         content.checkboxes = read_vml_checkboxes(pkg, part)?;
-        push_sheet(&mut doc, name, multi_sheet, build_table(content, &mut slots)?);
+        push_sheet(&mut doc, name, multi_sheet, hidden.count(build_table(content, &mut slots)?));
     }
+    hidden.warn(&mut doc);
     if !sheets.is_empty() && failed == sheets.len() {
         return Err(ConvertError::malformed("no sheet in the workbook could be read"));
     }
@@ -792,7 +794,7 @@ mod tests {
     }
 
     #[test]
-    fn hidden_rows_and_columns_are_omitted_and_hidden_sheets_marked() {
+    fn hidden_rows_columns_and_sheets_are_converted() {
         let mut visible = col_info(1, 1, true);
         visible.extend(row_hdr(0, false));
         visible.extend(real_cell(0, 0, 1.0));
@@ -816,7 +818,12 @@ mod tests {
         assert_eq!(doc.blocks.len(), 6, "three headings and three tables");
         let blocks = format!("{:?}", doc.blocks);
         assert!(blocks.contains("\"Hidden (hidden sheet)\"") && blocks.contains("VeryHidden (hidden sheet)"), "{blocks}");
-        assert_eq!(texts(first_table(&doc)), vec![vec!["1", "3"], vec!["5", ""]]);
+        // markitai: hidden rows and columns are written like visible ones.
+        assert_eq!(
+            texts(first_table(&doc)),
+            vec![vec!["1", "2", "3"], vec!["4", "", ""], vec!["5", "", ""]]
+        );
+        assert_eq!(doc.warnings.len(), 1, "{:?}", doc.warnings);
     }
 
     #[test]

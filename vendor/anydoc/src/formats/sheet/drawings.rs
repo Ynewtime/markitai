@@ -1,7 +1,7 @@
 //! Sheet-level figures, read only through the visible sheet's drawing
 //! references. Figures follow that sheet's grid; they are not cell values.
 
-use super::xlsx::{MAX_COLS, MAX_ROWS, SheetContent};
+use super::xlsx::{MAX_COLS, MAX_ROWS};
 use crate::error::ConvertError;
 use crate::formats::ppt::pictures::{self, Bank};
 use crate::model::{ImageSource, Inline};
@@ -14,17 +14,11 @@ const XDR: &str = "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetD
 const DRAWING: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing";
 const IMAGE: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
 
-fn hidden_cell(content: &SheetContent, row: u32, col: u32) -> bool {
-    content.hidden_rows.contains(&row)
-        || content.hidden_cols.iter().any(|&(a, b)| a <= col && col <= b)
-}
-
 pub(super) fn xml(
     pkg: &mut Package,
     worksheet: &Element,
     part: &str,
     rels: &Relationships,
-    content: &SheetContent,
     assets: &mut AssetSink,
     warnings: &mut Vec<String>,
 ) -> Result<Vec<Inline>, ConvertError> {
@@ -62,7 +56,9 @@ pub(super) fn xml(
                         ))
                     })
                     .is_some_and(|(row, col)| {
-                        row < MAX_ROWS && col < MAX_COLS && !hidden_cell(content, row, col)
+                        // markitai: a hidden row or column is written like a
+                        // visible one, its pictures too.
+                        row < MAX_ROWS && col < MAX_COLS
                     }),
                 "absoluteAnchor" => true,
                 _ => false,
@@ -151,7 +147,6 @@ pub(super) fn xml(
 
 pub(super) fn binary(
     data: &[u8],
-    content: &SheetContent,
     bank: &mut Bank,
 ) -> Result<Vec<Inline>, ConvertError> {
     let mut images = Vec::new();
@@ -178,7 +173,6 @@ pub(super) fn binary(
                 && let Some((row, col)) = shape.anchor
                 && row < 65_536
                 && col < 256
-                && !hidden_cell(content, row, col)
                 && let Some(pib) = shape.pib
                 && let Some(image) = bank.image(pib)?
             {
