@@ -423,6 +423,70 @@ fn the_default_always_and_never_keep_auto_local_with_the_same_failure() {
     }
 }
 
+/// Owner decision 3 (2026-10-22): a user token's serve job never sends its
+/// URL to a remote service, whatever consent says: a remote strategy is
+/// refused before any request, and `auto` leaves its remote steps out and
+/// says so when the local strategies did not get the page.
+#[test]
+fn a_user_tokens_conversion_never_reaches_a_remote_service() {
+    let (_directory, mut cfg) = auto_settings();
+    cfg["fetch"]["remote_consent"] = json!("always");
+    let page = PageServer::new(vec![
+        Reply::text("no").status(403),
+        Reply::text("gone").status(404),
+    ]);
+    let service = Mock::new(vec![jina_page("# Remote")]);
+    let terminal = Arc::new(Terminal::default());
+    let fixture = Fixture::new(gate(&terminal, true, Some(true), None));
+    let mut services = fixture.services(&service.origin);
+    services.refused = true;
+    let Err(Error::Fetch(message)) =
+        fetch_with_services(&page.url("/a"), &cfg, None, true, None, false, &services)
+    else {
+        panic!("a refusal stays a failure");
+    };
+    assert!(message.starts_with(REFUSED), "{message}");
+    assert!(message.ends_with(REMOTE_FALLBACK_SKIPPED), "{message}");
+    // A missing page is one no remote service could read: nothing to say.
+    let Err(Error::Fetch(message)) =
+        fetch_with_services(&page.url("/b"), &cfg, None, true, None, false, &services)
+    else {
+        panic!("a missing page stays a failure");
+    };
+    assert!(!message.contains("remote"), "{message}");
+    // A chosen remote strategy, by `-s` or by the configuration.
+    for (strategy, label) in [
+        ("jina", "Jina Reader"),
+        ("defuddle", "defuddle.md"),
+        ("cloudflare", "Cloudflare"),
+    ] {
+        cfg["fetch"]["strategy"] = json!(strategy);
+        for explicit in [Some(strategy), None] {
+            let Err(Error::Fetch(message)) = fetch_with_services(
+                &page.url("/c"),
+                &cfg,
+                explicit,
+                true,
+                None,
+                false,
+                &services,
+            ) else {
+                panic!("{strategy} is refused");
+            };
+            assert_eq!(
+                message,
+                format!(
+                    "{label} is not available to a user token's conversion: it never sends its URL to remote services. Choose auto, static or playwright."
+                )
+            );
+        }
+    }
+    assert!(service.requests().is_empty());
+    assert_eq!(page.requests().len(), 2);
+    assert_eq!(terminal.asked.load(Ordering::SeqCst), 0);
+    assert!(terminal.notices.lock().unwrap().is_empty());
+}
+
 #[test]
 fn ask_asks_once_per_process_and_a_no_keeps_every_later_page_local() {
     let (_directory, mut cfg) = auto_settings();

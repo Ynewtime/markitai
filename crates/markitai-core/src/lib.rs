@@ -467,6 +467,13 @@ fn convert_inner(
     };
     let cloudflare_wanted =
         !is_url && fetch::cloudflare::converts(&cfg, &input_path, cloudflare_extension);
+    if cloudflare_wanted && context.remote_services_refused {
+        // serve refuses the backend for a user token; this guards any other
+        // way it could be chosen.
+        return Err(Error::InvalidInput(
+            "The Cloudflare backend is not available to a user token's conversion: it never sends its files to remote services. Choose the native backend.".into(),
+        ));
+    }
     let cloudflare_backend = cloudflare_wanted
         && !config::enabled(&cfg, "/ocr/enabled")
         && !config::enabled(&cfg, "/screenshot/enabled");
@@ -530,6 +537,7 @@ fn convert_inner(
             output_dir.is_some(),
             context.browser_runtime,
             context.public_only,
+            context.remote_services_refused,
         )?;
         fetch_cache_hit = fetched.cache_hit;
         screenshots = fetched.screenshots;

@@ -413,7 +413,7 @@ pub(super) async fn create(
     };
     // A user's conversions route to its own and the shared models only.
     let configuration = state.conversion_config(owner.as_deref());
-    let cfg = options.config_for_request(&configuration, trusted && admin)?;
+    let cfg = options.config_for_request(&configuration, trusted && admin, owner.is_some())?;
     // Without a routable model every item would fail with the same error, so a
     // request for model processing is refused before anything is stored.
     options.require_model(&configuration, &cfg)?;

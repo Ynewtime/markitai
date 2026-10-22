@@ -511,7 +511,10 @@ table. The workbench and REST service additionally require
 for a selected Cloudflare strategy or file backend. Server defaults and history
 cannot supply that authorization; retries and enhancements must obtain it again.
 It cannot override `never` or `MARKITAI_NO_REMOTE_FETCH`, or authorize another
-remote provider.
+remote provider. A job a user token owns uses no remote service at all: its
+remote strategies are refused, a remote server default runs as `auto` and its
+`auto` chain has no remote steps, whatever `fetch.remote_consent` says (see
+[serve](serve.md)).
 
 Differences from the reference, kept on purpose: the reference's default
 `always` sends URLs to the remote services whenever local strategies fail, and

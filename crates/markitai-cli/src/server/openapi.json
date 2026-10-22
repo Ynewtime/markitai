@@ -1150,8 +1150,8 @@
           "text_only": { "type": ["boolean", "null"], "description": "Images and PDFs: write only the recognised text (`output.text_only`); offered when `features.text_only`" },
           "no_cache": { "type": ["boolean", "null"] },
           "no_compress": { "type": ["boolean", "null"] },
-          "strategy": { "type": ["string", "null"] },
-          "backend": { "type": ["string", "null"], "enum": ["native", "cloudflare", null] },
+          "strategy": { "type": ["string", "null"], "description": "auto, static, playwright, defuddle, jina or cloudflare. A job a user token owns (its retries too, whoever asks) is refused a remote one (defuddle, jina, cloudflare) with 403 remote_processing_forbidden, and a remote server default runs as auto for it." },
+          "backend": { "type": ["string", "null"], "enum": ["native", "cloudflare", null], "description": "cloudflare is refused for a job a user token owns (403 remote_processing_forbidden)." },
           "remote_processing": { "type": ["string", "null"], "enum": ["cloudflare", null], "description": "Consent for the explicitly selected Cloudflare strategy/backend in this request only. Requires a trusted client and locally ready server; never/hard-off policies win." }
         }
       },

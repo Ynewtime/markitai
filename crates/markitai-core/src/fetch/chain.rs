@@ -63,6 +63,16 @@ fn remote_may_help(error: &Error) -> bool {
     }
 }
 
+/// A failure of `auto` whose remote steps were left out for a user token's
+/// job, saying so when a remote service could have read the page.
+pub(super) fn remote_skipped(error: Error) -> Error {
+    if remote_may_help(&error) {
+        appended(error, super::REMOTE_FALLBACK_SKIPPED)
+    } else {
+        error
+    }
+}
+
 fn appended(error: Error, text: &str) -> Error {
     match error {
         Error::Fetch(message) => Error::Fetch(format!("{message}; {text}")),

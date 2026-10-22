@@ -116,6 +116,13 @@ pub struct ConvertContext<'a> {
     /// hops it follows and the pictures it links to never reach the server's
     /// own machine or network. Library and CLI callers leave it unset.
     pub public_only: bool,
+    /// Whether the conversion may use no remote service: set for a serve job
+    /// a user token owns, so its URLs and files never go to defuddle.md, Jina
+    /// Reader or Cloudflare, whether chosen as the strategy or backend
+    /// (refused) or reached as a fallback of `auto` (skipped, and said when the
+    /// local strategies did not get the page), whatever
+    /// `fetch.remote_consent` says. Library and CLI callers leave it unset.
+    pub remote_services_refused: bool,
 }
 
 #[derive(Debug, Deserialize)]

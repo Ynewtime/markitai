@@ -357,8 +357,10 @@ async fn convert_one(
             // Jobs always publish into their own folder.
             stdout_assets: None,
             // A user token's URL job reaches public addresses only, so its URL
-            // and the pictures it links to never reach the server's network.
+            // and the pictures it links to never reach the server's network,
+            // and it uses no remote service (defuddle.md, Jina, Cloudflare).
             public_only,
+            remote_services_refused: public_only,
         };
         match kept_id.filter(|_| create_private_dir(&snapshots).is_ok()) {
             Some(item_id) => {

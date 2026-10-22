@@ -674,6 +674,7 @@ export function App() {
       busy={submitting || cloudflare.pending !== null}
       openRequest={optionsRequest}
       textOnly={features?.text_only === true}
+      localOnly={role === "user"}
       defaults={defaults.control}
       onChange={(next) => {
         defaults.touch();

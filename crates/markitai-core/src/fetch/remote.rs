@@ -67,6 +67,10 @@ pub(crate) struct Services<'a> {
     pub gate: &'a Gate,
     /// The first pause after a Cloudflare 429; the second is twice as long.
     pub retry_pause: Duration,
+    /// No remote service may receive this conversion's URL (a user token's
+    /// serve job): a remote strategy is refused and `auto` leaves its remote
+    /// steps out, whatever consent says.
+    pub refused: bool,
 }
 
 static LIMITS: LazyLock<Limits> = LazyLock::new(|| Limits::new(Duration::from_secs(60)));
@@ -87,6 +91,7 @@ impl Services<'static> {
             slots: &SLOTS,
             gate: Gate::installed(),
             retry_pause: Duration::from_secs(2),
+            refused: false,
         }
     }
 }
@@ -124,6 +129,7 @@ impl Fixture {
             slots: &self.slots,
             gate: &self.gate,
             retry_pause: Duration::from_millis(5),
+            refused: false,
         }
     }
 }

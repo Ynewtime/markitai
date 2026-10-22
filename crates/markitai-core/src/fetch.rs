@@ -520,6 +520,7 @@ fn fetch_with_context(
         output_available,
         None,
         false,
+        false,
     )
 }
 
@@ -530,7 +531,10 @@ pub(crate) fn fetch_with_runtime(
     output_available: bool,
     runtime: Option<&crate::BrowserRuntime>,
     public_only: bool,
+    remote_services_refused: bool,
 ) -> Result<FetchOutcome> {
+    let mut services = Services::production();
+    services.refused = remote_services_refused;
     fetch_with_services(
         source,
         cfg,
@@ -538,9 +542,32 @@ pub(crate) fn fetch_with_runtime(
         output_available,
         runtime,
         public_only,
-        &Services::production(),
+        &services,
     )
 }
+
+/// A remote service as a reader knows it.
+pub(crate) fn service_label(service: &str) -> &str {
+    match service {
+        "defuddle" => "defuddle.md",
+        "jina" => "Jina Reader",
+        "cloudflare" => "Cloudflare",
+        other => other,
+    }
+}
+
+/// The refusal of a remote strategy or backend in a conversion that may use
+/// no remote service (a user token's serve job).
+pub(crate) fn refused_service_message(service: &str) -> String {
+    format!(
+        "{} is not available to a user token's conversion: it never sends its URL to remote services. Choose auto, static or playwright.",
+        service_label(service)
+    )
+}
+
+/// What a user token's failed `auto` fetch says when its remote fallbacks
+/// were left out.
+pub(crate) const REMOTE_FALLBACK_SKIPPED: &str = "the remote fallback (defuddle.md, Jina Reader, Cloudflare) was skipped: a user token's conversion never sends its URL to remote services";
 
 fn fetch_with_services(
     source: &str,
@@ -696,6 +723,11 @@ fn fetch_with_services(
         ),
         "static" => {
             fetch_static(source, &url, cfg, explicit_strategy).map_err(static_javascript_error)
+        }
+        // serve refuses the option for a user token; this guards any other
+        // way a remote strategy could reach its fetch.
+        "defuddle" | "jina" | "cloudflare" if services.refused => {
+            Err(Error::Fetch(refused_service_message(strategy)))
         }
         "defuddle" | "jina" | "cloudflare" => {
             require_capture_output(cfg, output_available)?;
@@ -890,6 +922,11 @@ fn chain_after(
     rendered: Option<Error>,
 ) -> Result<FetchOutcome> {
     let mut steps = auto_order(url, cfg, learned_route, services);
+    // A user token's job: the remote readers are off for it.
+    let remote_left_out = services.refused && steps.iter().any(|step| step.remote().is_some());
+    if services.refused {
+        steps.retain(|step| step.remote().is_none());
+    }
     let mut rendered = rendered;
     let browser_ran = rendered.is_some();
     if browser_ran {
@@ -899,7 +936,7 @@ fn chain_after(
     let remote: Vec<Service> = steps.iter().filter_map(|step| step.remote()).collect();
     // The target and consent are settled once, at the first remote step.
     let mut settled: Option<std::result::Result<(), Option<String>>> = None;
-    chain::run(
+    let result = chain::run(
         &steps,
         chain::Attempts {
             static_fetch: &mut || fetch_static(source, url, cfg, explicit_strategy),
@@ -948,10 +985,16 @@ fn chain_after(
                 remote::fetch(service, source, url, cfg, services).map(remote::outcome)
             },
             what_works: sites::what_works(url),
-            remote_hint: services.gate.could_opt_in(cfg, &services.vars)
+            remote_hint: !services.refused
+                && services.gate.could_opt_in(cfg, &services.vars)
                 && !(services.private_name)(url),
         },
-    )
+    );
+    // Said where it mattered: the local strategies did not get the page.
+    match result {
+        Err(error) if remote_left_out => Err(chain::remote_skipped(error)),
+        result => result,
+    }
 }
 
 fn add_learning_warning(outcome: &mut FetchOutcome) {

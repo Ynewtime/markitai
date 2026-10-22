@@ -15,6 +15,7 @@ import {
   featuresOf,
   hasAdvancedChoices,
   matchingPreset,
+  offeredStrategies,
   PRESETS,
   resolveOptions,
   sameAsDefaults,
@@ -28,7 +29,6 @@ import { HelpTooltip, helpItemText, type HelpItem } from "./help-tooltip.tsx";
 import { Icon } from "./icons.tsx";
 import type { DefaultsControl } from "../hooks/use-convert-defaults.ts";
 
-const STRATEGIES: FetchStrategy[] = ["auto", "static", "playwright", "defuddle", "jina", "cloudflare"];
 const BACKENDS: ConversionBackend[] = ["native", "cloudflare"];
 const PROFILES: (OutputProfile | null)[] = [null, "rag", "obsidian", "okf"];
 
@@ -163,6 +163,7 @@ export function OptionsPanel({
   onFolder,
   openRequest = 0,
   textOnly = false,
+  localOnly = false,
 }: {
   t: Dict;
   state: Composer;
@@ -189,6 +190,10 @@ export function OptionsPanel({
   openRequest?: number;
   /** The backend offers Text only (`features.text_only`). */
   textOnly?: boolean;
+  /** A user token: its conversions never use a remote service, so the remote
+   * strategies and the Cloudflare backend are not offered (both backends
+   * refuse them with 403 `remote_processing_forbidden`). */
+  localOnly?: boolean;
 }) {
   const [id] = useState(() => `opts-${++panels}`);
   const modelNote = needsModel ?? t.advNeedsModel;
@@ -205,6 +210,7 @@ export function OptionsPanel({
     return () => clearTimeout(timer);
   }, [copied]);
 
+  const strategies = offeredStrategies(localOnly);
   const reason = cloudflareReason(cloudflare);
   const a = state.advanced;
   const effective = resolveOptions(state, presets);
@@ -422,14 +428,14 @@ export function OptionsPanel({
                       id={`${id}-strategy`}
                       text={t.advStrategy}
                       hint={t.helpStrategy}
-                      items={STRATEGIES.map(strategyHelp)}
+                      items={strategies.map(strategyHelp)}
                       helpLabel={t.helpLabel}
                     />
                     <div class="opt-controls">
                       <Segments
                         labelledBy={`${id}-strategy`}
                         value={a.strategy}
-                        choices={STRATEGIES}
+                        choices={strategies}
                         label={(value) => strategyLabel[value]}
                         help={strategyHelp}
                         disabled={(value) => value === "cloudflare" && (reason !== null || !cloudflare?.browser_rendering)}
@@ -439,7 +445,7 @@ export function OptionsPanel({
                       {remoteNotice && <p class="opt-note">{remoteNotice}</p>}
                     </div>
                   </div>
-                  <div class="opt-row">
+                  {!localOnly && <div class="opt-row">
                     <RowLabel id={`${id}-backend`} text={t.advBackend} hint={t.helpBackend} items={BACKENDS.map(backendHelp)} helpLabel={t.helpLabel} />
                     <div class="opt-controls">
                       <Segments
@@ -453,8 +459,8 @@ export function OptionsPanel({
                         onPick={(value) => set("backend", value)}
                       />
                     </div>
-                  </div>
-                  {reason && a.strategy !== "cloudflare" && a.backend !== "cloudflare" && <div class="opt-row">
+                  </div>}
+                  {reason && !localOnly && a.strategy !== "cloudflare" && a.backend !== "cloudflare" && <div class="opt-row">
                     <RowLabel id={`${id}-cloudflare`} text="Cloudflare" hint={t.cloudflareSetup} items={[]} helpLabel={t.helpLabel} />
                     <div class="opt-controls"><p class="opt-note">{t.cloudflareReason(reason)}</p></div>
                   </div>}

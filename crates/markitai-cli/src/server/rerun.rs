@@ -147,7 +147,8 @@ pub(super) async fn retry(
         // Older histories may contain a previous confirmation; never reuse it.
         if !explicit_options { opts.remote_processing=None; }
         let configuration=state.conversion_config(job.owner.as_deref());
-        let mut cfg=opts.config_for_request(&configuration,trusted&&admin)?;
+        // Checked by the job's owner: an admin's retry of a user's job keeps its rules.
+        let mut cfg=opts.config_for_request(&configuration,trusted&&admin,job.owner.is_some())?;
         // Options inherited from the item are the caller's earlier choice and keep the
         // core's failure policy; a request that names model processing now needs a model now.
         if explicit_options&&body.operation==Operation::Retry{opts.require_model(&configuration,&cfg)?;}
@@ -289,8 +290,10 @@ async fn run(state: Arc<State>, job: Arc<Job>, work: Work) {
                 browser_runtime: Some(&browser_runtime),
                 // A rerun publishes into its job folder.
                 stdout_assets: None,
-                // A user token's URL rerun stays on public addresses too.
+                // A user token's URL rerun stays on public addresses too,
+                // and uses no remote service.
                 public_only,
+                remote_services_refused: public_only,
             };
             // A URL's newly kept page, its screenshots' blocks and compare
             // screenshots replace the old ones with the result, when the

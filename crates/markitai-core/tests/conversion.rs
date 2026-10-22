@@ -1162,3 +1162,33 @@ fn numbers_capture_keeps_its_own_error_without_a_renderer() {
         "{error}"
     );
 }
+
+/// A user token's job never sends its file to Cloudflare: the backend is
+/// refused before anything is read or sent (serve refuses the option too).
+#[test]
+fn a_conversion_that_refuses_remote_services_refuses_the_cloudflare_backend() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("report.docx");
+    std::fs::write(&input, b"not read").unwrap();
+    let cfg = json!({"fetch":{"remote_consent":"always","cloudflare":{"convert_enabled":true,
+        "account_id":"a","api_token":"t"}}});
+    let result = markitai_core::convert_with_context(
+        input.to_str().unwrap(),
+        ConvertOptions {
+            config: Some(cfg),
+            llm: Some(false),
+            ..Default::default()
+        },
+        markitai_core::ConvertContext {
+            remote_services_refused: true,
+            ..Default::default()
+        },
+    );
+    let Err(Error::InvalidInput(message)) = result else {
+        panic!("the Cloudflare backend is refused: {result:?}");
+    };
+    assert!(
+        message.starts_with("The Cloudflare backend is not available to a user token's conversion"),
+        "{message}"
+    );
+}

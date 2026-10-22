@@ -140,6 +140,14 @@ export function emptyOptions(): JobOptions {
   };
 }
 
+/** The fetch strategies the composer offers. A user token's conversions
+ * never use a remote service (defuddle.md, Jina Reader, Cloudflare): both
+ * backends refuse those strategies for it, so they are not offered. */
+export function offeredStrategies(localOnly: boolean): FetchStrategy[] {
+  const all: FetchStrategy[] = ["auto", "static", "playwright", "defuddle", "jina", "cloudflare"];
+  return localOnly ? all.slice(0, 3) : all;
+}
+
 const PROFILES = ["rag", "obsidian", "okf"];
 const STRATEGIES = ["auto", "static", "playwright", "defuddle", "jina", "cloudflare"];
 const BACKENDS = ["native", "cloudflare"];

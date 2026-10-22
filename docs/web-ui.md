@@ -633,6 +633,11 @@ file reader, and the page does not turn those choices off. Cloudflare's file
 backend cannot be combined with the Jina or Defuddle URL strategy: the page
 explains the conflict and waits for you to choose compatible options.
 
+A tab signed in with a user token is offered only the local strategies (Auto,
+Static, Playwright) and no backend choice: a user token's conversions never use a
+remote service, and both backends refuse those choices for it (403
+`remote_processing_forbidden`; see [serve](serve.md)).
+
 Before submission, a dialog explains the selected sources and asks for consent
 for this request. Cloudflare may charge separately; its charges are not included
 in the displayed LLM subtotal. If the selected sources do not use the chosen

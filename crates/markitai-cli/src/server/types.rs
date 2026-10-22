@@ -73,6 +73,8 @@ const STRATEGIES: [&str; 6] = [
     "jina",
     "cloudflare",
 ];
+/// Strategies that send a URL to a remote service.
+pub(super) const REMOTE_STRATEGIES: [&str; 3] = ["defuddle", "jina", "cloudflare"];
 
 fn invalid_options(detail: impl Into<String>) -> ApiError {
     ApiError::new(422, "invalid_options", detail)
@@ -189,10 +191,47 @@ impl JobOptions {
             })
     }
 
-    pub fn config_for_request(&self, base: &Value, trusted: bool) -> ApiResult<Value> {
-        self.config_for_request_with(base, trusted, || {
+    /// The configuration of a request's conversions. `trusted` is the admin's
+    /// request; `user_job` a job a user token owns (whoever asks, so an
+    /// admin's retry of a user's job follows the user's rules).
+    pub fn config_for_request(
+        &self,
+        base: &Value,
+        trusted: bool,
+        user_job: bool,
+    ) -> ApiResult<Value> {
+        if user_job {
+            self.refuse_remote_services()?;
+        }
+        let mut cfg = self.config_for_request_with(base, trusted, || {
             markitai_core::cloudflare_capabilities(base)
-        })
+        })?;
+        if user_job {
+            local_strategy(&mut cfg);
+        }
+        Ok(cfg)
+    }
+
+    /// A user token's job never sends its URLs or files to a remote service
+    /// (owner decision, 2026-10-22): not as a chosen strategy (defuddle.md,
+    /// Jina Reader, Cloudflare) or backend, whatever `fetch.remote_consent`
+    /// says, so it can neither bill the server's keys nor hand the URL to
+    /// those services; `auto` leaves its remote fallbacks out too (core's
+    /// `remote_services_refused`).
+    fn refuse_remote_services(&self) -> ApiResult<()> {
+        if self
+            .strategy
+            .as_deref()
+            .is_some_and(|strategy| REMOTE_STRATEGIES.contains(&strategy))
+            || self.backend.as_deref() == Some("cloudflare")
+        {
+            return Err(ApiError::new(
+                403,
+                "remote_processing_forbidden",
+                "A user token's conversion never uses remote services (defuddle.md, Jina Reader, Cloudflare); choose auto, static or playwright",
+            ));
+        }
+        Ok(())
     }
 
     fn config_for_request_with(
@@ -324,6 +363,18 @@ impl JobOptions {
         cfg["output"]["allow_symlinks"] = json!(false);
         markitai_core::config::normalize(&cfg)
             .map_err(|error| ApiError::new(422, "invalid_options", error.to_string()))
+    }
+}
+
+/// A remote `fetch.strategy` the server defaults to runs as `auto` for a
+/// user token's job (its own choice of one is refused): it reads its URLs
+/// locally.
+pub(super) fn local_strategy(cfg: &mut Value) {
+    if cfg["fetch"]["strategy"]
+        .as_str()
+        .is_some_and(|strategy| REMOTE_STRATEGIES.contains(&strategy))
+    {
+        cfg["fetch"]["strategy"] = json!("auto");
     }
 }
 

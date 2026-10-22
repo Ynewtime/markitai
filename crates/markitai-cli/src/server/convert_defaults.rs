@@ -7,7 +7,7 @@
 use super::{
     State,
     security::Principal,
-    types::{ApiError, ApiResult},
+    types::{ApiError, ApiResult, REMOTE_STRATEGIES},
 };
 use axum::{
     Json, Router,
@@ -189,15 +189,33 @@ fn answer(
     own: Option<&Map<String, Value>>,
     principal: &Principal,
 ) -> Value {
-    let mut effective = server.clone();
-    if let Some(own) = own {
-        effective.extend(own.iter().map(|(key, value)| (key.clone(), value.clone())));
-    }
     let (scope, can_save, rev) = match principal {
         Principal::Admin => ("server", true, revision(&json!(server))),
         Principal::User { .. } => ("user", true, revision(&json!(own))),
         Principal::Anonymous => ("server", false, revision(&json!(server))),
     };
+    // A user's conversions read URLs locally (a remote strategy runs as
+    // auto for its jobs), so a remote strategy is not what they start from.
+    let user = principal.user().is_some();
+    let local = |options: &Map<String, Value>| {
+        let mut options = options.clone();
+        if user
+            && options
+                .get("strategy")
+                .and_then(Value::as_str)
+                .is_some_and(|strategy| REMOTE_STRATEGIES.contains(&strategy))
+        {
+            options.insert("strategy".into(), json!("auto"));
+        }
+        options
+    };
+    let server = &local(server);
+    let own = own.map(local);
+    let own = own.as_ref();
+    let mut effective = server.clone();
+    if let Some(own) = own {
+        effective.extend(own.iter().map(|(key, value)| (key.clone(), value.clone())));
+    }
     json!({
         "defaults": effective,
         "server": server,
@@ -287,6 +305,16 @@ async fn replace(
             Ok(Json(answer(&of_config(&cfg), None, &principal)))
         }
         Principal::User { id, .. } => {
+            if wanted.as_ref().is_some_and(|wanted| {
+                wanted
+                    .get("strategy")
+                    .and_then(Value::as_str)
+                    .is_some_and(|strategy| REMOTE_STRATEGIES.contains(&strategy))
+            }) {
+                return Err(invalid(
+                    "a user token's conversions never use remote services; the default strategy must be auto, static or playwright",
+                ));
+            }
             let task = state.clone();
             let user = id.clone();
             let own = crate::task::blocking(move || {
@@ -366,5 +394,25 @@ mod tests {
             );
         }
         assert!(checked(&json!({"profile":null,"ocr":true})).is_ok());
+    }
+
+    #[test]
+    fn a_user_starts_from_a_local_strategy() {
+        let server = checked(&json!({"strategy":"jina","llm":true})).unwrap();
+        let own = checked(&json!({"strategy":"defuddle"})).unwrap();
+        let user = Principal::User {
+            id: "u".into(),
+            label: "u".into(),
+        };
+        let seen = answer(&server, Some(&own), &user);
+        assert_eq!(seen["defaults"]["strategy"], "auto");
+        assert_eq!(seen["server"]["strategy"], "auto");
+        assert_eq!(seen["own"]["strategy"], "auto");
+        assert_eq!(seen["defaults"]["llm"], true);
+        // The revision is the stored one's, so a save against it still matches.
+        assert_eq!(seen["revision"], revision(&json!(Some(&own))));
+        // The admin sees the server's own choice.
+        let admin = answer(&server, None, &Principal::Admin);
+        assert_eq!(admin["defaults"]["strategy"], "jina");
     }
 }

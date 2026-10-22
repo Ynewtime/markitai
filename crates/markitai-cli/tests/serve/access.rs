@@ -941,6 +941,105 @@ fn cloudflare_processing_billed_to_the_server_is_the_admins_alone() {
     server.stop();
 }
 
+/// Owner decision 3 (2026-10-22): a user token's job never uses a remote
+/// service. Choosing one is refused, checked by the job's owner (an admin's
+/// retry of a user's job too); a remote default of the server is `auto` for
+/// the user's composer, and the user cannot save one as its own.
+#[test]
+fn a_user_tokens_job_never_chooses_a_remote_service() {
+    let temp = tempfile::tempdir().unwrap();
+    configure(temp.path());
+    let path = temp.path().join("config.json");
+    let mut cfg: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    cfg["fetch"]["remote_consent"] = json!("always");
+    cfg["fetch"]["strategy"] = json!("jina");
+    cfg["fetch"]["cloudflare"] =
+        json!({"api_token":"synthetic-token","account_id":"synthetic-account"});
+    std::fs::write(&path, cfg.to_string()).unwrap();
+    let server = start(temp.path());
+    let created = call(
+        &server,
+        "POST",
+        "/api/access-tokens",
+        ADMIN,
+        Some(json!({"label":"guest"})),
+    );
+    let user = created.json()["token"].as_str().unwrap().to_owned();
+    let authorization = bearer(&user);
+    for options in [
+        json!({"strategy":"jina"}),
+        json!({"strategy":"defuddle"}),
+        json!({"strategy":"cloudflare","remote_processing":"cloudflare"}),
+        json!({"backend":"cloudflare","remote_processing":"cloudflare"}),
+    ] {
+        let (content, body) = multipart(&[("a.txt", b"local")], json!([]), options.clone());
+        let refused = server.request(
+            "POST",
+            "/api/jobs",
+            &[
+                ("Content-Type", content.as_str()),
+                ("Authorization", authorization.as_str()),
+            ],
+            &body,
+        );
+        assert_eq!(
+            reason(&refused),
+            (403, json!("remote_processing_forbidden")),
+            "{options}"
+        );
+        assert_eq!(
+            refused.json()["detail"],
+            "A user token's conversion never uses remote services (defuddle.md, Jina Reader, Cloudflare); choose auto, static or playwright"
+        );
+    }
+    // A local job runs; nobody may retry it through a remote service.
+    let job = submit_as(&server, &user, &[("a.txt", b"local text")], json!([]));
+    let done = done_as(&server, &user, &job);
+    assert_eq!(done["items"][0]["status"], "done", "{done}");
+    let item = done["items"][0]["item_id"].as_str().unwrap().to_owned();
+    let retry = format!("/api/jobs/{job}/items/{item}/retry");
+    for token in [ADMIN, user.as_str()] {
+        let refused = call(
+            &server,
+            "POST",
+            &retry,
+            token,
+            Some(json!({"options":{"strategy":"jina"}})),
+        );
+        assert_eq!(
+            reason(&refused),
+            (403, json!("remote_processing_forbidden"))
+        );
+    }
+    // The admin's own job may choose one.
+    let own = submit_as(&server, ADMIN, &[("b.txt", b"admin text")], json!([]));
+    let done = done_as(&server, ADMIN, &own);
+    let item = done["items"][0]["item_id"].as_str().unwrap();
+    let allowed = call(
+        &server,
+        "POST",
+        &format!("/api/jobs/{own}/items/{item}/retry"),
+        ADMIN,
+        Some(json!({"options":{"strategy":"jina"}})),
+    );
+    assert_eq!(allowed.status, 202, "{}", allowed.text());
+    done_as(&server, ADMIN, &own);
+    // The composer: the server's jina is auto for the user, the admin's own.
+    let defaults = call(&server, "GET", "/api/convert-defaults", &user, None).json();
+    assert_eq!(defaults["defaults"]["strategy"], "auto", "{defaults}");
+    let admin = call(&server, "GET", "/api/convert-defaults", ADMIN, None).json();
+    assert_eq!(admin["defaults"]["strategy"], "jina", "{admin}");
+    let saved = call(
+        &server,
+        "PUT",
+        "/api/convert-defaults",
+        &user,
+        Some(json!({"expected_revision":defaults["revision"],"defaults":{"strategy":"defuddle"}})),
+    );
+    assert_eq!(reason(&saved), (422, json!("invalid_convert_defaults")));
+    server.stop();
+}
+
 #[test]
 fn a_user_url_job_cannot_reach_this_machine() {
     // No MARKITAI_TEST_PUBLIC_NET_ALLOW: the loopback origin is private, as a

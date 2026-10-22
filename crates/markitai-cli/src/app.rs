@@ -1309,6 +1309,7 @@ fn execute_conversion(
         browser_runtime: Some(&browser_runtime),
         stdout_assets: None,
         public_only: false,
+        remote_services_refused: false,
     };
     if !batch {
         let mut task = tasks.remove(0);

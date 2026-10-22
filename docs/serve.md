@@ -667,6 +667,22 @@ metadata service. A user's fetch uses no proxy. The admin's own URL jobs are
 unchanged (they keep the proxy), except that a public page may no longer redirect or navigate into a
 private address (see [fetching](fetch.md)).
 
+A user token's jobs, and any retry or enhancement of them, never use a remote
+service, whatever `fetch.remote_consent` says, so they can neither bill the
+server's Jina or Cloudflare account nor hand a URL or file to those services.
+`strategy` `defuddle`, `jina` or `cloudflare`, or `backend: cloudflare`, is 403
+`remote_processing_forbidden` (`A user token's conversion never uses remote
+services (defuddle.md, Jina Reader, Cloudflare); choose auto, static or
+playwright`), checked by the job's owner, so an admin's retry of a user's job
+is refused too. A remote `fetch.strategy` the server defaults to runs as `auto`
+for them. `auto` leaves its remote fallbacks out; a page the local strategies
+could not read says so at the end of its error (`…; the remote fallback
+(defuddle.md, Jina Reader, Cloudflare) was skipped: a user token's conversion
+never sends its URL to remote services`). X posts are read from X itself, never
+through an embed service (see [fetching](fetch.md#x-post-addresses)), so there
+is no X lookup to skip. The admin's jobs follow `fetch.remote_consent` as
+before.
+
 Only each user token's SHA-256 is kept, in `MARKITAI_HOME/serve/access.json`
 (`{"version": 1, "tokens": [{"id", "label", "sha256", "hint", "created_at"}]}`,
 owner-only, replaced atomically), so user tokens survive restarts and admin-token
@@ -743,7 +759,10 @@ token's into its own file under `serve/user-models/` (`defaults: null` removes
 them). Cloudflare can never be a default (it needs a confirmation in each
 request): `strategy: "cloudflare"` or any other option is 422
 `invalid_convert_defaults`; a stale revision is 409 `stale_revision`; an
-anonymous caller gets 403 `settings_forbidden`. Answers carry
+anonymous caller gets 403 `settings_forbidden`. A user token's conversions use
+no remote service, so a user sees a `defuddle` or `jina` strategy of the
+server's (or its own, saved earlier) as `auto`, and a user's `PUT` naming one
+is 422 `invalid_convert_defaults`. Answers carry
 `Cache-Control: no-store`.
 
 All settings endpoints require the admin token by default. With `--no-auth`,
