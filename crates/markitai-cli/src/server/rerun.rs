@@ -146,6 +146,12 @@ pub(super) async fn retry(
         }};
         // Older histories may contain a previous confirmation; never reuse it.
         if !explicit_options { opts.remote_processing=None; }
+        // "enhance" asks for the model: an item converted without one (preset minimal,
+        // "llm": false) is exactly the one to enhance, unless this request turns it off.
+        if body.operation==Operation::Enhance{
+            if explicit_options&&opts.llm==Some(false){return Err(ApiError::new(409,"llm_unavailable","LLM enhancement needs the LLM, which these options turn off (\"llm\": false)"));}
+            opts.llm=Some(true);
+        }
         let configuration=state.conversion_config(job.owner.as_deref());
         // Checked by the job's owner: an admin's retry of a user's job keeps its rules.
         let mut cfg=opts.config_for_request(&configuration,trusted&&admin,job.owner.is_some())?;

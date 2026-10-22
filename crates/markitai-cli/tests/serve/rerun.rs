@@ -435,6 +435,48 @@ fn no_model_answer_publishes_only_the_base_and_names_no_model_until_one_answers(
 }
 
 #[test]
+fn bare_enhance_turns_the_llm_on_unless_its_own_options_turn_it_off() {
+    let model = Model::start();
+    let temp = tempfile::tempdir().unwrap();
+    model.configure(temp.path());
+    let server = Server::start(temp.path());
+    let created = server.submit(
+        &[("document.txt", b"Original conversion body.")],
+        json!([]),
+        json!({"preset":"minimal"}),
+    );
+    let id = created["job_id"].as_str().unwrap();
+    assert_eq!(server.done(id)["items"][0]["llm_enhanced"], false);
+    let refused = retry(
+        &server,
+        id,
+        "i1",
+        Some(json!({"operation":"enhance","options":{"llm":false}})),
+    );
+    assert_eq!(refused.status, 409);
+    let refusal = refused.json();
+    assert_eq!(refusal["reason"], "llm_unavailable", "{refusal}");
+    assert!(
+        refusal["detail"]
+            .as_str()
+            .unwrap()
+            .contains(r#"these options turn off ("llm": false)"#),
+        "{refusal}"
+    );
+    assert_eq!(model.entered.load(Ordering::SeqCst), 0);
+    let bare = retry(&server, id, "i1", Some(json!({"operation":"enhance"})));
+    assert_eq!(bare.status, 202);
+    let enhanced = server.done(id)["items"][0].clone();
+    assert_eq!(enhanced["llm_enhanced"], true, "{enhanced}");
+    assert_eq!(enhanced["operation"], "enhance");
+    assert!(model.entered.load(Ordering::SeqCst) > 0);
+    assert_eq!(result(&server, id, "i1")["variant"], "llm");
+    // Enhancement never becomes the saved choice for an ordinary retry.
+    assert_eq!(enhanced["options"]["preset"], "minimal", "{enhanced}");
+    server.stop();
+}
+
+#[test]
 fn enhance_failure_restores_the_previous_pair_and_plain_retry_prunes_stale_variant() {
     let model = Model::start();
     let temp = tempfile::tempdir().unwrap();

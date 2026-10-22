@@ -393,9 +393,12 @@ use `item.options ?? job.options`, remove any consent field and obtain fresh
 The small queued-item response returned by creation or retry is unchanged.
 
 Both operations reconvert the original retained upload or refetch the original
-URL. Enhancement is an explicit one-off attempt: effective options must enable a
-routable LLM, and success must contain an actual enhanced Markdown output. It does
-not silently enable LLM, and a fallback base conversion is not reported as a
+URL. Enhancement is an explicit one-off attempt that turns the LLM on: an item
+converted without it (`llm: false`, preset `minimal`) is enhanced by a bare
+`{"operation":"enhance"}`, while supplied `options` with `llm: false` are refused
+with 409 `llm_unavailable` saying they turn it off. A routable model is still
+required (409 `llm_unavailable` otherwise), and success must contain an actual
+enhanced Markdown output; a fallback base conversion is not reported as a
 successful enhancement. Enhancement does not replace the saved options for future
 ordinary retries. Ordinary retry updates both per-item options and the job's latest
 options; sibling items retain their own options.
