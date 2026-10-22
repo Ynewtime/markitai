@@ -224,8 +224,8 @@ pub(crate) fn enabled(source: &str, cfg: &Value) -> bool {
 /// already-owned images obey the same policy and final reference spelling.
 /// With an output directory, inline data images always become owned assets,
 /// as in the reference workflow; without one they stay self-contained rather
-/// than naming unwritten files. Other references are localized only for image
-/// enrichment.
+/// than naming unwritten files, and so do a local HTML page's pictures from its
+/// own folder. Other references are localized only for image enrichment.
 pub(crate) fn prepare(
     doc: &mut Document,
     source: &str,
@@ -234,6 +234,8 @@ pub(crate) fn prepare(
 ) -> Result<()> {
     let scope = if enabled(source, cfg) {
         resources::Scope::All
+    } else if persistent && resources::local_page(doc, source) {
+        resources::Scope::Page
     } else if persistent && doc.markdown.contains("data:image/") {
         resources::Scope::Data
     } else {

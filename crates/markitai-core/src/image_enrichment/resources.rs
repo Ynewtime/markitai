@@ -12,6 +12,8 @@ use url::{Host, Url};
 const MAX_IMAGE: usize = 64 * 1024 * 1024;
 const MAX_ADDED: usize = 100 * 1024 * 1024;
 const MAX_REFERENCES: usize = 1024;
+/// A local page's own pictures, read only when they are rasters this size at most.
+const MAX_PAGE_IMAGE: u64 = 32 * 1024 * 1024;
 
 fn failure(message: &str) -> Error {
     Error::Conversion(format!("Image resource: {message}"))
@@ -30,6 +32,8 @@ pub(super) fn asset_name(target: &str) -> Option<String> {
 pub(super) enum Scope {
     /// Inline data images only; nothing is read or downloaded.
     Data,
+    /// Data images and a local HTML page's own pictures; nothing is downloaded.
+    Page,
     /// Data, local and HTTP(S) images, for image enrichment.
     All,
 }
@@ -50,11 +54,14 @@ pub(super) fn prepare(
     let mut names = owned.clone();
     let mut replacements = HashMap::new();
     let mut attempted = HashSet::new();
+    let mut saved = HashMap::new();
     let mut total = 0usize;
     let base = Url::parse(source)
         .ok()
         .filter(|url| matches!(url.scheme(), "http" | "https"));
     let allow_private = base.as_ref().is_some_and(private_origin);
+    let page = base.is_none() && local_page(doc, source);
+    let allow_symlinks = config::enabled(cfg, "/output/allow_symlinks");
     for target in references {
         if scope == Scope::Data && !target.starts_with("data:image/") {
             continue;
@@ -77,16 +84,31 @@ pub(super) fn prepare(
                 .and_then(|url| download(url, allow_private))
         } else if matches!(Url::parse(&target), Ok(url) if matches!(url.scheme(), "http" | "https"))
         {
+            if scope == Scope::Page {
+                continue;
+            }
             download(Url::parse(&target).unwrap(), false)
+        } else if page {
+            match page_image(source, &target, allow_symlinks, MAX_ADDED - total) {
+                Ok(Some(bytes)) => Ok(bytes),
+                // Not a file of the page's folder (an address, an anchor, a
+                // missing file): the reference stays as written, unremarked.
+                Ok(None) => continue,
+                Err(error) => Err(error),
+            }
+        } else if scope == Scope::Page {
+            continue;
         } else {
-            local_image(
-                source,
-                &target,
-                config::enabled(cfg, "/output/allow_symlinks"),
-            )
+            local_image(source, &target, allow_symlinks)
         };
         match result {
             Ok(bytes) => {
+                let digest = crate::hex(Sha256::digest(&bytes));
+                // The same picture under another spelling is one asset.
+                if let Some(name) = saved.get(&digest) {
+                    replacements.insert(target, format!(".markitai/assets/{name}"));
+                    continue;
+                }
                 total = total
                     .checked_add(bytes.len())
                     .ok_or_else(|| failure("image total overflow"))?;
@@ -99,7 +121,6 @@ pub(super) fn prepare(
                     .ok()
                     .and_then(|format| format.extensions_str().first().copied())
                     .unwrap_or("img");
-                let digest = crate::hex(Sha256::digest(&bytes));
                 let mut index = 0;
                 let name = loop {
                     let name = format!("image-{}-{index}.{suffix}", &digest[..20]);
@@ -109,6 +130,7 @@ pub(super) fn prepare(
                     index += 1;
                 };
                 replacements.insert(target, format!(".markitai/assets/{name}"));
+                saved.insert(digest, name.clone());
                 doc.assets.push(Asset { name, bytes });
             }
             Err(error) => {
@@ -218,6 +240,125 @@ fn local_image(source: &str, target: &str, allow_symlinks: bool) -> Result<Vec<u
         return Err(failure("local file is not an image"));
     }
     Ok(bytes)
+}
+/// A local `.html`, `.htm` or `.xhtml` file, whose pictures are files beside it.
+pub(super) fn local_page(doc: &Document, source: &str) -> bool {
+    !crate::is_url(source)
+        && doc
+            .metadata
+            .get("format")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|format| matches!(format, "HTML" | "HTM" | "XHTML"))
+}
+
+/// The bytes of a picture a local page shows from its own folder, so that the
+/// Markdown keeps it wherever it is written. Only a relative path or a local
+/// `file:` address is considered (`Ok(None)` for anything else, or a file that
+/// is not there); the file must resolve inside the page's folder, not be a
+/// symbolic link (unless `output.allow_symlinks`), be at most 32 MiB and the
+/// document's remaining `budget`, and start like a PNG, JPEG, GIF, WebP, BMP
+/// or TIFF picture. A refused file is never read past its first bytes.
+fn page_image(
+    source: &str,
+    target: &str,
+    allow_symlinks: bool,
+    budget: usize,
+) -> Result<Option<Vec<u8>>> {
+    let root = match Path::new(source)
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or(Path::new("."))
+        .canonicalize()
+    {
+        Ok(root) => root,
+        Err(_) => return Ok(None),
+    };
+    let path = if target
+        .get(..5)
+        .is_some_and(|scheme| scheme.eq_ignore_ascii_case("file:"))
+    {
+        // Another host's share is never contacted.
+        match Url::parse(target) {
+            Ok(url) if matches!(url.host_str(), None | Some("") | Some("localhost")) => {
+                match url.to_file_path() {
+                    Ok(path) => path,
+                    Err(()) => return Ok(None),
+                }
+            }
+            _ => return Ok(None),
+        }
+    } else {
+        if Url::parse(target).is_ok()
+            || target.contains("://")
+            || target.starts_with(['#', '/', '\\'])
+        {
+            return Ok(None);
+        }
+        let Ok(text) = String::from_utf8(unquote(
+            target.split(['?', '#']).next().unwrap_or("").as_bytes(),
+        )?) else {
+            return Ok(None);
+        };
+        // Decoded, a target may name a root, a drive or a share: never asked for.
+        if text.is_empty()
+            || Path::new(&text).components().any(|part| {
+                matches!(
+                    part,
+                    std::path::Component::Prefix(_) | std::path::Component::RootDir
+                )
+            })
+        {
+            return Ok(None);
+        }
+        root.join(text)
+    };
+    if std::fs::symlink_metadata(&path).is_err() {
+        return Ok(None);
+    }
+    crate::output::check_user_path(&path, allow_symlinks)?;
+    let path = path.canonicalize()?;
+    if !path.starts_with(&root) {
+        return Err(failure("the picture is outside the page's folder"));
+    }
+    let meta = std::fs::metadata(&path)?;
+    if !meta.is_file() {
+        return Err(failure("the picture is not a regular file"));
+    }
+    if meta.len() > MAX_PAGE_IMAGE {
+        return Err(failure("the picture exceeds 32 MiB"));
+    }
+    if meta.len() > budget as u64 {
+        return Err(failure("the document's pictures exceed the 100 MiB budget"));
+    }
+    let mut file = crate::platform::open_read(&path, allow_symlinks)?;
+    let mut head = [0u8; 16];
+    let mut read = 0;
+    while read < head.len() {
+        match file.read(&mut head[read..])? {
+            0 => break,
+            count => read += count,
+        }
+    }
+    let raster = matches!(
+        image::guess_format(&head[..read]),
+        Ok(image::ImageFormat::Png
+            | image::ImageFormat::Jpeg
+            | image::ImageFormat::Gif
+            | image::ImageFormat::WebP
+            | image::ImageFormat::Bmp
+            | image::ImageFormat::Tiff)
+    );
+    if !raster {
+        return Err(failure(
+            "the file is not a PNG, JPEG, GIF, WebP, BMP or TIFF picture",
+        ));
+    }
+    let limit = MAX_PAGE_IMAGE.min(budget as u64) - read as u64;
+    let rest = crate::platform::read_limited(file, limit)?
+        .ok_or_else(|| failure("the picture grew beyond its limit"))?;
+    let mut bytes = head[..read].to_vec();
+    bytes.extend(rest);
+    Ok(Some(bytes))
 }
 fn private_origin(url: &Url) -> bool {
     match url.host() {
@@ -396,6 +537,93 @@ mod tests {
         for target in ["%2Fetc%2Fhostname", "%2F%2Fhost%2Fshare%2Fa.png"] {
             assert!(local_image(source, target, false).is_err(), "{target}");
         }
+    }
+
+    fn page(markdown: &str) -> Document {
+        let mut doc = Document {
+            markdown: markdown.into(),
+            ..Default::default()
+        };
+        doc.metadata.insert("format".into(), "HTML".into());
+        doc
+    }
+
+    #[test]
+    fn a_local_pages_own_pictures_become_assets_and_others_keep_their_reference() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("a#b%20c");
+        std::fs::create_dir_all(folder.join("img")).unwrap();
+        std::fs::create_dir(dir.path().join("outside")).unwrap();
+        std::fs::write(folder.join("img/ok.png"), png()).unwrap();
+        std::fs::write(folder.join("img/fake.png"), b"not a picture at all").unwrap();
+        std::fs::write(folder.join("img/drawing.svg"), b"<svg/>").unwrap();
+        std::fs::write(dir.path().join("outside/out.png"), png()).unwrap();
+        // Larger than 32 MiB, sparse: refused by its size, never read.
+        let big = std::fs::File::create(folder.join("img/big.png")).unwrap();
+        big.set_len(MAX_PAGE_IMAGE + 1).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(
+            dir.path().join("outside/out.png"),
+            folder.join("img/link.png"),
+        )
+        .unwrap();
+        let source = folder.join("page.html");
+        let source = source.to_str().unwrap();
+        let file_url =
+            Url::from_file_path(folder.join("img/ok.png").canonicalize().unwrap()).unwrap();
+        let outside_url =
+            Url::from_file_path(dir.path().join("outside/out.png").canonicalize().unwrap())
+                .unwrap();
+        let markdown = format!(
+            "![ok](img/ok.png)\n![again](img%2Fok.png)\n![url]({file_url})\n\
+             ![link](img/link.png)\n![up](../outside/out.png)\n![abs]({outside_url})\n\
+             ![fake](img/fake.png)\n![big](img/big.png)\n![svg](img/drawing.svg)\n\
+             ![missing](img/none.png)\n![web](https://example.invalid/a.png)\n"
+        );
+        let mut doc = page(&markdown);
+        prepare(&mut doc, source, &serde_json::json!({}), Scope::Page).unwrap();
+        // One asset, shared by the three references to the same picture.
+        let lines: Vec<_> = doc.markdown.lines().collect();
+        assert_eq!(doc.assets.len(), 1, "{:?}", doc.markdown);
+        assert_eq!(doc.assets[0].bytes, png());
+        let asset = format!(".markitai/assets/{}", doc.assets[0].name);
+        for line in &lines[..3] {
+            assert!(line.contains(&asset), "{line}");
+        }
+        for (line, kept) in lines[3..].iter().zip(markdown.lines().skip(3)) {
+            assert_eq!(line, &kept, "{line}");
+        }
+        let warnings = doc.warnings.join("\n");
+        assert!(warnings.contains("outside the page's folder"), "{warnings}");
+        assert!(warnings.contains("not a PNG, JPEG"), "{warnings}");
+        assert!(warnings.contains("exceeds 32 MiB"), "{warnings}");
+        // No word about the missing file or the web address.
+        assert!(!warnings.contains("none.png") && !warnings.contains("example.invalid"));
+        #[cfg(unix)]
+        assert!(warnings.contains("img/link.png"), "{warnings}");
+    }
+
+    #[test]
+    fn page_rules_apply_to_html_files_only() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("ok.png"), png()).unwrap();
+        let source = dir.path().join("notes.md");
+        let mut doc = Document {
+            markdown: "![ok](ok.png)\n".into(),
+            ..Default::default()
+        };
+        assert!(!local_page(&doc, source.to_str().unwrap()));
+        assert!(local_page(&page(""), source.to_str().unwrap()));
+        assert!(!local_page(&page(""), "https://example.invalid/page.html"));
+        prepare(
+            &mut doc,
+            source.to_str().unwrap(),
+            &serde_json::json!({}),
+            Scope::Page,
+        )
+        .unwrap();
+        assert_eq!(doc.markdown, "![ok](ok.png)\n");
+        assert!(doc.assets.is_empty());
     }
 
     #[test]

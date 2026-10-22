@@ -15,6 +15,22 @@ fragments so EPUB/Office/email content retains its own tables of contents.
 [Technical code blocks](html-code.md) describes highlighter normalization,
 literal content, language labels and resource limits.
 
+## Local pictures
+
+When a local `.html`, `.htm` or `.xhtml` file is converted into an output folder,
+the pictures it shows from its own folder are saved as the document's assets,
+like a DOCX or EPUB picture, so the Markdown keeps them wherever it is read. A
+picture is a relative path or a local `file:` address that resolves inside the
+page's folder (subfolders included), is not a symbolic link (unless
+`output.allow_symlinks`), is a regular file of at most 32 MiB within the
+document's 100 MiB budget, and starts like a PNG, JPEG, GIF, WebP, BMP or TIFF
+picture. Anything else keeps its reference as written: a picture outside the
+folder, a link, a larger file or another kind of file (an SVG drawing included)
+gets a warning and is never read past its first bytes; a web address, a
+root-relative path, another host's `file:` share or a missing file is left
+without one. The same picture under several spellings is one asset. Without an
+output folder (Markdown on stdout) references stay as written.
+
 ## Metadata
 
 Title selection follows the reference metadata layer: JSON-LD `headline`, then
@@ -181,8 +197,8 @@ documented article heuristic; ordinary hidden descendants remain hidden.
   Markdown emission. Relative URLs resolve against a supplied page URL. A full
   page read from a local file resolves relative links against its absolute
   `<base href>`, else its canonical link (only root-relative links when that is
-  the home page, whose directory is unknown); images keep their relative paths,
-  which a page saved with its files points at those files. Without such an
+  the home page, whose directory is unknown); images keep their relative paths
+  (see [local pictures](#local-pictures)). Without such an
   address, and in fragments, relative destinations stay as written, a colon
   after their first `/`, `?` or `#` included (`/wiki/Help:Contents`). A
   scheme-relative address (`//host/path`) takes `https:` when no page URL is
