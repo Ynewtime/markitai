@@ -396,8 +396,12 @@ fn an_explicit_always_falls_back_in_order_with_the_configured_options_and_disclo
     assert!(!directory.path().join("fetch_cache.db").exists());
 }
 
+/// Remote fetching stays opt-in (owner decision 10, 2026-10-22): the default
+/// `always` keeps `auto` local, and its failure names
+/// `fetch.remote_consent: always` as the way out; a written `never` says
+/// nothing more.
 #[test]
-fn the_default_always_and_never_keep_auto_local_with_the_same_failure() {
+fn the_default_always_and_never_keep_auto_local_and_the_default_says_how_to_allow_it() {
     for consent in [None, Some("never"), Some("always")] {
         let (_directory, mut cfg) = auto_settings();
         if let Some(consent) = consent {
@@ -416,11 +420,50 @@ fn the_default_always_and_never_keep_auto_local_with_the_same_failure() {
             panic!("a refusal stays a failure");
         };
         assert!(message.starts_with(REFUSED), "{message}");
-        assert!(!message.contains("remote"), "{message}");
+        if consent == Some("never") {
+            assert!(!message.contains("remote"), "{message}");
+        } else {
+            assert!(message.ends_with(sites::REMOTE_READERS), "{message}");
+            assert!(
+                message.contains("fetch.remote_consent: always"),
+                "{message}"
+            );
+        }
         assert!(service.requests().is_empty());
         assert_eq!(terminal.asked.load(Ordering::SeqCst), 0);
         assert!(terminal.notices.lock().unwrap().is_empty());
     }
+    // Nothing a remote reader could repair (a missing page), a local host,
+    // a URL with a secret, a host without consent facts (`mcp`, bindings):
+    // no hint.
+    let (_directory, cfg) = auto_settings();
+    let page = PageServer::new(vec![
+        Reply::text("gone").status(404),
+        Reply::text("no").status(403),
+        Reply::text("no").status(403),
+    ]);
+    let service = Mock::new(Vec::new());
+    let terminal = Arc::new(Terminal::default());
+    let fixture = Fixture::new(gate(&terminal, false, None, None));
+    let mut services = fixture.services(&service.origin);
+    let failure = |path: &str, services: &Services<'_>| {
+        fetch_with_services(&page.url(path), &cfg, None, true, None, false, services)
+            .err()
+            .unwrap()
+            .to_string()
+    };
+    assert!(!failure("/gone", &services).contains("remote"));
+    assert!(!failure("/a?token=secret", &services).contains("remote"));
+    services.private_name = |_| true;
+    assert!(!failure("/b", &services).contains("remote"));
+    let hostless = Fixture::new(Gate::new(None, None));
+    let services = hostless.services(&service.origin);
+    let page = PageServer::new(vec![Reply::text("no").status(403)]);
+    let message = fetch_with_services(&page.url("/c"), &cfg, None, true, None, false, &services)
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(!message.contains("remote"), "{message}");
 }
 
 /// Owner decision 3 (2026-10-22): a user token's serve job never sends its
@@ -1338,7 +1381,6 @@ fn a_zhihu_login_wall_from_jina_fails_with_the_site_aware_refusal_and_every_serv
                 remote::fetch(service, ZHIHU_QUESTION, &url, &cfg, &services).map(remote::outcome)
             },
             what_works: sites::what_works(&url),
-            remote_hint: false,
         },
     );
     let Err(Error::Fetch(message)) = result else {
@@ -1546,7 +1588,6 @@ fn a_zhihu_json_refusal_cloudflare_rendered_fails_with_every_service_and_why() {
                         .map(remote::outcome)
                 },
                 what_works: sites::what_works(&url),
-                remote_hint: false,
             },
         );
         let Err(Error::Fetch(message)) = result else {

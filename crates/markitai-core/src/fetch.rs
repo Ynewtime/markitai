@@ -817,7 +817,6 @@ fn auto_result(
             remote_ready: &mut |_| chain::Readiness::SkipAll(None),
             remote: &mut |_| unreachable!("no remote step"),
             what_works: String::new(),
-            remote_hint: false,
         },
     )
 }
@@ -985,16 +984,43 @@ fn chain_after(
                 remote::fetch(service, source, url, cfg, services).map(remote::outcome)
             },
             what_works: sites::what_works(url),
-            remote_hint: !services.refused
-                && services.gate.could_opt_in(cfg, &services.vars)
-                && !(services.private_name)(url),
         },
     );
-    // Said where it mattered: the local strategies did not get the page.
     match result {
+        // Said where it mattered: the local strategies did not get the page.
         Err(error) if remote_left_out => Err(chain::remote_skipped(error)),
+        // Remote fetching stays opt-in: a failure a remote reader could have
+        // repaired says how to allow one, when the user has not allowed it
+        // (the default `always` not written, or an `ask` not answered yes)
+        // and the order would try one for this URL.
+        Err(error) if remote_could_help(url, cfg, learned_route, services) => {
+            Err(chain::with_opt_in(error))
+        }
         result => result,
     }
+}
+
+/// Whether allowing remote fallback (`fetch.remote_consent: always`) would
+/// make `auto` try a remote service for this URL: the user has neither
+/// allowed nor refused it, the host can act on a written `always`, and the
+/// order keeps a remote step once consent is given (no local or private
+/// host, local-only pattern, credential material or local priority).
+fn remote_could_help(url: &Url, cfg: &Value, learned_route: bool, services: &Services<'_>) -> bool {
+    !services.refused
+        && services.gate.could_opt_in(cfg, &services.vars)
+        && policy::order(
+            url,
+            cfg,
+            &policy::Facts {
+                vars: &services.vars,
+                learned_route,
+                remote_possible: true,
+                private_name: (services.private_name)(url),
+                fallback_patterns: services.gate.fallback_patterns_configured(),
+            },
+        )
+        .iter()
+        .any(|step| step.remote().is_some())
 }
 
 fn add_learning_warning(outcome: &mut FetchOutcome) {

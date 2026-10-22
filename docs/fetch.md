@@ -149,9 +149,11 @@ opus posts are read by Jina Reader) carries the warning `<Site> showed a
 verification page instead of the page, so no copy or screenshot of the page was
 kept; its text was read by Jina Reader. Open the page itself to compare.`
 Without that consent the failure ends with `a remote reader (defuddle.md, Jina
-Reader) may read it if you allow one: set fetch.remote_consent to always, or
-choose the defuddle or jina strategy for this conversion`; an explicit `never`
-or a browser identity (cookies, credentials) keeps it local without the hint. A
+Reader) may read it if you allow one: set fetch.remote_consent: always
+(markitai config set fetch.remote_consent always), or choose the defuddle or
+jina strategy for this conversion`, as every `auto` failure a remote reader
+could repair does (see [consent](#consent)); an explicit `never` or a browser
+identity (cookies, credentials) keeps it local without the hint. A
 static or remote reading with screenshots on whose capture is a verification
 page keeps its text with the warning that no screenshot was kept.
 
@@ -484,6 +486,18 @@ before defaults are filled in:
 | `always`, written by the user | runs; a one-line disclosure the first time | runs | runs |
 | `ask` | asks once per run on a terminal before the first remote fallback; otherwise skipped with one note | runs (choosing it is the answer) | asks like the fallback; refused without a terminal |
 | `never`, or `--no-remote-fetch` | never | refused | refused |
+
+Remote fetching stays opt-in, so an `auto` failure that a remote reader could
+have repaired says how to allow one when the user has not: with the default
+`always` not written, or an `ask` not answered yes, a failure other than a 404,
+410, configuration or input error, for a URL the order would send to a remote
+service once allowed (not a local or private host, a local-only pattern or a
+URL with credential material), ends with `a remote reader (defuddle.md, Jina
+Reader) may read it if you allow one: set fetch.remote_consent: always
+(markitai config set fetch.remote_consent always), or choose the defuddle or
+jina strategy for this conversion`. A written `never`, `--no-remote-fetch`,
+`MARKITAI_NO_REMOTE_FETCH`, `mcp` and the bindings (which install no consent
+host) and a `serve` job a user token owns get no hint.
 
 `MARKITAI_NO_REMOTE_FETCH=1` (any nonempty value other than `0`, `false` or
 `no`, ignoring case and surrounding whitespace) refuses everything, as `never`

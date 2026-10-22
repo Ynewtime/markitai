@@ -48,6 +48,15 @@ configuration or the process environment, not in task content or published logs.
 - **Cloud processing:** `serve` requires fresh request authorization for selected
   Cloudflare work; a saved selection is not consent. Known model cost excludes
   Cloudflare charges. CLI/core remote-fetch policy is described in [fetch](fetch.md).
+- **Remote fetch fallback:** Python markitai's built-in `fetch.remote_consent:
+  always` let `auto` send a URL the local strategies could not read to
+  defuddle.md, Jina Reader or Cloudflare. Here remote fetching stays opt-in: the
+  same default keeps `auto` local, and the default `fetch.fallback_patterns`
+  list has no effect. To keep Python's behaviour, write
+  `fetch.remote_consent: always` in your configuration (`markitai config set
+  fetch.remote_consent always`); a failure a remote reader could have repaired
+  says so. A `serve` job a user token owns never uses a remote service, as in
+  Python 1.2.1. See [fetch](fetch.md#consent).
 - **Output recovery:** the CLI verifies native ownership evidence before replacing
   earlier batch results. A matching filename or digest alone is insufficient.
   Current-user directory aliases can be accepted; linked document leaves are

@@ -239,8 +239,8 @@ pub(super) fn read_past_notice(refusal: &str, reader: &str) -> String {
 }
 
 /// What a reader that is not allowed to send the page to a remote service
-/// can do about a verification page.
-pub(super) const REMOTE_READERS: &str = "a remote reader (defuddle.md, Jina Reader) may read it if you allow one: set fetch.remote_consent to always, or choose the defuddle or jina strategy for this conversion";
+/// can do about a page local fetching could not read.
+pub(super) const REMOTE_READERS: &str = "a remote reader (defuddle.md, Jina Reader) may read it if you allow one: set fetch.remote_consent: always (markitai config set fetch.remote_consent always), or choose the defuddle or jina strategy for this conversion";
 
 /// What works instead, for a page of `url` that turned a reader away: the
 /// site's own advice when it is known, otherwise saving the page.

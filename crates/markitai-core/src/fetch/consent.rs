@@ -182,8 +182,10 @@ impl Gate {
     /// Whether the user has neither allowed nor refused remote fallback: the
     /// default `always` they did not write, or an `ask` not answered yes. A
     /// failure `auto` could not repair may then say how to allow it.
+    /// Without a host (`mcp`, the bindings) a written `always` changes nothing,
+    /// so there is nothing to say.
     pub(crate) fn could_opt_in(&self, cfg: &Value, vars: &HashMap<String, String>) -> bool {
-        if hard_off(vars) {
+        if hard_off(vars) || self.host.is_none() {
             return false;
         }
         match configured(cfg) {

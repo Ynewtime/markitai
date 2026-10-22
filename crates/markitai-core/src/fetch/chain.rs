@@ -40,9 +40,6 @@ pub(super) struct Attempts<'a> {
     /// What works instead for this page ([`sites::what_works`]), said when a
     /// remote service was turned away and no other failure says it already.
     pub what_works: String,
-    /// Remote services could read this page if the user allowed them: a
-    /// verification page then says how.
-    pub remote_hint: bool,
 }
 
 const NO_BROWSER_FOR_ROUTE: &str = "No local browser (Chrome or Chromium) was found for a strategy order that needs one; install one or set MARKITAI_BROWSER_EXECUTABLE (see 'markitai doctor')";
@@ -60,6 +57,17 @@ fn remote_may_help(error: &Error) -> bool {
         }
         Error::Conversion(message) => message == NO_CONTENT,
         _ => false,
+    }
+}
+
+/// A failure of `auto` that a remote reader was not allowed to try: a
+/// verification page, or any failure a remote service could repair, says how
+/// to allow one (`fetch.remote_consent: always`).
+pub(super) fn with_opt_in(error: Error) -> Error {
+    if shown_instead(&error.to_string()) || remote_may_help(&error) {
+        appended(error, sites::REMOTE_READERS)
+    } else {
+        error
     }
 }
 
@@ -220,12 +228,6 @@ pub(super) fn run(steps: &[Step], attempts: Attempts<'_>) -> Result<FetchOutcome
         None => Error::Fetch(
             "No fetch strategy could run for this URL; check fetch.policy.strategy_priority and fetch.domain_profiles".into(),
         ),
-    };
-    // A verification page that a remote reader was not allowed to try.
-    let error = if attempts.remote_hint && shown_instead(&error.to_string()) {
-        appended(error, sites::REMOTE_READERS)
-    } else {
-        error
     };
     if remote_failures.is_empty() {
         return Err(error);
@@ -388,7 +390,6 @@ mod tests {
                         }
                     },
                     what_works: sites::what_works(&zhihu()),
-                    remote_hint: false,
                 },
             )
         }
