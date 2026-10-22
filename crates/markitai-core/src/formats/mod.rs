@@ -19,6 +19,7 @@ pub(crate) use native::extract_presentation_count;
 pub(crate) use native::pdf::extract_pages as extract_pdf_pages;
 pub(crate) use native::pdf::{
     OCR_FORCED as PDF_OCR_FORCED, PAGE_SOURCES as PDF_PAGE_SOURCES, PdfPages, UNREAD_PAGES,
+    check_glyphs as check_pdf_glyphs,
     extract_pages_bounded_with_config as extract_pdf_pages_bounded_with_config,
     is_unrecovered_warning, screenshot_reference as pdf_screenshot_reference,
 };

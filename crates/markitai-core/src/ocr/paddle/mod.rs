@@ -669,6 +669,26 @@ fn read_lines(recognizer: &Recognizer, cuts: &[&Cut]) -> Result<Vec<Line>> {
     spread(cuts.len(), |index| read_cut(recognizer, cuts[index]))
 }
 
+/// Read single upright text lines (the PDF glyph check's crops) in the
+/// language `spelling` names, with its recognizer only: no detection,
+/// classification or second reading. The recognizer loads here when no page
+/// has needed it yet. One text per image, in order.
+pub(super) fn read_line_images(images: &[RgbImage], spelling: &str) -> Result<Vec<String>> {
+    let name = match choice(spelling)? {
+        Choice::Default => MULTILINGUAL,
+        Choice::Model(name) => name,
+    };
+    models::preflight(&[models::named(name)?])?;
+    let recognizer = recognizer(name)?;
+    let read = |index: usize| recognizer.read(&images[index]).map(|reading| reading.text);
+    if images.len() <= 2 {
+        return tract_linalg::multithread::multithread_tract_scope(executor(), || {
+            (0..images.len()).map(read).collect()
+        });
+    }
+    spread(images.len(), read)
+}
+
 /// `work` of each index below `count`, in order, computed on [`pool`] next
 /// to every other page's work (on this thread without a pool). `work` must
 /// not wait for another page's work: the pool's threads would all wait.

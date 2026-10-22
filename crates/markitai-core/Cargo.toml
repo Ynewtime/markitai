@@ -60,6 +60,7 @@ markup5ever = "0.40"
 html5ever = "0.40"
 # General categories for titles (`titles.rs`) and readable addresses (`iri.rs`).
 unicode-properties = { version = "0.1.4", default-features = false, features = ["general-category"] }
+unicode-normalization = "0.1.26"
 htmd = { version = "0.5", default-features = false }
 quick-xml = "0.42"
 mail-parser = { version = "0.11", features = ["full_encoding"] }

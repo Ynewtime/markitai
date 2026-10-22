@@ -15,8 +15,9 @@ Local OCR is selected when OCR is enabled and LLM is disabled, or when
 `MARKITAI_NO_VLM_OCR` opts out of VLM OCR. With `ocr.per_page_routing=true`, only
 unreliable, empty or visibility-suspect native pages require recognition,
 including pages whose text layer reads wrong ([Text layers that read
-wrong](pdf.md#text-layers-that-read-wrong)) in a script `ocr.lang` reads.
-Disabling routing recognizes every page. Other pages retain their original
+wrong](pdf.md#text-layers-that-read-wrong)) in a script `ocr.lang` reads and
+pages whose text layer is not what its glyphs draw (a few crops per font read
+by the recognizer, before routing). Disabling routing recognizes every page. Other pages retain their original
 Markdown, including headings, links and tables. This uses typed reliability
 evidence rather than the reference reader's raw character-count threshold.
 

@@ -13,6 +13,8 @@ mod continued;
 mod figures;
 #[path = "pdf/geometry.rs"]
 mod geometry;
+#[path = "pdf/glyph_check.rs"]
+pub(crate) mod glyph_check;
 #[path = "pdf/layout.rs"]
 mod layout;
 #[path = "pdf/ocr_layer.rs"]
@@ -1541,6 +1543,18 @@ impl Trust {
         };
         Some((failure, Some(kept)))
     }
+}
+
+/// Compare the trusted pages' text layer with what their glyphs draw,
+/// reading crops with `read` (local OCR with per-page routing): a page that
+/// fails goes to OCR. See [`glyph_check`].
+pub(crate) fn check_glyphs(
+    bytes: &[u8],
+    pages: &mut PdfPages,
+    cfg: &serde_json::Value,
+    read: &glyph_check::ReadLines<'_>,
+) -> glyph_check::GlyphReport {
+    glyph_check::check(bytes, pages, Trust::from_config(cfg).readable, read)
 }
 
 fn extract_pages_policy(

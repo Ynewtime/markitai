@@ -2225,6 +2225,7 @@ dependencies = [
  "tract-linalg",
  "tract-onnx",
  "tungstenite",
+ "unicode-normalization",
  "unicode-properties",
  "url",
  "webpki-roots",

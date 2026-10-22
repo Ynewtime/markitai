@@ -1,6 +1,6 @@
 //! In-memory PDF page media planning; publication stays with the output layer.
 
-use crate::formats::{PdfPages, extract_pdf_pages_bounded_with_config};
+use crate::formats::{PdfPages, check_pdf_glyphs, extract_pdf_pages_bounded_with_config};
 use crate::{Asset, Document, Error, Result, config, ocr, pdf_raster::PdfRasterSession};
 use image::{ImageEncoder, ImageReader, RgbImage};
 use serde_json::{Value, json};
@@ -75,6 +75,19 @@ struct Plan {
 }
 
 impl Plan {
+    /// OCR runs here, not in a vision model.
+    fn local_ocr(cfg: &Value, vlm_optout: bool) -> bool {
+        config::enabled(cfg, "/ocr/enabled")
+            && (!config::enabled(cfg, "/llm/enabled") || vlm_optout)
+    }
+
+    /// Only the pages needing it are recognized (`ocr.per_page_routing`).
+    fn routing(cfg: &Value) -> bool {
+        cfg.pointer("/ocr/per_page_routing")
+            .and_then(Value::as_bool)
+            .unwrap_or(true)
+    }
+
     fn new(pages: &PdfPages, cfg: &Value, vlm_optout: bool) -> Result<Self> {
         let count = pages.pages.len();
         if count == 0 || count > MAX_PAGES {
@@ -92,7 +105,7 @@ impl Plan {
         }
         let ocr = config::enabled(cfg, "/ocr/enabled");
         let llm = config::enabled(cfg, "/llm/enabled");
-        let local_ocr = ocr && (!llm || vlm_optout);
+        let local_ocr = Self::local_ocr(cfg, vlm_optout);
         let vlm_ocr = ocr && llm && !vlm_optout;
         let screenshots = config::enabled(cfg, "/screenshot/enabled") || vlm_ocr;
         let sends_images = llm
@@ -108,10 +121,7 @@ impl Plan {
                 "PDF pages exceed llm.max_vision_pages_per_document; no pages were rendered or sent".into(),
             ));
         }
-        let routing = cfg
-            .pointer("/ocr/per_page_routing")
-            .and_then(Value::as_bool)
-            .unwrap_or(true);
+        let routing = Self::routing(cfg);
         let recognize = pages
             .pages
             .iter()
@@ -806,11 +816,20 @@ pub(crate) fn prepare(
     cfg: &Value,
     vlm_optout: bool,
 ) -> Result<PreparedPdf> {
-    prepare_with(bytes, prefix, cfg, vlm_optout, &ocr::recognize_rgb)
+    prepare_with(
+        bytes,
+        prefix,
+        cfg,
+        vlm_optout,
+        &ocr::recognize_rgb,
+        &ocr::read_lines,
+    )
 }
 
 /// What recognizes a rendered page; [`ocr::recognize_rgb`] outside tests.
 type Recognize<'a> = dyn Fn(RgbImage, &Value) -> Result<ocr::OcrResult> + Sync + 'a;
+/// What reads the glyph check's line crops; [`ocr::read_lines`] outside tests.
+type ReadLines<'a> = dyn Fn(Vec<RgbImage>, &Value) -> Result<Vec<String>> + Sync + 'a;
 
 fn prepare_with(
     bytes: &[u8],
@@ -818,9 +837,25 @@ fn prepare_with(
     cfg: &Value,
     vlm_optout: bool,
     recognize: &Recognize<'_>,
+    read_lines: &ReadLines<'_>,
 ) -> Result<PreparedPdf> {
     validate_name(prefix)?;
     let mut pages = extract_pdf_pages_bounded_with_config(bytes, MAX_PAGES, cfg)?;
+    // With local OCR routing pages, a text layer the text-only checks
+    // trusted is also compared with what its glyphs draw (a few crops per
+    // font, read by the recognizer); a page that fails is read by OCR.
+    // A page that failed is drawn from the copy the check drew it from.
+    let mut drawn = None;
+    if Plan::local_ocr(cfg, vlm_optout) && Plan::routing(cfg) {
+        let mut lap = ocr::trace::Lap::start();
+        let report = check_pdf_glyphs(bytes, &mut pages, cfg, &|images| read_lines(images, cfg));
+        ocr::trace::line(format_args!(
+            "glyph-check crops={} {:.0}ms",
+            report.crops,
+            lap.ms()
+        ));
+        drawn = report.render;
+    }
     let plan = Plan::new(&pages, cfg, vlm_optout)?;
     // Why each page OCR reads is read, before its recognition replaces the
     // reader's verdict: its page source.
@@ -843,7 +878,7 @@ fn prepare_with(
     let session = if render_indices.is_empty() {
         None
     } else {
-        Some(PdfRasterSession::open(bytes)?)
+        Some(PdfRasterSession::open(drawn.as_deref().unwrap_or(bytes))?)
     };
     let mut sizes = Vec::with_capacity(render_indices.len());
     if let Some(session) = &session {
@@ -1486,6 +1521,11 @@ mod tests {
         assert!(warnings.is_empty());
     }
 
+    /// The glyph check's reader for documents without a text layer.
+    fn no_lines(_: Vec<RgbImage>, _: &Value) -> Result<Vec<String>> {
+        unreachable!("a page without a text layer has no glyphs to check")
+    }
+
     /// Image-only pages, each one gray of its own (page `n` at `40 * n`).
     fn scans(count: u8) -> Vec<u8> {
         scans_sized(count, 72, 96)
@@ -1567,7 +1607,8 @@ mod tests {
         };
         let cfg =
             json!({"ocr":{"enabled":true},"llm":{"enabled":false},"screenshot":{"enabled":false}});
-        let prepared = prepare_with(&scans(4), "scan.pdf", &cfg, false, &recognize).unwrap();
+        let prepared =
+            prepare_with(&scans(4), "scan.pdf", &cfg, false, &recognize, &no_lines).unwrap();
         assert_eq!(most.load(Ordering::SeqCst), ocr_pages_at_once());
         let (document, _) = prepared.finish().unwrap();
         let markdown = &document.markdown;
@@ -1601,6 +1642,113 @@ mod tests {
         );
     }
 
+    /// One page of Helvetica lines whose ToUnicode map reads each lower-case
+    /// letter as the next one: the glyphs say `the committee`, the text
+    /// layer `uif dpnnjuuff`.
+    fn shifted_pdf() -> Vec<u8> {
+        use lopdf::{Object, Stream, dictionary};
+        let mut cmap = String::from(
+            "/CIDInit /ProcSet findresource begin 12 dict begin begincmap\n\
+             /CMapName /Shifted def /CMapType 2 def\n\
+             1 begincodespacerange <00> <FF> endcodespacerange\n95 beginbfchar\n",
+        );
+        for byte in 0x20u8..0x7F {
+            let read = if byte.is_ascii_lowercase() {
+                b'a' + (byte - b'a' + 1) % 26
+            } else {
+                byte
+            };
+            cmap.push_str(&format!("<{byte:02X}> <{read:04X}>\n"));
+        }
+        cmap.push_str("endbfchar\nendcmap CMapName currentdict /CMap defineresource pop end end\n");
+        let mut pdf = lopdf::Document::with_version("1.4");
+        let map = pdf.add_object(Stream::new(dictionary! {}, cmap.into_bytes()));
+        let font = pdf.add_object(dictionary! {
+            "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica",
+            "Encoding" => "WinAnsiEncoding", "ToUnicode" => map,
+        });
+        let content: String = (0..6)
+            .map(|index| {
+                format!(
+                    "BT /F1 12 Tf 72 {} Td (the committee met on tuesday to review the budget) Tj ET\n",
+                    720 - 20 * index
+                )
+            })
+            .collect();
+        let content = pdf.add_object(Stream::new(dictionary! {}, content.into_bytes()));
+        let tree = pdf.new_object_id();
+        let page = pdf.add_object(dictionary! {
+            "Type" => "Page", "Parent" => tree, "Contents" => content,
+            "Resources" => dictionary! { "Font" => dictionary! { "F1" => font } },
+        });
+        pdf.objects.insert(
+            tree,
+            dictionary! {
+                "Type" => "Pages", "Count" => 1, "Kids" => vec![Object::Reference(page)],
+                "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+            }
+            .into(),
+        );
+        let catalog = pdf.add_object(dictionary! { "Type" => "Catalog", "Pages" => tree });
+        pdf.trailer.set("Root", catalog);
+        let mut bytes = Vec::new();
+        pdf.save_to(&mut bytes).unwrap();
+        bytes
+    }
+
+    #[test]
+    fn a_layer_that_is_not_what_its_glyphs_draw_is_read_by_ocr() {
+        let recognize = |_: RgbImage, _: &Value| -> Result<ocr::OcrResult> {
+            Ok(ocr::OcrResult {
+                text: "Recognized: the committee met.".into(),
+                confidence: 1.0,
+                boxes: Vec::new(),
+                scale: 1.0,
+                language: "test".into(),
+                unread: false,
+                capped: false,
+            })
+        };
+        let read_lines = |images: Vec<RgbImage>, _: &Value| -> Result<Vec<String>> {
+            Ok(images
+                .iter()
+                .map(|_| "the committee met on".to_owned())
+                .collect())
+        };
+        let cfg =
+            json!({"ocr":{"enabled":true},"llm":{"enabled":false},"screenshot":{"enabled":false}});
+        let prepared = prepare_with(
+            &shifted_pdf(),
+            "s.pdf",
+            &cfg,
+            false,
+            &recognize,
+            &read_lines,
+        )
+        .unwrap();
+        let (document, _) = prepared.finish().unwrap();
+        assert!(document.markdown.contains("Recognized: the committee met."));
+        assert!(!document.markdown.contains("uif dpnnjuuff"));
+        let source = &document.metadata[crate::formats::PDF_PAGE_SOURCES][0];
+        assert_eq!(source["source"], "ocr");
+        assert_eq!(
+            source["reason"],
+            "text layer failed the script check: the layer's text is not what its glyphs draw (font Helvetica)"
+        );
+        // Without OCR routing pages, or with a vision model reading them,
+        // nothing is cropped.
+        let never =
+            |_: Vec<RgbImage>, _: &Value| -> Result<Vec<String>> { unreachable!("no glyph check") };
+        for cfg in [
+            json!({"ocr":{"enabled":false}}),
+            json!({"ocr":{"enabled":true,"per_page_routing":false},"llm":{"enabled":false}}),
+            json!({"ocr":{"enabled":true},"llm":{"enabled":true}}),
+        ] {
+            let prepared = prepare_with(&shifted_pdf(), "s.pdf", &cfg, false, &recognize, &never);
+            assert!(prepared.is_ok());
+        }
+    }
+
     #[test]
     fn a_poster_page_is_recognized_at_a_lower_resolution_instead_of_failing() {
         // 200 × 200 inches: 900 million pixels at 150 dpi.
@@ -1620,7 +1768,8 @@ mod tests {
         };
         let cfg =
             json!({"ocr":{"enabled":true},"llm":{"enabled":false},"screenshot":{"enabled":true}});
-        let prepared = prepare_with(&poster, "poster.pdf", &cfg, false, &recognize).unwrap();
+        let prepared =
+            prepare_with(&poster, "poster.pdf", &cfg, false, &recognize, &no_lines).unwrap();
         let (width, height) = seen.lock().unwrap().expect("the page was recognized");
         assert_eq!(width, height);
         let pixels = u64::from(width) * u64::from(height);
@@ -1663,7 +1812,8 @@ mod tests {
         };
         let cfg =
             json!({"ocr":{"enabled":true},"llm":{"enabled":false},"screenshot":{"enabled":false}});
-        let prepared = prepare_with(&scans(6), "scan.pdf", &cfg, false, &recognize).unwrap();
+        let prepared =
+            prepare_with(&scans(6), "scan.pdf", &cfg, false, &recognize, &no_lines).unwrap();
         assert!(most.load(Ordering::SeqCst) <= ocr_pages_at_once());
         // The other five pages were read while the first one still ran.
         assert_eq!(started_while_first_ran.load(Ordering::SeqCst), 6);

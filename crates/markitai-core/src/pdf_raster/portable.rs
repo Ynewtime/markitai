@@ -8,7 +8,7 @@
 //! rounding leaves at most one white pixel column or row at the right or
 //! bottom edge where CoreGraphics centres it.
 
-use super::{RasterSize, Result, failure, raster_size};
+use super::{RasterSize, Result, failure, raster_size, region_size};
 use crate::Error;
 use hayro::hayro_interpret::util::TransformExt;
 use hayro::hayro_interpret::{InterpreterSettings, InterpreterWarning};
@@ -205,6 +205,26 @@ impl PdfRasterSession {
         // ceil-rounded one, so the page is drawn into a context of that size
         // with the transform `hayro::render` uses.
         let scale = Affine::scale(dpi / 72.) * page.initial_transform(true).to_kurbo();
+        self.draw(page, scale, size)
+    }
+
+    /// See [`super::PdfRasterSession::render_region`].
+    pub(crate) fn render_region(
+        &self,
+        page_1_based: usize,
+        dpi: f64,
+        region: [f64; 4],
+    ) -> Result<RgbImage> {
+        let (page, width, height) = self.visible(page_1_based)?;
+        let ((x, y), size) = region_size(width, height, dpi, region)?;
+        let transform = Affine::translate((-x, -y))
+            * Affine::scale(dpi / 72.)
+            * page.initial_transform(true).to_kurbo();
+        self.draw(page, transform, size)
+    }
+
+    /// `page` drawn with `scale` into a white pixmap of `size`.
+    fn draw(&self, page: &Page<'_>, scale: Affine, size: RasterSize) -> Result<RgbImage> {
         // hayro is young; a page it cannot handle must fail this conversion,
         // not the process. Nothing the closure touches outlives it except the
         // immutable document, so a caught panic leaves the session usable.

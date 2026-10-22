@@ -168,6 +168,25 @@ impl PdfRasterSession {
         }
     }
 
+    /// The part `region` (`[left, top, right, bottom]`, in points from the
+    /// top-left corner of the visible page box after rotation) of the page
+    /// drawn at `dpi`, without drawing the rest: a few words of text read
+    /// for the PDF glyph check. The region is clipped to the page and may
+    /// hold at most [`MAX_REGION_PIXELS`].
+    pub(crate) fn render_region(
+        &self,
+        page_1_based: usize,
+        dpi: f64,
+        region: [f64; 4],
+    ) -> Result<image::RgbImage> {
+        match self {
+            #[cfg(target_os = "macos")]
+            Self::CoreGraphics(session) => session.render_region(page_1_based, dpi, region),
+            #[cfg(any(not(target_os = "macos"), feature = "portable-media"))]
+            Self::Portable(session) => session.render_region(page_1_based, dpi, region),
+        }
+    }
+
     /// Fonts and images hayro skipped so far; CoreGraphics reports none.
     #[cfg(all(test, any(not(target_os = "macos"), feature = "portable-media")))]
     pub(crate) fn portable_warnings(&self) -> Option<(usize, usize)> {
@@ -257,6 +276,38 @@ fn raster_size(width: f64, height: f64, dpi: f64) -> Result<RasterSize> {
     })
 }
 
+/// Pixels a [`PdfRasterSession::render_region`] may hold.
+pub(crate) const MAX_REGION_PIXELS: usize = 4_000_000;
+
+/// Where `region` of a `width` × `height` point page lies in the page drawn
+/// at `dpi`: its top-left pixel and its size, clipped to the page.
+fn region_size(
+    width: f64,
+    height: f64,
+    dpi: f64,
+    region: [f64; 4],
+) -> Result<((f64, f64), RasterSize)> {
+    let [left, top, right, bottom] = region;
+    if [width, height, dpi, left, top, right, bottom]
+        .iter()
+        .any(|value| !value.is_finite())
+        || dpi <= 0.
+    {
+        return Err(failure("region and DPI must be finite"));
+    }
+    let scale = dpi / 72.;
+    let x0 = (left.max(0.) * scale).floor();
+    let y0 = (top.max(0.) * scale).floor();
+    let x1 = (right.min(width) * scale).ceil();
+    let y1 = (bottom.min(height) * scale).ceil();
+    if x1 - x0 < 1. || y1 - y0 < 1. || (x1 - x0) * (y1 - y0) > MAX_REGION_PIXELS as f64 {
+        return Err(failure("region is empty or exceeds its pixel limit"));
+    }
+    // The region's own size in points at 72 DPI is its size in pixels.
+    let size = raster_size(x1 - x0, y1 - y0, 72.)?;
+    Ok(((x0, y0), size))
+}
+
 /// See [`PdfRasterSession::fitting_dpi`]. A page whose box is invalid keeps
 /// `dpi`; [`raster_size`] then reports what is wrong with it.
 fn fitting_dpi(width: f64, height: f64, dpi: f64) -> f64 {
@@ -322,6 +373,17 @@ mod limits_tests {
         assert!(raster_size(14_400., 1_440., dpi).is_ok() && dpi < 150.);
         // An invalid box keeps the resolution and fails as before.
         assert_eq!(fitting_dpi(0., 100., 150.), 150.);
+    }
+
+    #[test]
+    fn a_region_is_clipped_to_its_page_and_bounded() {
+        let ((x, y), size) = region_size(612., 792., 288., [-5., 100., 50., 112.]).unwrap();
+        assert_eq!((x, y, size.width, size.height), (0., 400., 200, 48));
+        let ((x, _), size) = region_size(612., 792., 72., [600., 0., 700., 10.]).unwrap();
+        assert_eq!((x, size.width), (600., 12));
+        assert!(region_size(612., 792., 72., [700., 0., 800., 10.]).is_err());
+        assert!(region_size(612., 792., 576., [0., 0., 612., 792.]).is_err());
+        assert!(region_size(612., 792., 72., [0., f64::NAN, 1., 1.]).is_err());
     }
 
     #[test]

@@ -164,6 +164,17 @@ pub(crate) fn recognize_rgb(image: image::RgbImage, cfg: &Value) -> Result<OcrRe
     read(&pixels::prepare_rgb(image)?, &spelling)
 }
 
+/// Read single upright text lines, one text per image in order: the crops
+/// of the PDF glyph check (`formats::pdf::glyph_check`). The portable engine
+/// reads them with its recognizer only; Vision recognizes each crop.
+#[cfg(all(target_os = "macos", not(feature = "portable-media")))]
+pub(crate) fn read_lines(images: Vec<image::RgbImage>, cfg: &Value) -> Result<Vec<String>> {
+    images
+        .into_iter()
+        .map(|image| recognize_rgb(image, cfg).map(|result| result.text))
+        .collect()
+}
+
 /// Integrity and path safety observed without loading an ONNX graph.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LocalOcrModelState {
@@ -415,6 +426,28 @@ pub(crate) fn recognize_rgb(image: image::RgbImage, cfg: &Value) -> Result<OcrRe
                 return read(&pixels::prepare_rgb(image)?, &spelling);
             }
             read_models
+        }
+    }
+}
+
+/// Read single upright text lines, one text per image in order: the crops
+/// of the PDF glyph check (`formats::pdf::glyph_check`). The portable engine
+/// reads them with its recognizer only; Vision recognizes each crop.
+#[cfg(any(not(target_os = "macos"), feature = "portable-media"))]
+pub(crate) fn read_lines(images: Vec<image::RgbImage>, cfg: &Value) -> Result<Vec<String>> {
+    let backend = selected()?;
+    let spelling = configured(cfg)?;
+    match backend {
+        #[cfg(target_os = "macos")]
+        Backend::Vision => images
+            .into_iter()
+            .map(|image| Ok(read(&pixels::prepare_rgb(image)?, &spelling)?.text))
+            .collect(),
+        Backend::Paddle => {
+            for image in &images {
+                pixels::check_rgb(image)?;
+            }
+            paddle::read_line_images(&images, &spelling)
         }
     }
 }

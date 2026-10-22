@@ -1,4 +1,4 @@
-use super::{RasterSize, Result, failure, raster_size};
+use super::{RasterSize, Result, failure, raster_size, region_size};
 use crate::system_frameworks::{self, Framework};
 use image::RgbImage;
 use objc2_core_foundation::{CFData, CFRetained, CGAffineTransform, CGPoint, CGRect, CGSize};
@@ -95,6 +95,31 @@ impl PdfRasterSession {
     }
 
     fn frame(&self, page_1_based: usize, dpi: f64) -> Result<PageFrame> {
+        let (page, crop, (width, height)) = self.page_box(page_1_based)?;
+        let size = raster_size(width, height, dpi)?;
+        let target = CGRect::new(
+            CGPoint::new(0., 0.),
+            CGSize::new(f64::from(size.width), f64::from(size.height)),
+        );
+        let transform = drawing_transform(
+            &page,
+            (width, height),
+            (f64::from(size.width), f64::from(size.height)),
+            dpi,
+        )?;
+        Ok(PageFrame {
+            page,
+            crop,
+            points: (width, height),
+            size,
+            target,
+            transform,
+        })
+    }
+
+    /// The page, its visible box (CropBox ∩ MediaBox) and that box's size in
+    /// points after the page's rotation.
+    fn page_box(&self, page_1_based: usize) -> Result<(CFRetained<CGPDFPage>, CGRect, (f64, f64))> {
         if page_1_based == 0 || page_1_based > self.pages {
             return Err(failure("page number is outside the document"));
         }
@@ -108,53 +133,12 @@ impl PdfRasterSession {
         if rotation % 90 != 0 {
             return Err(failure("page rotation is not a multiple of 90 degrees"));
         }
-        let (width, height) = if matches!(rotation, 90 | 270) {
+        let points = if matches!(rotation, 90 | 270) {
             (crop.size.height, crop.size.width)
         } else {
             (crop.size.width, crop.size.height)
         };
-        let size = raster_size(width, height, dpi)?;
-        let target = CGRect::new(
-            CGPoint::new(0., 0.),
-            CGSize::new(f64::from(size.width), f64::from(size.height)),
-        );
-        // Quartz fits oversized pages down, but does not upscale a page merely
-        // because the destination is larger. Ask it only for the point-space
-        // crop/rotation transform, then explicitly apply the requested DPI.
-        let page_target = CGRect::new(CGPoint::new(0., 0.), CGSize::new(width, height));
-        let mut transform =
-            CGPDFPage::drawing_transform(Some(&page), CGPDFBox::CropBox, page_target, 0, true);
-        let scale = dpi / 72.;
-        transform.a *= scale;
-        transform.b *= scale;
-        transform.c *= scale;
-        transform.d *= scale;
-        transform.tx = transform.tx * scale + (f64::from(size.width) - width * scale) / 2.;
-        transform.ty = transform.ty * scale + (f64::from(size.height) - height * scale) / 2.;
-        let determinant = transform.a * transform.d - transform.b * transform.c;
-        if [
-            transform.a,
-            transform.b,
-            transform.c,
-            transform.d,
-            transform.tx,
-            transform.ty,
-        ]
-        .iter()
-        .any(|value| !value.is_finite())
-            || !determinant.is_finite()
-            || determinant == 0.
-        {
-            return Err(failure("page drawing transform is invalid"));
-        }
-        Ok(PageFrame {
-            page,
-            crop,
-            points: (width, height),
-            size,
-            target,
-            transform,
-        })
+        Ok((page, crop, points))
     }
 
     /// The visible page box after rotation, in points.
@@ -177,46 +161,123 @@ impl PdfRasterSession {
             transform,
             ..
         } = self.frame(page_1_based, dpi)?;
-        let mut pixels = Vec::new();
-        pixels
-            .try_reserve_exact(size.rgba_bytes)
-            .map_err(|_| failure("cannot allocate the bounded page bitmap"))?;
-        pixels.resize(size.rgba_bytes, 255u8);
-        let color = CGColorSpace::new_device_rgb()
-            .ok_or_else(|| failure("cannot create the page color space"))?;
-        // SAFETY: The owned allocation is exactly row_bytes * height, remains
-        // immovable/unread while Quartz uses it, and outlives the context. RGBX
-        // byte order is explicit so no platform-native channel inference occurs.
-        let context = unsafe {
-            CGBitmapContextCreate(
-                pixels.as_mut_ptr().cast(),
-                size.width as usize,
-                size.height as usize,
-                8,
-                size.row_bytes,
-                Some(&color),
-                CGImageByteOrderInfo::Order32Big.0 | CGImageAlphaInfo::NoneSkipLast.0,
-            )
-        }
-        .ok_or_else(|| failure("cannot create the page bitmap context"))?;
-        CGContext::set_rgb_fill_color(Some(&context), 1., 1., 1., 1.);
-        CGContext::fill_rect(Some(&context), target);
-        CGContext::concat_ctm(Some(&context), transform);
-        CGContext::clip_to_rect(Some(&context), crop);
-        CGContext::draw_pdf_page(Some(&context), Some(&page));
-        CGContext::flush(Some(&context));
-        drop(context);
-        // The opaque RGBX context has already composited all PDF transparency
-        // onto white. Drop its unused fourth channel without interpreting alpha.
-        let mut rgb = Vec::new();
-        rgb.try_reserve_exact(size.rgb_bytes)
-            .map_err(|_| failure("cannot allocate the bounded RGB result"))?;
-        for pixel in pixels.as_chunks::<4>().0 {
-            rgb.extend_from_slice(&pixel[..3]);
-        }
-        RgbImage::from_raw(size.width, size.height, rgb)
-            .ok_or_else(|| failure("rendered RGB dimensions are inconsistent"))
+        draw(&page, crop, size, target, transform)
     }
+
+    /// See [`super::PdfRasterSession::render_region`].
+    pub(crate) fn render_region(
+        &self,
+        page_1_based: usize,
+        dpi: f64,
+        region: [f64; 4],
+    ) -> Result<RgbImage> {
+        let (page, crop, (width, height)) = self.page_box(page_1_based)?;
+        let ((x, y), size) = region_size(width, height, dpi, region)?;
+        // The whole page's frame at `dpi`, rounded up as `raster_size` rounds
+        // it, without its pixel limit: only the region is allocated.
+        let full = ((width * dpi / 72.).ceil(), (height * dpi / 72.).ceil());
+        let mut transform = drawing_transform(&page, (width, height), full, dpi)?;
+        // Quartz's origin is the bottom-left corner: the region's bottom
+        // edge lies `full.1 - (y + height)` pixels above the page's.
+        transform.tx -= x;
+        transform.ty -= full.1 - (y + f64::from(size.height));
+        let target = CGRect::new(
+            CGPoint::new(0., 0.),
+            CGSize::new(f64::from(size.width), f64::from(size.height)),
+        );
+        draw(&page, crop, size, target, transform)
+    }
+}
+
+/// The transform drawing `page`'s visible box, `points` large after
+/// rotation, at `dpi` into a frame of `frame` pixels, centred as the frame's
+/// rounding leaves it.
+fn drawing_transform(
+    page: &CGPDFPage,
+    (width, height): (f64, f64),
+    frame: (f64, f64),
+    dpi: f64,
+) -> Result<CGAffineTransform> {
+    // Quartz fits oversized pages down, but does not upscale a page merely
+    // because the destination is larger. Ask it only for the point-space
+    // crop/rotation transform, then explicitly apply the requested DPI.
+    let page_target = CGRect::new(CGPoint::new(0., 0.), CGSize::new(width, height));
+    let mut transform =
+        CGPDFPage::drawing_transform(Some(page), CGPDFBox::CropBox, page_target, 0, true);
+    let scale = dpi / 72.;
+    transform.a *= scale;
+    transform.b *= scale;
+    transform.c *= scale;
+    transform.d *= scale;
+    transform.tx = transform.tx * scale + (frame.0 - width * scale) / 2.;
+    transform.ty = transform.ty * scale + (frame.1 - height * scale) / 2.;
+    let determinant = transform.a * transform.d - transform.b * transform.c;
+    if [
+        transform.a,
+        transform.b,
+        transform.c,
+        transform.d,
+        transform.tx,
+        transform.ty,
+    ]
+    .iter()
+    .any(|value| !value.is_finite())
+        || !determinant.is_finite()
+        || determinant == 0.
+    {
+        return Err(failure("page drawing transform is invalid"));
+    }
+    Ok(transform)
+}
+
+/// `page` drawn with `transform` into an opaque white bitmap of `size`,
+/// clipped to its visible box `crop`.
+fn draw(
+    page: &CGPDFPage,
+    crop: CGRect,
+    size: RasterSize,
+    target: CGRect,
+    transform: CGAffineTransform,
+) -> Result<RgbImage> {
+    let mut pixels = Vec::new();
+    pixels
+        .try_reserve_exact(size.rgba_bytes)
+        .map_err(|_| failure("cannot allocate the bounded page bitmap"))?;
+    pixels.resize(size.rgba_bytes, 255u8);
+    let color = CGColorSpace::new_device_rgb()
+        .ok_or_else(|| failure("cannot create the page color space"))?;
+    // SAFETY: The owned allocation is exactly row_bytes * height, remains
+    // immovable/unread while Quartz uses it, and outlives the context. RGBX
+    // byte order is explicit so no platform-native channel inference occurs.
+    let context = unsafe {
+        CGBitmapContextCreate(
+            pixels.as_mut_ptr().cast(),
+            size.width as usize,
+            size.height as usize,
+            8,
+            size.row_bytes,
+            Some(&color),
+            CGImageByteOrderInfo::Order32Big.0 | CGImageAlphaInfo::NoneSkipLast.0,
+        )
+    }
+    .ok_or_else(|| failure("cannot create the page bitmap context"))?;
+    CGContext::set_rgb_fill_color(Some(&context), 1., 1., 1., 1.);
+    CGContext::fill_rect(Some(&context), target);
+    CGContext::concat_ctm(Some(&context), transform);
+    CGContext::clip_to_rect(Some(&context), crop);
+    CGContext::draw_pdf_page(Some(&context), Some(page));
+    CGContext::flush(Some(&context));
+    drop(context);
+    // The opaque RGBX context has already composited all PDF transparency
+    // onto white. Drop its unused fourth channel without interpreting alpha.
+    let mut rgb = Vec::new();
+    rgb.try_reserve_exact(size.rgb_bytes)
+        .map_err(|_| failure("cannot allocate the bounded RGB result"))?;
+    for pixel in pixels.as_chunks::<4>().0 {
+        rgb.extend_from_slice(&pixel[..3]);
+    }
+    RgbImage::from_raw(size.width, size.height, rgb)
+        .ok_or_else(|| failure("rendered RGB dimensions are inconsistent"))
 }
 
 #[cfg(test)]

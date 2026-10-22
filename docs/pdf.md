@@ -960,10 +960,31 @@ these checks, as do Hebrew and Arabic in reading order and a page that quotes
 a few codes or a reversed phrase; their Markdown is unchanged. The 25 PDFs
 under `crates/markitai-core/src` convert byte-identically. The idea of
 checking a text layer by the script it shows comes from Indra OCR
-(datalab-to/indra); the code is markitai's own. Python markitai also crops a
-few lines of each font under `--ocr` and has the recognizer read them, which
-catches a legacy font whose codes stand for other letters than it draws (a
-shifted alphabet, Latin codes for CJK glyphs); this reader does not.
+(datalab-to/indra); the code is markitai's own.
+
+With `--ocr` (local OCR routing pages, `ocr.per_page_routing` on), a page the
+checks above trust is also compared with what its glyphs draw, as Python
+markitai 1.2.1 does: a legacy or custom-encoded font stores other codes than
+the letters it draws (a shifted alphabet, Latin codes for CJK or Devanagari
+glyphs), and only the image tells. Up to 20 characters at the start of a
+run, mostly letters (six at least) of a script the configured OCR reads, are
+drawn from the page alone, 48 pixels high, and read by the OCR recognizer
+without detection; OCR's text and the layer's are compared by writing system
+and by their letters and digits (difflib's ratio below 0.5 disagrees). Each
+font (its name and its ToUnicode map, so a font copied onto every page is one)
+is sampled twice per document, a page four crops at most, so the cost does
+not grow with the page count. A page whose disagreeing fonts carry three in
+ten of its letters is recognized from its image; its page source says
+`text layer failed the script check: the layer's text is not what its glyphs
+draw (font Helvetica)` or `the layer reads Latin, the page shows CJK (font
+Heiti)`. A non-embedded CJK font is drawn from its character collection for
+the check, and such a page for its OCR, not through the ToUnicode map being
+checked (the portable renderer picks those glyphs through Unicode). Rotated
+pages, rotated runs and runs whose width the font does not give are not
+sampled; an error in drawing or reading stops the check and every page keeps
+its verdict. The recognizer loads with the first crop, so a document whose
+text layers agree costs a few crops and that load, and one without a text
+layer nothing.
 
 ## Where each page's text came from
 
@@ -973,7 +994,8 @@ Every PDF result lists its pages in `page_sources`, as Python markitai does:
 pictures' text recognized, or a vision model reading the page image beside it
 under `--ocr --llm`). `reason` is a short note: `text layer trusted`,
 `no text layer`, `text layer failed the script check: mojibake, UTF-8 read as
-Windows-1252 (24 words)`, `…; kept, since OCR with ocr.lang en does not read
+Windows-1252 (24 words)`, `text layer failed the script check: the layer's
+text is not what its glyphs draw (font Helvetica)` (with `--ocr`), `…; kept, since OCR with ocr.lang en does not read
 Hebrew`, `OCR forced by --ocr (ocr.per_page_routing is off)`, `…; OCR found no
 text`, or `text layer trusted: the invisible OCR layer over the page image`.
 It is in the `--json` items, the bindings' result, recorded history and

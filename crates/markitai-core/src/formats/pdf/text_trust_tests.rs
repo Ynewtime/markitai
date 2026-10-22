@@ -723,3 +723,99 @@ fn a_subset_without_encoding_or_tounicode_is_not_readable_for_its_punctuation() 
     let error = pages.finish().unwrap_err().to_string();
     assert!(error.contains("run again with --ocr"), "{error}");
 }
+
+/// The six Latin lines in Helvetica whose ToUnicode map reads each lower-case
+/// letter as the next one (`the` as `uif`): a shifted alphabet, which every
+/// text-only check trusts.
+fn shifted_pdf(pages: usize) -> Vec<u8> {
+    let map: Vec<(u8, String)> = (b'a'..=b'z')
+        .map(|byte| (byte, char::from(b'a' + (byte - b'a' + 1) % 26).to_string()))
+        .collect();
+    helvetica_pdf(&vec![ascii_lines(&LATIN_LINES); pages], Some(&map))
+}
+
+/// A crop reader that answers, crop by crop, what the glyphs drawn there
+/// say: the starts of the lines of [`LATIN_LINES`] the check samples (the
+/// first and the fourth of six, spread over the page). It keeps each
+/// crop's size and whether it holds ink on white.
+struct Reader {
+    crops: std::cell::RefCell<Vec<(u32, u32, bool)>>,
+}
+
+impl Reader {
+    fn new() -> Self {
+        Self {
+            crops: Default::default(),
+        }
+    }
+
+    fn read(&self, images: Vec<image::RgbImage>) -> Result<Vec<String>> {
+        let mut crops = self.crops.borrow_mut();
+        let mut texts = Vec::new();
+        for image in images {
+            let ink = image.pixels().filter(|pixel| pixel.0[0] < 100).count();
+            let white = image.pixels().filter(|pixel| pixel.0[0] > 200).count();
+            let line = [0, 3][crops.len() % 2];
+            crops.push((image.width(), image.height(), ink > 50 && white > ink));
+            texts.push(LATIN_LINES[line].chars().take(20).collect());
+        }
+        Ok(texts)
+    }
+}
+
+#[test]
+fn a_shifted_alphabet_fails_the_glyph_check_on_every_page_of_its_font() {
+    let bytes = shifted_pdf(3);
+    let mut pages = extract_pages(&bytes).unwrap();
+    // The text-only checks trust it.
+    assert!(pages.pages.iter().all(|page| !page.needs_ocr));
+    // OCR reads each crop as the text the glyphs draw.
+    let reader = Reader::new();
+    let report = glyph_check::check(&bytes, &mut pages, &["Latin"], &|images| {
+        reader.read(images)
+    });
+    // Two crops for the font, on the first page only.
+    assert_eq!(report.crops, 2);
+    assert!(report.render.is_none());
+    for (width, height, inked) in reader.crops.borrow().iter() {
+        assert!(
+            (44..=60).contains(height) && *width > 4 * height,
+            "{width}x{height}"
+        );
+        assert!(inked);
+    }
+    for page in &pages.pages {
+        assert!(page.needs_ocr, "page {}", page.number);
+        assert_eq!(
+            page.layer_reason(),
+            format!("{FAILED}the layer's text is not what its glyphs draw (font Helvetica)")
+        );
+        assert_eq!(
+            page.ocr_reason.as_deref(),
+            Some(format!("{FAILED}{}", glyph_check::KIND).as_str())
+        );
+    }
+}
+
+#[test]
+fn a_true_layer_passes_the_glyph_check_and_a_failing_reader_changes_nothing() {
+    let bytes = helvetica_pdf(&[ascii_lines(&LATIN_LINES)], None);
+    let mut pages = extract_pages(&bytes).unwrap();
+    let reader = Reader::new();
+    let report = glyph_check::check(&bytes, &mut pages, &["Latin"], &|images| {
+        reader.read(images)
+    });
+    assert_eq!(report.crops, 2);
+    assert!(!pages.pages[0].needs_ocr && pages.pages[0].layer_failure.is_none());
+    // A reader that fails stops the check: every page keeps its verdict.
+    let bytes = shifted_pdf(1);
+    let mut pages = extract_pages(&bytes).unwrap();
+    glyph_check::check(&bytes, &mut pages, &["Latin"], &|_| {
+        Err(crate::Error::Unsupported("no OCR here".into()))
+    });
+    assert!(!pages.pages[0].needs_ocr);
+    // Text OCR does not read is not sampled.
+    let mut pages = extract_pages(&bytes).unwrap();
+    let report = glyph_check::check(&bytes, &mut pages, &["Arabic"], &|_| unreachable!());
+    assert_eq!(report.crops, 0);
+}
