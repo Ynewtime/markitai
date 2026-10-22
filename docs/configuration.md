@@ -137,7 +137,7 @@ stdout 仍为“配置有效”且退出 0。只检查所选文件与 `--config-
 | `MARKITAI_BROWSER_EXECUTABLE` | 指定 Chrome/Chromium 可执行文件 |
 | `PLAYWRIGHT_BROWSERS_PATH` | 额外搜索的 Playwright 浏览器缓存目录 |
 | `MODEL` | 未配置 `llm.model_list` 时使用的模型，如 `openai/gpt-4.1-mini` |
-| `OPENAI_API_KEY`、`ANTHROPIC_API_KEY`、`GEMINI_API_KEY`、`DEEPSEEK_API_KEY`、`OPENROUTER_API_KEY` | 供应商密钥；未配置模型时据此自动选择模型 |
+| `OPENAI_API_KEY`、`ANTHROPIC_API_KEY`、`GEMINI_API_KEY`、`DEEPSEEK_API_KEY`、`OPENROUTER_API_KEY` | 供应商密钥；未配置模型时据此自动选择模型。别名与 LiteLLM 相同：`ANTHROPIC_AUTH_TOKEN`（网关令牌，以 `Authorization: Bearer` 发送）、`GOOGLE_API_KEY`（与 `GEMINI_API_KEY` 同时设置时优先，同 Google SDK）、`OR_API_KEY` |
 | `AWS_BEARER_TOKEN_BEDROCK`、`AWS_ACCESS_KEY_ID`、`AWS_SECRET_ACCESS_KEY`、`AWS_SESSION_TOKEN`、`AWS_PROFILE`、`AWS_REGION_NAME`、`AWS_REGION`；`GOOGLE_APPLICATION_CREDENTIALS`、`VERTEXAI_PROJECT`、`VERTEXAI_LOCATION` | `bedrock/` 与 `vertex_ai/` 部署的凭据、区域与项目（部署本身只读取 `api_key`、`api_base`）；见 [Bedrock 与 Vertex AI](llm.md#bedrock-and-vertex-ai) |
 | `AZURE_API_KEY`、`AZURE_API_VERSION`、`OLLAMA_API_KEY` | Azure 与 Ollama 部署的凭据和 API 版本 |
 | `GROQ_API_KEY`、`MISTRAL_API_KEY`、`XAI_API_KEY`、`TOGETHER_API_KEY` 等 | 兼容 OpenAI 的前缀的密钥（完整列表及 LiteLLM 的别名见 [LLM：兼容 OpenAI 的前缀](llm.md#openai-compatible-prefixes)）；不参与自动选择，需用 `MODEL` 或 `llm.model_list` 指定模型。`hosted_vllm/`、`lm_studio/` 无需密钥 |

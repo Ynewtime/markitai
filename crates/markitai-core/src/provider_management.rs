@@ -392,9 +392,9 @@ fn discovery_base_variable(provider: &str, env: &HashMap<String, String>) -> Opt
         })
 }
 
-/// The first of the provider's key variables holding a value in `env`, for
-/// reporting that a connection without a stored key is served by the
-/// environment (process variables and dotenv files).
+/// The provider's key variable a request reads in `env`, for reporting that
+/// a connection without a stored key is served by the environment (process
+/// variables and dotenv files).
 pub fn environment_key_variable(
     provider: &str,
     env: &HashMap<String, String>,
@@ -402,13 +402,16 @@ pub fn environment_key_variable(
     CATALOG
         .iter()
         .find(|entry| entry.provider == provider)
-        .and_then(|entry| {
-            entry
-                .key_variables
-                .iter()
-                .copied()
-                .find(|name| env.get(*name).is_some_and(|value| !value.trim().is_empty()))
-        })
+        .and_then(|entry| crate::llm::providers::held_key_variable(entry.key_variables, env))
+}
+
+/// The variable among `variables` a request reads its key from, given which
+/// ones hold a value: the first, except that `GOOGLE_API_KEY` comes first.
+pub fn held_key_variable(
+    variables: &[&'static str],
+    held: impl Fn(&str) -> bool,
+) -> Option<&'static str> {
+    crate::llm::providers::held_key_variable_by(variables, held)
 }
 
 /// Discover model identifiers using a credential-isolated in-memory cache.
@@ -509,18 +512,17 @@ fn discover_with_environment(
             variable.as_deref(),
         ));
     }
-    // The first of the provider's key variables that holds a value.
-    let variable = entry
-        .key_variables
-        .iter()
-        .find(|name| {
-            env.get(**name)
-                .is_some_and(|value| !value.trim().is_empty())
-        })
-        .or(entry.key_variables.first())
-        .copied();
+    // The provider's key variable that holds a value, else its first one.
+    let variable = crate::llm::providers::held_key_variable(entry.key_variables, &env)
+        .or(entry.key_variables.first().copied());
     // The keyless placeholder is no key to send, and never the environment's.
     let key = resolve(field(request, "api_key")?, variable, &env)?.filter(|key| key != NO_KEY);
+    // A gateway token is a bearer token, as for inference.
+    let bearer = provider == "anthropic"
+        && match field(request, "api_key")?.filter(|value| !value.is_empty()) {
+            Some(value) => value == "env:ANTHROPIC_AUTH_TOKEN",
+            None => variable == Some("ANTHROPIC_AUTH_TOKEN"),
+        };
     // Built-in and additional providers share inference's endpoint variables.
     let base_variable = discovery_base_variable(&provider, &env);
     let base = resolve(field(request, "api_base")?, base_variable, &env)?
@@ -543,13 +545,25 @@ fn discover_with_environment(
         .flatten();
     if public_only {
         // Never answered from, nor stored for, another caller's list.
-        return Ok(
-            discovery::load(&provider, &base, key.as_deref(), keyless_variable, true)
-                .unwrap_or_else(|failed| failed),
-        );
+        return Ok(discovery::load(
+            &provider,
+            &base,
+            key.as_deref(),
+            bearer,
+            keyless_variable,
+            true,
+        )
+        .unwrap_or_else(|failed| failed));
     }
     cache::global().discover(&provider, &base, key.as_deref(), refresh, || {
-        discovery::load(&provider, &base, key.as_deref(), keyless_variable, false)
+        discovery::load(
+            &provider,
+            &base,
+            key.as_deref(),
+            bearer,
+            keyless_variable,
+            false,
+        )
     })
 }
 

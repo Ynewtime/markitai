@@ -326,6 +326,7 @@ fn entry(provider: &str, endpoint: &str) -> Deployment {
         provider: provider.into(),
         weight: 1,
         key: None,
+        key_variable: None,
         endpoint: endpoint.into(),
         protocol: Protocol::Chat,
         max_tokens: None,

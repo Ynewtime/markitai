@@ -135,6 +135,7 @@ mod tests {
             provider: "claude-agent".into(),
             weight: 1,
             key: None,
+            key_variable: None,
             endpoint: "claude-cli://fixture".into(),
             protocol: Protocol::Anthropic,
             max_tokens: None,

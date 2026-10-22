@@ -41,37 +41,26 @@ pub(crate) use vision::{
 
 const MAX_RESPONSE: u64 = 100 * 1024 * 1024;
 const MAX_BACKOFF_SECONDS: u64 = 60;
-/// (provider, API key variable, model) used without `llm.model_list`, in the
-/// reference's detection priority.
-const DEFAULT_MODELS: [(&str, &str, &str); 5] = [
-    (
-        "anthropic",
-        "ANTHROPIC_API_KEY",
-        "anthropic/claude-haiku-5-5",
-    ),
-    ("openai", "OPENAI_API_KEY", "openai/gpt-6-luna"),
-    (
-        "gemini",
-        "GEMINI_API_KEY",
-        "gemini/gemini-flash-lite-latest",
-    ),
+/// (provider, model) used without `llm.model_list`, in the reference's
+/// detection priority; a provider joins when one of its key variables is set.
+const DEFAULT_MODELS: [(&str, &str); 5] = [
+    ("anthropic", "anthropic/claude-haiku-5-5"),
+    ("openai", "openai/gpt-6-luna"),
+    ("gemini", "gemini/gemini-flash-lite-latest"),
     // DeepSeek's model list names `deepseek-flash`; `deepseek-v4-flash` is an alias.
-    ("deepseek", "DEEPSEEK_API_KEY", "deepseek/deepseek-flash"),
-    (
-        "openrouter",
-        "OPENROUTER_API_KEY",
-        "openrouter/google/gemini-3.5-flash-lite",
-    ),
+    ("deepseek", "deepseek/deepseek-flash"),
+    ("openrouter", "openrouter/google/gemini-3.5-flash-lite"),
 ];
 
 /// (provider, model) of each default whose API key is set and not blank.
 pub(crate) fn keyed_defaults(
     env: &HashMap<String, String>,
 ) -> impl Iterator<Item = (&'static str, &'static str)> + '_ {
-    DEFAULT_MODELS
-        .iter()
-        .filter(|(_, key, _)| env.get(*key).is_some_and(|value| !value.trim().is_empty()))
-        .map(|&(provider, _, model)| (provider, model))
+    DEFAULT_MODELS.iter().copied().filter(|(provider, _)| {
+        providers::find(provider)
+            .and_then(|known| providers::held_key_variable(known.key_vars, env))
+            .is_some()
+    })
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -97,6 +86,10 @@ struct Deployment {
     provider: String,
     weight: u64,
     key: Option<String>,
+    /// The environment variable `key` was read from (a provider's own
+    /// variable or an `env:` reference); `None` for a key written in the
+    /// configuration, or no key.
+    key_variable: Option<String>,
     endpoint: String,
     protocol: Protocol,
     max_tokens: Option<u64>,
@@ -123,6 +116,7 @@ impl std::fmt::Debug for Deployment {
             .field("provider", &self.provider)
             .field("weight", &self.weight)
             .field("key", &self.key.as_ref().map(|_| "[REDACTED]"))
+            .field("key_variable", &self.key_variable)
             .field("endpoint", &crate::output::redact_url(&self.endpoint))
             .field("protocol", &self.protocol)
             .field("max_tokens", &self.max_tokens)
@@ -989,16 +983,16 @@ fn deployments(cfg: &Value, env: &HashMap<String, String>) -> Result<Vec<Deploym
                 })
                 .and_then(Value::as_bool)
                 != Some(false);
-        // The first key variable that holds a value; with none set, the
-        // first name decides (it may be present but empty).
-        let key_var = known
-            .key_vars
-            .iter()
-            .copied()
-            .find(|name| env.get(*name).is_some_and(|value| !value.is_empty()))
-            .unwrap_or(known.key_vars[0]);
+        // The key variable that holds a value; with none set, the first
+        // name decides (it may be present but empty).
+        let key_var =
+            providers::held_key_variable(known.key_vars, env).unwrap_or(known.key_vars[0]);
         let key =
             config::resolve_optional(stored_key, allow_environment.then_some(key_var), env, true);
+        let key_variable = match stored_key {
+            Some(stored) => stored.strip_prefix("env:").map(str::to_owned),
+            None => allow_environment.then(|| key_var.to_owned()),
+        };
         let endpoint_base = config::resolve_optional(
             nonempty(params.get("api_base"))
                 .or_else(|| nonempty(saved_provider.and_then(|provider| provider.get("api_base")))),
@@ -1092,6 +1086,7 @@ fn deployments(cfg: &Value, env: &HashMap<String, String>) -> Result<Vec<Deploym
             provider: provider.into(),
             weight,
             key,
+            key_variable,
             endpoint,
             protocol,
             max_tokens,
@@ -1871,6 +1866,11 @@ fn request_with_mode(
     } else {
         if let Some(key) = &entry.key {
             request = match entry.protocol {
+                Protocol::Anthropic
+                    if entry.key_variable.as_deref() == Some("ANTHROPIC_AUTH_TOKEN") =>
+                {
+                    request.bearer_auth(key)
+                }
                 Protocol::Anthropic => request.header("x-api-key", key),
                 Protocol::Azure => request.header("api-key", key),
                 Protocol::Chat => request.bearer_auth(key),
@@ -2396,6 +2396,7 @@ mod tests {
     mod auth_fallback;
     mod cloud_auth;
     mod hardening;
+    mod keys;
     mod reasoning;
     mod resend;
     mod transport;

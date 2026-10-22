@@ -385,6 +385,7 @@ impl Plan {
             provider: self.endpoint.provider.clone(),
             weight: 1,
             key: None,
+            key_variable: None,
             endpoint: format!(
                 "{}{}",
                 self.endpoint.api_base,

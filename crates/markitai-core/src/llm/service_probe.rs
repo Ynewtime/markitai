@@ -327,6 +327,11 @@ fn perform(entry: &Deployment) -> Result<(), Failure> {
     } else {
         if let Some(key) = &entry.key {
             call = match entry.protocol {
+                Protocol::Anthropic
+                    if entry.key_variable.as_deref() == Some("ANTHROPIC_AUTH_TOKEN") =>
+                {
+                    call.bearer_auth(key)
+                }
                 Protocol::Anthropic => call.header("x-api-key", key),
                 Protocol::Azure => call.header("api-key", key),
                 Protocol::Chat => call.bearer_auth(key),

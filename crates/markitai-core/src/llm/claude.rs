@@ -87,6 +87,7 @@ pub(super) fn deployment(
         provider: "claude-agent".into(),
         weight: params.get("weight").and_then(Value::as_u64).unwrap_or(1),
         key: None,
+        key_variable: None,
         endpoint,
         protocol: Protocol::Chat,
         max_tokens: None,

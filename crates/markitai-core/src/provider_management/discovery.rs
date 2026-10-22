@@ -100,6 +100,7 @@ pub(super) fn load(
     provider: &str,
     base: &str,
     key: Option<&str>,
+    bearer: bool,
     keyless_variable: Option<&str>,
     public_only: bool,
 ) -> std::result::Result<Value, Value> {
@@ -160,6 +161,7 @@ pub(super) fn load(
     let mut request = client.get(url).header("accept", "application/json");
     if let Some(key) = key {
         request = match provider {
+            "anthropic" if bearer => request.bearer_auth(key),
             "anthropic" => request.header("x-api-key", key),
             "azure" => request.header("api-key", key),
             // A header rather than `?key=`, which request logs and proxies record.

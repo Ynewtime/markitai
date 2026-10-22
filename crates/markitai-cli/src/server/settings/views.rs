@@ -1,7 +1,7 @@
 use super::{SettingsSource, identity, model, store::Data};
 use markitai_core::provider_management::{
-    catalog, environment_key_variable, provider_default_base, provider_entry as entry,
-    provider_label,
+    catalog, environment_key_variable, held_key_variable, provider_default_base,
+    provider_entry as entry, provider_label,
 };
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
@@ -20,12 +20,7 @@ fn facts(name: &str, card: &mut Value) {
         card["aliases"] = json!(entry.aliases);
     }
     let variable = entry.as_ref().and_then(|entry| {
-        entry
-            .key_variables
-            .iter()
-            .find(|variable| set(variable))
-            .or(entry.key_variables.first())
-            .copied()
+        held_key_variable(entry.key_variables, set).or(entry.key_variables.first().copied())
     });
     card["default_base"] = json!(entry.as_ref().and_then(|entry| entry.default_base));
     card["key_variable"] = json!(variable);
@@ -255,7 +250,7 @@ pub(super) fn providers(data: &Data) -> Value {
     let configured = configured_cards(data, &env);
     for known in &catalog {
         let name = known.provider;
-        let Some(variable) = known.key_variables.iter().copied().find(|v| set(v)) else {
+        let Some(variable) = held_key_variable(known.key_variables, set) else {
             continue;
         };
         let reference = format!("env:{variable}");

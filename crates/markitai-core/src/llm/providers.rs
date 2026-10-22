@@ -114,7 +114,9 @@ static PROVIDERS: [Provider; 93] = [
         protocol: Protocol::Anthropic,
         base: Some("https://api.anthropic.com/v1"),
         base_vars: &["ANTHROPIC_API_BASE"],
-        key_vars: &["ANTHROPIC_API_KEY"],
+        // An `ANTHROPIC_AUTH_TOKEN` (a gateway's token) is sent as a bearer
+        // token, as Anthropic's SDK and LiteLLM send it.
+        key_vars: &["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"],
         key_optional: false,
         special: Special::None,
     },
@@ -122,7 +124,8 @@ static PROVIDERS: [Provider; 93] = [
         "gemini",
         "https://generativelanguage.googleapis.com/v1beta/openai",
         &["GEMINI_API_BASE"],
-        &["GEMINI_API_KEY"],
+        // Google's SDK reads `GOOGLE_API_KEY` first (see `held_key_variable`).
+        &["GEMINI_API_KEY", "GOOGLE_API_KEY"],
     ),
     chat(
         "deepseek",
@@ -134,7 +137,7 @@ static PROVIDERS: [Provider; 93] = [
         "openrouter",
         "https://openrouter.ai/api/v1",
         &["OPENROUTER_API_BASE"],
-        &["OPENROUTER_API_KEY"],
+        &["OPENROUTER_API_KEY", "OR_API_KEY"],
     ),
     Provider {
         prefix: "azure",
@@ -729,6 +732,32 @@ static PROVIDERS: [Provider; 93] = [
         &["OOBABOOGA_API_KEY"],
     ),
 ];
+
+/// The key variable a request reads, among `variables`: the first one that
+/// holds a value, except that `GOOGLE_API_KEY` comes before the others, as
+/// Google's SDK and LiteLLM read it before `GEMINI_API_KEY`. `None` when none
+/// holds one; messages then name the first variable, the documented one.
+pub(crate) fn held_key_variable(
+    variables: &[&'static str],
+    env: &HashMap<String, String>,
+) -> Option<&'static str> {
+    held_key_variable_by(variables, |name| {
+        env.get(name).is_some_and(|value| !value.trim().is_empty())
+    })
+}
+
+/// [`held_key_variable`] with the caller's test of whether a variable holds
+/// a value.
+pub(crate) fn held_key_variable_by(
+    variables: &[&'static str],
+    held: impl Fn(&str) -> bool,
+) -> Option<&'static str> {
+    variables
+        .iter()
+        .find(|name| **name == "GOOGLE_API_KEY" && held(name))
+        .or_else(|| variables.iter().find(|name| held(name)))
+        .copied()
+}
 
 /// What provider settings need to know about one HTTP prefix, without the
 /// request protocol itself.

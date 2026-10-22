@@ -619,6 +619,7 @@ mod tests {
             provider: "openai".into(),
             weight: 1,
             key: Some(key.into()),
+            key_variable: None,
             endpoint: "https://user:pw@llm.example.test:8443/v1/chat/completions?key=secret".into(),
             protocol: super::super::Protocol::Chat,
             max_tokens: None,

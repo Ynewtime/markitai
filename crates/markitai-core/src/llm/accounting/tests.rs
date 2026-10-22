@@ -18,6 +18,7 @@ fn entry() -> Deployment {
         provider: "openai".into(),
         weight: 1,
         key: Some("test-not-a-provider-key".into()),
+        key_variable: None,
         endpoint: "https://api.openai.com/v1/chat/completions".into(),
         protocol: Protocol::Chat,
         max_tokens: None,

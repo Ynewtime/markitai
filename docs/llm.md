@@ -180,6 +180,12 @@ or optional quota settings that Markitai does not expose.
 | The prefixes in the next table | The provider's OpenAI-compatible Chat Completions endpoint |
 | `copilot/`, `claude-agent/`, `chatgpt/` | Installed official subscription runtime; see [subscriptions](subscriptions.md) |
 
+The five built-in API providers read their keys from `OPENAI_API_KEY`,
+`ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN` (a gateway token, sent as
+`Authorization: Bearer`), `GEMINI_API_KEY` or `GOOGLE_API_KEY` (which wins when
+both are set, as in Google's SDK), `DEEPSEEK_API_KEY`, and `OPENROUTER_API_KEY`
+or `OR_API_KEY`, as LiteLLM does.
+
 ### OpenAI-compatible prefixes
 
 These prefixes are plain Chat Completions endpoints that the reference reaches
