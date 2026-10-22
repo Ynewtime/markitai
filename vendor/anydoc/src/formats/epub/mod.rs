@@ -73,6 +73,7 @@ pub fn parse(bytes: &[u8]) -> Result<Document, ConvertError> {
 
     let assets = RefCell::new(AssetSink::new());
     let notes = RefCell::new(Vec::new());
+    let cover_at = doc.blocks.len();
     let mut css_cache: HashMap<String, Option<String>> = HashMap::new();
     let mut converted = 0usize;
     for chapter_path in &spine_paths {
@@ -104,6 +105,24 @@ pub fn parse(bytes: &[u8]) -> Result<Document, ConvertError> {
     if spine_entries > 0 && converted == 0 {
         return Err(ConvertError::malformed("no chapter in the book could be read"));
     }
+    // markitai: a cover the package names (EPUB 3's `cover-image` item, EPUB
+    // 2's `<meta name="cover">`) that no page shows comes first, as a
+    // reader's library shows it.
+    if let Some(cover) = opf_cover(&opf, &manifest)
+        && let Ok(target) = path::resolve(&opf_path, cover)
+        && !assets.borrow().contains_part(&target.path)
+        && let Some(bytes) = pkg.borrow_mut().optional_part(&target.path)?
+    {
+        let media = media_type_for(&target.path);
+        let id = assets.borrow_mut().add(media, target.path, &bytes)?;
+        doc.blocks.insert(
+            cover_at,
+            Block::Paragraph(vec![Inline::Image {
+                alt: "Cover".into(),
+                source: ImageSource::Asset(id),
+            }]),
+        );
+    }
 
     doc.assets = std::mem::take(&mut assets.borrow_mut().assets);
     doc.notes = notes.into_inner();
@@ -129,29 +148,65 @@ pub fn parse(bytes: &[u8]) -> Result<Document, ConvertError> {
     Ok(doc)
 }
 
+/// markitai: the href of the picture the package names as the book's cover:
+/// the manifest item whose `properties` hold `cover-image` (EPUB 3), else the
+/// item `<meta name="cover" content="…">` names by id (EPUB 2). Only an
+/// image item counts.
+fn opf_cover<'m>(
+    opf: &Element,
+    manifest: &'m HashMap<String, (String, String)>,
+) -> Option<&'m str> {
+    let image = |id: &str| {
+        manifest
+            .get(id)
+            .filter(|(_, media)| media.starts_with("image/"))
+            .map(|(href, _)| href.as_str())
+    };
+    opf.descendants_any("item")
+        .find(|item| {
+            item.attr_any("properties")
+                .is_some_and(|value| value.split_whitespace().any(|word| word == "cover-image"))
+        })
+        .and_then(|item| item.attr_any("id"))
+        .and_then(image)
+        .or_else(|| {
+            opf.descendants_any("meta")
+                .find(|meta| meta.attr_any("name") == Some("cover"))
+                .and_then(|meta| meta.attr_any("content"))
+                .and_then(image)
+        })
+}
+
 /// markitai: the longest link text read as a note's mark (`[12]`, `iv`, `*`).
 const MAX_NOTE_MARK: usize = 8;
 
 fn mark_note_refs(blocks: &mut [Block], ids: &HashMap<String, String>) {
-    fn walk(inlines: &mut [Inline], ids: &HashMap<String, String>) {
-        for inline in inlines {
-            let reference = match inline {
+    // markitai: longer prose linking to a note keeps its words, followed by
+    // the note's reference: a link to the note's chapter-scoped anchor
+    // (`#EPUB/c2.xhtml#fn1`) leads nowhere once the note is a definition.
+    fn walk(inlines: &mut Vec<Inline>, ids: &HashMap<String, String>) {
+        for inline in std::mem::take(inlines) {
+            match inline {
                 Inline::Link { content, target: LinkTarget::Anchor(id) }
-                    if ids.contains_key(id)
+                    if ids.contains_key(&id)
                         && !content.iter().any(|c| matches!(c, Inline::Image { .. }))
-                        && inlines_to_plain_text(content).trim().chars().count()
+                        && inlines_to_plain_text(&content).trim().chars().count()
                             <= MAX_NOTE_MARK =>
                 {
-                    Some(ids[id].clone())
+                    inlines.push(Inline::NoteRef(ids[&id].clone()));
                 }
-                Inline::Link { content, .. } => {
-                    walk(content, ids);
-                    None
+                Inline::Link { mut content, target: LinkTarget::Anchor(id) }
+                    if ids.contains_key(&id) =>
+                {
+                    walk(&mut content, ids);
+                    inlines.extend(content);
+                    inlines.push(Inline::NoteRef(ids[&id].clone()));
                 }
-                _ => None,
-            };
-            if let Some(id) = reference {
-                *inline = Inline::NoteRef(id);
+                Inline::Link { mut content, target } => {
+                    walk(&mut content, ids);
+                    inlines.push(Inline::Link { content, target });
+                }
+                other => inlines.push(other),
             }
         }
     }
@@ -356,8 +411,87 @@ mod tests {
         for stray in ["<a id", "c0.xhtml", "c1.xhtml", "↩", "---", "](#"] {
             assert!(!markdown.contains(stray), "{stray}: {markdown}");
         }
-        // Prose linking to a note keeps its words.
-        assert!(markdown.contains("the note on sources"), "{markdown}");
+        // Prose linking to a note keeps its words, and points at the note.
+        assert!(markdown.contains("See the note on sources[^3]."), "{markdown}");
+    }
+
+    /// markitai: a book of one chapter and a cover picture the package names
+    /// as `manifest` and `metadata` give.
+    fn covered_book(metadata: &str, cover_item: &str, chapter: &str) -> Vec<u8> {
+        let mut w = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default();
+        let parts = [
+            (
+                "META-INF/container.xml",
+                r#"<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OPS/c.opf" media-type="application/oebps-package+xml"/></rootfiles></container>"#.to_string(),
+            ),
+            (
+                "OPS/c.opf",
+                format!(
+                    r#"<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Invented</dc:title>{metadata}</metadata><manifest><item id="c0" href="Text/c0.xhtml" media-type="application/xhtml+xml"/>{cover_item}</manifest><spine><itemref idref="c0"/></spine></package>"#
+                ),
+            ),
+            (
+                "OPS/Text/c0.xhtml",
+                format!(
+                    r#"<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml"><body>{chapter}</body></html>"#
+                ),
+            ),
+            ("OPS/Images/cover.png", "not decoded here".to_string()),
+        ];
+        for (name, body) in &parts {
+            w.start_file(*name, options).unwrap();
+            w.write_all(body.as_bytes()).unwrap();
+        }
+        w.finish().unwrap().into_inner()
+    }
+
+    /// markitai: the alt text of each picture the book's blocks show, in order.
+    fn pictures(doc: &Document) -> Vec<String> {
+        doc.blocks
+            .iter()
+            .filter_map(|block| match block {
+                Block::Paragraph(inlines) => Some(inlines),
+                _ => None,
+            })
+            .flatten()
+            .filter_map(|inline| match inline {
+                Inline::Image { alt, source: ImageSource::Asset(_) } => Some(alt.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_cover_only_the_package_names_comes_first() {
+        let epub3 = r#"<item id="cv" properties="cover-image" href="Images/cover.png" media-type="image/png"/>"#;
+        let epub2 = r#"<item id="cv" href="Images/cover.png" media-type="image/png"/>"#;
+        for (metadata, item) in [("", epub3), (r#"<meta name="cover" content="cv"/>"#, epub2)] {
+            let doc = parse(&covered_book(metadata, item, "<h1>One</h1><p>Text.</p>")).unwrap();
+            assert_eq!(doc.assets.len(), 1, "{item}");
+            assert_eq!(doc.assets[0].origin_part, "OPS/Images/cover.png");
+            assert_eq!(pictures(&doc), ["Cover"]);
+            // After the title, before the first chapter.
+            assert!(matches!(&doc.blocks[1], Block::Paragraph(inlines)
+                if matches!(inlines[..], [Inline::Image { .. }])));
+        }
+        // A page that shows it already: once, where the page has it.
+        let doc = parse(&covered_book(
+            "",
+            epub3,
+            r#"<p><img src="../Images/cover.png" alt="Front"/></p><h1>One</h1>"#,
+        ))
+        .unwrap();
+        assert_eq!(doc.assets.len(), 1);
+        assert_eq!(pictures(&doc), ["Front"]);
+        // A `cover` meta naming no image item names no cover.
+        let doc = parse(&covered_book(
+            r#"<meta name="cover" content="c0"/>"#,
+            "",
+            "<p>Text.</p>",
+        ))
+        .unwrap();
+        assert!(doc.assets.is_empty());
     }
 
     #[test]

@@ -348,7 +348,7 @@ impl Builder<'_> {
     }
 
     fn push_text(&mut self, text: &str, delta: StyleDelta) {
-        let collapsed = collapse_ws(&clean_text(text));
+        let collapsed = collapse_html_ws(text);
         if collapsed.is_empty() {
             return;
         }
@@ -852,6 +852,50 @@ impl Builder<'_> {
     }
 }
 
+/// markitai: a text node's whitespace as a browser collapses it (CSS Text
+/// 3): a run of HTML whitespace (space, tab, line feed, form feed, carriage
+/// return) is one space, but one holding a line break between two Chinese or
+/// Japanese characters is nothing, so hard-wrapped CJK prose joins without a
+/// space. Other spaces are text: U+3000, a CJK paragraph's full-width
+/// indent, stays (upstream collapsed every Unicode space). A no-break space
+/// is a space, as before.
+fn collapse_html_ws(text: &str) -> String {
+    fn wide(c: char) -> bool {
+        matches!(c as u32,
+            0x2E80..=0x303F | 0x3040..=0x30FF | 0x3100..=0x312F | 0x31A0..=0x31FF
+            | 0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xF900..=0xFAFF | 0xFE30..=0xFE4F
+            | 0xFF00..=0xFF60 | 0xFFE0..=0xFFE6 | 0x20000..=0x3FFFF)
+    }
+    let html_space = |c: char| matches!(c, ' ' | '\t' | '\n' | '\r' | '\u{c}');
+    let mut joined = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if !html_space(c) {
+            joined.push(c);
+            continue;
+        }
+        let mut broken = matches!(c, '\n' | '\r');
+        while let Some(&next) = chars.peek().filter(|&&next| html_space(next)) {
+            broken |= matches!(next, '\n' | '\r');
+            chars.next();
+        }
+        let between_wide = joined.chars().next_back().is_some_and(wide)
+            && chars.peek().copied().is_some_and(wide);
+        if !(broken && between_wide) {
+            joined.push(' ');
+        }
+    }
+    let cleaned = clean_text(&joined);
+    let mut out = String::with_capacity(cleaned.len());
+    for c in cleaned.chars() {
+        if c == ' ' && out.ends_with(' ') {
+            continue;
+        }
+        out.push(c);
+    }
+    out
+}
+
 /// markitai: the first Markdown footnote mark in `text` (`[^5]`, `[^note-2]`:
 /// a label of up to 32 bytes of letters, digits, `-` and `_`), as the text
 /// before it, its label and the text after it.
@@ -1137,6 +1181,20 @@ mod tests {
         assert_eq!(para_text(&out[0]), "foo bar");
         let out = blocks("<body><p>  foo\n  bar  </p></body>");
         assert_eq!(para_text(&out[0]), "foo bar ");
+    }
+
+    #[test]
+    fn hard_wrapped_cjk_joins_without_a_space_and_keeps_its_indent() {
+        // markitai: a line break between two CJK characters is nothing, as
+        // a browser shows it; between words, or beside one, it is a space.
+        let out = blocks("<body><p>\u{3000}\u{3000}虛構的文字在這裡\n  斷行，下一行接著寫。Latin\nwords, 中文\nmixed\r\n。</p></body>");
+        assert_eq!(
+            para_text(&out[0]),
+            "\u{3000}\u{3000}虛構的文字在這裡斷行，下一行接著寫。Latin words, 中文 mixed 。"
+        );
+        // A full-width space between two titles is text, not a collapsed run.
+        let out = blocks("<body><p>第一回　虛構的題目</p></body>");
+        assert_eq!(para_text(&out[0]), "第一回\u{3000}虛構的題目");
     }
 
     #[test]

@@ -51,11 +51,23 @@ upstream files:
   headings and rule; a back-link (`doc-backlink`, `footnote-back` and the
   like) and the `.`/`)`/`:` after a leading one are left out. A link to a
   note whose text is a short mark (eight characters at most, no image)
-  becomes the note's reference; longer prose linking to it keeps its words.
+  becomes the note's reference; longer prose linking to it keeps its words,
+  unlinked, followed by the note's reference.
   Notes are numbered `1`, `2`, … through the book in reading order, where
   upstream wrote each as an `<a id>` anchor and every mark as a link to a
   chapter-scoped anchor (`#EPUB/text/ch001.xhtml#fn1`). Other HTML readers
   do not collect notes (`HtmlCtx::collects_notes` defaults to false).
+- `src/formats/epub/mod.rs`, `src/shared/assets.rs`: the cover picture the
+  package names (an EPUB 3 manifest item with `properties="cover-image"`,
+  else the image item EPUB 2's `<meta name="cover">` names by id) comes
+  first, after the title, as `![Cover]`, when no page shows it
+  (`AssetSink::contains_part`); upstream left it out.
+- `src/shared/html.rs`: a text node's whitespace collapses as CSS Text 3
+  collapses it: a run of HTML whitespace (space, tab, line feed, form feed,
+  carriage return) is one space, nothing when it holds a line break between
+  two Chinese or Japanese characters, so hard-wrapped CJK prose joins
+  without a space; other spaces (U+3000's full-width indent) are text.
+  Upstream made every Unicode space run, line breaks included, one space.
 - `src/formats/odf/mod.rs`: a slide's table frame is read as its table
   alone; the picture after it in the frame is the replacement LibreOffice
   writes for readers without tables (`Pictures/TablePreview1.svm`), which

@@ -22,6 +22,12 @@ impl AssetSink {
         AssetSink::default()
     }
 
+    /// markitai: whether the part is already retained (an EPUB cover a page
+    /// shows).
+    pub fn contains_part(&self, origin_part: &str) -> bool {
+        self.by_part.contains_key(origin_part)
+    }
+
     /// Retain an asset's bytes (copied only when the part is not already
     /// retained). Crossing the retained-bytes cap is a hard error.
     pub fn add(
