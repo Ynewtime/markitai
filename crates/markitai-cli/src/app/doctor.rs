@@ -25,6 +25,11 @@ struct Check {
     path: Option<PathBuf>,
     #[serde(skip_serializing_if = "Option::is_none")]
     models: Option<Vec<String>>,
+    /// Provider key variables set in the environment that no active model
+    /// uses (`markitai init` leaves out a key whose default model another
+    /// configured route already serves).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    unused_api_keys: Option<Vec<String>>,
     #[serde(skip)]
     required: bool,
     /// Not ready yet, but it sets itself up the first time it is used (the OCR
@@ -71,6 +76,7 @@ impl Check {
             optional: None,
             path: None,
             models: None,
+            unused_api_keys: None,
             required: false,
             first_use: false,
             fix: Vec::new(),
@@ -276,6 +282,20 @@ fn report(
         }));
         for check in members {
             lines.push(style.item(mark(check), &check_line(check, lang)));
+            if let Some(unused) = &check.unused_api_keys {
+                lines.push(style.detail(&match lang {
+                    Lang::En => format!(
+                        "Not used: {} (set, but no model in llm.model_list uses {})",
+                        unused.join(", "),
+                        if unused.len() == 1 { "it" } else { "them" }
+                    ),
+                    Lang::Zh => format!(
+                        "未使用：{}（已设置，但 llm.model_list 中没有模型用到{}）",
+                        unused.join("、"),
+                        if unused.len() == 1 { "它" } else { "它们" }
+                    ),
+                }));
+            }
             // An optional next step for a check that is ready.
             if check.status == "ok" && !check.install_hint.is_empty() {
                 lines.push(style.detail(&localized(&check.install_hint, lang)));
@@ -1032,6 +1052,19 @@ fn model_check(
         "",
     );
     check.required = !providers.is_empty() || unsupported;
+    // Keys of the built-in providers that are set but used by no active model.
+    let unused: Vec<String> = ["anthropic", "openai", "gemini", "deepseek", "openrouter"]
+        .into_iter()
+        .filter(|provider| !active.is_empty() && !providers.contains(provider))
+        .filter_map(markitai_core::provider_management::provider_entry)
+        .flat_map(|entry| entry.key_variables)
+        .filter(|name| {
+            env.get(**name)
+                .is_some_and(|value| !value.trim().is_empty())
+        })
+        .map(|name| (*name).to_owned())
+        .collect();
+    check.unused_api_keys = (!unused.is_empty()).then_some(unused);
     // Without llm.model_list, conversions fall back to MODEL or provider API
     // keys in the environment; report what --llm would actually use.
     let detected = models
@@ -1575,6 +1608,45 @@ mod tests {
         auth.fix = vec![Fix::command("markitai auth claude login")];
         checks.insert("claude-agent-auth", auth);
         checks
+    }
+
+    #[test]
+    fn keys_no_active_model_uses_are_listed() {
+        let cfg = config::normalize(&json!({"llm":{"model_list":[
+            {"model_name":"default","litellm_params":{"model":"deepseek/deepseek-flash"}}]}}))
+        .unwrap();
+        let env = HashMap::from([
+            ("DEEPSEEK_API_KEY".to_owned(), "fake-test-key".to_owned()),
+            ("OPENAI_API_KEY".to_owned(), "fake-test-key".to_owned()),
+            ("GOOGLE_API_KEY".to_owned(), "fake-test-key".to_owned()),
+            ("OR_API_KEY".to_owned(), " ".to_owned()),
+        ]);
+        let checks = checks(&cfg, None, &env, Ok(None), Ok(None), Vec::new());
+        let llm = &checks["llm-api"];
+        assert_eq!(
+            llm.unused_api_keys.as_deref(),
+            Some(&["OPENAI_API_KEY".to_owned(), "GOOGLE_API_KEY".to_owned()][..])
+        );
+        let plain = Style {
+            color: false,
+            unicode: true,
+            width: None,
+            bright: false,
+        };
+        let english = report(&checks, &[], Lang::En, plain).join("\n");
+        assert!(
+            english.contains("Not used: OPENAI_API_KEY, GOOGLE_API_KEY (set, but no model in llm.model_list uses them)"),
+            "{english}"
+        );
+        let chinese = report(&checks, &[], Lang::Zh, plain).join("\n");
+        assert!(
+            chinese.contains("未使用：OPENAI_API_KEY、GOOGLE_API_KEY（已设置，但 llm.model_list 中没有模型用到它们）"),
+            "{chinese}"
+        );
+        // Without a model list, the keys choose the models: none is unused.
+        let plain_cfg = config::normalize(&json!({})).unwrap();
+        let checks = super::checks(&plain_cfg, None, &env, Ok(None), Ok(None), Vec::new());
+        assert!(checks["llm-api"].unused_api_keys.is_none());
     }
 
     #[test]

@@ -169,6 +169,7 @@ MARKITAI_LANG=zh markitai doctor
 - `doctor [--json]` 检查本地依赖与配置，不发模型请求。
   `doctor --fix` 可下载浏览器与缺少的 Paddle 模型；普通 doctor 不下载。
   缺少可选组件不等于程序不可用；配置要求的组件失败才导致退出 1。
+  LLM API 一项会列出模型缺少的密钥变量，以及已设置但没有生效模型用到的供应商密钥（JSON 的 `unused_api_keys`）。
 - `cache stats [--json]` 查看缓存，`cache clear -y` 清理模型/页面缓存；
   `cache spa-domains` 管理已学习的浏览器域名。详见[缓存](cache.md)。
 - `serve` 提供工作台、REST、SSE、下载和历史；即使本机访问，API 默认也需令牌。
