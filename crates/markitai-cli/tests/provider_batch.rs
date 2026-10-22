@@ -352,7 +352,8 @@ fn anthropic_batch_submits_inline_waits_and_collects() {
         let id = request["custom_id"].as_str().unwrap();
         assert!(id.len() <= 64 && id.contains('-'), "{id}");
         assert_eq!(request["params"]["model"], "claude-haiku-5-5");
-        assert_eq!(request["params"]["max_tokens"], 8192);
+        // Without a configured cap, the model's output limit.
+        assert_eq!(request["params"]["max_tokens"], 128_000);
     }
     // One create, status and results reads; the results_url was not followed.
     assert_eq!(seen.iter().filter(|seen| seen.method == "POST").count(), 1);
