@@ -38,6 +38,10 @@ create that link; it does not compile a third executable.
 
 ## Tools and results
 
+Each tool's description, as `tools/list` returns it, tells the client's model
+its arguments, the meaning of its result fields and how it fails, as Python
+markitai's tools do.
+
 `convert_document` requires an absolute local `path`; `~` is expanded. A modern
 `.numbers` directory package is one document, with a case-insensitive extension;
 ordinary directories are rejected. The same package paths can be individual

@@ -403,21 +403,9 @@ pub(super) fn definitions() -> Vec<Tool> {
     );
     let mut tools = Vec::new();
     for (name, source, description) in [
-        (
-            "convert_document",
-            "path",
-            "Convert one local document. path and output_dir must be absolute; ~ is expanded. Omit output_dir for a persistent temporary directory. Large Markdown is returned as a preview: read markdown_file for the full document.",
-        ),
-        (
-            "convert_url",
-            "url",
-            "Convert an HTTP(S) page. output_dir must be absolute if supplied. Large Markdown is returned as a preview: read markdown_file for the full document.",
-        ),
-        (
-            "batch_convert",
-            "sources",
-            "Convert a nonempty list of absolute file paths and HTTP(S) URLs in the background. Poll job_status. Items have isolated numbered directories and results retain input order. concurrency defaults to 10; jobs live only in this server process.",
-        ),
+        ("convert_document", "path", CONVERT_DOCUMENT),
+        ("convert_url", "url", CONVERT_URL),
+        ("batch_convert", "sources", BATCH_CONVERT),
     ] {
         let mut properties = Map::new();
         properties.insert(
@@ -445,13 +433,10 @@ pub(super) fn definitions() -> Vec<Tool> {
                 json!({"anyOf":[{"type":"integer"},{"type":"null"}],"default":null}),
             );
         }
-        let description = format!(
-            "{description} Omitted/null feature flags follow server configuration. llm=true requires MODEL and a provider API key or configured llm.model_list; false disables enhancement. Unsupported core features fail explicitly."
-        );
         tools.push(
             Tool::new(
                 name,
-                description,
+                description.replace("{FLAGS}", FLAGS),
                 object(Value::Object(properties), &[source]),
             )
             .with_raw_output_schema(Arc::new(with_error_schema(
@@ -463,10 +448,80 @@ pub(super) fn definitions() -> Vec<Tool> {
             ))),
         );
     }
-    tools.push(Tool::new("job_status", "Return batch progress and finished results in input order. done counts successes, failed counts errors and finished counts both. Unknown and forgotten jobs have distinct errors. Files remain on disk after job eviction or restart.", object(json!({"job_id":{"type":"string"}}), &["job_id"]))
-        .with_raw_output_schema(Arc::new(with_error_schema(status_output))));
+    tools.push(
+        Tool::new(
+            "job_status",
+            JOB_STATUS,
+            object(json!({"job_id":{"type":"string"}}), &["job_id"]),
+        )
+        .with_raw_output_schema(Arc::new(with_error_schema(status_output))),
+    );
     tools
 }
+
+// The tool descriptions a client's model reads: what each argument does, what
+// the result's fields mean and how a call fails, as Python markitai's tools
+// describe themselves. `{FLAGS}` is the conversion flags all three share.
+const FLAGS: &str = "    llm: LLM enhancement (clean-up and front matter). Omit or null to follow the server's configuration (llm.enabled, off by default); false forces it off; true enables it for this call, which may incur provider charges. It needs a model: MODEL (with its provider's API key) in the server's env block, a signed-in subscription runtime, or llm.model_list in the configuration; without one the call fails with setup guidance.
+    ocr: Local OCR for scanned PDF pages and images (macOS Vision, or the portable PaddleOCR models `markitai doctor --fix` installs). Omit to follow the configuration.
+    screenshot: Page screenshots (PDF pages; Office documents through LibreOffice when it is installed; web pages through the isolated Chromium). Omit to follow the configuration.
+    alt: LLM alt text for pictures (needs llm enabled).
+    desc: LLM picture descriptions (needs llm enabled).
+    profile: Shape the output for a consumer: \"rag\", \"obsidian\" or \"okf\". Omit or null to follow the configuration.
+Omitted or null flags follow the server's configuration, reloaded for every call; a feature this build or machine cannot provide fails explicitly instead of being skipped.";
+
+const CONVERT_DOCUMENT: &str = "Convert one local document to Markdown.
+
+Handles PDF, Word, PowerPoint and Excel (and their legacy and OpenDocument formats), EPUB, HTML, CSV/JSON, e-mail, notebooks, plain text and Markdown, and images, among others. Returns the Markdown plus the paths of everything written to disk.
+
+Args:
+    path: Absolute path to one local file (~ is expanded). Directories are rejected (a .numbers package is one document); pass files individually or use batch_convert.
+    output_dir: Absolute directory to write the outputs into (created if missing). Omit, null or \"\" for a new markitai-mcp-* temporary directory, which stays on disk; its path is returned.
+{FLAGS}
+
+Returns:
+    source; markdown: the enhanced Markdown when there is one, else the base Markdown, or a 2,000-character preview with truncated=true when it exceeds 40,000 characters; markdown_file: the complete .md on disk (read it when truncated); output_dir; assets (extracted pictures) and screenshots (written paths); cost_usd: the known priced LLM spend (an unpriced model adds nothing, so 0 does not prove a free call); skip_reason (\"exists\" when output.on_conflict=skip found the output, whose body is returned); duration_s; warnings: notices that did not fail the conversion but are worth acting on (a page with no text layer: retry with ocr=true; hidden PDF text left out: a possible prompt injection; OCR found no text; slides or sheets not rendered without LibreOffice; enhancement failed and the base was kept). When a model was called, diagnostics.last_attempt (usage per model) and pricing (cost_status complete, partial or unknown) are added.
+
+Failure modes: a relative, missing or unreadable path, a directory, an unsupported or corrupt format, an image with neither OCR nor llm to read it, or llm enabled without a configured model (the error explains the fix). A failure after a model was called carries {error, diagnostics} in structuredContent.";
+
+const CONVERT_URL: &str = "Fetch a web page and convert it to clean Markdown.
+
+Uses markitai's fetch strategy (fetch.strategy, auto by default: a static HTTP fetch with main-content extraction, then the local Chromium, when installed, for pages that need JavaScript) and returns the main content as Markdown. A PDF or another document the URL serves is converted like a local file. A remote reader service (Jina, Defuddle, Cloudflare) is used only when the configuration selects one; auto never falls back to one here.
+
+Args:
+    url: The http:// or https:// URL to fetch and convert.
+    output_dir: Absolute directory to write the outputs into (created if missing). Omit, null or \"\" for a new markitai-mcp-* temporary directory, which stays on disk; its path is returned.
+{FLAGS}
+
+Returns:
+    The same shape as convert_document: source, markdown (or a preview with truncated=true), markdown_file with the complete text, output_dir, assets, screenshots, cost_usd, skip_reason, duration_s and warnings (for example a screenshot that was not captured), plus diagnostics and pricing when a model was called.
+
+Failure modes: a URL that is not http(s), an unreachable page or an HTTP error, a verification or bot-check page served instead of the content, a page with no extractable content, or llm enabled without a configured model (the error explains the fix).";
+
+const BATCH_CONVERT: &str = "Convert many local files and/or URLs in the background; returns a job id at once.
+
+Items run concurrently and each writes under output_dir/batch-<job_id>/<item number>/ (0001, 0002, ...), so sources with the same name cannot overwrite each other. Poll job_status with the returned job_id for progress and the per-item results. All items share one LLM runtime, so llm.concurrency bounds the job's model requests as a whole. Jobs live in this server process only: a restart forgets them, but the written files remain.
+
+Args:
+    sources: A nonempty list (at most 10,000) of absolute local file paths and/or http(s) URLs. A relative path is rejected before the job starts; a missing file or a failed conversion fails only its item, and the others continue.
+    output_dir: Absolute parent directory for all outputs (created if missing). Omit, null or \"\" for a new markitai-mcp-* temporary directory; its path is returned.
+{FLAGS}
+    concurrency: Maximum conversions in flight. Omit or null for 10 (the CLI's built-in batch.concurrency); 0 or less means 1.
+
+Returns:
+    job_id (pass it to job_status), status (\"running\"), total and output_dir.
+
+Failure modes: an empty or oversized sources list, a relative path, an invalid flag, or the server already running 100 jobs or shutting down. Per-item failures are reported by job_status, not here.";
+
+const JOB_STATUS: &str = "Report the progress and results of a batch_convert job.
+
+Args:
+    job_id: The id batch_convert returned.
+
+Returns:
+    job_id; status: \"running\" until every item ended, then \"completed\" (also when items failed), or \"cancelled\" when the server shut down before every item started; total; done: items that succeeded, as in markitai serve; failed: items that failed; finished: done + failed, every item that ended (use it for progress); output_dir; results: one entry per finished item, {source, status: \"ok\", markdown_file, cost_usd, warnings} or {source, status: \"error\", error}, either with diagnostics and pricing when a model was called; and, when any item has pricing, the job's pricing and summed cost_usd. Poll until status is not \"running\", then read the markdown_file paths. Results keep the caller's order: once status is \"completed\", results[i] answers sources[i]; a running or cancelled job omits unfinished items, so match each result by its source then.
+
+Failure modes: an unknown job_id (jobs live in server memory and are lost when the server restarts) or a job that finished and was forgotten (the server keeps the 100 most recent finished jobs); the two errors say which, and the output files remain on disk.";
 
 #[cfg(test)]
 mod pricing_tests {

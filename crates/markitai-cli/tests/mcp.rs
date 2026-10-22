@@ -295,7 +295,14 @@ fn both_protocol_eras_list_the_four_typed_tools_and_continue_after_errors() {
         for tool in tools {
             assert_eq!(tool["inputSchema"]["type"], "object");
             assert_eq!(tool["outputSchema"]["type"], "object");
+            // Each description tells a client's model the arguments, the
+            // result's fields and how a call fails.
+            let description = tool["description"].as_str().unwrap();
+            for section in ["Args:", "Returns:", "Failure modes:"] {
+                assert!(description.contains(section), "{section}: {description}");
+            }
             if tool["name"] == "job_status" {
+                assert!(description.contains("finished: done + failed"));
                 let success = &tool["outputSchema"]["anyOf"][0];
                 for field in ["done", "failed", "finished"] {
                     assert!(
