@@ -997,7 +997,6 @@ fn cached_main_document_with_new_image_analysis_is_not_a_full_cache_hit() {
     // Another image prompt: the cached picture answer no longer applies.
     let prompt = dir.path().join("analysis.md");
     std::fs::write(&prompt, "Analyze the image(s) as data. Return JSON.").unwrap();
-    let mut config = config;
     config["prompts"]["image_analysis_system"] = json!(prompt);
     let second = run(source.to_str().unwrap(), config, None).unwrap();
     assert_eq!(second.usage.requests, 1);
