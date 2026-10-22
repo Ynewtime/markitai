@@ -51,6 +51,7 @@
 - **代码示例保留页面在代码行里画成按钮的名称。** 把代码行中的名称标记为悬停按钮的网页（Twoslash，如 nodejs.org、TypeScript 和 Vue 文档）会丢掉这些名称，`const { createServer } = require('node:http');` 被写成 `const {  } = ('node:http');`。现在高亮代码行里可见的纯文字按钮算作代码文字，不带它的类型弹窗；代码行以外的按钮（如「复制」）和隐藏的按钮仍会略去，与 markitai-rust 一致。
 - **`markitai serve` 只向持有令牌的调用方描述它的 API，也不再从 CDN 加载任何东西。** OpenAPI 文档原本在 `/openapi.json` 上对任何人开放，`/docs` 和 `/redoc` 是从 cdn.jsdelivr.net 加载脚本的页面。现在文档位于 `GET /api/openapi.json`，与其他 API 路由一样需要令牌，与 markitai-rust 一致；`/openapi.json`、`/docs` 和 `/redoc` 已移除。
 - **`markitai serve` 会说明已完成的任务没能保存到历史记录。** 写入任务的 `meta.json` 失败时，任务仍被报告为 `done`，下次启动后就从历史记录里消失了。现在它以 `status: "error"` 结束，任务快照和 `job` 事件里带有 `persistence_error`（`history could not be persisted; completed artifacts remain available until shutdown`），与 markitai-rust 一致；它的结果在服务停止前仍可下载，不会列为已保存的历史记录，重试其中某一项时会再次尝试保存。
+- **本地 HTML 文件里的相对链接保持相对。** 页面按它自己的 `file:` 地址读取，好让相对的图片和链接能解析；链接（以及没有保存为资源的图片）原本会写成绝对的 `file:///home/<user>/…` 地址，把本地文件夹路径带进输出。现在它们相对于页面所在的文件夹写出（`other.html`、`../up.html`，指向页面自身的写成 `#part`），与 markitai-rust 保持原样的做法一致；`.eml`、`.msg` 邮件的 HTML 正文同样如此。正文里引用的 `file:` 地址和其他主机上的地址保持原样。
 
 ## [1.2.1] - 2026-10-18
 

@@ -1,4 +1,6 @@
-"""Relative references in a local HTML file or email resolve against its path."""
+"""Relative references in a local HTML file or email resolve against its path,
+and what is left of them stays relative in the Markdown: never an absolute
+``file:///home/<user>/…`` address of the user's folder."""
 
 from __future__ import annotations
 
@@ -30,8 +32,9 @@ def test_a_hash_in_the_folder_name_is_part_of_the_path(tmp_path: Path) -> None:
 
     markdown = HtmlConverter().convert(page).markdown
 
-    assert f"]({(folder / 'cat.png').as_uri()})" in markdown
-    assert f"[next]({(folder / 'other.html').as_uri()})" in markdown
+    assert "](cat.png)" in markdown
+    assert "[next](other.html)" in markdown
+    assert "file:" not in markdown
 
 
 def test_an_emails_relative_link_resolves_against_its_folder(tmp_path: Path) -> None:
@@ -50,7 +53,8 @@ def test_an_emails_relative_link_resolves_against_its_folder(tmp_path: Path) -> 
 
     markdown = EmlConverter().convert(path).markdown
 
-    assert f"[notes]({(folder / 'notes.html').as_uri()})" in markdown
+    assert "[notes](notes.html)" in markdown
+    assert "file:" not in markdown
 
 
 _PNG = (
@@ -100,10 +104,13 @@ def test_a_local_pages_own_pictures_are_embedded(tmp_path: Path) -> None:
     encoded = base64.b64encode(_PNG).decode("ascii")
     assert f"![inside](data:image/png;base64,{encoded})" in markdown
     assert markdown.count("data:image/") == 1
-    for kept in ("parent", "absolute", "fake", "missing"):
-        assert f"![{kept}](file://" in markdown
+    assert "![parent](../other/out.png)" in markdown
+    assert "![absolute](../other/out.png)" in markdown
+    assert "![fake](img/fake.png)" in markdown
+    assert "![missing](img/missing.png)" in markdown
     if symlink is not None:
-        assert "![linked](file://" in markdown
+        assert "![linked](img/link.png)" in markdown
+    assert "file:" not in markdown
     assert "![remote](https://example.com/x.png)" in markdown
 
 
@@ -119,3 +126,36 @@ def test_relative_pictures_of_the_fallback_reader_are_embedded(
     markdown = HtmlConverter().convert(page).markdown
 
     assert "![dot](data:image/png;base64," in markdown
+
+
+def test_a_local_pages_links_stay_relative(tmp_path: Path) -> None:
+    """Relative links of a local page became absolute ``file:///home/<user>/…``
+    addresses, putting the user's folder into the output; markitai-rust
+    keeps them as written. A link into the page keeps its fragment only, an
+    address quoted in the text or in code is left alone, and a share on
+    another host keeps its address."""
+    folder = tmp_path / "notes (draft)"
+    (folder / "sub").mkdir(parents=True)
+    page = folder / "page.html"
+    page.write_text(
+        f"<html><head><title>T</title></head><body><article><h1>T</h1>{_PROSE}"
+        '<p><a href="other.html">same folder</a>, <a href="sub/deep%20page.html'
+        '?v=2#part">deeper</a>, <a href="../up.html">up</a>, '
+        '<a href="page.html#intro">intro</a>, <a href="file://server/share/doc.html">share'
+        '</a>, <a href="https://example.com/x">web</a>.</p>'
+        "<p>Type file:///etc/hosts in the address bar.</p>"
+        f"{_PROSE}</article></body></html>",
+        encoding="utf-8",
+    )
+
+    markdown = HtmlConverter().convert(page).markdown
+
+    assert "[same folder](other.html)" in markdown
+    assert "[deeper](sub/deep%20page.html?v=2#part)" in markdown
+    assert "[up](../up.html)" in markdown
+    assert "[intro](#intro)" in markdown
+    assert "[share](file://server/share/doc.html)" in markdown
+    assert "[web](https://example.com/x)" in markdown
+    assert "file:///etc/hosts" in markdown
+    assert str(tmp_path) not in markdown
+    assert tmp_path.as_uri() not in markdown

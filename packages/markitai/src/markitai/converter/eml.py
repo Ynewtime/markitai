@@ -28,6 +28,7 @@ from markitai.converter.base import (
     FileFormat,
     register_converter,
 )
+from markitai.converter.local_links import relative_local_links
 
 _HEADER_FIELDS = ("From", "To", "Cc", "Date", "Subject")
 
@@ -258,9 +259,8 @@ class EmlConverter(BaseConverter):
         logger.debug("[EmlConverter] Converting: {}", input_path.name)
 
         msg = message_from_bytes(input_path.read_bytes(), policy=_DEFAULT_POLICY)
-        markdown = _render_message(
-            msg,
-            source=input_path.resolve().as_uri(),
+        markdown = relative_local_links(
+            _render_message(msg, source=input_path.resolve().as_uri()), input_path
         )
 
         metadata: dict = {

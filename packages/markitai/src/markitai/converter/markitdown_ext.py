@@ -28,6 +28,7 @@ from markitai.converter.base import (
     not_a_package,
     register_converter,
 )
+from markitai.converter.local_links import relative_local_links
 from markitai.notices import user_notice
 from markitai.utils.charset import read_text_file
 
@@ -177,7 +178,9 @@ def _convert_html(input_path: Path) -> ConvertResult:
             if extracted.metadata and extracted.metadata.title:
                 metadata["title"] = extracted.metadata.title
             return ConvertResult(
-                markdown=_embed_local_images(markdown, input_path),
+                markdown=relative_local_links(
+                    _embed_local_images(markdown, input_path), input_path
+                ),
                 images=[],
                 metadata=metadata,
             )
@@ -191,7 +194,9 @@ def _convert_html(input_path: Path) -> ConvertResult:
         )
 
     result = _convert(input_path)
-    result.markdown = _embed_local_images(result.markdown, input_path)
+    result.markdown = relative_local_links(
+        _embed_local_images(result.markdown, input_path), input_path
+    )
     return result
 
 
@@ -661,9 +666,8 @@ def _msg_fallback_body(input_path: Path) -> tuple[str, str | None]:
             codec = _msg_codepage(properties, _PR_INTERNET_CPID)
             html = _decode_msg_bytes(html_bytes, codec)
             try:
-                return _html_to_markdown(
-                    html, input_path.resolve().as_uri()
-                ).strip(), None
+                markdown = _html_to_markdown(html, input_path.resolve().as_uri())
+                return relative_local_links(markdown, input_path).strip(), None
             except Exception as exc:
                 logger.warning("[MsgConverter] HTML body conversion failed: {}", exc)
                 return html.strip(), None
