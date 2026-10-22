@@ -88,6 +88,28 @@ impl Span {
 /// OpenRouter's `usage.cost` is the amount it charged, not a catalog price.
 const OPENROUTER_REPORTED: &str = "openrouter-reported-cost";
 
+/// Model servers the user runs (Ollama, LM Studio, vLLM and the like) bill no
+/// tokens. Gateways such as `litellm_proxy/` and `openai_like/` are not here:
+/// they usually forward to a paid API, and stay unpriced.
+const SELF_HOSTED: [&str; 9] = [
+    "ollama",
+    "ollama_chat",
+    "lm_studio",
+    "hosted_vllm",
+    "llamafile",
+    "docker_model_runner",
+    "lemonade",
+    "xinference",
+    "oobabooga",
+];
+const SELF_HOSTED_FREE: &str = "self-hosted-no-charge";
+
+/// Whether a deployment's provider is a model server the user runs, which
+/// costs nothing per token.
+pub(crate) fn self_hosted(provider: &str) -> bool {
+    SELF_HOSTED.contains(&provider)
+}
+
 // Intentionally no Debug: callers can hold a secret-bearing endpoint supplied
 // by configuration; unknown identities never appear in error messages.
 pub(crate) struct Identity<'a> {
@@ -146,10 +168,14 @@ enum Provider {
     Gemini,
     DeepSeek,
     OpenRouter,
+    SelfHosted,
 }
 
 /// The catalog tariff, or `None` for OpenRouter, which reports its charge.
 fn resolve(identity: &Identity<'_>) -> Result<(Provider, Option<catalog::Tariff>), UnknownPrice> {
+    if self_hosted(identity.provider) {
+        return Ok((Provider::SelfHosted, None));
+    }
     let provider = match identity.provider {
         "openai" => Provider::OpenAi,
         "anthropic" => Provider::Anthropic,
@@ -176,6 +202,7 @@ fn resolve(identity: &Identity<'_>) -> Result<(Provider, Option<catalog::Tariff>
         Provider::OpenRouter => {
             identity.endpoint == "https://openrouter.ai/api/v1/chat/completions"
         }
+        Provider::SelfHosted => true,
     };
     if !valid {
         return Err(UnknownPrice::Endpoint);
@@ -338,6 +365,9 @@ fn calculate(
     span: Option<Span>,
 ) -> Result<(Usd, &'static str, &'static str), UnknownPrice> {
     let (provider, tariff) = resolve(identity)?;
+    if provider == Provider::SelfHosted {
+        return Ok((Usd::default(), SELF_HOSTED_FREE, "self-hosted/no-charge"));
+    }
     let Some(tariff) = tariff else {
         return Ok((
             reported(response, class)?,
@@ -618,7 +648,9 @@ fn calculate(
             }
             (input - hit, hit, 0, 0, output)
         }
-        Provider::OpenRouter => unreachable!("OpenRouter reports its charge"),
+        Provider::OpenRouter | Provider::SelfHosted => {
+            unreachable!("OpenRouter reports its charge; a self-hosted server has none")
+        }
     };
     let all_input = add(add(add(base, cached)?, written)?, written_1h)?;
     if tariff

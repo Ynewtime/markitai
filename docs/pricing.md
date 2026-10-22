@@ -6,6 +6,12 @@ not an invoice. Unknown prices remain explicitly unknown; a numeric zero alone
 does not establish a free request. No provider call or pricing download occurs
 when looking up a tariff.
 
+A model server the user runs bills no tokens, so its requests cost $0 and count
+as priced: `ollama/`, `ollama_chat/`, `lm_studio/`, `hosted_vllm/`,
+`llamafile/`, `docker_model_runner/`, `lemonade/`, `xinference/` and
+`oobabooga/`, at any address. Gateways (`litellm_proxy/`, `openai_like/`, or
+`openai/` with an `api_base`) usually forward to a paid API and stay unpriced.
+
 ## Reviewed catalog
 
 Snapshot `litellm-1.106.0.dev2-selected-2026-10-11` derives 37 exact source keys
@@ -230,7 +236,8 @@ A positive sub-picodollar cap stays enabled at zero. Invalid, nonfinite or
 unrepresentable budgets fail rather than saturate.
 
 Before an outgoing request, the selected deployment must have a verified tariff
-(or be OpenRouter, which reports its charge) when the dollar cap is enabled. Unknown identity rejects before network activity
+(or be OpenRouter, which reports its charge, or a self-hosted server, which
+charges nothing) when the dollar cap is enabled. Unknown identity rejects before network activity
 and without consuming an attempt. After a response, exact observed cost is added.
 The response crossing the cap is retained; subsequent admissions fail when the
 sum is strictly greater than the cap. Equality permits a further attempt. If an

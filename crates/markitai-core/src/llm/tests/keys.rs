@@ -298,3 +298,26 @@ fn a_refused_key_names_the_variable_that_held_it() {
     assert_eq!(requests.len(), 3);
     assert!(!requests[2].0.to_ascii_lowercase().contains("authorization"));
 }
+
+#[test]
+fn a_self_hosted_server_costs_nothing_and_passes_a_dollar_cap() {
+    let server = Mock::new(vec![(200, success("answer"))]);
+    let cfg = config::normalize(&json!({"llm":{"max_cost_per_document_usd":0.01,
+        "model_list":[{"model_name":"default","litellm_params":{"model":"ollama/llama-test","api_base":server.base}}],
+        "router_settings":{"num_retries":0}},"cache":{"enabled":false},
+        "prompts":{"dir":"/nonexistent/markitai-test-prompts"}}))
+    .unwrap();
+    let (text, usage) = run(&plain(), &cfg, &HashMap::new(), &mut |_| {}).unwrap();
+    assert_eq!(text, "answer");
+    assert!(usage.cost_complete(), "{usage:?}");
+    assert_eq!(usage.cost_usd, 0.0);
+    assert_eq!(server.finish().len(), 1);
+    // A gateway may forward to a paid API: still unpriced, so a dollar cap
+    // refuses it before anything is sent.
+    let cfg = config::normalize(&json!({"llm":{"max_cost_per_document_usd":0.01,
+        "model_list":[{"model_name":"default","litellm_params":{"model":"litellm_proxy/x","api_base":"http://127.0.0.1:9/v1"}}],
+        "router_settings":{"num_retries":0}},"cache":{"enabled":false}}))
+    .unwrap();
+    let error = run(&plain(), &cfg, &HashMap::new(), &mut |_| {}).unwrap_err();
+    assert!(error.to_string().contains("verified tariff"), "{error}");
+}
