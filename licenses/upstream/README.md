@@ -83,6 +83,24 @@ This brings the overlay to thirty versions, twenty-nine raw exact manifest
 matches, fifty-one overlay files and eight source archives. Legal review
 remains not_performed.
 
+## napi 3.15.0, napi-derive 3.6.13, napi-sys 3.4.1 and napi-derive-backend 6.1.6
+
+The Node binding's lock moved to napi 3.15.0, napi-derive 3.6.13 and napi-sys
+3.4.1, and napi-derive-backend 6.1.6 (napi-derive's code generator, never
+covered before) is in the same closure; none ships a license file. Each
+published `.cargo_vcs_info.json` names napi-rs/napi-rs commit `d9cb526c…` and
+its crate path, each exact `Cargo.toml.orig` equals the same-commit child
+manifest, which declares MIT and a literal version directly, and the
+unmodified crates.io archives (SHA-256 equal to the Cargo.lock checksums) are
+kept. The same-commit root Cargo.toml and LICENSE are byte-identical to the
+`37109f13…` copies; the LICENSE, with both original MIT copyright notices, is
+copied unchanged for each crate. The validator pins each of these tuples as
+it pins the first four; napi-build 2.6.0 is unchanged. The retrievals are
+listed under `napi_refresh_license_collection` in the manifest. The superseded
+tuples stay. This brings the overlay to thirty-four versions, thirty-three raw
+exact manifest matches, fifty-five overlay files and twelve source archives.
+Legal review remains not_performed.
+
 ## Original seventeen-version collection and retained history
 
 Packaging validates this directory offline before copying it. Package manifests,

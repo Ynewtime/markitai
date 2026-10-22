@@ -24,12 +24,12 @@
     "max_concurrency": 4
   },
   "summary": {
-    "requested_packages": 30,
-    "exact_commit_manifest_matches": 29,
-    "full_license_text_packages": 30,
+    "requested_packages": 34,
+    "exact_commit_manifest_matches": 33,
+    "full_license_text_packages": 34,
     "notice_only_packages": 0,
-    "overlay_files": 51,
-    "source_archives": 8,
+    "overlay_files": 55,
+    "source_archives": 12,
     "historical_text_packages": 3,
     "reviewed_publication_version_stamps": 1
   },
@@ -1584,6 +1584,246 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#napi@3.15.0",
+      "name": "napi",
+      "version": "3.15.0",
+      "declared_license": "MIT",
+      "repository": "https://github.com/napi-rs/napi-rs",
+      "commit": "d9cb526c15e63ba30e06b4d169068c9854180595",
+      "path_in_vcs": "crates/napi",
+      "package_manifest_matches_published_original": true,
+      "license_inherited_from_workspace": false,
+      "version_inherited_from_workspace": false,
+      "content_kind": "full_license_text",
+      "complete_license_options_present": [
+        "MIT"
+      ],
+      "applicability": "The exact published child manifest directly declares MIT and its literal version; the same-commit repository root LICENSE retains both complete original MIT notices. This is a Node-specific tuple, not workspace license inheritance.",
+      "unresolved_full_text_reason": null,
+      "evidence": [
+        {
+          "path": "upstream/napi-rs/napi-rs/d9cb526c15e63ba30e06b4d169068c9854180595/crates/napi/Cargo.toml",
+          "bytes": 3980,
+          "sha256": "ed67c43de5350454692d7e279e2dddcb4520a023214a01fe4ef0aac8d3b674ef",
+          "source_url": "https://raw.githubusercontent.com/napi-rs/napi-rs/d9cb526c15e63ba30e06b4d169068c9854180595/crates/napi/Cargo.toml"
+        },
+        {
+          "path": "local-evidence/napi-3.15.0/Cargo.toml.orig",
+          "bytes": 3980,
+          "sha256": "ed67c43de5350454692d7e279e2dddcb4520a023214a01fe4ef0aac8d3b674ef"
+        },
+        {
+          "path": "local-evidence/napi-3.15.0/.cargo_vcs_info.json",
+          "bytes": 105,
+          "sha256": "8f417bbb7137f0c1d8b45d31d8a9764ce9424639c38250f84ffb0679ecc4ebfd"
+        },
+        {
+          "path": "upstream/napi-rs/napi-rs/d9cb526c15e63ba30e06b4d169068c9854180595/Cargo.toml",
+          "bytes": 964,
+          "sha256": "f2110059925ada6800f0d3e8a7976f6967803686d6a87d68f2c67ce5974b6261",
+          "source_url": "https://raw.githubusercontent.com/napi-rs/napi-rs/d9cb526c15e63ba30e06b4d169068c9854180595/Cargo.toml"
+        },
+        {
+          "path": "upstream/napi-rs/napi-rs/d9cb526c15e63ba30e06b4d169068c9854180595/LICENSE",
+          "bytes": 2138,
+          "sha256": "3f1ce66533302df3a32edbfdfc0b78f0dd34659e4c1f5817162e5ea3c2297215",
+          "source_url": "https://raw.githubusercontent.com/napi-rs/napi-rs/d9cb526c15e63ba30e06b4d169068c9854180595/LICENSE"
+        }
+      ],
+      "assets": [
+        {
+          "path": "overlay/licenses/napi-3.15.0/LICENSE",
+          "bytes": 2138,
+          "sha256": "3f1ce66533302df3a32edbfdfc0b78f0dd34659e4c1f5817162e5ea3c2297215",
+          "destination": "licenses/napi-3.15.0/LICENSE",
+          "source_path": "upstream/napi-rs/napi-rs/d9cb526c15e63ba30e06b4d169068c9854180595/LICENSE",
+          "source_url": "https://raw.githubusercontent.com/napi-rs/napi-rs/d9cb526c15e63ba30e06b4d169068c9854180595/LICENSE",
+          "source_sha256": "3f1ce66533302df3a32edbfdfc0b78f0dd34659e4c1f5817162e5ea3c2297215",
+          "content_kind": "full_license_text"
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#napi-derive@3.6.13",
+      "name": "napi-derive",
+      "version": "3.6.13",
+      "declared_license": "MIT",
+      "repository": "https://github.com/napi-rs/napi-rs",
+      "commit": "d9cb526c15e63ba30e06b4d169068c9854180595",
+      "path_in_vcs": "crates/macro",
+      "package_manifest_matches_published_original": true,
+      "license_inherited_from_workspace": false,
+      "version_inherited_from_workspace": false,
+      "content_kind": "full_license_text",
+      "complete_license_options_present": [
+        "MIT"
+      ],
+      "applicability": "The exact published child manifest directly declares MIT and its literal version; the same-commit repository root LICENSE retains both complete original MIT notices. This is a Node-specific tuple, not workspace license inheritance.",
+      "unresolved_full_text_reason": null,
+      "evidence": [
+        {
+          "path": "upstream/napi-rs/napi-rs/d9cb526c15e63ba30e06b4d169068c9854180595/crates/macro/Cargo.toml",
+          "bytes": 974,
+          "sha256": "84f5ae907e86619814aad37c03c22253a547e12fd2cc3d8c500b26c2aedc5a95",
+          "source_url": "https://raw.githubusercontent.com/napi-rs/napi-rs/d9cb526c15e63ba30e06b4d169068c9854180595/crates/macro/Cargo.toml"
+        },
+        {
+          "path": "local-evidence/napi-derive-3.6.13/Cargo.toml.orig",
+          "bytes": 974,
+          "sha256": "84f5ae907e86619814aad37c03c22253a547e12fd2cc3d8c500b26c2aedc5a95"
+        },
+        {
+          "path": "local-evidence/napi-derive-3.6.13/.cargo_vcs_info.json",
+          "bytes": 106,
+          "sha256": "9af016540388a0b6e0d14bebc10fff6951ac43412cf878738ae47607cdc75124"
+        },
+        {
+          "path": "upstream/napi-rs/napi-rs/d9cb526c15e63ba30e06b4d169068c9854180595/Cargo.toml",
+          "bytes": 964,
+          "sha256": "f2110059925ada6800f0d3e8a7976f6967803686d6a87d68f2c67ce5974b6261",
+          "source_url": "https://raw.githubusercontent.com/napi-rs/napi-rs/d9cb526c15e63ba30e06b4d169068c9854180595/Cargo.toml"
+        },
+        {
+          "path": "upstream/napi-rs/napi-rs/d9cb526c15e63ba30e06b4d169068c9854180595/LICENSE",
+          "bytes": 2138,
+          "sha256": "3f1ce66533302df3a32edbfdfc0b78f0dd34659e4c1f5817162e5ea3c2297215",
+          "source_url": "https://raw.githubusercontent.com/napi-rs/napi-rs/d9cb526c15e63ba30e06b4d169068c9854180595/LICENSE"
+        }
+      ],
+      "assets": [
+        {
+          "path": "overlay/licenses/napi-derive-3.6.13/LICENSE",
+          "bytes": 2138,
+          "sha256": "3f1ce66533302df3a32edbfdfc0b78f0dd34659e4c1f5817162e5ea3c2297215",
+          "destination": "licenses/napi-derive-3.6.13/LICENSE",
+          "source_path": "upstream/napi-rs/napi-rs/d9cb526c15e63ba30e06b4d169068c9854180595/LICENSE",
+          "source_url": "https://raw.githubusercontent.com/napi-rs/napi-rs/d9cb526c15e63ba30e06b4d169068c9854180595/LICENSE",
+          "source_sha256": "3f1ce66533302df3a32edbfdfc0b78f0dd34659e4c1f5817162e5ea3c2297215",
+          "content_kind": "full_license_text"
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#napi-sys@3.4.1",
+      "name": "napi-sys",
+      "version": "3.4.1",
+      "declared_license": "MIT",
+      "repository": "https://github.com/napi-rs/napi-rs",
+      "commit": "d9cb526c15e63ba30e06b4d169068c9854180595",
+      "path_in_vcs": "crates/sys",
+      "package_manifest_matches_published_original": true,
+      "license_inherited_from_workspace": false,
+      "version_inherited_from_workspace": false,
+      "content_kind": "full_license_text",
+      "complete_license_options_present": [
+        "MIT"
+      ],
+      "applicability": "The exact published child manifest directly declares MIT and its literal version; the same-commit repository root LICENSE retains both complete original MIT notices. This is a Node-specific tuple, not workspace license inheritance.",
+      "unresolved_full_text_reason": null,
+      "evidence": [
+        {
+          "path": "upstream/napi-rs/napi-rs/d9cb526c15e63ba30e06b4d169068c9854180595/crates/sys/Cargo.toml",
+          "bytes": 707,
+          "sha256": "82b7eef9b33624a95256db45c4736805c2a77ae37319c34a4b0286c87694ae10",
+          "source_url": "https://raw.githubusercontent.com/napi-rs/napi-rs/d9cb526c15e63ba30e06b4d169068c9854180595/crates/sys/Cargo.toml"
+        },
+        {
+          "path": "local-evidence/napi-sys-3.4.1/Cargo.toml.orig",
+          "bytes": 707,
+          "sha256": "82b7eef9b33624a95256db45c4736805c2a77ae37319c34a4b0286c87694ae10"
+        },
+        {
+          "path": "local-evidence/napi-sys-3.4.1/.cargo_vcs_info.json",
+          "bytes": 104,
+          "sha256": "2a3eb2bd1135dbf07a332c93f714fc0ccf768187c7ece05d35009c3ccebb54fc"
+        },
+        {
+          "path": "upstream/napi-rs/napi-rs/d9cb526c15e63ba30e06b4d169068c9854180595/Cargo.toml",
+          "bytes": 964,
+          "sha256": "f2110059925ada6800f0d3e8a7976f6967803686d6a87d68f2c67ce5974b6261",
+          "source_url": "https://raw.githubusercontent.com/napi-rs/napi-rs/d9cb526c15e63ba30e06b4d169068c9854180595/Cargo.toml"
+        },
+        {
+          "path": "upstream/napi-rs/napi-rs/d9cb526c15e63ba30e06b4d169068c9854180595/LICENSE",
+          "bytes": 2138,
+          "sha256": "3f1ce66533302df3a32edbfdfc0b78f0dd34659e4c1f5817162e5ea3c2297215",
+          "source_url": "https://raw.githubusercontent.com/napi-rs/napi-rs/d9cb526c15e63ba30e06b4d169068c9854180595/LICENSE"
+        }
+      ],
+      "assets": [
+        {
+          "path": "overlay/licenses/napi-sys-3.4.1/LICENSE",
+          "bytes": 2138,
+          "sha256": "3f1ce66533302df3a32edbfdfc0b78f0dd34659e4c1f5817162e5ea3c2297215",
+          "destination": "licenses/napi-sys-3.4.1/LICENSE",
+          "source_path": "upstream/napi-rs/napi-rs/d9cb526c15e63ba30e06b4d169068c9854180595/LICENSE",
+          "source_url": "https://raw.githubusercontent.com/napi-rs/napi-rs/d9cb526c15e63ba30e06b4d169068c9854180595/LICENSE",
+          "source_sha256": "3f1ce66533302df3a32edbfdfc0b78f0dd34659e4c1f5817162e5ea3c2297215",
+          "content_kind": "full_license_text"
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#napi-derive-backend@6.1.6",
+      "name": "napi-derive-backend",
+      "version": "6.1.6",
+      "declared_license": "MIT",
+      "repository": "https://github.com/napi-rs/napi-rs",
+      "commit": "d9cb526c15e63ba30e06b4d169068c9854180595",
+      "path_in_vcs": "crates/backend",
+      "package_manifest_matches_published_original": true,
+      "license_inherited_from_workspace": false,
+      "version_inherited_from_workspace": false,
+      "content_kind": "full_license_text",
+      "complete_license_options_present": [
+        "MIT"
+      ],
+      "applicability": "The exact published child manifest directly declares MIT and its literal version; the same-commit repository root LICENSE retains both complete original MIT notices. This is a Node-specific tuple, not workspace license inheritance.",
+      "unresolved_full_text_reason": null,
+      "evidence": [
+        {
+          "path": "upstream/napi-rs/napi-rs/d9cb526c15e63ba30e06b4d169068c9854180595/crates/backend/Cargo.toml",
+          "bytes": 624,
+          "sha256": "310cae4da3ac464443046c8acb5e563e60da2b5ab502f824dfd07f8c65c14772",
+          "source_url": "https://raw.githubusercontent.com/napi-rs/napi-rs/d9cb526c15e63ba30e06b4d169068c9854180595/crates/backend/Cargo.toml"
+        },
+        {
+          "path": "local-evidence/napi-derive-backend-6.1.6/Cargo.toml.orig",
+          "bytes": 624,
+          "sha256": "310cae4da3ac464443046c8acb5e563e60da2b5ab502f824dfd07f8c65c14772"
+        },
+        {
+          "path": "local-evidence/napi-derive-backend-6.1.6/.cargo_vcs_info.json",
+          "bytes": 108,
+          "sha256": "35c192e47381e0c1a3f74c4231ae9a7b01aa5051c564f9b31bae5c4127334dce"
+        },
+        {
+          "path": "upstream/napi-rs/napi-rs/d9cb526c15e63ba30e06b4d169068c9854180595/Cargo.toml",
+          "bytes": 964,
+          "sha256": "f2110059925ada6800f0d3e8a7976f6967803686d6a87d68f2c67ce5974b6261",
+          "source_url": "https://raw.githubusercontent.com/napi-rs/napi-rs/d9cb526c15e63ba30e06b4d169068c9854180595/Cargo.toml"
+        },
+        {
+          "path": "upstream/napi-rs/napi-rs/d9cb526c15e63ba30e06b4d169068c9854180595/LICENSE",
+          "bytes": 2138,
+          "sha256": "3f1ce66533302df3a32edbfdfc0b78f0dd34659e4c1f5817162e5ea3c2297215",
+          "source_url": "https://raw.githubusercontent.com/napi-rs/napi-rs/d9cb526c15e63ba30e06b4d169068c9854180595/LICENSE"
+        }
+      ],
+      "assets": [
+        {
+          "path": "overlay/licenses/napi-derive-backend-6.1.6/LICENSE",
+          "bytes": 2138,
+          "sha256": "3f1ce66533302df3a32edbfdfc0b78f0dd34659e4c1f5817162e5ea3c2297215",
+          "destination": "licenses/napi-derive-backend-6.1.6/LICENSE",
+          "source_path": "upstream/napi-rs/napi-rs/d9cb526c15e63ba30e06b4d169068c9854180595/LICENSE",
+          "source_url": "https://raw.githubusercontent.com/napi-rs/napi-rs/d9cb526c15e63ba30e06b4d169068c9854180595/LICENSE",
+          "source_sha256": "3f1ce66533302df3a32edbfdfc0b78f0dd34659e4c1f5817162e5ea3c2297215",
+          "content_kind": "full_license_text"
+        }
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#heifer@0.2.0",
       "name": "heifer",
       "version": "0.2.0",
@@ -2181,6 +2421,42 @@
       "package": "napi-sys",
       "version": "3.4.0",
       "commit": "37109f133043aff379a38edfb8b1548e7e9309e5"
+    },
+    {
+      "path": "source-archives/napi-3.15.0.crate",
+      "bytes": 277276,
+      "sha256": "6a746ad50efbfb632ade1de4025519a477decbbd798cea1a6ac41d7c44f80083",
+      "source_url": "https://static.crates.io/crates/napi/napi-3.15.0.crate",
+      "package": "napi",
+      "version": "3.15.0",
+      "commit": "d9cb526c15e63ba30e06b4d169068c9854180595"
+    },
+    {
+      "path": "source-archives/napi-derive-3.6.13.crate",
+      "bytes": 23276,
+      "sha256": "3ff48271a0f61abb83f3e2d1989fa71169143db95f6f948c3a8903961f2855dc",
+      "source_url": "https://static.crates.io/crates/napi-derive/napi-derive-3.6.13.crate",
+      "package": "napi-derive",
+      "version": "3.6.13",
+      "commit": "d9cb526c15e63ba30e06b4d169068c9854180595"
+    },
+    {
+      "path": "source-archives/napi-sys-3.4.1.crate",
+      "bytes": 12563,
+      "sha256": "d153beb7d5c973f4b9395be8a83054a28968b61188f1dd1a2cc2321af22daea2",
+      "source_url": "https://static.crates.io/crates/napi-sys/napi-sys-3.4.1.crate",
+      "package": "napi-sys",
+      "version": "3.4.1",
+      "commit": "d9cb526c15e63ba30e06b4d169068c9854180595"
+    },
+    {
+      "path": "source-archives/napi-derive-backend-6.1.6.crate",
+      "bytes": 43115,
+      "sha256": "f2639052c5aff9956a21d7b6202fc61d5e89c5f19c72d289b7a0641ea94e8159",
+      "source_url": "https://static.crates.io/crates/napi-derive-backend/napi-derive-backend-6.1.6.crate",
+      "package": "napi-derive-backend",
+      "version": "6.1.6",
+      "commit": "d9cb526c15e63ba30e06b4d169068c9854180595"
     }
   ],
   "round30_provenance": {
@@ -2277,6 +2553,26 @@
     ],
     "authenticated_requests": false,
     "checks": "The crates.io archive's SHA-256 equals the Cargo.lock checksum and its 21 members equal the local registry source; its .cargo_vcs_info.json names this commit and path selectors, and its Cargo.toml.orig and lib.rs equal the same-commit files. The crate ships no license file; the first 206 bytes of lib.rs (the MPL-2.0 notice, identical to 0.38.0's) link the round30 MPL-2.0 text, copied unchanged.",
+    "legal_review": "not_performed"
+  },
+  "napi_refresh_license_collection": {
+    "date": "2026-10-22",
+    "repository": "https://github.com/napi-rs/napi-rs",
+    "commit": "d9cb526c15e63ba30e06b4d169068c9854180595",
+    "retrieved": [
+      "https://raw.githubusercontent.com/napi-rs/napi-rs/d9cb526c15e63ba30e06b4d169068c9854180595/Cargo.toml",
+      "https://raw.githubusercontent.com/napi-rs/napi-rs/d9cb526c15e63ba30e06b4d169068c9854180595/LICENSE",
+      "https://raw.githubusercontent.com/napi-rs/napi-rs/d9cb526c15e63ba30e06b4d169068c9854180595/crates/napi/Cargo.toml",
+      "https://raw.githubusercontent.com/napi-rs/napi-rs/d9cb526c15e63ba30e06b4d169068c9854180595/crates/macro/Cargo.toml",
+      "https://raw.githubusercontent.com/napi-rs/napi-rs/d9cb526c15e63ba30e06b4d169068c9854180595/crates/sys/Cargo.toml",
+      "https://raw.githubusercontent.com/napi-rs/napi-rs/d9cb526c15e63ba30e06b4d169068c9854180595/crates/backend/Cargo.toml",
+      "https://static.crates.io/crates/napi/napi-3.15.0.crate",
+      "https://static.crates.io/crates/napi-derive/napi-derive-3.6.13.crate",
+      "https://static.crates.io/crates/napi-sys/napi-sys-3.4.1.crate",
+      "https://static.crates.io/crates/napi-derive-backend/napi-derive-backend-6.1.6.crate"
+    ],
+    "authenticated_requests": false,
+    "checks": "Each crates.io archive's SHA-256 equals the Cargo.lock checksum; its .cargo_vcs_info.json names this commit and the crate path, and its Cargo.toml.orig equals the same-commit crate manifest, which declares MIT and a literal version directly. The same-commit root Cargo.toml and LICENSE are byte-identical to the 37109f13 copies the earlier four tuples use; the LICENSE keeps both original MIT copyright notices. napi-derive-backend (napi-derive's code generator) had no overlay entry before.",
     "legal_review": "not_performed"
   }
 }

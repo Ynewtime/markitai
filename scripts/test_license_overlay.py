@@ -14,7 +14,8 @@ from ci_packages import supplement_wheel_licenses, verify_node_licenses
 from package_go_static import bundle_licenses, inventory, package_archive, unpack_verified
 
 VENDOR = Path(__file__).resolve().parents[1] / "licenses/upstream"
-REFRESHED = {"selectors@0.41.0"}
+REFRESHED = {"selectors@0.41.0", "napi@3.15.0", "napi-derive@3.6.13", "napi-sys@3.4.1",
+             "napi-derive-backend@6.1.6"}
 
 
 class LicenseOverlayTests(unittest.TestCase):
@@ -414,7 +415,7 @@ class LicenseOverlayTests(unittest.TestCase):
 
     def test_parent_terms_close_both_gaps_with_truthful_manifest_provenance(self):
         result = stage_overlay(self.vendor, self.destination, self.packages)
-        self.assertEqual(result["record"]["exact_commit_manifest_matches"], 29)
+        self.assertEqual(result["record"]["exact_commit_manifest_matches"], 33)
         self.assertEqual(result["record"]["reviewed_publication_version_stamps"], 1)
         expected = {"nom-language": ("raw_exact_match", ["LICENSE"], 7),
                     "tract-extra": ("reviewed_publication_version_stamp",
@@ -639,12 +640,13 @@ class LicenseOverlayTests(unittest.TestCase):
         self.assertEqual(result["record"]["complete_text_packages"], 17)
         self.assertTrue(all(not key.rsplit("#", 1)[-1].startswith("napi") for key in result["packages"]))
         shutil.rmtree(self.destination)
-        result = stage_overlay(self.vendor, self.destination, self.packages + self.node_packages)
-        self.assertEqual(result["record"]["matched_packages"], 21)
-        self.assertEqual(result["record"]["complete_text_packages"], 21)
-        self.assertEqual(result["record"]["exact_commit_manifest_matches"], 29)
+        napi = [p for p in self.refresh_packages if p["name"].startswith("napi")]
+        result = stage_overlay(self.vendor, self.destination, self.packages + self.node_packages + napi)
+        self.assertEqual(result["record"]["matched_packages"], 25)
+        self.assertEqual(result["record"]["complete_text_packages"], 25)
+        self.assertEqual(result["record"]["exact_commit_manifest_matches"], 33)
         self.assertEqual(result["record"]["reviewed_publication_version_stamps"], 1)
-        self.assertEqual(len(result["record"]["source_archives"]), 8)
+        self.assertEqual(len(result["record"]["source_archives"]), 12)
         for entry in self.manifest["packages"]:
             if not entry["name"].startswith("napi"):
                 continue
@@ -733,6 +735,30 @@ class LicenseOverlayTests(unittest.TestCase):
         notice["source_path"] = notice["source_path"].replace(entry["commit"], "572ecba2d1600e7c3d490586692a209faf703baa")
         self.save_manifest()
         with self.assertRaisesRegex(RuntimeError, "outside the attributed commit"):
+            stage_overlay(self.vendor, self.destination, self.refresh_packages)
+        self.assertFalse(self.destination.exists())
+
+    def test_refreshed_napi_tuples_keep_both_original_copyrights_from_their_commit(self):
+        napi = [p for p in self.refresh_packages if p["name"].startswith("napi")]
+        self.assertEqual(sorted(p["name"] for p in napi),
+                         ["napi", "napi-derive", "napi-derive-backend", "napi-sys"])
+        result = stage_overlay(self.vendor, self.destination, self.node_packages + napi)
+        self.assertEqual(result["record"]["matched_packages"], 8)
+        for package in napi:
+            record = result["packages"][package["id"]]
+            self.assertEqual(record["commit"], "d9cb526c15e63ba30e06b4d169068c9854180595")
+            self.assertEqual(record["manifest_provenance"], "raw_exact_match")
+            self.assertEqual(len(record["texts"]), 1)
+            raw = (self.destination.parent.parent / record["texts"][0]["path"]).read_bytes()
+            self.assertEqual(raw.count(b"MIT License"), 2)
+        archives = {(row["package"], row["version"]) for row in result["record"]["source_archives"]}
+        self.assertTrue({(p["name"], p["version"]) for p in napi} <= archives)
+
+    def test_a_refreshed_napi_tuple_cannot_borrow_the_older_commit(self):
+        entry = next(p for p in self.manifest["packages"] if p["id"].endswith("#napi-sys@3.4.1"))
+        entry["commit"] = "37109f133043aff379a38edfb8b1548e7e9309e5"
+        self.save_manifest()
+        with self.assertRaises(RuntimeError):
             stage_overlay(self.vendor, self.destination, self.refresh_packages)
         self.assertFalse(self.destination.exists())
 
@@ -840,7 +866,8 @@ class LicenseOverlayTests(unittest.TestCase):
     def test_node_payload_verifier_checks_both_original_copyrights_byte_for_byte(self):
         files = upstream_files(self.repository)
         names = ["licenses/upstream/overlay/licenses/" + name + "/LICENSE" for name in
-                 ["napi-3.14.0", "napi-build-2.6.0", "napi-derive-3.6.10", "napi-sys-3.4.0"]]
+                 ["napi-3.14.0", "napi-build-2.6.0", "napi-derive-3.6.10", "napi-sys-3.4.0",
+                  "napi-3.15.0", "napi-derive-3.6.13", "napi-sys-3.4.1", "napi-derive-backend-6.1.6"]]
         for name in names:
             self.assertEqual(files[name], (self.repository / name).read_bytes())
             self.assertEqual(files[name].count(b"MIT License"), 2)
