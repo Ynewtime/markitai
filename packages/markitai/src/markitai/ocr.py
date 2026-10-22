@@ -418,6 +418,11 @@ def _capture_engine_thresholds(engine: Any) -> dict[str, Any]:
     postprocess = getattr(getattr(engine, "text_det", None), "postprocess_op", None)
     if postprocess is not None and hasattr(postprocess, "box_thresh"):
         snapshot["box_thresh"] = postprocess.box_thresh
+    # RapidOCR 3.10 loads its detector on first use and keeps box_thresh in
+    # its config too, which a detector created later starts from
+    det_cfg = getattr(getattr(engine, "cfg", None), "Det", None)
+    if det_cfg is not None and hasattr(det_cfg, "box_thresh"):
+        snapshot["cfg_box_thresh"] = det_cfg.box_thresh
     return snapshot
 
 
@@ -425,8 +430,24 @@ def _restore_engine_thresholds(engine: Any, snapshot: dict[str, Any]) -> None:
     """Restore thresholds captured by :func:`_capture_engine_thresholds`."""
     if "text_score" in snapshot:
         engine.text_score = snapshot["text_score"]
-    if "box_thresh" in snapshot:
-        engine.text_det.postprocess_op.box_thresh = snapshot["box_thresh"]
+    if "cfg_box_thresh" in snapshot:
+        engine.cfg.Det.box_thresh = snapshot["cfg_box_thresh"]
+    box_thresh = snapshot.get("box_thresh", snapshot.get("cfg_box_thresh"))
+    postprocess = getattr(getattr(engine, "text_det", None), "postprocess_op", None)
+    if box_thresh is not None and postprocess is not None:
+        # Also a detector the scoped call created (RapidOCR 3.10)
+        postprocess.box_thresh = box_thresh
+
+
+def _text_recognizer(engine: Any) -> Any:
+    """RapidOCR's line recognizer: an attribute up to 3.9; 3.10 creates it
+    on first use, and ``text_rec`` is None until then."""
+    recognizer = getattr(engine, "text_rec", None)
+    if recognizer is None and hasattr(engine, "_load_rec_model"):
+        recognizer = engine._load_rec_model()
+    if recognizer is None:
+        raise RuntimeError("RapidOCR exposes no text recognizer")
+    return recognizer
 
 
 class OCRProcessor:
@@ -911,7 +932,7 @@ class OCRProcessor:
 
         engine = self.engine
         with self._gate.shared():
-            output = engine.text_rec(TextRecInput(img=list(images)))
+            output = _text_recognizer(engine)(TextRecInput(img=list(images)))
         texts = list(output.txts) if output.txts is not None else []
         return [str(text) for text in texts]
 

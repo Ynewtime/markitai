@@ -54,6 +54,7 @@
 - **本地 HTML 文件里的相对链接保持相对。** 页面按它自己的 `file:` 地址读取，好让相对的图片和链接能解析；链接（以及没有保存为资源的图片）原本会写成绝对的 `file:///home/<user>/…` 地址，把本地文件夹路径带进输出。现在它们相对于页面所在的文件夹写出（`other.html`、`../up.html`，指向页面自身的写成 `#part`），与 markitai-rust 保持原样的做法一致；`.eml`、`.msg` 邮件的 HTML 正文同样如此。正文里引用的 `file:` 地址和其他主机上的地址保持原样。
 - **`--json` 会在条目的 `warnings` 里列出它的提示。** 转换时打印在 stderr 上的提示（看起来是扫描件或乱码的 PDF 页面、隐藏文字、超时的 LLM 请求）原本不会出现在 `--json` 和报告里：扫描的 PDF 返回的是 `warnings: []`。现在单个文件或 URL，以及文件夹批处理和 URL 列表批处理的每个条目，都会把它们写进条目的 `warnings`，与 markitai-rust 和 `markitai serve` 一致；stderr 上每条仍只显示一次。
 - **`markitai serve` 中用户令牌的转换不再使用远程抓取回退。** 本地策略拿不到页面时，只要 `fetch.remote_consent` 允许（内置默认值就允许），用户令牌的 URL 会继续交给 defuddle.md、Jina Reader 或 Cloudflare，等于以服务器的名义把用户的 URL 发给第三方。现在用户令牌的任务（以及对它的任何重试）不论 `fetch.remote_consent` 怎么设都不会尝试它们，条目会带上警告 `[Fetch] …: the remote fallback (defuddle.md, Jina Reader, Cloudflare) was skipped: a user token's conversion never sends its URL to remote services`。管理员的任务和命令行仍按 `fetch.remote_consent` 处理。
+- **PDF 字形检查兼容 RapidOCR 3.10。** 新安装 `ocr` 扩展会得到 RapidOCR 3.10，它在第一次使用时才创建识别器：`--ocr` 下读取各字体截图的检查在这里出错，并悄悄信任了画出的字母与所说不符的文字层（移位字母表、旧式 CJK 字体）。现在由检查自己加载识别器；稀疏分块识别用的低检测阈值也会恢复到 RapidOCR 3.10 创建检测器所依据的配置里。RapidOCR 3.9 照旧可用。
 
 ## [1.2.1] - 2026-10-18
 

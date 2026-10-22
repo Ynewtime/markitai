@@ -503,13 +503,71 @@ class TestOCRLanguageResolution:
         assert resolve_ocr_language("fr") == ("fr", False)
 
     def test_ppocrv6_table_matches_the_installed_rapidocr(self):
-        """The copied PP-OCRv6 language table must track RapidOCR's own."""
+        """The copied PP-OCRv6 language table must track RapidOCR's own
+        (3.9's constant, or 3.10's model routes)."""
         pytest.importorskip("rapidocr")
-        from rapidocr.utils.model_resolver import PP_OCRV6_LANGS
+        from rapidocr.utils import model_resolver
 
         from markitai.ocr import _PPOCRV6_REC_LANGS
 
-        assert frozenset(PP_OCRV6_LANGS) == _PPOCRV6_REC_LANGS
+        langs = getattr(model_resolver, "PP_OCRV6_LANGS", None)
+        if langs is None:
+            from rapidocr import OCRVersion
+            from rapidocr.utils.typings import TaskType
+
+            langs = model_resolver.list_supported_langs(
+                TaskType.REC, OCRVersion.PPOCRV6
+            )
+        assert frozenset(langs) == _PPOCRV6_REC_LANGS
+
+    def test_line_reads_load_a_lazily_created_recognizer(self):
+        """RapidOCR 3.10 creates its recognizer on first use: ``text_rec``
+        was None, the glyph check failed on it and quietly trusted a text
+        layer that draws other letters than it says."""
+        from markitai.ocr import _text_recognizer
+
+        recognizer = object()
+
+        class Lazy:
+            text_rec = None
+
+            def _load_rec_model(self):
+                self.text_rec = recognizer
+                return recognizer
+
+        class Eager:
+            text_rec = recognizer
+
+        assert _text_recognizer(Lazy()) is recognizer
+        assert _text_recognizer(Eager()) is recognizer
+
+    def test_tile_thresholds_do_not_leak_into_a_lazily_created_detector(self):
+        """RapidOCR 3.10 keeps box_thresh in its config, which a detector
+        created during the tile pass starts from: both are put back."""
+        from types import SimpleNamespace
+
+        from markitai.ocr import (
+            _capture_engine_thresholds,
+            _restore_engine_thresholds,
+        )
+
+        engine = SimpleNamespace(
+            text_score=0.5,
+            text_det=None,
+            cfg=SimpleNamespace(Det=SimpleNamespace(box_thresh=0.5)),
+        )
+        snapshot = _capture_engine_thresholds(engine)
+        # The tile pass: low thresholds, the detector created on the way
+        engine.text_score = 0.3
+        engine.cfg.Det.box_thresh = 0.3
+        engine.text_det = SimpleNamespace(
+            postprocess_op=SimpleNamespace(box_thresh=0.3)
+        )
+        _restore_engine_thresholds(engine, snapshot)
+
+        assert engine.text_score == 0.5
+        assert engine.cfg.Det.box_thresh == 0.5
+        assert engine.text_det.postprocess_op.box_thresh == 0.5
 
     def test_unknown_language_is_an_error_not_chinese(self):
         from markitai.ocr import OCRLanguageError, resolve_ocr_language
