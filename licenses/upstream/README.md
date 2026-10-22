@@ -66,6 +66,23 @@ longer has that exception.) The repository NOTICE (remarks on the PP-OCR
 models, which are not distributed) is not copied. Legal review remains
 not_performed.
 
+## selectors 0.41.0
+
+selectors 0.41.0 (MPL-2.0, through scraper 0.29 and html5ever 0.40) publishes no
+license file, as 0.38.0 did not. Its crates.io archive (SHA-256 equal to the
+Cargo.lock checksum, 21 members) is kept under `source-archives/`; its
+`.cargo_vcs_info.json` names servo/stylo commit `34d25f74…` and path
+`selectors`, and its `Cargo.toml.orig` and `lib.rs` equal the same-commit
+files. The first 206 bytes of `lib.rs`, the MPL-2.0 notice (unchanged from
+0.38.0), are its NOTICE, and they link the same round30 MPL-2.0 text, copied
+unchanged; the validator accepts that linked authority only for these two
+selectors tuples. The retrievals are listed under
+`selectors_license_collection` in the manifest. The 0.38.0 entry stays, as
+other superseded versions do: matching follows the caller's resolved closure.
+This brings the overlay to thirty versions, twenty-nine raw exact manifest
+matches, fifty-one overlay files and eight source archives. Legal review
+remains not_performed.
+
 ## Original seventeen-version collection and retained history
 
 Packaging validates this directory offline before copying it. Package manifests,

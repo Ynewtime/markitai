@@ -14,6 +14,7 @@ from ci_packages import supplement_wheel_licenses, verify_node_licenses
 from package_go_static import bundle_licenses, inventory, package_archive, unpack_verified
 
 VENDOR = Path(__file__).resolve().parents[1] / "licenses/upstream"
+REFRESHED = {"selectors@0.41.0"}
 
 
 class LicenseOverlayTests(unittest.TestCase):
@@ -30,6 +31,8 @@ class LicenseOverlayTests(unittest.TestCase):
         self.heif_packages = []
         self.qpp_packages = []
         self.avif_packages = []
+        # Versions added after the dependency majors of 2026-10-22.
+        self.refresh_packages = []
         for item in self.manifest["packages"]:
             label = f"{item['name']}-{item['version']}"
             source = self.root / "registry" / label
@@ -44,7 +47,9 @@ class LicenseOverlayTests(unittest.TestCase):
                             target = source / name
                             target.parent.mkdir(parents=True, exist_ok=True)
                             target.write_bytes(archive.extractfile(member).read())
-            if item["name"] in {"napi", "napi-build", "napi-derive", "napi-sys"}:
+            if item["id"].rsplit("#", 1)[-1] in REFRESHED:
+                target_packages = self.refresh_packages
+            elif item["name"] in {"napi", "napi-build", "napi-derive", "napi-sys"}:
                 target_packages = self.node_packages
             elif item["name"].startswith("heifer"):
                 target_packages = self.heif_packages
@@ -409,7 +414,7 @@ class LicenseOverlayTests(unittest.TestCase):
 
     def test_parent_terms_close_both_gaps_with_truthful_manifest_provenance(self):
         result = stage_overlay(self.vendor, self.destination, self.packages)
-        self.assertEqual(result["record"]["exact_commit_manifest_matches"], 28)
+        self.assertEqual(result["record"]["exact_commit_manifest_matches"], 29)
         self.assertEqual(result["record"]["reviewed_publication_version_stamps"], 1)
         expected = {"nom-language": ("raw_exact_match", ["LICENSE"], 7),
                     "tract-extra": ("reviewed_publication_version_stamp",
@@ -637,9 +642,9 @@ class LicenseOverlayTests(unittest.TestCase):
         result = stage_overlay(self.vendor, self.destination, self.packages + self.node_packages)
         self.assertEqual(result["record"]["matched_packages"], 21)
         self.assertEqual(result["record"]["complete_text_packages"], 21)
-        self.assertEqual(result["record"]["exact_commit_manifest_matches"], 28)
+        self.assertEqual(result["record"]["exact_commit_manifest_matches"], 29)
         self.assertEqual(result["record"]["reviewed_publication_version_stamps"], 1)
-        self.assertEqual(len(result["record"]["source_archives"]), 7)
+        self.assertEqual(len(result["record"]["source_archives"]), 8)
         for entry in self.manifest["packages"]:
             if not entry["name"].startswith("napi"):
                 continue
@@ -705,6 +710,31 @@ class LicenseOverlayTests(unittest.TestCase):
         (directory / ".cargo_vcs_info.json").write_text("{}")
         with self.assertRaisesRegex(RuntimeError, "Current package source differs"):
             stage_overlay(self.vendor, self.destination, self.packages + self.qpp_packages)
+
+    def test_selectors_0_41_takes_the_reviewed_mpl_terms_through_its_own_notice(self):
+        package = next(p for p in self.refresh_packages if p["name"] == "selectors")
+        result = stage_overlay(self.vendor, self.destination, self.packages + [package])
+        self.assertEqual(result["record"]["matched_packages"], 18)
+        record = result["packages"][package["id"]]
+        self.assertEqual(record["manifest_provenance"], "raw_exact_match")
+        self.assertTrue(record["complete_text"])
+        self.assertEqual(record["commit"], "34d25f741765a0bdb894f8271852e633299352d8")
+        self.assertEqual(sorted((Path(text["path"]).name, text["source_kind"]) for text in record["texts"]),
+                         [("LICENSE-MPL-2.0.txt", "linked_authority"), ("NOTICE-MPL-2.0.txt", "same_commit")])
+        archives = {(row["package"], row["version"]) for row in result["record"]["source_archives"]}
+        self.assertIn(("selectors", "0.41.0"), archives)
+        # The 0.38.0 terms do not stand in for 0.41.0, nor the reverse.
+        old = next(p for p in self.packages if p["name"] == "selectors")
+        self.assertNotEqual(result["packages"][old["id"]]["commit"], record["commit"])
+
+    def test_selectors_0_41_notice_must_be_its_own_commit_bytes(self):
+        entry = next(p for p in self.manifest["packages"] if p["id"].endswith("#selectors@0.41.0"))
+        notice = entry["assets"][0]
+        notice["source_path"] = notice["source_path"].replace(entry["commit"], "572ecba2d1600e7c3d490586692a209faf703baa")
+        self.save_manifest()
+        with self.assertRaisesRegex(RuntimeError, "outside the attributed commit"):
+            stage_overlay(self.vendor, self.destination, self.refresh_packages)
+        self.assertFalse(self.destination.exists())
 
     def test_atomig_macro_terms_are_the_published_commit_root_licenses(self):
         self.assertEqual(len(self.avif_packages), 1)

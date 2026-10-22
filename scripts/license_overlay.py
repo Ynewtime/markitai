@@ -92,7 +92,8 @@ _AUTHORITY_TERMS = {
         "sha256": "3f3d9e0024b1921b067d6f7f88deb4a60cbe7a78e76c64e3f1d7fc3b779b9d04",
         "link": b"https://mozilla.org/MPL/2.0/",
         "repository": "servo/stylo",
-        "packages": {("selectors", "0.38.0", "572ecba2d1600e7c3d490586692a209faf703baa")},
+        "packages": {("selectors", "0.38.0", "572ecba2d1600e7c3d490586692a209faf703baa"),
+                     ("selectors", "0.41.0", "34d25f741765a0bdb894f8271852e633299352d8")},
     },
 }
 _MIT_ORIGINAL_URL = "https://raw.githubusercontent.com/madsmtm/objc2/9961247c1a82027d6edbe6c516011b1363b9354c/LICENSE.txt"
@@ -109,6 +110,10 @@ _SELECTORS_ARCHIVE_SHA = "8adfa1c298912827b8a28b223b3b874357397ae706e6190acd9bf2
 _SOURCE_PACKAGES = {
     ("selectors", "0.38.0", "572ecba2d1600e7c3d490586692a209faf703baa"): {
         "sha256": _SELECTORS_ARCHIVE_SHA, "path_in_vcs": "selectors", "members": 22,
+    },
+    ("selectors", "0.41.0", "34d25f741765a0bdb894f8271852e633299352d8"): {
+        "sha256": "8322aebea94a6cc288ff884e8a49bdbceef60206c400c6c46d22e62fc4fd91a6",
+        "path_in_vcs": "selectors", "members": 21,
     },
     ("nom-language", "0.1.0", "2cec1b3e4c9ccac62c902d60c00de6d1549ccbe1"): {
         "sha256": "2de2bc5b451bfedaef92c90b8939a8fff5770bdcc1fafd6239d086aab8fa6b29",

@@ -3,8 +3,8 @@
   "files": [
     {
       "path": "README.md",
-      "bytes": 8821,
-      "sha256": "51bbd58ca1ccf35ef64b1e8d1f20f4dfa1eaa44a0ad335149a821fd0c0493064"
+      "bytes": 9817,
+      "sha256": "bdf4e9de887503e47901e819f512b30005571fbb9b214be3a16ffc0b4703d25e"
     },
     {
       "path": "input-manifest.json",
@@ -372,6 +372,21 @@
       "sha256": "c0a9128170286f7c593f0c316f00d4a9c8671140bbd9d59f7e6c001d696b2810"
     },
     {
+      "path": "local-evidence/selectors-0.41.0/.cargo_vcs_info.json",
+      "bytes": 103,
+      "sha256": "f226a170c11137299dda27987268e283b50c60c35fd07fbc20c335911d716bc9"
+    },
+    {
+      "path": "local-evidence/selectors-0.41.0/Cargo.toml.orig",
+      "bytes": 793,
+      "sha256": "83a81d4b9309f7a2eefa9e2309c30d131b18e2d6737a2057bcb1583f2a465fb3"
+    },
+    {
+      "path": "local-evidence/selectors-0.41.0/README.md",
+      "bytes": 1171,
+      "sha256": "74030a4dc8cf91e4c7d8eee9cfaff241860671724b70a346d74e3a997ebcf9ab"
+    },
+    {
       "path": "local-evidence/tract-extra-0.23.8/.cargo_vcs_info.json",
       "bytes": 118,
       "sha256": "27516d0f04ba415e01c4e6c506f2e5d402ac3f53d9afd1d34339bdce97b51cf1"
@@ -383,8 +398,8 @@
     },
     {
       "path": "manifest.json",
-      "bytes": 116167,
-      "sha256": "4d0492c85f750f0a1580c69a8c2caa143d241d67b2428cd6ccb9d23a482e2654"
+      "bytes": 121184,
+      "sha256": "25246317c29961dc708fedcb6ff243959e35fea9af5a7fe2e330c18c9630d61d"
     },
     {
       "path": "napi-license-provenance.json",
@@ -622,6 +637,16 @@
       "sha256": "766674381e88a468d55e07de3596987391cf0e8beebe51baf4fddf11078785b3"
     },
     {
+      "path": "overlay/licenses/selectors-0.41.0/LICENSE-MPL-2.0.txt",
+      "bytes": 16726,
+      "sha256": "3f3d9e0024b1921b067d6f7f88deb4a60cbe7a78e76c64e3f1d7fc3b779b9d04"
+    },
+    {
+      "path": "overlay/licenses/selectors-0.41.0/NOTICE-MPL-2.0.txt",
+      "bytes": 206,
+      "sha256": "766674381e88a468d55e07de3596987391cf0e8beebe51baf4fddf11078785b3"
+    },
+    {
       "path": "overlay/licenses/tract-extra-0.23.8/LICENSE",
       "bytes": 495,
       "sha256": "f7ef673bf046d823dcd775bdd0768432bd8855f81d0e5e1290a0a48c42e2dca3"
@@ -755,6 +780,11 @@
       "path": "source-archives/selectors-0.38.0.crate",
       "bytes": 69601,
       "sha256": "8adfa1c298912827b8a28b223b3b874357397ae706e6190acd9bf28cee99114d"
+    },
+    {
+      "path": "source-archives/selectors-0.41.0.crate",
+      "bytes": 69626,
+      "sha256": "8322aebea94a6cc288ff884e8a49bdbceef60206c400c6c46d22e62fc4fd91a6"
     },
     {
       "path": "source-archives/tract-extra-0.23.8.crate",
@@ -1050,6 +1080,16 @@
       "path": "upstream/rust-bakery/nom/2cec1b3e4c9ccac62c902d60c00de6d1549ccbe1/nom-language/src/precedence/tests.rs",
       "bytes": 1786,
       "sha256": "bec5f416d2e300e664ba1d974d3fdc1e731fca98d87cb32d9d7b29b462df14ec"
+    },
+    {
+      "path": "upstream/servo/stylo/34d25f741765a0bdb894f8271852e633299352d8/selectors/Cargo.toml",
+      "bytes": 793,
+      "sha256": "83a81d4b9309f7a2eefa9e2309c30d131b18e2d6737a2057bcb1583f2a465fb3"
+    },
+    {
+      "path": "upstream/servo/stylo/34d25f741765a0bdb894f8271852e633299352d8/selectors/lib.rs",
+      "bytes": 643,
+      "sha256": "d54c6e13e9e952dac17d209171df8657e3cae93beaddace4906150cdec8d02e9"
     },
     {
       "path": "upstream/servo/stylo/572ecba2d1600e7c3d490586692a209faf703baa/selectors/Cargo.toml",

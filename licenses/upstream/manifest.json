@@ -24,12 +24,12 @@
     "max_concurrency": 4
   },
   "summary": {
-    "requested_packages": 29,
-    "exact_commit_manifest_matches": 28,
-    "full_license_text_packages": 29,
+    "requested_packages": 30,
+    "exact_commit_manifest_matches": 29,
+    "full_license_text_packages": 30,
     "notice_only_packages": 0,
-    "overlay_files": 49,
-    "source_archives": 7,
+    "overlay_files": 51,
+    "source_archives": 8,
     "historical_text_packages": 3,
     "reviewed_publication_version_stamps": 1
   },
@@ -1079,6 +1079,76 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#selectors@0.41.0",
+      "name": "selectors",
+      "version": "0.41.0",
+      "declared_license": "MPL-2.0",
+      "repository": "https://github.com/servo/stylo",
+      "commit": "34d25f741765a0bdb894f8271852e633299352d8",
+      "path_in_vcs": "selectors",
+      "package_manifest_matches_published_original": true,
+      "license_inherited_from_workspace": false,
+      "version_inherited_from_workspace": false,
+      "content_kind": "full_license_text",
+      "complete_license_options_present": [
+        "MPL-2.0"
+      ],
+      "applicability": "Exact package manifest declares MPL-2.0; the same-commit selectors/lib.rs starts with the Mozilla Public License 2.0 notice, which links the reviewed publisher terms retained in round30 (the same text as for selectors 0.38.0); only that explicit license alternative is supplied.",
+      "unresolved_full_text_reason": null,
+      "evidence": [
+        {
+          "path": "upstream/servo/stylo/34d25f741765a0bdb894f8271852e633299352d8/selectors/Cargo.toml",
+          "bytes": 793,
+          "sha256": "83a81d4b9309f7a2eefa9e2309c30d131b18e2d6737a2057bcb1583f2a465fb3",
+          "source_url": "https://raw.githubusercontent.com/servo/stylo/34d25f741765a0bdb894f8271852e633299352d8/selectors/Cargo.toml"
+        },
+        {
+          "path": "local-evidence/selectors-0.41.0/Cargo.toml.orig",
+          "bytes": 793,
+          "sha256": "83a81d4b9309f7a2eefa9e2309c30d131b18e2d6737a2057bcb1583f2a465fb3"
+        },
+        {
+          "path": "local-evidence/selectors-0.41.0/.cargo_vcs_info.json",
+          "bytes": 103,
+          "sha256": "f226a170c11137299dda27987268e283b50c60c35fd07fbc20c335911d716bc9"
+        },
+        {
+          "path": "local-evidence/selectors-0.41.0/README.md",
+          "bytes": 1171,
+          "sha256": "74030a4dc8cf91e4c7d8eee9cfaff241860671724b70a346d74e3a997ebcf9ab"
+        }
+      ],
+      "assets": [
+        {
+          "path": "overlay/licenses/selectors-0.41.0/NOTICE-MPL-2.0.txt",
+          "bytes": 206,
+          "sha256": "766674381e88a468d55e07de3596987391cf0e8beebe51baf4fddf11078785b3",
+          "destination": "licenses/selectors-0.41.0/NOTICE-MPL-2.0.txt",
+          "source_path": "upstream/servo/stylo/34d25f741765a0bdb894f8271852e633299352d8/selectors/lib.rs",
+          "source_url": "https://raw.githubusercontent.com/servo/stylo/34d25f741765a0bdb894f8271852e633299352d8/selectors/lib.rs",
+          "source_sha256": "d54c6e13e9e952dac17d209171df8657e3cae93beaddace4906150cdec8d02e9",
+          "content_kind": "notice_only",
+          "source_byte_range": {
+            "start_inclusive": 0,
+            "end_exclusive": 206
+          }
+        },
+        {
+          "path": "overlay/licenses/selectors-0.41.0/LICENSE-MPL-2.0.txt",
+          "bytes": 16726,
+          "sha256": "3f3d9e0024b1921b067d6f7f88deb4a60cbe7a78e76c64e3f1d7fc3b779b9d04",
+          "destination": "licenses/selectors-0.41.0/LICENSE-MPL-2.0.txt",
+          "source_path": "round30/primary/MPL-2.0.txt",
+          "source_url": "https://www.mozilla.org/media/MPL/2.0/index.f75d2927d3c1.txt",
+          "source_sha256": "3f3d9e0024b1921b067d6f7f88deb4a60cbe7a78e76c64e3f1d7fc3b779b9d04",
+          "source_kind": "linked_authority",
+          "license_option": "MPL-2.0",
+          "notice_asset": "overlay/licenses/selectors-0.41.0/NOTICE-MPL-2.0.txt",
+          "content_kind": "full_license_text"
+        }
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#nom-language@0.1.0",
       "name": "nom-language",
       "version": "0.1.0",
@@ -2047,6 +2117,16 @@
       "scope": "Original covered source, unmodified; SHA equals the pinned Cargo.lock checksum and all 22 files matched the local published registry source."
     },
     {
+      "path": "source-archives/selectors-0.41.0.crate",
+      "bytes": 69626,
+      "sha256": "8322aebea94a6cc288ff884e8a49bdbceef60206c400c6c46d22e62fc4fd91a6",
+      "package": "selectors",
+      "version": "0.41.0",
+      "commit": "34d25f741765a0bdb894f8271852e633299352d8",
+      "source_url": "https://static.crates.io/crates/selectors/selectors-0.41.0.crate",
+      "scope": "Original covered source, unmodified; SHA equals the pinned Cargo.lock checksum and all 21 files matched the local published registry source."
+    },
+    {
       "path": "source-archives/nom-language-0.1.0.crate",
       "bytes": 7648,
       "sha256": "2de2bc5b451bfedaef92c90b8939a8fff5770bdcc1fafd6239d086aab8fa6b29",
@@ -2184,6 +2264,19 @@
     ],
     "authenticated_requests": false,
     "checks": "Each published crate (static.crates.io archive, SHA-256 equal to the Cargo.lock checksum) carries a .cargo_vcs_info.json naming this commit and its crate path, and its Cargo.toml.orig equals the same-commit crate manifest. The workspace manifest declares version 0.3.1 and license MIT OR Apache-2.0. Corrects the 2026-10-16 collection, which attributed the crates to 3e53bbc2 (identical bytes) as if they had no VCS record. The repository NOTICE (remarks on the PP-OCR models, which are not distributed) is not copied.",
+    "legal_review": "not_performed"
+  },
+  "selectors_license_collection": {
+    "date": "2026-10-22",
+    "repository": "https://github.com/servo/stylo",
+    "commit": "34d25f741765a0bdb894f8271852e633299352d8",
+    "retrieved": [
+      "https://static.crates.io/crates/selectors/selectors-0.41.0.crate",
+      "https://raw.githubusercontent.com/servo/stylo/34d25f741765a0bdb894f8271852e633299352d8/selectors/Cargo.toml",
+      "https://raw.githubusercontent.com/servo/stylo/34d25f741765a0bdb894f8271852e633299352d8/selectors/lib.rs"
+    ],
+    "authenticated_requests": false,
+    "checks": "The crates.io archive's SHA-256 equals the Cargo.lock checksum and its 21 members equal the local registry source; its .cargo_vcs_info.json names this commit and path selectors, and its Cargo.toml.orig and lib.rs equal the same-commit files. The crate ships no license file; the first 206 bytes of lib.rs (the MPL-2.0 notice, identical to 0.38.0's) link the round30 MPL-2.0 text, copied unchanged.",
     "legal_review": "not_performed"
   }
 }
