@@ -77,15 +77,25 @@ def test_entry_points_share_one_dom_traversal():
     ],
 )
 def test_mutated_attributes_and_scoped_roots_keep_reference_semantics(attributes):
+    """Whatever SoupSieve does with values code wrote into ``attrs`` (2.10
+    and 3.0 raise TypeError on a number where 2.9 matched it as text), the
+    fast path does the same."""
     soup = BeautifulSoup("<main><article><p>body</p></article></main>", "lxml")
     article = soup.article
     assert isinstance(article, Tag)
     article.attrs.update(attributes)
     queries = (*scoring.ENTRY_POINT_SELECTORS, "[role]", "[data-x]", "*")
+
+    def outcome(select):
+        try:
+            return identities(select())
+        except TypeError as error:
+            return ("TypeError", str(error))
+
     for root in (soup, soup.main, soup.article):
         assert isinstance(root, Tag)
-        assert identities(selectors.select_many(root, queries)) == identities(
-            [root.select(query) for query in queries]
+        assert outcome(lambda root=root: selectors.select_many(root, queries)) == (
+            outcome(lambda root=root: [root.select(query) for query in queries])
         )
 
 

@@ -770,11 +770,17 @@ def _pdf_bytes(pages: int = 2, *, rotate: int = 0, pictures: bool = False) -> by
             picture = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 8, 8), False)
             picture.clear_with(120)
             png = picture.tobytes("png")
-            page.insert_image(pymupdf.Rect(100, 200, 300, 350), stream=png)
+            page.insert_image(
+                pymupdf.Rect(100, 200, 300, 350), stream=png, keep_proportion=False
+            )
             # A rule drawn as a picture: under 4 points tall, left out
-            page.insert_image(pymupdf.Rect(72, 400, 540, 402), stream=png)
+            page.insert_image(
+                pymupdf.Rect(72, 400, 540, 402), stream=png, keep_proportion=False
+            )
             # Partly off the page: clipped to it
-            page.insert_image(pymupdf.Rect(500, 700, 700, 900), stream=png)
+            page.insert_image(
+                pymupdf.Rect(500, 700, 700, 900), stream=png, keep_proportion=False
+            )
         if rotate:
             page.set_rotation(rotate)
     data = document.tobytes()

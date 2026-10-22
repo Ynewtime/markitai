@@ -989,10 +989,18 @@ async def test_history_archives_have_independent_response_lifetimes(
         payloads = []
 
         async def receive():
-            return {"type": "http.request", "body": b"", "more_body": False}
+            # As an ASGI server does: the request once, then nothing until
+            # the client goes away (starlette >= 1.9 listens for that while
+            # it streams a file; an answer every call never let it stream)
+            if not received:
+                received.append(True)
+                return {"type": "http.request", "body": b"", "more_body": False}
+            await asyncio.Event().wait()
+            return {"type": "http.disconnect"}
 
         for response in (first, second):
             chunks = []
+            received: list[bool] = []
 
             async def send(message, chunks=chunks):
                 if message["type"] == "http.response.body":

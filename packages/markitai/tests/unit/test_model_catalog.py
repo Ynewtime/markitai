@@ -203,7 +203,8 @@ def test_their_answers_are_priced(model: str, prompt: int, cost: float) -> None:
 def test_registering_prints_nothing() -> None:
     """LiteLLM printed "Provider List: ..." to stdout while registering
     gpt-6.1-sol, a name it cannot place yet, ahead of --json output. A fresh
-    interpreter: this one's LiteLLM already knows the name."""
+    interpreter: this one's LiteLLM already knows the name. A LiteLLM that
+    lists it (1.106) has its entry removed first, so the registration runs."""
     import subprocess
     import sys
 
@@ -211,6 +212,7 @@ def test_registering_prints_nothing() -> None:
         "from markitai.utils.litellm_import import prepare_litellm_import\n"
         "prepare_litellm_import()\n"
         "import litellm\n"
+        "litellm.model_cost.pop('gpt-6.1-sol', None)\n"
         "from markitai.model_catalog import register_missing_models\n"
         "assert 'gpt-6.1-sol' in register_missing_models()\n"
         "assert litellm.suppress_debug_info is False\n"
