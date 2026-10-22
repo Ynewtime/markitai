@@ -67,8 +67,13 @@ sh docs/validation/drivers/windows-check-round38/check-windows.sh clippy -- -D w
 - Core code stays independent of Python/Node/Go runtimes. Bindings call Rust in
   process; unsupported capabilities return explicit errors.
 - Keep user guides concise and current. Put applicable limits in the relevant
-  topic guide, and public changes in the changelog; avoid duplicated work logs.
+  topic guide, and public changes in the unreleased notes; avoid duplicated work logs.
 - After each user-reported fix, check all project documentation for affected
   claims, including help, examples, configuration, format limits and Agent guides.
   Refresh affected content in the same change; leave unrelated documents alone.
-- Keep `CHANGELOG.md` and `CHANGELOG.zh.md` synchronized under undated `[1.3.0]`.
+- `CHANGELOG.md` and `CHANGELOG.zh.md` hold released versions only. Append
+  unreleased notes to `.local/changelog-unreleased.md` and
+  `.local/changelog-unreleased.zh.md` in the main checkout (shared by every
+  worktree), in the CHANGELOG format, keeping English and Chinese in step; the
+  release commit moves them into the CHANGELOG. Corrections to released
+  sections may land at any time.
