@@ -291,6 +291,19 @@ fn document_usage() -> Option<ConversionUsage> {
             .map(|state| copy_usage(&state.lock().unwrap_or_else(|e| e.into_inner()).usage))
     })
 }
+/// The request budget's refusal, with the failure that used its last
+/// request when one did: the provider's error says why the document needed
+/// more requests.
+fn budget_exhausted(previous: Option<&str>) -> Error {
+    Error::Conversion(match previous {
+        Some(cause) => {
+            format!("{BUDGET_EXHAUSTED} after a failed request: {cause}")
+        }
+        None => BUDGET_EXHAUSTED.into(),
+    })
+}
+const BUDGET_EXHAUSTED: &str = "LLM per-document request budget exhausted";
+
 fn admit_document_attempt_for(entry: Option<&Deployment>) -> Result<()> {
     DOCUMENT_ACCOUNTING.with(|slot| {
         if let Some(state) = slot.borrow().as_ref() {
@@ -298,9 +311,7 @@ fn admit_document_attempt_for(entry: Option<&Deployment>) -> Result<()> {
             let image_worker = IMAGE_WORKER.with(std::cell::Cell::get);
             let kept = if image_worker { state.reserved } else { 0 };
             if state.limit > 0 && state.attempts.saturating_add(kept) >= state.limit {
-                return Err(Error::Conversion(
-                    "LLM per-document request budget exhausted".into(),
-                ));
+                return Err(budget_exhausted(None));
             }
             state.dollars.admit(entry.map(price_identity).as_ref())?;
             state.attempts = state.attempts.saturating_add(1);
@@ -1619,6 +1630,8 @@ fn run_mode(
     let mut last_error = VisionFailure::blocked(Error::Conversion(
         "No enabled LLM model can process this request".into(),
     ));
+    // The last failed request's error, for a budget refusal that follows it.
+    let mut previous: Option<String> = None;
     for (group_index, group) in groups.iter().enumerate() {
         let candidates: Vec<_> = entries
             .iter()
@@ -1653,8 +1666,8 @@ fn run_mode(
         let mut attempt = 0;
         loop {
             if budget > 0 && attempts >= budget || document_exhausted() {
-                return Err(VisionFailure::blocked(Error::Conversion(
-                    "LLM per-document request budget exhausted".into(),
+                return Err(VisionFailure::blocked(budget_exhausted(
+                    previous.as_deref(),
                 )));
             }
             let (selected, result, moves) = {
@@ -1713,6 +1726,12 @@ fn run_mode(
                     if let Some(stop) = stop {
                         stop.store(true, Ordering::Release);
                     }
+                    let error = match (&error, previous.as_deref()) {
+                        (Error::Conversion(text), Some(_)) if text == BUDGET_EXHAUSTED => {
+                            budget_exhausted(previous.as_deref())
+                        }
+                        _ => error,
+                    };
                     return Err(VisionFailure::blocked(error));
                 }
                 attempts = attempts.saturating_add(1);
@@ -1847,6 +1866,7 @@ fn run_mode(
                         allow_text_fallback: !failure.document_fatal,
                         kind: failure.kind,
                     };
+                    previous = Some(last_error.error.to_string());
                     if failure.fatal
                         || structured.is_some()
                             && matches!(
@@ -1886,8 +1906,8 @@ fn run_mode(
                         break;
                     }
                     if budget > 0 && attempts >= budget || document_exhausted() {
-                        return Err(VisionFailure::blocked(Error::Conversion(
-                            "LLM per-document request budget exhausted".into(),
+                        return Err(VisionFailure::blocked(budget_exhausted(
+                            previous.as_deref(),
                         )));
                     }
                     let backoff = failure
@@ -2175,7 +2195,7 @@ fn request_with_mode(
         .headers()
         .get("retry-after")
         .and_then(|header| header.to_str().ok())
-        .and_then(|text| text.parse::<u64>().ok());
+        .and_then(retry_delay);
     let content_type = response
         .headers()
         .get("content-type")
@@ -2241,6 +2261,13 @@ fn request_with_mode(
             record_usage_since(usage, entry, &data, sent);
         }
         let body = String::from_utf8_lossy(&bytes).to_ascii_lowercase();
+        // Without the header, a rate limit's own words may say when to retry
+        // (Gemini's `retryDelay`, OpenAI's "try again in 1.204s").
+        let retry_after = retry_after.or_else(|| {
+            matches!(status, 429 | 503)
+                .then(|| body_retry_delay(&body))
+                .flatten()
+        });
         let fatal = quota_refused(status, &body);
         let transient = matches!(status, 408 | 409 | 429 | 500..=599);
         // A missing or regionally blocked model cannot succeed on retry. A
@@ -2376,6 +2403,75 @@ fn request_with_mode(
             retry_after: None,
             deployment: None,
         })
+}
+
+/// Seconds to wait from a `Retry-After` value: whole or decimal seconds, a
+/// duration such as `1.204s`, `750ms` or `6m0s`, or an HTTP date; rounded up
+/// to a whole second.
+fn retry_delay(text: &str) -> Option<u64> {
+    let text = text.trim();
+    if let Ok(seconds) = text.parse::<f64>() {
+        return (seconds.is_finite() && seconds >= 0.0).then(|| seconds.ceil() as u64);
+    }
+    if let Some(seconds) = duration_seconds(&text.to_ascii_lowercase()) {
+        return Some(seconds);
+    }
+    let date = chrono::DateTime::parse_from_rfc2822(text).ok()?;
+    let wait = date
+        .signed_duration_since(chrono::Utc::now())
+        .num_milliseconds();
+    Some(u64::try_from(wait.max(0)).ok()?.div_ceil(1000))
+}
+
+/// A duration at the start of `text`: `1.204s`, `750ms`, `6m0s`, `20 seconds`.
+fn duration_seconds(text: &str) -> Option<u64> {
+    let number = |text: &str| -> Option<(f64, usize)> {
+        let end = text
+            .find(|c: char| !(c.is_ascii_digit() || c == '.'))
+            .unwrap_or(text.len());
+        Some((text[..end].parse::<f64>().ok()?, end))
+    };
+    let (mut value, end) = number(text)?;
+    let mut rest = text[end..].trim_start();
+    let mut seconds = 0.0;
+    // `6m0s`: minutes before seconds.
+    if let Some(after) = rest.strip_prefix('m')
+        && after.starts_with(|c: char| c.is_ascii_digit())
+    {
+        seconds += value * 60.0;
+        let (next, end) = number(after)?;
+        value = next;
+        rest = after[end..].trim_start();
+    }
+    let unit = rest
+        .split(|c: char| !c.is_ascii_alphabetic())
+        .next()
+        .unwrap_or("");
+    seconds += match unit {
+        "ms" => value / 1000.0,
+        "s" | "sec" | "secs" | "second" | "seconds" => value,
+        _ => return None,
+    };
+    (seconds.is_finite() && seconds >= 0.0).then(|| seconds.ceil() as u64)
+}
+
+/// The delay a rate limit's (lowercased) body asks for, after a phrase that
+/// introduces one, so an unrelated number is never taken for it.
+fn body_retry_delay(body: &str) -> Option<u64> {
+    [
+        "retrydelay",
+        "retry_after",
+        "retry after",
+        "retry in",
+        "try again in",
+    ]
+    .iter()
+    .find_map(|phrase| {
+        let at = body.find(phrase)? + phrase.len();
+        let rest = body[at..]
+            .trim_start_matches(|c: char| c.is_whitespace() || matches!(c, '"' | ':' | '=' | '\\'));
+        duration_seconds(rest)
+    })
 }
 
 /// A response cut off by its output cap; when reasoning spent the whole cap,

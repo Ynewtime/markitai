@@ -625,12 +625,17 @@ error to another deployment only when the group has more than one, but spends a
 retry on the move and cools a 401 deployment down only for `cooldown_time`
 (5 seconds by default) rather than for the run.
 
-Backoff starts at one second and doubles. A numeric `Retry-After` value can
-replace that delay. Individual delays and total backoff sleep across all groups
-are capped at 60 seconds; exhausting the sleep allowance returns the last
-failure. HTTP request timeouts are separate from this sleep allowance. The
-request budget is checked before requests and before scheduling another sleep,
-so an exhausted budget does not wait needlessly.
+Backoff starts at one second and doubles. A `Retry-After` value replaces that
+delay: whole or decimal seconds, a duration such as `1.204s`, `750ms` or
+`6m0s`, or an HTTP date; without the header, a 429 or 503 body that says when
+to retry (Gemini's `retryDelay`, "try again in 3.5s") is used the same way.
+Delays round up to whole seconds. Individual delays and total backoff sleep
+across all groups are capped at 60 seconds; exhausting the sleep allowance
+returns the last failure. HTTP request timeouts are separate from this sleep
+allowance. The request budget is checked before requests and before scheduling
+another sleep, so an exhausted budget does not wait needlessly; its error then
+keeps the failure that spent the last request (`LLM per-document request budget
+exhausted after a failed request: …`).
 
 Every request sent again is reported as a warning of its document, and each
 counts toward `llm.max_requests_per_document`: a transport retry (`LLM request

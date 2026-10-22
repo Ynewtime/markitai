@@ -277,3 +277,58 @@ fn a_user_model_never_reaches_this_machine() {
     }
     assert!(listener.accept().is_err(), "a request reached loopback");
 }
+
+#[test]
+fn retry_after_reads_the_forms_providers_send() {
+    assert_eq!(retry_delay("7"), Some(7));
+    assert_eq!(retry_delay("1.204"), Some(2));
+    assert_eq!(retry_delay("1.204s"), Some(2));
+    assert_eq!(retry_delay("750ms"), Some(1));
+    assert_eq!(retry_delay("6m0s"), Some(360));
+    assert_eq!(retry_delay("20 seconds"), Some(20));
+    assert_eq!(retry_delay("Wed, 21 Oct 2015 07:28:00 GMT"), Some(0));
+    assert_eq!(retry_delay("soon"), None);
+    // In a rate limit's words, only after a phrase that introduces a delay.
+    let gemini = r#"[{"error":{"code":429,"details":[{"@type":"type.googleapis.com/google.rpc.retryinfo","retrydelay":"1.204s"}]}}]"#;
+    assert_eq!(body_retry_delay(gemini), Some(2));
+    assert_eq!(
+        body_retry_delay("rate limit reached: limit 30, used 30. please try again in 750ms."),
+        Some(1)
+    );
+    assert_eq!(body_retry_delay("limit 30s window, used 30"), None);
+}
+
+#[test]
+fn a_delay_in_the_rate_limit_body_is_waited_for() {
+    let limited = json!({"error":{"message":"Rate limit reached. Please try again in 3.5s.","code":"rate_limit_exceeded"}});
+    let server = Mock::new(vec![(429, limited), (200, success("after the wait"))]);
+    let mut waited = Vec::new();
+    let (text, _) = run(
+        &plain(),
+        &cfg("openai/test", &server.base),
+        &HashMap::new(),
+        &mut |delay| waited.push(delay),
+    )
+    .unwrap();
+    assert_eq!(text, "after the wait");
+    assert_eq!(waited, [Duration::from_secs(4)]);
+    server.finish();
+}
+
+#[test]
+fn a_spent_request_budget_keeps_the_failure_that_spent_it() {
+    let failing = json!({"error":{"message":"upstream overloaded","type":"server_error"}});
+    let server = Mock::new(vec![(503, failing)]);
+    let mut cfg = cfg("openai/test", &server.base);
+    cfg["llm"]["max_requests_per_document"] = json!(1);
+    let error = run(&plain(), &cfg, &HashMap::new(), &mut |_| {})
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.starts_with(
+            "LLM per-document request budget exhausted after a failed request: LLM returned HTTP 503 (server_error): upstream overloaded"
+        ),
+        "{error}"
+    );
+    server.finish();
+}
