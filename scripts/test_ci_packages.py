@@ -18,7 +18,7 @@ import unittest
 import pathlib
 import zipfile
 
-from ci_packages import (apply_path_remap, _sbom_without_local_paths, npm_command, source_snapshot, stage_node_licenses, supplement_wheel_licenses,
+from ci_packages import (apply_path_remap, _sbom_without_local_paths, npm_command, packed_filename, source_snapshot, stage_node_licenses, supplement_wheel_licenses,
                          verify_node_licenses, write_cli_zip, extract_cli_zip, doctor_probe, mcp_probe, identity, package_attribution,
                          write_single_binary_tar, extract_single_binary_tar, windows_cli_build, main)
 from cli_documentation import DOCUMENTATION_PATHS
@@ -506,6 +506,14 @@ for line in sys.stdin:
                 with self.assertRaises(RuntimeError):
                     verify_node_licenses(package, {"NOTICE": b"notice"})
 
+    def test_packed_filename_reads_npm_11_and_12_pack_json(self):
+        self.assertEqual(packed_filename('[{"name": "a", "filename": "a-1.0.0.tgz"}]'), "a-1.0.0.tgz")
+        self.assertEqual(packed_filename('{"a": {"name": "a", "filename": "a-1.0.0.tgz"}}'), "a-1.0.0.tgz")
+        for stdout in ['[]', '{}', '[{"filename": "a.tgz"}, {"filename": "b.tgz"}]', '[{"name": "a"}]',
+                       '[{"filename": "../a.tgz"}]', '"a.tgz"']:
+            with self.assertRaises(RuntimeError):
+                packed_filename(stdout)
+
     @unittest.skipUnless(shutil.which("npm"), "npm required for actual archive regression")
     def test_npm_preserves_nested_original_manifest_and_hidden_provenance(self):
         licenses = {
@@ -521,7 +529,7 @@ for line in sys.stdin:
                                  "pack", "--json", "--ignore-scripts", "--offline"],
                                 cwd=self.root, capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stderr)
-        package = self.root / json.loads(result.stdout)[0]["filename"]
+        package = self.root / packed_filename(result.stdout)
         verify_node_licenses(package, licenses)
         with tarfile.open(package) as archive:
             self.assertFalse(any(name.endswith(".npmignore") for name in archive.getnames()))

@@ -318,6 +318,18 @@ def npm_command(npm, node, host_platform=sys.platform):
     raise RuntimeError("Cannot locate npm-cli.js beside npm.cmd or node; install a standard Node/npm distribution")
 
 
+def packed_filename(stdout):
+    """npm 11 prints `pack --json` as a list of packages; npm 12 as an object keyed by package name."""
+    packed = json.loads(stdout)
+    entries = list(packed.values()) if isinstance(packed, dict) else packed
+    if not isinstance(entries, list) or len(entries) != 1 or not isinstance(entries[0], dict):
+        raise RuntimeError("npm pack --json did not describe exactly one package")
+    filename = entries[0].get("filename")
+    if not isinstance(filename, str) or not filename or Path(filename).name != filename:
+        raise RuntimeError("npm pack --json reported no plain package file name")
+    return filename
+
+
 def verify_node_licenses(package, licenses):
     with tarfile.open(package, "r:gz") as bundle:
         for name, expected in licenses.items():
@@ -808,8 +820,8 @@ def main():
         if not npm:
             raise RuntimeError("npm is required for native Node package validation")
         npm = npm_command(npm, shutil.which("node"))
-        packed = json.loads(run("node-pack", [*npm, "pack", "--json", "--pack-destination", output], cwd=node_source))
-        node_package = output / packed[0]["filename"]
+        node_package = output / packed_filename(run("node-pack", [*npm, "pack", "--json", "--pack-destination", output],
+                                                    cwd=node_source))
         verify_node_licenses(node_package, licenses)
         artifact(node_package)
         consumer = work / "node-consumer"
