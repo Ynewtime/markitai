@@ -20,6 +20,14 @@ const RULES: &[(&str, &str)] = &[
         "未配置 LLM 模型；请设置 MODEL 和供应商的 API key，或配置 llm.model_list",
     ),
     (
+        "The installed Codex could not list its models, so chatgpt/{} is sent as named, unvalidated",
+        "已安装的 Codex 无法列出它的模型，因此按名称发送 chatgpt/{}，未经验证",
+    ),
+    (
+        "The installed Codex does not offer chatgpt/{}; it offers {}",
+        "已安装的 Codex 不提供 chatgpt/{}；它提供 {}",
+    ),
+    (
         "{} is newer than {}, the release this adapter was verified with; it is used, and every message it sends is still checked",
         "{} 比本适配器验证过的 {} 更新；仍会使用它，并检查它发来的每条消息",
     ),

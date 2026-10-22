@@ -17,7 +17,13 @@ use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 
 pub const CLI_VERSION: &str = "0.159.0";
-pub const MODEL: &str = "gpt-5.5";
+/// The model of the catalog compiled into this build, used when the
+/// installed Codex cannot list its models.
+pub const BUNDLED_MODEL: &str = "gpt-5.5";
+/// The model offered when the installed Codex cannot be asked (Python
+/// markitai's default); otherwise the first model Codex lists is the default.
+pub const FALLBACK_MODEL: &str = "gpt-6-luna";
+const CATALOG_LIMIT: usize = 8 * 1024 * 1024;
 const INPUT_LIMIT: usize = 10 * 1024 * 1024;
 const IMAGE_LIMIT: usize = 32 * 1024 * 1024;
 const TEXT_LIMIT: usize = 8 * 1024 * 1024;
@@ -130,6 +136,15 @@ fn small_command(
     deadline: Instant,
     cancel: Option<&AtomicBool>,
 ) -> Result<(Vec<u8>, Vec<u8>, std::process::ExitStatus), Failure> {
+    bounded_command(config, args, deadline, cancel, 64 * 1024)
+}
+fn bounded_command(
+    config: &Config,
+    args: &[OsString],
+    deadline: Instant,
+    cancel: Option<&AtomicBool>,
+    bound: usize,
+) -> Result<(Vec<u8>, Vec<u8>, std::process::ExitStatus), Failure> {
     let mut child = RUNTIME.spawn(
         &config.executable,
         &config.environment,
@@ -141,7 +156,7 @@ fn small_command(
     child.send(None, cancel)?;
     let mut output = Vec::new();
     while let Some(line) = child.next(cancel)? {
-        if output.len().saturating_add(line.len()) > 64 * 1024 {
+        if output.len().saturating_add(line.len()) > bound {
             return Err(limit());
         }
         output.extend_from_slice(&line);
@@ -215,6 +230,186 @@ pub fn status(config: &Config, timeout: Duration) -> Result<AuthStatus, Failure>
             "newer_than_verified":release == Release::Newer,"native_adapter":true,"account_identity_available":false}),
     })
 }
+/// Whether `name` can be given to Codex as a model: letters, digits and
+/// `.`, `-`, `_`, `:`, at most 128 bytes.
+pub fn valid_model(name: &str) -> bool {
+    (1..=128).contains(&name.len())
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_' | b':'))
+}
+
+/// The models the installed Codex offers, its default first (Codex's own
+/// `priority` order, which puts the newest current model first), as `codex
+/// debug models` lists them: with `refresh`, Codex updates its list for the
+/// signed-in account; without, it reads the catalog shipped with the binary.
+/// Hidden entries (internal review models) are left out. `None` when this
+/// Codex cannot tell: the command fails or prints no catalog.
+fn offered(
+    config: &Config,
+    deadline: Instant,
+    cancel: Option<&AtomicBool>,
+    refresh: bool,
+) -> Result<Option<Vec<Value>>, Failure> {
+    let mut args: Vec<OsString> = vec!["debug".into(), "models".into()];
+    if !refresh {
+        args.push("--bundled".into());
+    }
+    let (out, _, exit) = bounded_command(config, &args, deadline, cancel, CATALOG_LIMIT)?;
+    if !exit.success() {
+        return Ok(None);
+    }
+    let Some(models) = serde_json::from_slice::<Value>(&out)
+        .ok()
+        .and_then(|value| value.get("models").and_then(Value::as_array).cloned())
+    else {
+        return Ok(None);
+    };
+    let mut listed: Vec<Value> = models
+        .into_iter()
+        .filter(|entry| {
+            entry["visibility"] == "list" && entry["slug"].as_str().is_some_and(valid_model)
+        })
+        .collect();
+    listed.sort_by_key(|entry| entry["priority"].as_i64().unwrap_or(i64::MAX));
+    Ok(Some(listed))
+}
+
+/// The bundled catalog of the installed Codex, asked once per executable,
+/// release and Codex home in a process.
+fn bundled(
+    config: &Config,
+    installed: &str,
+    deadline: Instant,
+    cancel: Option<&AtomicBool>,
+) -> Result<Option<Vec<Value>>, Failure> {
+    type Known = HashMap<(PathBuf, String, Option<String>), Option<Vec<Value>>>;
+    static KNOWN: std::sync::OnceLock<std::sync::Mutex<Known>> = std::sync::OnceLock::new();
+    let key = (
+        config.executable.clone(),
+        installed.to_owned(),
+        config.environment.get("CODEX_HOME").cloned(),
+    );
+    let known = KNOWN.get_or_init(Default::default);
+    if let Some(list) = known.lock().unwrap_or_else(|e| e.into_inner()).get(&key) {
+        return Ok(list.clone());
+    }
+    let list = offered(config, deadline, cancel, false)?;
+    known
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(key, list.clone());
+    Ok(list)
+}
+
+/// `entry` as the one model of the catalog an exec reads, with the tool
+/// surfaces this adapter keeps off switched off in the entry too (the
+/// configuration already disables them): no patch tool, no code mode, no
+/// experimental tools, no sub-agents, no search tool.
+fn restricted(entry: &Value) -> Value {
+    let mut entry = entry.clone();
+    for (key, value) in [
+        ("apply_patch_tool_type", Value::Null),
+        ("tool_mode", Value::Null),
+        ("experimental_supported_tools", json!([])),
+        ("multi_agent_version", Value::Null),
+        ("multi_agent_reasoning_effort", Value::Null),
+        ("supports_search_tool", json!(false)),
+    ] {
+        if let Some(object) = entry.as_object_mut() {
+            object.insert(key.into(), value);
+        }
+    }
+    json!({"models":[entry]})
+}
+
+/// The catalog an exec of `model` reads: the installed Codex's own entry,
+/// restricted; the compiled catalog for its model when Codex cannot list
+/// its models; `None` (Codex's own catalog, with a one-time warning) for
+/// another model then. A model Codex can list and does not offer is refused.
+fn catalog_for(
+    config: &Config,
+    installed: &str,
+    model: &str,
+    deadline: Instant,
+    cancel: Option<&AtomicBool>,
+) -> Result<Option<Vec<u8>>, Failure> {
+    let find = |list: &[Value]| {
+        list.iter()
+            .find(|entry| entry["slug"] == model)
+            .map(restricted)
+    };
+    let shipped = bundled(config, installed, deadline, cancel)?;
+    if let Some(entry) = shipped.as_deref().and_then(find) {
+        return Ok(Some(serde_json::to_vec(&entry).map_err(|_| protocol())?));
+    }
+    // A model newer than the binary is known only to the account's list.
+    match offered(config, deadline, cancel, true)? {
+        Some(account) => match find(&account) {
+            Some(entry) => Ok(Some(serde_json::to_vec(&entry).map_err(|_| protocol())?)),
+            None => {
+                let names: Vec<String> = account
+                    .iter()
+                    .filter_map(|entry| entry["slug"].as_str())
+                    .take(12)
+                    .map(|slug| format!("chatgpt/{slug}"))
+                    .collect();
+                Err(Failure {
+                    kind: FailureKind::Unsupported,
+                    error: crate::Error::Unsupported(format!(
+                        "The installed Codex does not offer chatgpt/{model}; it offers {}",
+                        names.join(", ")
+                    )),
+                    usage: UsageEvidence::default(),
+                })
+            }
+        },
+        None if model == BUNDLED_MODEL => Ok(Some(CATALOG.to_vec())),
+        None => {
+            note_unvalidated_model(model);
+            Ok(None)
+        }
+    }
+}
+
+/// The one-time notice that a model was sent without Codex confirming it
+/// offers the model.
+fn note_unvalidated_model(model: &str) {
+    static NOTED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+    if !crate::llm::document_scoped() {
+        return;
+    }
+    let mut noted = NOTED.lock().unwrap_or_else(|e| e.into_inner());
+    if noted.iter().any(|seen| seen == model) {
+        return;
+    }
+    noted.push(model.to_owned());
+    crate::llm::note_document_warning(format!(
+        "The installed Codex could not list its models, so chatgpt/{model} is sent as named, unvalidated"
+    ));
+}
+
+/// The model `chatgpt/` defaults to: the first one the installed Codex
+/// lists (its default, the newest current model), else [`FALLBACK_MODEL`].
+pub fn default_model(config: &Config, timeout: Duration) -> String {
+    RUNTIME
+        .deadline(timeout)
+        .ok()
+        .and_then(|deadline| {
+            let (installed, _) = version(config, deadline, None).ok()?;
+            bundled(config, &installed, deadline, None).ok().flatten()
+        })
+        .and_then(|list| {
+            list.first()
+                .and_then(|entry| entry["slug"].as_str())
+                .map(str::to_owned)
+        })
+        .unwrap_or_else(|| FALLBACK_MODEL.into())
+}
+
+/// The models the signed-in account can use through the installed Codex,
+/// its default first; the compiled catalog's model when Codex cannot list
+/// them.
 pub fn models(config: &Config, timeout: Duration) -> Result<Vec<Model>, Failure> {
     if !status(config, timeout)?.authenticated {
         return Err(Failure::new(
@@ -222,23 +417,51 @@ pub fn models(config: &Config, timeout: Duration) -> Result<Vec<Model>, Failure>
             "Codex CLI is not signed in with a ChatGPT subscription",
         ));
     }
-    // This is the tested adapter allowlist, not account entitlement discovery.
-    Ok(vec![Model {
-        model: format!("chatgpt/{MODEL}"),
-        label: "GPT-5.5 (pinned Codex adapter)".into(),
-        supports_vision: true,
-    }])
+    let deadline = RUNTIME.deadline(timeout)?;
+    let (installed, _) = version(config, deadline, None)?;
+    let listed = match offered(config, deadline, None, true)? {
+        Some(list) => Some(list),
+        None => bundled(config, &installed, deadline, None)?,
+    };
+    let Some(listed) = listed else {
+        return Ok(vec![Model {
+            model: format!("chatgpt/{BUNDLED_MODEL}"),
+            label: "GPT-5.5".into(),
+            supports_vision: true,
+        }]);
+    };
+    Ok(listed
+        .iter()
+        .filter_map(|entry| {
+            let slug = entry["slug"].as_str()?;
+            Some(Model {
+                model: format!("chatgpt/{slug}"),
+                label: entry["display_name"]
+                    .as_str()
+                    .filter(|label| label.len() <= 128)
+                    .unwrap_or(slug)
+                    .into(),
+                supports_vision: entry["input_modalities"]
+                    .as_array()
+                    .is_some_and(|kinds| kinds.iter().any(|kind| kind == "image")),
+            })
+        })
+        .collect())
 }
 fn exec_args(
     workspace: &Workspace,
     system: &str,
     images: &[(&str, &[u8])],
+    model: &str,
+    catalog: Option<&[u8]>,
 ) -> Result<Vec<OsString>, Failure> {
-    let catalog = private_file(workspace, "models.json", CATALOG)?;
     let prompt = private_file(workspace, "system.txt", system.as_bytes())?;
     let mut args = Vec::new();
+    if let Some(catalog) = catalog {
+        let catalog = private_file(workspace, "models.json", catalog)?;
+        config_arg(&mut args, "model_catalog_json", &json!(catalog));
+    }
     for (name, value) in [
-        ("model_catalog_json", json!(catalog)),
         ("model_instructions_file", json!(prompt)),
         ("model_provider", json!("openai")),
         ("sqlite_home", json!(workspace.directory("state"))),
@@ -311,7 +534,7 @@ fn exec_args(
             "--color",
             "never",
             "--model",
-            MODEL,
+            model,
         ]
         .into_iter()
         .map(OsString::from),
@@ -337,15 +560,14 @@ fn exec_args(
 }
 pub fn complete(config: &Config, request: Request<'_>) -> Result<Completion, Failure> {
     let deadline = RUNTIME.deadline(request.timeout)?;
-    if request
+    let model = request
         .model
         .strip_prefix("chatgpt/")
-        .unwrap_or(request.model)
-        != MODEL
-    {
+        .unwrap_or(request.model);
+    if !valid_model(model) {
         return Err(Failure::new(
-            FailureKind::Unsupported,
-            "The Codex adapter has not validated this model's tool capabilities",
+            FailureKind::InvalidRequest,
+            "ChatGPT model name is invalid",
         ));
     }
     if request.system.len().saturating_add(request.user.len()) > INPUT_LIMIT
@@ -373,8 +595,15 @@ pub fn complete(config: &Config, request: Request<'_>) -> Result<Completion, Fai
             "Codex CLI is not signed in with a ChatGPT subscription",
         ));
     }
+    let catalog = catalog_for(config, &installed, model, deadline, request.cancel)?;
     let workspace = RUNTIME.workspace()?;
-    let args = exec_args(&workspace, request.system, request.images)?;
+    let args = exec_args(
+        &workspace,
+        request.system,
+        request.images,
+        model,
+        catalog.as_deref(),
+    )?;
     let mut child = RUNTIME.spawn(
         &config.executable,
         &config.environment,

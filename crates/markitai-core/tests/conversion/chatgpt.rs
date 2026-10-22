@@ -394,7 +394,8 @@ fn shared_chunk_request_budget_stops_subscription_spawn_after_prior_paid_work() 
     );
     assert_eq!(server.count(), 2);
     assert_eq!(records("requests.jsonl").len(), 1);
-    assert_eq!(records("calls.jsonl").len(), 3);
+    // Version, sign-in, the model list and the one document request.
+    assert_eq!(records("calls.jsonl").len(), 4);
     assert_eq!(
         (
             failure.usage.requests,

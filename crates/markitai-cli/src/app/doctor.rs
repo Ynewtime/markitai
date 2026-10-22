@@ -873,7 +873,7 @@ fn checks(
                 } else {
                     "Installed Codex runtime could not verify its supported version"
                 },
-                "Install official Codex 0.159.0; this adapter currently supports chatgpt/gpt-5.5",
+                "Install official Codex 0.159.0 or later; chatgpt/<model> takes any model it offers",
             );
             adapter.required = true;
             newer_release(&mut adapter, "Codex", &auth);

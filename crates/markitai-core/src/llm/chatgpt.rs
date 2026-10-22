@@ -12,11 +12,16 @@ pub(super) fn deployment(
     let params = &entry["litellm_params"];
     let id = nonempty(params.get("model"))
         .ok_or_else(|| Error::Config("ChatGPT model is required".into()))?;
+    // Which models the installed Codex offers is checked when a request is
+    // sent; here only the name's shape.
     let model = id
         .strip_prefix("chatgpt/")
-        .filter(|model| *model == subscription::chatgpt::MODEL)
+        .filter(|model| subscription::chatgpt::valid_model(model))
         .ok_or_else(|| {
-            Error::Unsupported("The installed Codex adapter has not validated this model".into())
+            Error::Config(
+                "ChatGPT model name is invalid; name one the installed Codex offers, as chatgpt/<model>"
+                    .into(),
+            )
         })?;
     for field in ["api_key", "api_base", "max_tokens", "reasoning_effort"] {
         if params
@@ -235,7 +240,7 @@ mod tests {
             ("PATH".to_owned(), std::env::var("PATH").unwrap()),
         ]);
         let cfg = crate::config::normalize(&json!({"llm":{"model_list":[{"model_name":"default",
-            "litellm_params":{"model":format!("chatgpt/{}", crate::subscription::chatgpt::MODEL)}}],
+            "litellm_params":{"model":format!("chatgpt/{}", crate::subscription::chatgpt::BUNDLED_MODEL)}}],
             "router_settings":{"timeout":20}},"cache":{"enabled":false},
             "prompts":{"dir":"/nonexistent/markitai-test-prompts"}}))
         .unwrap();
@@ -275,7 +280,7 @@ mod tests {
             ("PATH".to_owned(), std::env::var("PATH").unwrap()),
         ]);
         let cfg = crate::config::normalize(&json!({"llm":{"model_list":[{"model_name":"default",
-            "litellm_params":{"model":format!("chatgpt/{}", crate::subscription::chatgpt::MODEL)}}],
+            "litellm_params":{"model":format!("chatgpt/{}", crate::subscription::chatgpt::BUNDLED_MODEL)}}],
             "router_settings":{"timeout":20}},"cache":{"enabled":false},
             "prompts":{"dir":"/nonexistent/markitai-test-prompts"}}))
         .unwrap();

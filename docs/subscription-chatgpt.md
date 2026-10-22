@@ -1,10 +1,25 @@
 # Restricted ChatGPT subscription adapter
 
-The `chatgpt/gpt-5.5` route uses a separately installed official Codex CLI 0.159.0.
-It supports text, typed document JSON and ordered in-memory image inputs through
-the existing native conversion APIs. Other runtime versions and models fail
-explicitly. It never silently changes to API-key billing, downloads a runtime,
-starts login during conversion or implements a private OAuth endpoint.
+The `chatgpt/MODEL` route uses a separately installed official Codex CLI 0.159.0
+or later (a newer release is used with a one-time warning; see
+[subscriptions](subscriptions.md)). It supports text, typed document JSON and
+ordered in-memory image inputs through the existing native conversion APIs. It
+never silently changes to API-key billing, downloads a runtime, starts login
+during conversion or implements a private OAuth endpoint.
+
+`MODEL` is any model the installed Codex offers. The adapter asks Codex
+(`codex debug models`): first the catalog shipped with the binary, then, for a
+model newer than the binary, the list Codex refreshes for the signed-in
+account. A model Codex lists nowhere is refused before any document request,
+with the models it does offer. A Codex that cannot list its models still gets
+the named model, with a one-time warning that it is unvalidated. The default,
+where a model is chosen for you (automatic detection, `markitai init`), is the
+first model Codex lists, its own default and the newest current model; with no
+Codex to ask, `gpt-6-luna`, Python markitai's default.
+
+Python markitai signed in to ChatGPT itself (LiteLLM's device-code login); this
+adapter uses Codex's login instead, so run `markitai auth chatgpt login` once
+after installing Codex.
 
 ```text
 markitai auth chatgpt status --json
@@ -22,9 +37,9 @@ terminal, signals and exact exit status without a post-login model request.
 Windows runs the official login as a waited-for child on the existing console
 and returns its exit status; the runtime owns its credential store.
 Doctor checks runtime version and status, not inference or model entitlement.
-Discovery returns the tested adapter allowlist and labels it nonauthoritative.
+Discovery returns the models Codex lists for the signed-in account.
 
-Set `llm.model_list[].litellm_params.model` to `chatgpt/gpt-5.5`. Do not supply
+Set `llm.model_list[].litellm_params.model` to `chatgpt/<model>`. Do not supply
 api_key, api_base, max_tokens or reasoning_effort; the subscription runtime cannot enforce those
 HTTP settings. Its ordered requests share the normal concurrency, document
 request admission, cancellation, content validation and configured fallback
@@ -38,11 +53,15 @@ and cross-call merging, including when another HTTP model is first in the pool.
 A stable runtime home path does not establish which account is currently logged in.
 
 Each conversion uses a private temporary workspace, custom system prompt,
-ephemeral exec, ignored user configuration/rules and a restricted official model
-catalog. The selected catalog changes only `apply_patch_tool_type` to null and
-omits unvalidated models. Shell, file editing, MCP, applications, search and other
-tools are disabled using the pinned official interface. Unexpected tool events
-fail the conversion. Success requires a completed turn and successful process
+ephemeral exec, ignored user configuration/rules and a restricted model catalog:
+the one entry Codex reports for the model, with its patch tool, code mode,
+experimental tools, sub-agents and search tool set off (`apply_patch_tool_type`,
+`tool_mode` and `multi_agent_version` null, `experimental_supported_tools`
+empty, `supports_search_tool` false). When Codex cannot list its models, the
+`gpt-5.5` entry compiled into this build serves that model, and another model
+runs on Codex's own catalog. Shell, file editing, MCP, applications, search and
+other tools are disabled using the official configuration interface. Unexpected
+tool events fail the conversion. Success requires a completed turn and successful process
 exit; partial output, malformed events or a late nonzero exit cannot become a
 successful document. The complete Apache-2.0 catalog license, modification notice
 and data provenance are distributed under `licenses/codex/`.

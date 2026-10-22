@@ -227,7 +227,7 @@ pub(super) fn discover(provider: &str, env: &std::collections::HashMap<String, S
                 });
             match result {
                 Ok(models) => {
-                    json!({"provider":"chatgpt","status":"ok","source":"adapter_allowlist","authoritative":false,"cached":false,"stale":false,"models":models,"detail":"Only the pinned gpt-5.5 adapter capability is listed; account entitlement is not discovered"})
+                    json!({"provider":"chatgpt","status":"ok","source":"official_cli","authoritative":true,"cached":false,"stale":false,"models":models,"detail":"Models the installed Codex offers for the signed-in account, its default first"})
                 }
                 Err(cause) => unavailable(&CODEX, &cause),
             }

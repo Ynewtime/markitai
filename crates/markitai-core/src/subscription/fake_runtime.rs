@@ -841,6 +841,34 @@ fn codex(home: &Path, scenario: &Value) -> i32 {
             }
         };
     }
+    if args.first().map(String::as_str) == Some("debug")
+        && args.get(1).map(String::as_str) == Some("models")
+    {
+        // `none`: this Codex cannot list its models.
+        if scenario["catalog"] == "none" {
+            stderr("error: unrecognized subcommand 'models'\n");
+            return 2;
+        }
+        let entry = |slug: &str, priority: i64, visibility: &str| {
+            json!({"slug":slug,"display_name":slug.to_uppercase(),"priority":priority,
+                "visibility":visibility,"input_modalities":["text","image"],
+                "apply_patch_tool_type":"freeform","tool_mode":"code_mode_only",
+                "experimental_supported_tools":["clock"],"multi_agent_version":"v2",
+                "supports_search_tool":true,"shell_type":"unified_exec"})
+        };
+        let mut models = vec![
+            entry("gpt-5.5", 3, "list"),
+            entry("gpt-6-luna", 1, "list"),
+            entry("codex-auto-review", 43, "hide"),
+        ];
+        // The account's list knows a model newer than the binary.
+        if !args.iter().any(|arg| arg == "--bundled") {
+            append(&home.join("refreshes.jsonl"), &json!({"refresh":true}));
+            models.push(entry("gpt-6.2-nova", 0, "list"));
+        }
+        println!("{}", json!({"models":models}));
+        return 0;
+    }
     assert!(args.iter().any(|arg| arg == "exec"));
     for flag in [
         "--ignore-user-config",
@@ -852,7 +880,7 @@ fn codex(home: &Path, scenario: &Value) -> i32 {
         assert!(args.iter().any(|arg| arg == flag), "{flag} is missing");
     }
     assert_eq!(after(&args, "--sandbox"), "read-only");
-    assert_eq!(after(&args, "--model"), "gpt-5.5");
+    let model = after(&args, "--model").to_owned();
     for key in [
         "OPENAI_API_KEY",
         "OPENAI_BASE_URL",
@@ -874,14 +902,25 @@ fn codex(home: &Path, scenario: &Value) -> i32 {
     assert_eq!(settings["project_doc_max_bytes"], 0);
     assert_eq!(settings["web_search"], "disabled");
     assert_eq!(settings["features.shell_tool"], false);
-    let catalog_path = PathBuf::from(settings["model_catalog_json"].as_str().unwrap());
-    let catalog: Value = serde_json::from_slice(&std::fs::read(&catalog_path).unwrap()).unwrap();
-    let models = catalog["models"].as_array().unwrap();
-    assert_eq!(models.len(), 1);
-    assert_eq!(models[0]["slug"], "gpt-5.5");
-    assert!(models[0]["apply_patch_tool_type"].is_null());
-    assert!(models[0]["tool_mode"].is_null());
-    assert_eq!(models[0]["experimental_supported_tools"], json!([]));
+    // The one model of a restricted catalog, unless this Codex cannot list
+    // its models and the model is not the compiled catalog's.
+    let catalog_path = settings
+        .get("model_catalog_json")
+        .and_then(Value::as_str)
+        .map(PathBuf::from);
+    match &catalog_path {
+        Some(path) => {
+            let catalog: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+            let models = catalog["models"].as_array().unwrap();
+            assert_eq!(models.len(), 1);
+            assert_eq!(models[0]["slug"], model.as_str());
+            assert!(models[0]["apply_patch_tool_type"].is_null());
+            assert!(models[0]["tool_mode"].is_null());
+            assert_eq!(models[0]["experimental_supported_tools"], json!([]));
+            assert!(models[0]["multi_agent_version"].is_null());
+        }
+        None => assert!(scenario["catalog"] == "none" && model != "gpt-5.5"),
+    }
     let images: Vec<PathBuf> = args
         .iter()
         .enumerate()
@@ -898,11 +937,13 @@ fn codex(home: &Path, scenario: &Value) -> i32 {
         .collect();
     #[cfg_attr(not(unix), allow(unused_mut))]
     let mut request = json!({"system":system,"user":user,"image_hashes":hashes,
-        "workspace":cwd.to_string_lossy()});
+        "workspace":cwd.to_string_lossy(),"model":model,"catalog":catalog_path.is_some()});
     #[cfg(unix)]
     {
         request["workspace_mode"] = json!(permissions(&cwd));
-        let files = [instructions.clone(), catalog_path.clone()];
+        let files: Vec<PathBuf> = std::iter::once(instructions.clone())
+            .chain(catalog_path.clone())
+            .collect();
         request["file_modes"] = files
             .iter()
             .chain(&images)

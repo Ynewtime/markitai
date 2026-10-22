@@ -15,8 +15,8 @@ array included; Perplexity, Z.ai and Fireworks AI answer `unavailable` with
 model list, and their model IDs are typed by hand. The subscription providers
 `copilot` and `claude-agent` ask their installed official runtime for its model
 list on every request (never cached, because a stored login can change);
-`chatgpt` returns the adapter's fixed `gpt-5.5` allowlist marked
-non-authoritative. They reject an API key or base URL and report `unavailable`
+`chatgpt` returns the models the installed Codex offers for the signed-in
+account (`codex debug models`), its default first. They reject an API key or base URL and report `unavailable`
 when the runtime or its login is missing. Markitai itself reads no browser or
 CLI authentication store; see [subscriptions](subscriptions.md).
 Quick-add `/api/settings/llm/detected` lists the default models whose API keys

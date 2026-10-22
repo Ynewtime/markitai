@@ -183,9 +183,19 @@ fn unknown_version_model_and_mime_fail_without_document_execution() {
     assert_eq!(e.kind, FailureKind::Unsupported);
     assert_eq!(f.calls().len(), 1);
     let f = Fixture::new("ok");
-    let e = complete(&f.config, f.request("gpt-6-sol", &[])).unwrap_err();
-    assert_eq!(e.kind, FailureKind::Unsupported);
+    // A name that cannot be a model is refused before Codex is started.
+    let e = complete(&f.config, f.request("gpt 6; rm", &[])).unwrap_err();
+    assert_eq!(e.kind, FailureKind::InvalidRequest);
     assert!(f.calls().is_empty());
+    // A model the installed Codex does not offer is refused before any
+    // document request, naming the ones it offers.
+    let e = complete(&f.config, f.request("gpt-4-retired", &[])).unwrap_err();
+    assert_eq!(e.kind, FailureKind::Unsupported);
+    assert_eq!(
+        e.error.to_string(),
+        "The installed Codex does not offer chatgpt/gpt-4-retired; it offers chatgpt/gpt-6.2-nova, chatgpt/gpt-6-luna, chatgpt/gpt-5.5"
+    );
+    assert!(!f.root.path().join("request.json").exists());
     let e = complete(
         &f.config,
         f.request("gpt-5.5", &[("image/png", b"not an image")]),
@@ -279,10 +289,66 @@ fn stderr_is_bounded_and_never_appears_in_public_errors() {
     assert!(e.error.to_string().len() < 256);
 }
 #[test]
-fn catalog_list_is_a_restricted_capability_allowlist_not_entitlement_discovery() {
+fn the_models_are_the_ones_the_installed_codex_offers_its_default_first() {
     let f = Fixture::new("ok");
+    let list = models(&f.config, Duration::from_secs(5)).unwrap();
+    let names: Vec<&str> = list.iter().map(|model| model.model.as_str()).collect();
+    // The account's list, hidden entries left out, in Codex's own order.
+    assert_eq!(
+        names,
+        [
+            "chatgpt/gpt-6.2-nova",
+            "chatgpt/gpt-6-luna",
+            "chatgpt/gpt-5.5"
+        ]
+    );
+    assert_eq!(list[1].label, "GPT-6-LUNA");
+    assert!(list.iter().all(|model| model.supports_vision));
+    // The default is the first model of the binary's own list.
+    assert_eq!(
+        default_model(&f.config, Duration::from_secs(5)),
+        "gpt-6-luna"
+    );
+    // A Codex that cannot list its models.
+    let f = Fixture::new("ok");
+    fake_runtime::install(f.root.path(), &json!({"name":"ok","catalog":"none"}));
     let list = models(&f.config, Duration::from_secs(5)).unwrap();
     assert_eq!(list.len(), 1);
     assert_eq!(list[0].model, "chatgpt/gpt-5.5");
-    assert!(list[0].supports_vision);
+    assert_eq!(
+        default_model(&f.config, Duration::from_secs(5)),
+        FALLBACK_MODEL
+    );
+}
+#[test]
+fn each_offered_model_runs_with_its_own_restricted_catalog_entry() {
+    let f = Fixture::new("ok");
+    // In the binary's list: no account refresh is needed.
+    complete(&f.config, f.request("gpt-6-luna", &[])).unwrap();
+    let sent: Value =
+        serde_json::from_slice(&std::fs::read(f.root.path().join("request.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        (sent["model"].as_str(), sent["catalog"].as_bool()),
+        (Some("gpt-6-luna"), Some(true))
+    );
+    assert!(!f.root.path().join("refreshes.jsonl").exists());
+    // Newer than the binary: found in the account's list.
+    complete(&f.config, f.request("chatgpt/gpt-6.2-nova", &[])).unwrap();
+    let sent: Value =
+        serde_json::from_slice(&std::fs::read(f.root.path().join("request.json")).unwrap())
+            .unwrap();
+    assert_eq!(sent["model"], "gpt-6.2-nova");
+    assert!(f.root.path().join("refreshes.jsonl").exists());
+    // A Codex that cannot list its models: the compiled catalog for its
+    // model, Codex's own catalog for another one.
+    let f = Fixture::new("ok");
+    fake_runtime::install(f.root.path(), &json!({"name":"ok","catalog":"none"}));
+    for (model, catalog) in [("gpt-5.5", true), ("gpt-6-luna", false)] {
+        complete(&f.config, f.request(model, &[])).unwrap();
+        let sent: Value =
+            serde_json::from_slice(&std::fs::read(f.root.path().join("request.json")).unwrap())
+                .unwrap();
+        assert_eq!(sent["catalog"], catalog, "{model}");
+    }
 }

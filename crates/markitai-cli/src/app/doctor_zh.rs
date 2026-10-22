@@ -162,8 +162,8 @@ const KNOWN: &[(&str, &str)] = &[
         "已安装的 Codex 运行时无法确认它支持的版本",
     ),
     (
-        "Install official Codex 0.159.0; this adapter currently supports chatgpt/gpt-5.5",
-        "请安装官方 Codex 0.159.0；此适配器目前支持 chatgpt/gpt-5.5",
+        "Install official Codex 0.159.0 or later; chatgpt/<model> takes any model it offers",
+        "请安装官方 Codex 0.159.0 或更新版本；chatgpt/<model> 可使用它提供的任何模型",
     ),
     (
         "Official runtime reports a ChatGPT login; model entitlement and inference were not probed",

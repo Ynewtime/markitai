@@ -256,7 +256,7 @@ candidates available without persisting them. Explicit `MODEL` selects the
 process's automatic model. Common provider cards do not perform network requests;
 `refresh` recomputes these inexpensive cards immediately.
 
-Subscription models (`copilot/`, `claude-agent/` and `chatgpt/gpt-5.5`) run
+Subscription models (`copilot/`, `claude-agent/` and `chatgpt/`) run
 through their installed official runtimes as described in
 [subscriptions](subscriptions.md); they take no API key or base URL, and their
 provider cards stay offered after models are added, listing models through the

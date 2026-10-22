@@ -7,7 +7,7 @@ key, using the provider's separately installed official command-line runtime:
 |---|---|---|
 | `copilot/MODEL` | GitHub Copilot CLI `1.0.90-2` or later (protocol 3) | `markitai auth copilot status`, `markitai auth copilot login` |
 | `claude-agent/MODEL` | Claude Code CLI `2.1.284` or later | `markitai auth claude status`, `markitai auth claude login` |
-| `chatgpt/gpt-5.5` | Codex CLI `0.159.0` or later | `markitai auth chatgpt status`, `markitai auth chatgpt login` |
+| `chatgpt/MODEL` | Codex CLI `0.159.0` or later | `markitai auth chatgpt status`, `markitai auth chatgpt login` |
 
 `markitai auth` alone reports all three. When the workbench or
 `POST /api/settings/llm/model-discovery` cannot list a runtime's models, the answer names the cause
@@ -234,7 +234,9 @@ official-runtime checks establish only their recorded version, initialization
 or signed-out behavior. They do not establish a real login, model entitlement,
 authenticated inference or billing.
 
-The restricted `chatgpt/gpt-5.5` adapter targets official Codex 0.159.0; its
-[contract](subscription-chatgpt.md) describes its model allowlist and aggregate
-usage limits. No adapter imports a private OAuth protocol or invents dollar
+The restricted `chatgpt/` adapter targets official Codex 0.159.0 and later; its
+[contract](subscription-chatgpt.md) describes how it takes the models Codex
+offers and its aggregate usage limits. Models other than `gpt-5.5` have been
+checked against a fake runtime and Codex's own model list (0.159.0 and 0.163.0),
+not with real inference. No adapter imports a private OAuth protocol or invents dollar
 prices for a subscription.

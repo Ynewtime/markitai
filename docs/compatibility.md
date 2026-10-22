@@ -55,6 +55,13 @@ configuration or the process environment, not in task content or published logs.
 - **Caching:** native entries preserve their own content/model/prompt identity;
   older reference rows can remain inspectable without being reusable as new typed
   answers. Cache hits do not imply a fresh provider request or current model output.
+- **ChatGPT subscription:** Python markitai signed in to ChatGPT itself
+  (LiteLLM's device-code login, stored in `~/.config/litellm/chatgpt/`); this
+  build uses the official Codex CLI instead and implements no private OAuth.
+  Install Codex (`npm install -g @openai/codex`) and run `markitai auth chatgpt
+  login` once; the Python login is not reused. `chatgpt/<model>` takes any model
+  the installed Codex offers (`gpt-6-luna`, Python's default, included);
+  [ChatGPT](subscription-chatgpt.md) has the details.
 - **Bindings:** Python, Node and Go share the conversion envelope but their
   convenience functions and error types differ. Windows Go/cgo packages are not
   delivered. See [bindings](bindings.md) and [MCP](mcp.md).
