@@ -26,9 +26,12 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tempfile.workspace = true
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "multipart", "json", "rustls-tls", "gzip", "brotli"] }
-# The system's certificate authorities (or SSL_CERT_FILE/SSL_CERT_DIR),
-# trusted beside reqwest's built-in Mozilla roots (`trust.rs`).
+# rustls without reqwest's own crypto provider (aws-lc-rs, which needs extra
+# build tools on Windows Arm64): `trust.rs` gives every client a ring config.
+reqwest = { version = "0.13.5", default-features = false, features = ["blocking", "multipart", "json", "form", "rustls-no-provider", "gzip", "brotli"] }
+# The built-in Mozilla roots, and the system's certificate authorities (or
+# SSL_CERT_FILE/SSL_CERT_DIR) trusted beside them (`trust.rs`).
+webpki-roots = "1"
 rustls-native-certs = "0.8"
 rustls = { version = "0.23", default-features = false, features = ["std", "ring"] }
 url = "2"

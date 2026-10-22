@@ -277,7 +277,7 @@ fn streaming_download_checks_actual_bytes_and_records_digest() {
         });
         (url, task)
     }
-    let client = Client::builder()
+    let client = crate::trust::bundled_builder()
         .no_proxy()
         .timeout(Duration::from_secs(3))
         .build()

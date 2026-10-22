@@ -320,7 +320,7 @@ fn statuses_refusals_clean_closes_resets_after_the_request_and_timeouts_are_neve
         .unwrap_err();
     assert!(!connection_dropped(&refused), "{refused:?}");
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let slow = reqwest::blocking::Client::builder()
+    let slow = crate::trust::bundled_builder()
         .timeout(Duration::from_millis(150))
         .build()
         .unwrap()

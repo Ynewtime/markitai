@@ -7,22 +7,39 @@
 //! proxy that re-signs HTTPS with its own authority is then trusted wherever
 //! that authority is installed, while every site the built-in roots verify
 //! keeps working when the system store cannot be read.
-use std::sync::OnceLock;
+use rustls::pki_types::CertificateDer;
+use std::sync::{Arc, OnceLock};
 
 /// A blocking client builder trusting the built-in roots and, beside them,
 /// the system's or the `SSL_CERT_FILE`/`SSL_CERT_DIR` certificates.
 pub(crate) fn client_builder() -> reqwest::blocking::ClientBuilder {
-    added()
-        .iter()
-        .cloned()
-        .fold(reqwest::blocking::Client::builder(), |builder, root| {
-            builder.add_root_certificate(root)
-        })
+    static CONFIG: OnceLock<rustls::ClientConfig> = OnceLock::new();
+    with_roots(CONFIG.get_or_init(|| tls_config(added())).clone())
+}
+
+/// A client builder whose TLS is `config`. reqwest is built without a
+/// crypto provider of its own (it would bring aws-lc-rs); every client is
+/// given this ring-based configuration instead.
+fn with_roots(config: rustls::ClientConfig) -> reqwest::blocking::ClientBuilder {
+    reqwest::blocking::Client::builder().tls_backend_preconfigured(config)
+}
+
+/// TLS 1.2 and 1.3 on ring, trusting the built-in Mozilla roots and `extra`.
+fn tls_config(extra: &[CertificateDer<'static>]) -> rustls::ClientConfig {
+    let mut roots = rustls::RootCertStore {
+        roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
+    };
+    roots.add_parsable_certificates(extra.iter().cloned());
+    rustls::ClientConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
+        .with_safe_default_protocol_versions()
+        .expect("ring supports TLS 1.2 and 1.3")
+        .with_root_certificates(roots)
+        .with_no_client_auth()
 }
 
 /// The roots added to the built-in ones, read once per process.
-fn added() -> &'static [reqwest::Certificate] {
-    static ADDED: OnceLock<Vec<reqwest::Certificate>> = OnceLock::new();
+fn added() -> &'static [CertificateDer<'static>] {
+    static ADDED: OnceLock<Vec<CertificateDer<'static>>> = OnceLock::new();
     ADDED.get_or_init(|| {
         let loaded = rustls_native_certs::load_native_certs();
         // An unreadable system store is no failure (the built-in roots
@@ -41,20 +58,19 @@ fn added() -> &'static [reqwest::Certificate] {
 
 /// The certificates a TLS client can use as roots. A store often carries
 /// certificates rustls cannot read as a trust anchor (old roots without
-/// extensions); one of them would make every client fail to build, so each
-/// is checked and skipped alone.
-fn usable(
-    certificates: Vec<rustls::pki_types::CertificateDer<'static>>,
-) -> Vec<reqwest::Certificate> {
+/// extensions); each is checked and skipped alone.
+fn usable(certificates: Vec<CertificateDer<'static>>) -> Vec<CertificateDer<'static>> {
     certificates
         .into_iter()
-        .filter_map(|der| {
-            rustls::RootCertStore::empty()
-                .add(der.clone())
-                .ok()
-                .and_then(|()| reqwest::Certificate::from_der(&der).ok())
-        })
+        .filter(|der| rustls::RootCertStore::empty().add(der.clone()).is_ok())
         .collect()
+}
+
+/// A client builder trusting only the built-in roots, for tests that need
+/// no added authority.
+#[cfg(test)]
+pub(crate) fn bundled_builder() -> reqwest::blocking::ClientBuilder {
+    with_roots(tls_config(&[]))
 }
 
 #[cfg(test)]
@@ -196,17 +212,11 @@ mod tests {
     #[test]
     fn unusable_store_entries_are_skipped_not_fatal() {
         let (ca, _, _) = authority();
-        let garbage = rustls::pki_types::CertificateDer::from(b"not a certificate".to_vec());
+        let garbage = CertificateDer::from(b"not a certificate".to_vec());
         let roots = usable(vec![garbage, ca.into()]);
         assert_eq!(roots.len(), 1);
         // A builder carrying them still builds.
-        roots
-            .into_iter()
-            .fold(reqwest::blocking::Client::builder(), |builder, root| {
-                builder.add_root_certificate(root)
-            })
-            .build()
-            .unwrap();
+        with_roots(tls_config(&roots)).build().unwrap();
     }
 
     /// A server whose certificate only the test authority vouches for is
@@ -217,18 +227,14 @@ mod tests {
         let (ca, leaf, pkcs8) = authority();
         let (port, server) = serve(leaf, pkcs8, 2);
         let url = format!("https://localhost:{port}/");
-        let bundled = reqwest::blocking::Client::builder()
+        let bundled = bundled_builder()
             .no_proxy()
             .timeout(std::time::Duration::from_secs(10))
             .build()
             .unwrap();
         let error = bundled.get(&url).send().unwrap_err();
         assert!(format!("{error:?}").contains("UnknownIssuer"), "{error:?}");
-        let trusted = usable(vec![ca.into()])
-            .into_iter()
-            .fold(reqwest::blocking::Client::builder(), |builder, root| {
-                builder.add_root_certificate(root)
-            })
+        let trusted = with_roots(tls_config(&usable(vec![ca.into()])))
             .no_proxy()
             .timeout(std::time::Duration::from_secs(10))
             .build()

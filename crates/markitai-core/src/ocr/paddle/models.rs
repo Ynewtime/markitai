@@ -696,7 +696,7 @@ mod tests {
     }
 
     fn client() -> reqwest::blocking::Client {
-        reqwest::blocking::Client::builder()
+        crate::trust::bundled_builder()
             .no_proxy()
             .timeout(Duration::from_secs(3))
             .build()

@@ -97,7 +97,7 @@ fn the_proxy_not_opening_a_tunnel_is_named() {
         drain(stream);
     });
     let proxy = reqwest::Proxy::all(format!("http://{address}")).unwrap();
-    let client = reqwest::blocking::Client::builder()
+    let client = crate::trust::bundled_builder()
         .no_proxy()
         .proxy(proxy)
         .build()
@@ -233,7 +233,7 @@ fn a_retried_failure_is_warned_with_its_cause() {
 fn a_refusing_proxy_is_named_without_its_credentials_and_the_provider_is_not_blamed() {
     // Nothing listens on port 9 of loopback.
     let proxy = reqwest::Proxy::all("http://alice:secret@127.0.0.1:9").unwrap();
-    let client = reqwest::blocking::Client::builder()
+    let client = crate::trust::bundled_builder()
         .no_proxy()
         .proxy(proxy)
         .build()
@@ -249,10 +249,7 @@ fn a_refusing_proxy_is_named_without_its_credentials_and_the_provider_is_not_bla
     );
     assert!(!said.contains("alice") && !said.contains("secret"));
     // Without a proxy the wording is unchanged.
-    let direct = reqwest::blocking::Client::builder()
-        .no_proxy()
-        .build()
-        .unwrap();
+    let direct = crate::trust::bundled_builder().no_proxy().build().unwrap();
     let error = direct.get("http://127.0.0.1:9/").send().unwrap_err();
     assert_eq!(diagnosis::cause(error, None).unwrap(), "connection refused");
 }
