@@ -879,6 +879,7 @@ The initial exact capability table is deliberately small:
 | Provider and exact model IDs | Available modes before JSON text |
 |---|---|
 | OpenAI `gpt-4.1`, `gpt-4.1-2025-04-14` | Named tools, JSON schema |
+| OpenAI GPT-5 and later (`gpt-5*`, `gpt-6-luna`, `gpt-6.1-sol`, …) | JSON schema (`response_format`), as Python markitai sends it to these reasoning models; LiteLLM's catalog lists structured outputs for all of them |
 | Anthropic `claude-haiku-5-5` | Named tools, native JSON schema; in a live check (2026-10-09) its forced tool answer kept every protected marker of the presentation that Haiku 4.5 failed |
 | Anthropic `claude-haiku-4-5`, `claude-haiku-4-5-20251001` | Native JSON schema; Haiku 4.5's forced tool answers dropped the protected markers in live checks, costing a second request |
 | Anthropic `claude-opus-5-5`, `claude-sonnet-5-5`, `claude-fable-5-1`, `claude-mythos-5-1` | Native JSON schema; these models restrict forced named tools |

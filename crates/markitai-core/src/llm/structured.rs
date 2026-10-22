@@ -56,6 +56,11 @@ pub(super) fn capabilities(entry: &Deployment) -> (bool, bool) {
         entry.protocol,
     ) {
         ("openai", "gpt-4.1" | "gpt-4.1-2025-04-14", Protocol::Chat) => (true, true),
+        // GPT-5 and later reason; Python markitai (through LiteLLM, whose
+        // catalog lists structured outputs for every one of them) skips
+        // forced tools for reasoning models and sends `response_format`
+        // with the JSON schema. A refusal of the mode moves to JSON text.
+        ("openai", model, Protocol::Chat) if gpt_five_or_later(model) => (false, true),
         // Claude Haiku 5.5's forced tool answer kept all 9 protected markers,
         // in order, in the live check of 2026-10-09 that Haiku 4.5 failed
         // (sample.pptx --llm --alt --desc: one document request, no resend). A
@@ -89,6 +94,15 @@ pub(super) fn capabilities(entry: &Deployment) -> (bool, bool) {
         _ => (false, false),
     }
 }
+/// `gpt-5`, `gpt-5.5`, `gpt-6-luna`, `gpt-6.1-sol` and their dated names.
+fn gpt_five_or_later(model: &str) -> bool {
+    model
+        .strip_prefix("gpt-")
+        .and_then(|rest| rest.split(['.', '-']).next())
+        .and_then(|major| major.parse::<u32>().ok())
+        .is_some_and(|major| major >= 5)
+}
+
 fn modes(prompts: &Prompts, cfg: &Value, env: &HashMap<String, String>) -> Result<Vec<Mode>> {
     let entries = deployments(cfg, env)?;
     let groups = fallback_groups(cfg, &entries)?;
@@ -689,6 +703,25 @@ mod tests {
             ..haiku
         };
         assert_eq!(capabilities(&haiku), (true, true));
+        // GPT-5 and later answer through `response_format`, not forced tools.
+        for model in ["gpt-6-luna", "gpt-5.5-2026-04-23", "gpt-6.1-sol", "gpt-5"] {
+            let gpt = Deployment {
+                model: model.into(),
+                provider: "openai".into(),
+                protocol: Protocol::Chat,
+                ..haiku.clone()
+            };
+            assert_eq!(capabilities(&gpt), (false, true), "{model}");
+        }
+        for model in ["gpt-4o", "gpt-4.1-mini", "o4-mini"] {
+            let other = Deployment {
+                model: model.into(),
+                provider: "openai".into(),
+                protocol: Protocol::Chat,
+                ..haiku.clone()
+            };
+            assert_eq!(capabilities(&other), (false, false), "{model}");
+        }
     }
     #[test]
     fn parameter_rejection_does_not_reclassify_bad_images() {
