@@ -151,6 +151,14 @@ impl PdfRasterSession {
         }
     }
 
+    /// `dpi`, or the highest resolution below it at which the page fits the
+    /// 32 million pixel limit: a poster-sized page (up to 200 × 200 inches)
+    /// is drawn smaller instead of failing its document.
+    pub(crate) fn fitting_dpi(&self, page_1_based: usize, dpi: f64) -> Result<f64> {
+        let (width, height) = self.page_size(page_1_based)?;
+        Ok(fitting_dpi(width, height, dpi))
+    }
+
     pub(crate) fn render(&self, page_1_based: usize, dpi: f64) -> Result<image::RgbImage> {
         match self {
             #[cfg(target_os = "macos")]
@@ -249,6 +257,27 @@ fn raster_size(width: f64, height: f64, dpi: f64) -> Result<RasterSize> {
     })
 }
 
+/// See [`PdfRasterSession::fitting_dpi`]. A page whose box is invalid keeps
+/// `dpi`; [`raster_size`] then reports what is wrong with it.
+fn fitting_dpi(width: f64, height: f64, dpi: f64) -> f64 {
+    if raster_size(width, height, dpi).is_ok() {
+        return dpi;
+    }
+    let pixels = width * dpi / 72. * (height * dpi / 72.);
+    if !pixels.is_finite() || pixels <= 0. {
+        return dpi;
+    }
+    let mut fitted = dpi * (MAX_PIXELS as f64 / pixels).sqrt();
+    // Each side is rounded up; a few small steps down absorb that.
+    for _ in 0..64 {
+        if raster_size(width, height, fitted).is_ok() {
+            return fitted;
+        }
+        fitted *= 0.999;
+    }
+    fitted
+}
+
 #[cfg(test)]
 mod limits_tests {
     use super::*;
@@ -276,6 +305,23 @@ mod limits_tests {
         assert_eq!((a4.width, a4.height), (1250, 1667));
         let letter = raster_size(612., 792., 150.).unwrap();
         assert_eq!((letter.width, letter.height), (1275, 1650));
+    }
+
+    #[test]
+    fn a_poster_page_is_drawn_at_the_resolution_that_fits_the_limit() {
+        // A letter page keeps its resolution.
+        assert_eq!(fitting_dpi(612., 792., 150.), 150.);
+        // 200 × 200 inches, the largest page a PDF may have: 900 million
+        // pixels at 150 dpi, about 28 dpi within the limit.
+        let dpi = fitting_dpi(14_400., 14_400., 150.);
+        assert!((27.9..28.3).contains(&dpi), "{dpi}");
+        let size = raster_size(14_400., 14_400., dpi).unwrap();
+        assert!(size.rgb_bytes / 3 > 31_900_000, "{}", size.rgb_bytes / 3);
+        // A long strip is limited by its area too.
+        let dpi = fitting_dpi(14_400., 1_440., 150.);
+        assert!(raster_size(14_400., 1_440., dpi).is_ok() && dpi < 150.);
+        // An invalid box keeps the resolution and fails as before.
+        assert_eq!(fitting_dpi(0., 100., 150.), 150.);
     }
 
     #[test]

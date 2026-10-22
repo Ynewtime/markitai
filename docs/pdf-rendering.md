@@ -23,7 +23,10 @@ the same checks and returns upright RGB8 pixels composited onto white. The frame
 is CropBox intersected with MediaBox, with the page's quarter-turn rotation;
 dimensions are the frame at the requested DPI, rounded up. The media
 orchestration layer chooses 150 DPI and manages document-wide page, pixel and
-screenshot budgets.
+screenshot budgets. A page that would exceed the per-raster limit at 150 DPI
+(a poster, up to the 200 × 200 inches a PDF page may measure) is drawn at the
+highest DPI that fits it (`fitting_dpi`, about 28 DPI for the largest page) for
+its screenshot and OCR, instead of failing the document.
 
 Each raster is limited to 32 million pixels. Coordinates and DPI must be finite,
 dimensions must be positive, and all row/buffer products are checked. Input is

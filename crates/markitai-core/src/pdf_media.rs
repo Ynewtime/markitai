@@ -664,13 +664,14 @@ pub(crate) fn capture_external_pdf(
     let mut blank_pages = Vec::new();
     let mut sizes = Vec::with_capacity(count);
     for page in 1..=count {
-        let size = session.dimensions(page, DPI)?;
+        let dpi = session.fitting_dpi(page, DPI)?;
+        let size = session.dimensions(page, dpi)?;
         budget.pixels(size.0, size.1)?;
-        sizes.push(size);
+        sizes.push((size, dpi));
     }
-    for (index, size) in sizes.into_iter().enumerate() {
+    for (index, (size, dpi)) in sizes.into_iter().enumerate() {
         let page = index + 1;
-        let pixels = session.render(page, DPI)?;
+        let pixels = session.render(page, dpi)?;
         if pixels.dimensions() != size {
             return Err(failure(
                 "rendered dimensions changed after budget validation",
@@ -850,9 +851,12 @@ fn prepare_with(
             return Err(failure("renderer and extractor disagree on page count"));
         }
         for &index in &render_indices {
-            let size = session.dimensions(pages.pages[index].number, DPI)?;
+            // A poster-sized page is drawn smaller, to fit the pixel limit.
+            let number = pages.pages[index].number;
+            let dpi = session.fitting_dpi(number, DPI)?;
+            let size = session.dimensions(number, dpi)?;
             budget.pixels(size.0, size.1)?;
-            sizes.push(size);
+            sizes.push((size, dpi));
         }
     }
     let mut screenshots = Vec::new();
@@ -879,13 +883,13 @@ fn prepare_with(
             std::collections::VecDeque::new();
         let (ended, endings) = std::sync::mpsc::channel::<()>();
         let mut running = 0usize;
-        for (&index, &size) in render_indices.iter().zip(&sizes) {
+        for (&index, &(size, dpi)) in render_indices.iter().zip(&sizes) {
             let number = pages.pages[index].number;
             let mut lap = ocr::trace::Lap::start();
             let pixels = session
                 .as_ref()
                 .expect("render indices require a session")
-                .render(number, DPI)?;
+                .render(number, dpi)?;
             ocr::trace::set_page(number);
             ocr::trace::line(format_args!(
                 "render={:.0}ms size={}x{}",
@@ -1484,6 +1488,11 @@ mod tests {
 
     /// Image-only pages, each one gray of its own (page `n` at `40 * n`).
     fn scans(count: u8) -> Vec<u8> {
+        scans_sized(count, 72, 96)
+    }
+
+    /// [`scans`] on pages `width` × `height` points large.
+    fn scans_sized(count: u8, width: i64, height: i64) -> Vec<u8> {
         use lopdf::{Dictionary, Object, Stream, dictionary};
         let mut pdf = lopdf::Document::with_version("1.7");
         let tree = pdf.new_object_id();
@@ -1499,7 +1508,7 @@ mod tests {
             ));
             let content = pdf.add_object(Stream::new(
                 Dictionary::new(),
-                b"q 72 0 0 96 0 0 cm /Scan Do Q".to_vec(),
+                format!("q {width} 0 0 {height} 0 0 cm /Scan Do Q").into_bytes(),
             ));
             kids.push(Object::Reference(pdf.add_object(dictionary! {
                 "Type" => "Page", "Parent" => tree, "Contents" => content,
@@ -1510,7 +1519,7 @@ mod tests {
             tree,
             dictionary! {
                 "Type" => "Pages", "Count" => i64::from(count), "Kids" => kids,
-                "MediaBox" => vec![0.into(), 0.into(), 72.into(), 96.into()]
+                "MediaBox" => vec![0.into(), 0.into(), width.into(), height.into()]
             }
             .into(),
         );
@@ -1590,6 +1599,35 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn a_poster_page_is_recognized_at_a_lower_resolution_instead_of_failing() {
+        // 200 × 200 inches: 900 million pixels at 150 dpi.
+        let poster = scans_sized(1, 14_400, 14_400);
+        let seen = std::sync::Mutex::new(None);
+        let recognize = |pixels: RgbImage, _: &Value| -> Result<ocr::OcrResult> {
+            *seen.lock().unwrap() = Some(pixels.dimensions());
+            Ok(ocr::OcrResult {
+                text: "Recognized poster.".into(),
+                confidence: 1.0,
+                boxes: Vec::new(),
+                scale: 1.0,
+                language: "test".into(),
+                unread: false,
+                capped: false,
+            })
+        };
+        let cfg =
+            json!({"ocr":{"enabled":true},"llm":{"enabled":false},"screenshot":{"enabled":true}});
+        let prepared = prepare_with(&poster, "poster.pdf", &cfg, false, &recognize).unwrap();
+        let (width, height) = seen.lock().unwrap().expect("the page was recognized");
+        assert_eq!(width, height);
+        let pixels = u64::from(width) * u64::from(height);
+        assert!((31_000_000..=MAX_PAGE_PIXELS).contains(&pixels), "{pixels}");
+        assert_eq!(prepared.screenshots.len(), 1);
+        let (document, _) = prepared.finish().unwrap();
+        assert!(document.markdown.contains("Recognized poster."));
     }
 
     #[test]
