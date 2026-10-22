@@ -1355,7 +1355,7 @@ line two</t></is></c><c r="B2" t="inlineStr"><is><t>example.com</t></is></c><c r
         let opts = zip::write::SimpleFileOptions::default();
         for i in 0..archive.len() {
             let mut file = archive.by_index(i).unwrap();
-            let name = file.name().to_string();
+            let name = file.name().unwrap().to_string(); // markitai: zip 9
             let mut body = String::new();
             file.read_to_string(&mut body).unwrap();
             if name == "xl/_rels/workbook.xml.rels" {

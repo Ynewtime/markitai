@@ -270,7 +270,7 @@ fn read_docx(bytes: &[u8]) -> Metadata {
         // entries): their comments are present but unread, not absent.
         Err(message) => {
             return match zip::ZipArchive::new(Cursor::new(bytes)) {
-                Ok(raw) if raw.file_names().any(|name| name == "word/comments.xml") => Metadata {
+                Ok(raw) if raw.index_for_name("word/comments.xml").is_some() => Metadata {
                     warnings: vec![format!(
                         "Word review comments could not be recovered: {message}"
                     )],
@@ -280,10 +280,10 @@ fn read_docx(bytes: &[u8]) -> Metadata {
             };
         }
     };
-    if !archive
+    if archive
         .archive
-        .file_names()
-        .any(|name| name == "word/comments.xml")
+        .index_for_name("word/comments.xml")
+        .is_none()
     {
         return Metadata::default();
     }

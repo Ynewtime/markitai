@@ -54,7 +54,10 @@ impl<'a> Package<'a> {
                 .archive
                 .by_index(i)
                 .map_err(|_| failure("workbook ZIP entry cannot be copied"))?;
-            if !self.changed.contains_key(file.name()) {
+            // Every changed part has a UTF-8 name (`opc::Zip::names`).
+            let changed =
+                std::str::from_utf8(file.name_raw()).is_ok_and(|n| self.changed.contains_key(n));
+            if !changed {
                 writer
                     .raw_copy_file(file)
                     .map_err(|_| failure("workbook ZIP part could not be preserved"))?;

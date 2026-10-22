@@ -12,7 +12,7 @@ fn parts(bytes: &[u8]) -> BTreeMap<String, Vec<u8>> {
     (0..zip.len())
         .map(|i| {
             let mut f = zip.by_index(i).unwrap();
-            let n = f.name().to_owned();
+            let n = f.name().unwrap().into_owned();
             let mut b = Vec::new();
             f.read_to_end(&mut b).unwrap();
             (n, b)

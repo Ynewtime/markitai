@@ -250,8 +250,12 @@ mod tests {
         let mut bytes = bytes;
         let central = bytes.len() - 22 - (46 + 5);
         bytes[central + 24..central + 28].copy_from_slice(&3u32.to_le_bytes());
+        // zip refuses the local header that disagrees with it before this
+        // reader's own size check sees the bytes.
         let mut zip = Zip::open(&bytes, MAX_ENTRIES).unwrap();
-        assert!(zip.read("a.xml", 5).unwrap_err().contains("declared size"));
+        let error = zip.read("a.xml", 5).unwrap_err();
+        assert!(error.starts_with("part a.xml cannot be read: "), "{error}");
+        assert!(error.contains("size"), "{error}");
     }
 
     #[test]

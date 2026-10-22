@@ -1383,7 +1383,7 @@ mod error_code_tests {
             let mut file = archive.by_index(index).unwrap();
             let mut text = String::new();
             std::io::Read::read_to_string(&mut file, &mut text).unwrap();
-            folders.push((file.name().to_owned(), text));
+            folders.push((file.name().unwrap().into_owned(), text));
         }
         folders.sort();
         assert_eq!(

@@ -550,7 +550,10 @@ upstream files:
 
 `Cargo.toml` asks `zip` for `deflate-flate2-zlib-rs` instead of `deflate`, as
 the workspace crates do: the same deflate backend without the zopfli encoder,
-which zip uses only above level 9 and Markitai never requests.
+which zip uses only above level 9 and Markitai never requests. It requires
+zip 9 instead of 8 (zip 8 carries RUSTSEC-2026-0367 to 0369), where
+`ZipFile::name` returns a `Result`; the one caller, a test helper in
+`src/formats/sheet/xlsx.rs`, unwraps it.
 
 `rustfmt.toml` (`use_small_heuristics = "Max"`) is not in the published
 package; it reproduces upstream's formatting, so `cargo fmt` in this directory

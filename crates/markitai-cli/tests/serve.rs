@@ -341,7 +341,7 @@ fn zip_contents(bytes: &[u8]) -> HashMap<String, Vec<u8>> {
         .map(|index| {
             let mut file = archive.by_index(index).unwrap();
             assert!(file.enclosed_name().is_some());
-            let name = file.name().to_owned();
+            let name = file.name().unwrap().into_owned();
             let mut bytes = Vec::new();
             file.read_to_end(&mut bytes).unwrap();
             (name, bytes)

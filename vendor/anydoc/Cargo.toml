@@ -72,7 +72,7 @@ version = "1.14.2"
 version = "0.42.0"
 
 [dependencies.zip]
-version = "8.6.0"
+version = "9.0.5"
 features = ["deflate-flate2-zlib-rs"]
 default-features = false
 

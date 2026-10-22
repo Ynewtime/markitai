@@ -1,0 +1,286 @@
+{
+  "name": "iwork",
+  "version": "0.2.1",
+  "repository": "https://github.com/zebra-pig/iwork-rs",
+  "upstream_git_commit": "4cf8282d2cc93570ed00c2fe2e4207ef69229898",
+  "registry_archive_sha256": "8a8862036a02bcac12eade55a57905341fbf3d8a92a7455ed5ba9a4e639c7dce",
+  "license": "MIT",
+  "copy_scope": "The published package's library and command source (src), integration tests (tests; the fixture documents they look for are not in the package and those tests pass without them), examples, README.md, LICENSE and its package manifest. No Cargo.lock, Cargo.toml.orig, registry markers, FORMAT.md, CHANGELOG.md or CI files copied.",
+  "copied_files": [
+    {
+      "path": "Cargo.toml",
+      "bytes": 2960,
+      "upstream_sha256": "d1e157d71dac3dec09837ec6e5b24655708a7d4ac4563f4d48f779f5eb2ac1de"
+    },
+    {
+      "path": "LICENSE",
+      "bytes": 1066,
+      "upstream_sha256": "2e18bf29046566200071ab85a3aaa749a8fa5cf56aac1250826ddeb5c4a30057"
+    },
+    {
+      "path": "README.md",
+      "bytes": 92357,
+      "upstream_sha256": "17036a66b2a263af889d50de93cbaa471bca45d109df06d1a05f39fa0cbb9742"
+    },
+    {
+      "path": "examples/deck.rs",
+      "bytes": 2227,
+      "upstream_sha256": "9f21717e23815082004159836734fa72a6e43502d99ed38fb79c7442bfbdc218"
+    },
+    {
+      "path": "examples/report.rs",
+      "bytes": 1290,
+      "upstream_sha256": "cfa1d9351285a9d792c68716ae2f93e0781f8de33d3c536beca7dab5bf91457c"
+    },
+    {
+      "path": "examples/showcase.rs",
+      "bytes": 8676,
+      "upstream_sha256": "f303afdf4d271ad0ecbef2422f337716be6651a2e93e7698744ed3bb1e2197b4"
+    },
+    {
+      "path": "examples/spreadsheet.rs",
+      "bytes": 2543,
+      "upstream_sha256": "36f4fc2fc1967536e884c908eb7956c93576a79d62e5e5d6da03b54cc37eece7"
+    },
+    {
+      "path": "src/annotations.rs",
+      "bytes": 45875,
+      "upstream_sha256": "353a7b7f2772463556188c264bade452b9eb7f7fd3ff65aba03a8ad5ae3c0dd0"
+    },
+    {
+      "path": "src/bin/iwork.rs",
+      "bytes": 146473,
+      "upstream_sha256": "225a0f3045b8381cfc74fc513f78c953d829b912b69be78a046fdb6957e828a1"
+    },
+    {
+      "path": "src/calc.rs",
+      "bytes": 24796,
+      "upstream_sha256": "7d569434e191ce41ea0c7ba12e62d294c42c1d0659f812553f2c21973206ccfb"
+    },
+    {
+      "path": "src/chart.rs",
+      "bytes": 71789,
+      "upstream_sha256": "f5ef10c6456379a7c9e81911893d9e6822bdbd3799da143f82367fa79d369eac"
+    },
+    {
+      "path": "src/create.rs",
+      "bytes": 113045,
+      "upstream_sha256": "19d2a8d948d07f22645a955d4cebda3f90f8215b4db3fec32e2409de78e7116a"
+    },
+    {
+      "path": "src/document.rs",
+      "bytes": 420175,
+      "upstream_sha256": "da5c19f8578ce205faa6de51a30dbb851e3f81b95b34e36aac839912c80541e3"
+    },
+    {
+      "path": "src/drawable.rs",
+      "bytes": 99485,
+      "upstream_sha256": "81f1fbd608c38afd9faa74052de340f42d0f81a0ca160dd8048f1ff7b7bb1d3d"
+    },
+    {
+      "path": "src/formula.rs",
+      "bytes": 90062,
+      "upstream_sha256": "9944373091c685811ffc1f7887536938c551f7089797c86a3cf522405d4101e5"
+    },
+    {
+      "path": "src/formula_functions.rs",
+      "bytes": 6705,
+      "upstream_sha256": "c89a22a9da3df75165d814611a3dc25c33cce15fa4b0c037875c81352183ae4f"
+    },
+    {
+      "path": "src/formula_parse.rs",
+      "bytes": 26930,
+      "upstream_sha256": "795f3cad9bad1af82cc333af54fcc123fb6301792fd676d44b36778c4ace472c"
+    },
+    {
+      "path": "src/iwa.rs",
+      "bytes": 12801,
+      "upstream_sha256": "643c8b1e4909163cbd187bc004ee0f2e65dc186b4458711ad578b11671662cf8"
+    },
+    {
+      "path": "src/keynote.rs",
+      "bytes": 119167,
+      "upstream_sha256": "4d7344312762f9d5db60ddad3f2d6483d6a2d07d12d9e8aab2696a6f8ba12b75"
+    },
+    {
+      "path": "src/lib.rs",
+      "bytes": 22511,
+      "upstream_sha256": "007f8bdd10f5ead99b0b0c50f3bdefde00e40e34ec9232dc95ba510fa28e9ac1"
+    },
+    {
+      "path": "src/media.rs",
+      "bytes": 13709,
+      "upstream_sha256": "22f41d661ff893b23026d84c636a313c82c631f2f8e7a1bb398a4faa98299437"
+    },
+    {
+      "path": "src/metadata.rs",
+      "bytes": 31501,
+      "upstream_sha256": "65db58ae2ab3d03e13c411b5bdbcac848822783f277d66d864c121384dc8c27c"
+    },
+    {
+      "path": "src/package.rs",
+      "bytes": 31427,
+      "upstream_sha256": "dd78135e24c076d1378ae6e232ed72c1299d3d16fcca08e8f43f3cda4a863e65"
+    },
+    {
+      "path": "src/pages.rs",
+      "bytes": 52209,
+      "upstream_sha256": "58c2bf6f46f23869e69fc2a086343323852c50b9d2c23d2f946ec13616354264"
+    },
+    {
+      "path": "src/pb.rs",
+      "bytes": 14172,
+      "upstream_sha256": "7af1b2f46e354967e30649400153f44bbd1bf4924b685c8a4b098fb64159b07f"
+    },
+    {
+      "path": "src/plist.rs",
+      "bytes": 36763,
+      "upstream_sha256": "4c1e97d5aed3cdb399f7347546d92e1d38a7c211689aadc8fbcbf0176af8d4db"
+    },
+    {
+      "path": "src/registry.rs",
+      "bytes": 50323,
+      "upstream_sha256": "18ff68bca63e1ed739738a401fe76dee5b126ea7b80b49c916a757bb2a741dc6"
+    },
+    {
+      "path": "src/style.rs",
+      "bytes": 55689,
+      "upstream_sha256": "a804f77a5891cf67bed12f397ab492d44909876b653161d9ab87dc2339826da3"
+    },
+    {
+      "path": "src/table.rs",
+      "bytes": 186315,
+      "upstream_sha256": "5d8e4f3da54528c71e9e8bbadbf659f81abe95c4eed09d0c589c799ebe7b067b"
+    },
+    {
+      "path": "src/text.rs",
+      "bytes": 77288,
+      "upstream_sha256": "e2021ee95c4bf0d658d33fa76cceefb8e27517681be452fc48d27cd7c886e65f"
+    },
+    {
+      "path": "tests/api.rs",
+      "bytes": 20180,
+      "upstream_sha256": "224e3e859c2260daf44daf1acbc61e706cfdce9e81563d0f8c44996107097172"
+    },
+    {
+      "path": "tests/cell_styles.rs",
+      "bytes": 7564,
+      "upstream_sha256": "49654e16a01cdabf3dd1528c6c29b8ca4abd3ab540313011eb84bc2fe4de0244"
+    },
+    {
+      "path": "tests/cells.rs",
+      "bytes": 42452,
+      "upstream_sha256": "13a5e8fc9cf4a995e48b063496513dd5a80d7ded675c76a5aabcbbd4a5047eb5"
+    },
+    {
+      "path": "tests/chart_write.rs",
+      "bytes": 18889,
+      "upstream_sha256": "3c18855bb6296279fe93a62d84a5943cd975cc66706a31cfaef73ad16a2d66f9"
+    },
+    {
+      "path": "tests/charts.rs",
+      "bytes": 32371,
+      "upstream_sha256": "5fec0732fe238c5367ef45ef09d15c39e9e70ee2345a12f6d0d4b58fa05d9d60"
+    },
+    {
+      "path": "tests/columns.rs",
+      "bytes": 17015,
+      "upstream_sha256": "e540746c5b95ff4821cecbd7c579f76bc998995f99eb6296e528bbb88ee6848b"
+    },
+    {
+      "path": "tests/comments.rs",
+      "bytes": 9518,
+      "upstream_sha256": "a65a5aaad3b8368e4876a3f0e7a99da9a5a3d0f9376761dca459e22049e2dc14"
+    },
+    {
+      "path": "tests/corrupt.rs",
+      "bytes": 4530,
+      "upstream_sha256": "c7483b380ea283e6dd7a29a06f5f07073e4f8d7e0e6f5af4902837a72f362c40"
+    },
+    {
+      "path": "tests/create.rs",
+      "bytes": 21580,
+      "upstream_sha256": "b19501b62530916aaa5794ed58a9d71f3e0b5bc6adc8a31831290566c991a9ef"
+    },
+    {
+      "path": "tests/documents.rs",
+      "bytes": 20970,
+      "upstream_sha256": "ca84a26bcf94638bab1dcdc4d2fc7cfe0b6071f4dab4cb4e470ae0e5a05ff5bd"
+    },
+    {
+      "path": "tests/drawable_write.rs",
+      "bytes": 28890,
+      "upstream_sha256": "8098fad557a129b4583676614025ff949c9c96f65c2880c92d86a4f42bd412e9"
+    },
+    {
+      "path": "tests/drawables.rs",
+      "bytes": 37834,
+      "upstream_sha256": "59c6901a22b8f4dca00dfd5e620cf4f45cce926f93c385c6a7eb6219799aadad"
+    },
+    {
+      "path": "tests/fixtures.rs",
+      "bytes": 39432,
+      "upstream_sha256": "afc74d45c60557cf2c7c3bc696c80d13ade8d0603e1b42dc9ce93e7b75405e35"
+    },
+    {
+      "path": "tests/formats.rs",
+      "bytes": 16035,
+      "upstream_sha256": "814f2c61dde274977cdab59c164778c16c26a105a1f0a58385889890ef7e9938"
+    },
+    {
+      "path": "tests/formula_write.rs",
+      "bytes": 20479,
+      "upstream_sha256": "15c0bf4e3c81645e573cde5526f743e31265bd527609fa526451aa112adbff9a"
+    },
+    {
+      "path": "tests/formulas.rs",
+      "bytes": 32460,
+      "upstream_sha256": "a38b3d2a0619178b5cbb26010ae955142b60f2c87a34fc1b18895ff61d3a53ab"
+    },
+    {
+      "path": "tests/fuzz.rs",
+      "bytes": 31523,
+      "upstream_sha256": "729495e1332c67ff24960d32828d6d3380371df742b84a16e44a86f738005781"
+    },
+    {
+      "path": "tests/keynote.rs",
+      "bytes": 71824,
+      "upstream_sha256": "6bbb6845c6079fa0249d98a88d04b806a63ee44d48ebc5d45e8063d09ecad691"
+    },
+    {
+      "path": "tests/object_styles.rs",
+      "bytes": 9742,
+      "upstream_sha256": "f64aa520f802f76a3363c24a1f8a54c32dbb1402708d0e5b526c53f04507e451"
+    },
+    {
+      "path": "tests/organise.rs",
+      "bytes": 13738,
+      "upstream_sha256": "5f3029207da05ec889b4be4edc63ae21dedcd68b34142cf0da1f26cde1a3a0d8"
+    },
+    {
+      "path": "tests/pages.rs",
+      "bytes": 37462,
+      "upstream_sha256": "88c789fce039165c8c9bc695eed54c54b6416cbcec4d194501f75abce262ab87"
+    },
+    {
+      "path": "tests/rows.rs",
+      "bytes": 30602,
+      "upstream_sha256": "9fd7aca93704b09dbb0f84f26f4e64dc3e2e1e2f9ff35f115ce315fa6d9f618d"
+    },
+    {
+      "path": "tests/styles.rs",
+      "bytes": 39136,
+      "upstream_sha256": "4a2a637363fe0419fbdeae3e3c67a36b5749ac4917ba1a8172e136588c405d57"
+    },
+    {
+      "path": "tests/tables.rs",
+      "bytes": 50782,
+      "upstream_sha256": "f60316aa050b6190f935c60c102ef8615a92a80372ad20da16778f1433e286d6"
+    },
+    {
+      "path": "tests/text.rs",
+      "bytes": 52384,
+      "upstream_sha256": "ae4b4a3b0f6f6c66e7bb8190e751ad34c5b99caf5758fc39d345176cbe14bab4"
+    }
+  ]
+}

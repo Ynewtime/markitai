@@ -1,6 +1,6 @@
 # Numbers tables
 
-The local reader accepts modern `.numbers` ZIP files and directory packages, decoding their IWA streams in Rust. Both containers use the same allocation checks, semantic decoder and renderer; directory packages are not recompressed into ZIP files. It uses the pinned MIT-licensed `iwork = 0.2.1` library. Conversion does not launch Numbers, Python, a browser or a remote service.
+The local reader accepts modern `.numbers` ZIP files and directory packages, decoding their IWA streams in Rust. Both containers use the same allocation checks, semantic decoder and renderer; directory packages are not recompressed into ZIP files. It uses the MIT-licensed `iwork` 0.2.1 library, vendored in `vendor/iwork` so it reads ZIP files with the same zip 9 as the rest of Markitai. Conversion does not launch Numbers, Python, a browser or a remote service.
 
 ## What is retained
 

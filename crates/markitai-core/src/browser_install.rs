@@ -203,7 +203,9 @@ fn extract(reader: impl Read + Seek, output: &Path, platform: &str, limit: u64) 
         let mut entry = archive
             .by_index(index)
             .map_err(|_| failure("cannot read browser ZIP entry"))?;
-        let name = entry.name();
+        let name = entry
+            .name()
+            .map_err(|_| failure("browser ZIP contains an invalid path"))?;
         if name.contains(['\\', ':', '\0']) || name.len() > 1024 {
             return Err(failure("browser ZIP contains an invalid path"));
         }
