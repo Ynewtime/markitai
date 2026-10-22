@@ -3385,7 +3385,17 @@ def create_app(
                 except Exception as e:
                     logger.debug("[Serve] LiteLLM client cleanup failed: {}", e)
 
-    app = FastAPI(title="markitai serve", version=__version__, lifespan=lifespan)
+    # The API description sits under /api/, behind the token like every other
+    # API route (as in markitai-rust); FastAPI's /docs and /redoc pages are
+    # off: they load their scripts from a CDN.
+    app = FastAPI(
+        title="markitai serve",
+        version=__version__,
+        lifespan=lifespan,
+        openapi_url="/api/openapi.json",
+        docs_url=None,
+        redoc_url=None,
+    )
     # Mutable: POST /api/access-token/regenerate replaces it, and every
     # guard reads it per request. Event streams opened under an older
     # generation end when it changes.

@@ -49,6 +49,7 @@
 - **发出后超时并被重发的 LLM 请求不再让费用看起来是完整的。** 请求发出后超时，原本会被重发最多 `num_retries` 次，而且不记录任何用量，尽管服务商可能已经完成并计费。现在最多再发一次（连接没能及时建立的仍照旧重试），这次请求按价格未知计入，所以文档的费用显示为不完整（`unpriced_requests`），设置了正数的 `llm.max_cost_per_document_usd` 时该文档不再发出新请求，文档还会带上警告 `LLM request to … timed out (…) and was sent again once; the provider may have billed the first request, so the cost is incomplete`，与 markitai-rust 一致。
 - **`markitai serve` 的对比视图能框出 PDF 里的图片。** 页面文字接口 `GET /api/jobs/{job_id}/items/{item_id}/original/pages/{n}/text` 现在还返回 `images: [{bbox}]`，即页面上图片绘制的位置（从左上角起算的点数，按绘制顺序，裁剪到页面内，最多 500 个，任一边小于 4 点的不算），与 markitai-rust 一致，工作台由此能把 Markdown 里的图片和它在页面上的位置对应起来。
 - **代码示例保留页面在代码行里画成按钮的名称。** 把代码行中的名称标记为悬停按钮的网页（Twoslash，如 nodejs.org、TypeScript 和 Vue 文档）会丢掉这些名称，`const { createServer } = require('node:http');` 被写成 `const {  } = ('node:http');`。现在高亮代码行里可见的纯文字按钮算作代码文字，不带它的类型弹窗；代码行以外的按钮（如「复制」）和隐藏的按钮仍会略去，与 markitai-rust 一致。
+- **`markitai serve` 只向持有令牌的调用方描述它的 API，也不再从 CDN 加载任何东西。** OpenAPI 文档原本在 `/openapi.json` 上对任何人开放，`/docs` 和 `/redoc` 是从 cdn.jsdelivr.net 加载脚本的页面。现在文档位于 `GET /api/openapi.json`，与其他 API 路由一样需要令牌，与 markitai-rust 一致；`/openapi.json`、`/docs` 和 `/redoc` 已移除。
 
 ## [1.2.1] - 2026-10-18
 

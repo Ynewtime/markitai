@@ -210,6 +210,32 @@ class TestDownloadTickets:
         assert "abcdef0123" not in redact_urls_in_text(line)
 
 
+class TestApiDescription:
+    """The OpenAPI document is an API route like the others (behind the
+    token, as in markitai-rust); FastAPI's /docs and /redoc pages, which
+    load their scripts from a CDN, are not served."""
+
+    async def test_served_under_api_behind_the_token(self, tmp_path: Path) -> None:
+        async with _client(_make_app(tmp_path), peer=LAN_PEER) as client:
+            refused = await client.get("/api/openapi.json")
+            allowed = await client.get("/api/openapi.json", headers=AUTH)
+        check_error(refused, 401, "token_required")
+        assert allowed.status_code == 200
+        document = allowed.json()
+        assert document["info"]["title"] == "markitai serve"
+        assert "/api/jobs" in document["paths"]
+
+    @pytest.mark.parametrize("path", ["/openapi.json", "/docs", "/redoc"])
+    async def test_no_unauthenticated_description_or_cdn_pages(
+        self, tmp_path: Path, path: str
+    ) -> None:
+        async with _client(_make_app(tmp_path), peer=LAN_PEER) as client:
+            response = await client.get(path)
+        assert response.status_code == 404
+        assert "cdn.jsdelivr.net" not in response.text
+        assert '"openapi"' not in response.text
+
+
 class TestSettingsNeedTheToken:
     async def test_loopback_needs_the_token_for_settings(self, tmp_path: Path) -> None:
         async with _client(_make_app(tmp_path)) as client:
