@@ -91,6 +91,32 @@ test("a flowchart wider than the column takes the vertical layout instead of shr
   assert.ok(width(narrow) <= 700, `upright it is ${width(narrow)} px wide`);
 });
 
+test("a label on a series colour takes that series' label colour; others keep Pele's", () => {
+  const fillOf = (tree: DiagramElement, label: string) =>
+    elements(tree).find((element) => element.tag === "text" && text(element) === label)?.attributes.find(([name]) => name === "fill")?.[1];
+  const on = (series: number) => `var(--diagram-on-${series}, var(--_bg))`;
+  const git = drawn("gitGraph\n  commit\n  branch dev\n  commit\n  branch feature\n  commit\n  branch fix\n  commit").tree;
+  assert.deepEqual(["main", "dev", "feature", "fix"].map((name) => fillOf(git, name)), [on(1), on(2), on(3), on(4)]);
+  // A pie's labels sit apart from its slices: each takes the slice its angle falls in; a label outside (2%) keeps the text colour.
+  const pie = drawn('pie\n  "A" : 10\n  "B" : 1\n  "C" : 30\n  "D" : 1\n  "E" : 20').tree;
+  assert.deepEqual(["16%", "48%", "32%", "2%"].map((label) => fillOf(pie, label)), [on(1), on(3), on(5), undefined]);
+  const ring = drawn('---\nconfig:\n  pie:\n    donutHole: 0.2\n---\npie\n  "A" : 40\n  "B" : 46\n  "C" : 9').tree;
+  assert.deepEqual(["42%", "48%", "9%"].map((label) => fillOf(ring, label)), [on(1), on(2), on(3)]);
+  const timeline = drawn("timeline\n  section Early\n    2024 : One\n  section Late\n    2026 : Three").tree;
+  assert.deepEqual(["Early", "2024", "Late", "2026", "One"].map((label) => fillOf(timeline, label)), [on(1), on(1), on(2), on(2), undefined]);
+  const treemap = drawn('treemap-beta\n"Root"\n  "Leaf": 10\n  "Other": 20').tree;
+  assert.equal(fillOf(treemap, "Leaf"), on(1));
+  // The accent and critical bars of a Gantt chart are not series colours: their labels stay as Pele draws them.
+  const gantt = drawn("gantt\n  dateFormat YYYY-MM-DD\n  section A\n  Task one :crit, a1, 2026-01-01, 30d\n  Task two :after a1, 20d").tree;
+  assert.deepEqual(["Task one", "Task two"].map((label) => fillOf(gantt, label)), ["var(--_bg)", "var(--_bg)"]);
+  // A colour the diagram sets itself, or a translucent fill, is left alone.
+  const own = readDiagram(
+    '<svg fill="var(--_fg)"><g><rect fill="var(--pele-series-4,#e45756)"/><text fill="var(--_bg)" style="fill:#ff0000">set</text></g><g><rect fill="var(--pele-series-2,#f58518)" fill-opacity="0.16"/><text fill="var(--_bg)">pale</text></g></svg>',
+    { prefix, links: true },
+  ) as DiagramElement;
+  assert.deepEqual(["set", "pale"].map((label) => fillOf(own, label)), ["var(--_bg)", "var(--_bg)"]);
+});
+
 test("a diagram with an error falls back to its code, with the line in the note", () => {
   const result = draw("flowchart LR\n  A --> B\n  B -->");
   assert.equal(result.ok, false);

@@ -186,6 +186,15 @@
   --chart-6: #008300;
   --chart-7: #6250d6;
   --chart-8: #e34948;
+  /* a label drawn on a series colour (a git branch, a pie slice): whichever text token reads better on it */
+  --chart-1-on: var(--surface);
+  --chart-2-on: var(--text-1);
+  --chart-3-on: var(--text-1);
+  --chart-4-on: var(--text-1);
+  --chart-5-on: var(--text-1);
+  --chart-6-on: var(--surface);
+  --chart-7-on: var(--surface);
+  --chart-8-on: var(--text-1);
 
   --sidebar-w: 232px;
   --rail-w: 60px;
@@ -235,6 +244,14 @@
     --chart-6: #008300;
     --chart-7: #9085e9;
     --chart-8: #e66767;
+    --chart-1-on: var(--surface);
+    --chart-2-on: var(--surface);
+    --chart-3-on: var(--surface);
+    --chart-4-on: var(--surface);
+    --chart-5-on: var(--surface);
+    --chart-6-on: var(--text-1);
+    --chart-7-on: var(--surface);
+    --chart-8-on: var(--surface);
   }
 }
 
@@ -280,6 +297,14 @@
   --chart-6: #008300;
   --chart-7: #9085e9;
   --chart-8: #e66767;
+  --chart-1-on: var(--surface);
+  --chart-2-on: var(--surface);
+  --chart-3-on: var(--surface);
+  --chart-4-on: var(--surface);
+  --chart-5-on: var(--surface);
+  --chart-6-on: var(--text-1);
+  --chart-7-on: var(--surface);
+  --chart-8-on: var(--surface);
 }
 
 /* ------------------------------------------------------------- reset */
@@ -5379,7 +5404,8 @@ input[type="password"],
 }
 /* a Mermaid diagram (drawn by Pele in place of its code block): the code block's frame on the preview's
    surface, the drawing centred and never wider than the column. Pele paints with these variables, so a
-   theme switch recolours a drawn diagram; the label font is the one its boxes were measured with */
+   theme switch recolours a drawn diagram; the label font is the one its boxes were measured with, and
+   a label on a series colour takes --diagram-on-N (lib/diagram.ts) */
 .doc-body .md-diagram {
   --pele-bg: var(--surface);
   --pele-fg: var(--text-1);
@@ -5402,6 +5428,14 @@ input[type="password"],
   --pele-series-6: var(--chart-6);
   --pele-series-7: var(--chart-7);
   --pele-series-8: var(--chart-8);
+  --diagram-on-1: var(--chart-1-on);
+  --diagram-on-2: var(--chart-2-on);
+  --diagram-on-3: var(--chart-3-on);
+  --diagram-on-4: var(--chart-4-on);
+  --diagram-on-5: var(--chart-5-on);
+  --diagram-on-6: var(--chart-6-on);
+  --diagram-on-7: var(--chart-7-on);
+  --diagram-on-8: var(--chart-8-on);
   margin: 16px 0;
   padding: 16px;
   overflow-x: auto;

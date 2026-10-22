@@ -235,10 +235,77 @@ export function cleanDiagram(root: DiagramElement, { prefix, links }: CleanOptio
   return clean(root);
 }
 
+const BACKGROUND = "var(--_bg)";
+const SERIES_FILL = /^var\(--pele-series-([1-8])\b/;
+const SHAPES = new Set(["rect", "path", "circle", "ellipse", "polygon"]);
+/** A pie slice's outer arc, drawn clockwise from `<start>` to `<end>`: `M0,0L<start>A<r>,<r> 0 <large> 1 <end>…`
+ * from the centre, `M<start>A…` for a ring (donut). */
+const SLICE = /^M(?:0,0L)?(-?[\d.]+),(-?[\d.]+)A[\d.]+,[\d.]+ 0 [01] 1 (-?[\d.]+),(-?[\d.]+)/;
+const TAU = 2 * Math.PI;
+
+const attributeOf = (element: DiagramElement, name: string) => element.attributes.find(([key]) => key === name)?.[1];
+const classOf = (element: DiagramElement) => (attributeOf(element, "class") ?? "").split(" ");
+/** The fill an element paints with: its own (a style first), else the one it inherits. */
+const fillOf = (element: DiagramElement, inherited: string) => element.styles.find(([name]) => name === "fill")?.[1] ?? attributeOf(element, "fill") ?? inherited;
+const elementsIn = (element: DiagramElement) => element.children.filter((child): child is DiagramElement => typeof child !== "string");
+
+/** The series (1–8) a shape is solidly filled with, or 0. */
+function solidSeries(element: DiagramElement): number {
+  if (!SHAPES.has(element.tag) || element.styles.some(([name]) => name === "fill")) return 0;
+  const opacity = attributeOf(element, "fill-opacity") ?? attributeOf(element, "opacity");
+  if (opacity !== undefined && Number(opacity) < 1) return 0;
+  return Number(SERIES_FILL.exec(attributeOf(element, "fill") ?? "")?.[1] ?? 0);
+}
+
+function paintOnSeries(text: DiagramElement, series: number): void {
+  const value = `var(--diagram-on-${series}, ${BACKGROUND})`;
+  const at = text.attributes.findIndex(([name]) => name === "fill");
+  if (at < 0) text.attributes.push(["fill", value]);
+  else text.attributes[at] = ["fill", value];
+}
+
+/** Labels Pele paints in the background colour on a series colour (a git branch, a timeline
+ * period or section, a treemap cell, a pie slice) take that series' own label colour
+ * (`--diagram-on-N`, the text token that reads better on it), falling back to Pele's. A label
+ * whose diagram sets its colour keeps it. Labels sit beside their shape in one group; a pie
+ * keeps its labels apart, so each is matched to the slice its angle falls in. */
+export function labelsOnSeries(root: DiagramElement): void {
+  const visit = (element: DiagramElement, inherited: string) => {
+    const fill = fillOf(element, inherited);
+    const children = elementsIn(element);
+    const series = children.map(solidSeries).find((found) => found > 0) ?? 0;
+    for (const child of children) {
+      if (series && child.tag === "text" && fillOf(child, fill) === BACKGROUND && !child.styles.some(([name]) => name === "fill")) paintOnSeries(child, series);
+    }
+    const slices = children.find((child) => classOf(child).includes("pele-slices"));
+    for (const labels of slices ? children.filter((child) => classOf(child).includes("pele-slice-labels")) : []) {
+      if (fillOf(labels, fill) !== BACKGROUND || attributeOf(labels, "transform") !== attributeOf(slices as DiagramElement, "transform")) continue;
+      const arcs = elementsIn(slices as DiagramElement).flatMap((slice) => {
+        const found = SLICE.exec(attributeOf(slice, "d") ?? "");
+        const number = solidSeries(slice);
+        if (!found || !number) return [];
+        const [x1, y1, x2, y2] = found.slice(1).map(Number) as [number, number, number, number];
+        const start = Math.atan2(y1, x1);
+        return [{ start, span: (((Math.atan2(y2, x2) - start) % TAU) + TAU) % TAU || TAU, series: number }];
+      });
+      for (const text of elementsIn(labels)) {
+        if (text.tag !== "text" || text.styles.some(([name]) => name === "fill") || attributeOf(text, "fill") !== undefined) continue;
+        const angle = Math.atan2(Number(attributeOf(text, "y")), Number(attributeOf(text, "x")));
+        const arc = arcs.find(({ start, span }) => (((angle - start) % TAU) + TAU) % TAU <= span);
+        if (arc) paintOnSeries(text, arc.series);
+      }
+    }
+    for (const child of children) visit(child, fill);
+  };
+  visit(root, "");
+}
+
 /** Pele's SVG markup as a checked tree, or null when it cannot be read. */
 export function readDiagram(markup: string, options: CleanOptions): DiagramElement | null {
   const parsed = parseSvg(markup);
-  return parsed && cleanDiagram(parsed, options);
+  const tree = parsed && cleanDiagram(parsed, options);
+  if (tree) labelsOnSeries(tree);
+  return tree;
 }
 
 /** Build a checked tree as live SVG elements of `doc`: text as text nodes, styles through the CSS object model. */

@@ -225,7 +225,8 @@ holds one; Source, the downloads and the Markdown itself keep the code. The
 diagram's SVG is rebuilt from an allowlist of drawing elements and attributes,
 its styles set through the page's script under the same Content Security Policy;
 its links open in a new tab without a referrer, and it loads no pictures. Its
-colours follow the theme without being drawn again. A block that does not parse,
+colours follow the theme without being drawn again, and a label on a series colour (a git
+branch, a pie slice, a timeline period) takes whichever text colour reads better on it. A block that does not parse,
 holds a diagram type Pele does not know, or is too large (over 50,000 characters,
 2,000 flowchart edges or 2,000,000 characters of SVG) stays a code block with a
 note saying why. While a result loads, Rendered, Source and Files show

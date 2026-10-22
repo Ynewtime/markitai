@@ -157,6 +157,17 @@ export const PAIRS = [
   ["var(--text-1)", ["var(--sel-strong)"], T, "diagram node labels"],
   ["var(--text-1)", ["color-mix(in srgb, var(--text-1) 3%, var(--surface))"], T, "diagram group labels"],
   ["var(--text-2)", ["var(--surface)"], G, "diagram lines and arrowheads"],
+  ["var(--chart-1-on)", ["var(--chart-1)"], G, "diagram label on series 1 (git branch, timeline, treemap, pie slice)"],
+  ["var(--chart-2-on)", ["var(--chart-2)"], G, "diagram label on series 2 (git branch, timeline, treemap, pie slice)"],
+  ["var(--chart-3-on)", ["var(--chart-3)"], G, "diagram label on series 3 (git branch, timeline, treemap, pie slice)"],
+  ["var(--chart-4-on)", ["var(--chart-4)"], G, "diagram label on series 4 (git branch, timeline, treemap, pie slice)"],
+  ["var(--chart-5-on)", ["var(--chart-5)"], G, "diagram label on series 5 (git branch, timeline, treemap, pie slice)"],
+  ["var(--chart-6-on)", ["var(--chart-6)"], G, "diagram label on series 6 (git branch, timeline, treemap, pie slice)"],
+  ["var(--chart-7-on)", ["var(--chart-7)"], G, "diagram label on series 7 (git branch, timeline, treemap, pie slice)"],
+  ["var(--chart-8-on)", ["var(--chart-8)"], G, "diagram label on series 8 (git branch, timeline, treemap, pie slice)"],
+  ["var(--surface)", ["var(--chart-1)"], G, "gantt task label on the accent"],
+  ["var(--surface)", ["var(--err)"], G, "gantt critical task label"],
+  ["var(--surface)", ["var(--text-2)"], G, "sequence diagram step numbers"],
 ];
 
 export function check(source) {
