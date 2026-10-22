@@ -211,7 +211,7 @@ markitai document.pdf -o ./output --json | jq '.items[] | select(.status == "fai
 
 ### `--resume`
 
-继续被中断的批量。它跳过已完成的文件，重试失败和中断的，新增的文件也捡起来。重试的条目覆盖自己之前的输出，不会再多出一份 `.v2`；状态里没记下输出名的条目（在占用输出名之前就失败，或状态来自旧版本）和新条目一样按 `output.on_conflict` 处理，不会覆盖不是这次批量写的文件。目录和 `.urls` 列表都适用；按 Ctrl-C 中断时进度同样会保存。状态里记的是输出的绝对路径，所以换个工作目录也能继续（`markitai ../docs -o ../output --resume`）。
+继续被中断的批量。它跳过已完成的文件，重试失败和中断的，新增的文件也捡起来。重试的条目覆盖自己之前的输出，不会再多出一份 `.v2`；状态里没记下输出名的条目（在占用输出名之前就失败，或状态来自旧版本）和新条目一样按 `output.on_conflict` 处理，不会覆盖不是这次批量写的文件。目录和 `.urls` 列表都适用；按 Ctrl-C 中断时进度同样会保存。状态里记的是输出的绝对路径，所以换个工作目录也能继续（`markitai ../docs -o ../output --resume`）。输出设置不同的运行（`--llm`、`--ocr`、`--screenshot`、`--alt`、`--desc`、`--pure`、`--keep-base`、`--screenshot-only`、`output.profile` 或 `-s`）各有自己的状态，所以不会跳过在其他设置下完成的条目。
 
 状态还记下每个已完成条目的费用，所以续跑的批量统计的是整个批量。目录批量的摘要行给出整个批量的费用和这次运行的部分（`Done: 9 files, 2 URLs (1:23, $0.094 total, $0.067 this run)`）。报告（`.markitai/reports/*.report.json`）里，之前的运行完成的条目标上 `earlier_run: true`，目录批量的报告还为它保留那次运行的 `started_at`、`completed_at`、`duration`、`cost_usd` 和 `llm_usage`。`llm_usage` 是整个批量的合计；其中的 `this_run` 块只在续跑后出现，字段相同，只算这次运行。`summary` 里的计数覆盖整个批量，`summary.duration` 和报告的 `started_at` 是这次运行的，`summary.processing_time` 是所有条目各自耗时之和。旧版本写的状态没有记费用：`llm_usage.usage_unknown_items` 统计它记下的已完成条目，合计里不含它们，它们的 `cost_usd` 为 `null`，摘要行写 `cost of earlier runs unknown`。被 Ctrl-C 打断的条目在中断前已经发出的请求不计入：该条目会重新转换，只算一次。
 

@@ -94,6 +94,8 @@ uv pip install markitai      # 装进当前虚拟环境
 
 手动安装不带任何可选组件。用 `markitai doctor` 查看可用能力，用 `markitai init` 配置 LLM 提供商。
 
+markitai 1.2.1 要求 `litellm>=1.83.0,!=1.92.0,<1.105` 和 `anthropic>=1.0.0,<2`：更新的 LiteLLM 版本会改变 markitai 依赖的模型价格和 OpenRouter 上限，Anthropic SDK 2 改用 Bearer 令牌发送 API 密钥，读取 `X-Api-Key` 的网关会拒绝 `--llm-batch`。不支持把 markitai 装进需要这两个包更新版本的环境。
+
 ## 功能说明
 
 **预设**打包了常用参数。`minimal` 只做基础转换，`standard` 加 LLM 清洗和图片分析，`rich` 再加页面截图。任何一项都能用 `--no-*` 关掉，例如 `--preset rich --no-desc`。

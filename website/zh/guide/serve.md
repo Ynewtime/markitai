@@ -121,7 +121,7 @@ Vertex AI（以及 watsonx、GigaChat）用服务器自己的登录凭据而不�
 
 ## API 概览
 
-工作台建立在一套小型 REST + SSE API 之上，脚本也能直接调用。错误响应是 JSON `{"detail", "code", "reason"}`：`detail` 是英文说明，`reason` 是稳定的原因代码，例如 `llm_unavailable`、`file_too_large`。
+工作台建立在一套小型 REST + SSE API 之上，脚本也能直接调用。错误响应是 JSON `{"detail", "code", "reason"}`：`detail` 是英文说明，`reason` 是稳定的原因代码，例如 `llm_unavailable`、`file_too_large`。任务选项严格检查：未知选项或类型不对的值返回 422 `invalid_options`（重试时为 `invalid_retry_body`），URL 在提交时检查（422 `invalid_url` 或 `unsupported_url_scheme`）。用户令牌选择 `jina`、`defuddle` 或 `cloudflare` 会得到 403 `remote_processing_forbidden`；使用 `--no-auth` 时，来自其他机器的 URL 会得到 403 `remote_url_forbidden`。OpenAPI 文档位于 `GET /api/openapi.json`，与其他 API 一样需要令牌。
 
 | 端点 | 说明 |
 |------|------|

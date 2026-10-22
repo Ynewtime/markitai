@@ -9,55 +9,72 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **A new `markitai serve` workbench**, the same one markitai's Rust implementation uses: Convert, Conversions and Settings in a sidebar (a bottom bar on a phone); files, folders, pasted URLs and `.urls` lists staged into one submission; one list of every conversion with filters, Stop remaining and multi-select delete; and a conversion window with Details, Preview (Rendered, Source, Diff, Files; Base | LLM) and Compare. The React web app is gone, and building markitai needs neither Node nor Rust.
-- **Compare puts the original beside the Markdown** and links them block by block: PDF pages with their pictures and bookmarks, images, and a web page's kept copy and screenshots. It says when a site showed a verification check or a blank page instead of its content.
-- **User tokens, own models and Edit config in `markitai serve`.** Settings → Access token creates named, revocable tokens (shown once, with a sign-in link and a QR code; only a digest is kept). A user token sees only its own conversions and uses its own models and the ones the admin shares, with its own weights and tests. The admin edits the configuration file in the browser (secrets masked, checked as you type, reviewed before saving), and the composer starts from the server's defaults, which the admin, or a user for itself, can save.
-- **PDF text layers that read wrong are caught, and each page says where its text came from.** Private-use or `(cid:NN)` codes, UTF-8 read as Windows-1252, reversed right-to-left text and, under `--ocr`, a font whose codes stand for other letters than it draws send a page to the scanned-page notice and to OCR. `page_sources` (in `--json`, the Python API, history and serve items) gives each page's source and why. The idea of checking the text layer this way comes from [Indra OCR](https://github.com/datalab-to/indra); the code is markitai's own.
+- A new `markitai serve` workbench, shared with markitai's Rust implementation, replaces the React web app and needs neither Node nor Rust to build.
+- Compare shows the original PDF, image or web page beside the Markdown and links the two block by block.
+- `markitai serve` adds user tokens, which see only their own conversions and use their own models or the ones the admin shares.
+- The admin can edit the configuration file in the browser, and new conversions start from the server's saved defaults.
+- A PDF text layer that reads wrong now gets the scanned-page notice and OCR, a check inspired by [Indra OCR](https://github.com/datalab-to/indra).
+- Each PDF page now reports where its text came from in `page_sources`, in `--json`, the Python API and `markitai serve`.
 
 ### Changed
 
-- **Faster, with the same output**: a long PDF is extracted on every core and no longer holds up other documents (409 pages on 4 cores: 54 s → 30 s), a scanned PDF is OCR'd one page per worker (a 490-page scan: about 290 s instead of 500 s), web pages are extracted about twice as fast, and `markitai doctor` and `markitai --version` start fast. The PDF workers use more memory for it (about 1.3 GB for four extraction workers).
-- **New default models**: `deepseek/deepseek-flash` (DeepSeek retired V4-Flash; a config that names it gets a warning), `openai/gpt-6-luna`, `anthropic/claude-haiku-5-5`, `chatgpt/gpt-6-luna`, `copilot/auto`, `openrouter/~anthropic/claude-haiku-latest` and `claude-agent/haiku`. markitai carries the prices of Claude Haiku 5.5, Claude Sonnet 5.5 and GPT-6.1 Sol until LiteLLM lists them.
-- **`markitai serve` API for clients**: job options are checked strictly (an unknown key or a wrong type is 422), URLs are checked when submitted, a 422 explains itself in one sentence, asking for LLM processing without a usable model is 422 `llm_unavailable`, Cloudflare needs the request's own consent (`"remote_processing": "cloudflare"`), a result over 64 MiB is 413, errors carry a `reason`, and the OpenAPI document moved to `/api/openapi.json` behind the token (`/docs` and `/redoc` are gone).
-- **`markitai serve` access**: the LLM settings need the token from every client, this machine included, and with `--no-auth` only this machine may submit URLs (403 `remote_url_forbidden`).
-- **A user token's conversions never leave the public network or use remote services**: its URLs and the pictures its documents link to are fetched from public addresses only, choosing defuddle.md, Jina Reader or Cloudflare is refused (403 `remote_processing_forbidden`), a remote default strategy of the server runs as `auto`, and remote fallbacks and X/Twitter embed lookups are skipped with a warning. Admin jobs and the CLI still follow `fetch.remote_consent`.
-- **Notices reach `--json`, and page lists read as ranges**: an item's `warnings` include the notices printed on stderr (pages that look scanned, hidden text, a resent request), for example `4 of 120 pages look scanned/garbled (pages 3–5, 9)`.
-- **`markitai doctor` says plainly whether markitai is ready** (in Chinese under a Chinese terminal), and `markitai init` says which keys it leaves out and why.
-- **Batches**: a folder batch skips hidden folders, `node_modules` and Office lock files unless a glob names them; `--resume` keeps separate state for other output settings (`--pure`, `--keep-base`, `--screenshot-only`, the profile, `-s`); `--llm-batch` refuses URLs instead of running them at full price.
-- **MCP `job_status`**: `done` counts the items that succeeded; the new `finished` counts done and failed together.
-- **LLM requests**: DeepSeek's thinking models and Claude Haiku 5.5 answer without reasoning first, the configured `max_tokens` is what is requested, and a request that timed out is sent again once at most and marks the document's cost incomplete.
-- **Dependencies**: the package requires `litellm>=1.83.0,!=1.92.0,<1.105` and `anthropic>=1.0.0,<2` (newer releases change OpenRouter limits, Claude prices and the Batch API's authentication), and declares what it imports (PyYAML, beautifulsoup4, soupsieve, defusedxml, PyMuPDF, openpyxl, numpy, olefile, `xlrd`; no longer pandas).
-- **Removed**: unused Python APIs (`LLMProcessor.clean_markdown`, `get_usage`, `get_total_cost`, `reset_call_counter`, `enhance_url_with_vision`, `BatchProcessor.process_batch` and others; `SingleFileWorkflow` needs `processor=`) and the never-used `prompts.url_enhance_*` settings.
-- **After upgrading**: existing LLM cache entries miss once after upgrading (the key now covers the whole text and the image bytes), `cache.enabled: false` also turns it off, and `markitai serve` history ages from when a job finished, so history finished more than seven days ago is deleted on the first start.
+- Long PDFs, scanned PDFs and web pages convert much faster with the same output, while PDF extraction uses more memory.
+- The default models are now `deepseek/deepseek-flash`, `openai/gpt-6-luna` and `anthropic/claude-haiku-5-5`, with matching ChatGPT, Copilot, OpenRouter and Claude Code defaults.
+- The `markitai serve` API checks job options and URLs strictly and answers every error with a stable `reason`.
+- `markitai serve` refuses LLM processing when no model can be reached, and uses Cloudflare only with the request's own consent.
+- The serve API description moved to `/api/openapi.json` behind the access token, and the `/docs` and `/redoc` pages are gone.
+- `markitai serve` needs the token for its LLM settings from every client, and under `--no-auth` only this machine may submit URLs.
+- A user token's conversions fetch from the public network only and never use defuddle.md, Jina Reader, Cloudflare or X/Twitter embed lookups.
+- The notices a conversion prints on stderr, such as pages that look scanned, now also appear in the item's `warnings` in `--json`.
+- `markitai doctor` now says plainly whether markitai is ready, and `markitai init` explains which API keys it leaves out.
+- Folder batches skip hidden folders, `node_modules` and Office lock files unless a glob names them.
+- `--resume` keeps separate state for different output settings, and `--llm-batch` refuses URLs instead of running them at full price.
+- MCP `job_status` now counts only successful items as `done` and adds `finished` for successful and failed items together.
+- Reasoning models now answer without thinking first, and markitai requests the `max_tokens` the configuration sets.
+- A request that timed out is sent again at most once, and the document's cost is then marked incomplete.
+- The package requires `litellm<1.105` and `anthropic<2`, because newer releases change prices, OpenRouter limits and Batch API authentication.
+- The package declares the libraries it imports directly, `xlrd` among them, and no longer declares pandas.
+- Unused Python APIs and the never-used `prompts.url_enhance_*` settings were removed.
+- Existing LLM cache entries miss once after upgrading, because the cache key now covers the whole text and the images.
+- `cache.enabled: false` now turns off the LLM result cache as well as the fetch cache.
+- `markitai serve` history now ages from when a job finished, so history older than seven days is deleted on the first start.
 
 ### Fixed
 
-- **PDF**: a password-protected PDF or one without pages says so; a poster-sized page converts; borderless tables stay tables; running headers, footers and page numbers stay out of the text without taking numbered body lines along; a line of text is no longer a picture of itself; Chrome's CJK radicals become the right characters; titles and headings are plain text; a picture that is mostly text shows its text.
-- **OCR**: `--ocr --llm` keeps the transcription of scanned pages; a searchable scan's OCR layer is not reported as hidden text; the glyph check works with RapidOCR 3.10.
-- **Office and spreadsheets**: empty cells stay empty (no `NaN` or `Unnamed: 1`), cells show their number formats and dates as Excel does, hidden sheets are marked, ODS keeps empty cells, a line break in a cell no longer breaks the table, a CSV row longer than its header keeps its cells and a UTF-8 BOM is not part of the first column name; ODT and RTF keep their formatting, lists, footnotes and pictures; a PPTX shape after a table is its own block.
-- **EPUB and local HTML**: pictures are saved as assets, an EPUB's metadata goes to the front matter, a local page's relative links stay relative (no `file:///home/<user>/…`), folders with `#` or `%` work, legacy encodings read correctly, a misnamed file says what it is, and `.numbers` without `-b cloudflare` fails with a reason.
-- **Web pages**: wiki articles start with the article (no language list, edit links or "Retrieved from"), article sidebars, abstracts, table headers and nested lists are kept, words are no longer glued together, code keeps names drawn as buttons, and X posts link their real destinations and show in Compare.
-- **Fetching**: plain requests identify as markitai, so fewer pages need a browser; the browser stops waiting once a page settles; bot checks (Cloudflare, DataDome, PerimeterX, …) are not taken for content, while a Chinese page that only mentions 验证码 is no longer one; UTF-8 text URLs no longer come out as mojibake; macOS proxy detection works; `NO_PROXY` covers subdomains; a response over 500 MB fails.
-- **Markdown cleanup**: a stray `[` no longer swallows the text up to the next link (one document kept 141 of 16,003 lines), a long document no longer freezes `markitai serve` for a minute in that step, a repeated table delimiter row is dropped, and page references a model glued to a paragraph are blocks again.
-- **LLM costs**: rejected answers, failed Batch answers and failed URLs are counted; an unknown price is reported as unknown, never as $0, in the CLI, `markitai serve` and history; Claude Batch costs include caching; DeepSeek's holiday rates and Gemini's 2027 prices are right; subscription estimates name the right model; one request budget covers a whole document; Claude Code requests use your subscription, not `ANTHROPIC_API_KEY`.
-- **LLM answers**: no `.llm.md` when no model succeeded (a refusal, a filtered or truncated answer, a failed Claude Code turn); a missing API key is named before anything is sent, and a refused one is reported once with the variable to fix; the default DeepSeek and OpenAI models no longer start with a failed request; the Copilot provider works with its SDK again; a ChatGPT rate limit fails only that request.
-- **Batches and resume**: a resumed batch reports what the whole batch cost, `--resume` works with a relative input folder and across operating systems, a symlink keeps its own entry, and the summary lists failures as errors.
-- **`markitai serve`**: a failed history save is reported (`persistence_error`) instead of `done`; models from an environment card or a server key load; a model test or an empty model list says why; Retry is offered only where it can help; Ctrl-C while the browser starts no longer hangs; a retry cannot bring back a deleted job.
-- **Install and Windows**: `setup.ps1` runs on Windows PowerShell 5.1 and installs on an x64 Python on Windows on Arm; setup installs once and finds markitai wherever uv put it; install hints keep your extras; no WMI queries on every run; `doctor` allows Chromium's slow first start; terminal output wraps under its text; no "leaked semaphore objects" warning.
+- PDF conversion handles password-protected, page-less and poster-sized files, borderless tables, running headers and footers, and Chrome's CJK characters.
+- `--ocr --llm` keeps the transcription of scanned pages, and the PDF glyph check works with RapidOCR 3.10.
+- Spreadsheets show empty cells as empty and show numbers and dates in the format Excel shows them.
+- ODT, RTF, ODS, PPTX and CSV files keep footnotes, pictures, empty cells and long rows that were lost before.
+- EPUB and local HTML pictures are saved as assets, and a local page's relative links no longer turn into absolute paths.
+- Web page extraction keeps more of the article and leaves out page furniture such as wiki language lists and edit links.
+- URL fetching needs a browser less often and no longer mistakes a bot-check page for content.
+- A stray `[` no longer swallows the text up to the next link, which could drop most of a document.
+- Rejected, failed and unpriced LLM requests are now counted, and an unknown price is never shown as $0.
+- Claude Code requests now use your subscription instead of `ANTHROPIC_API_KEY`.
+- No `.llm.md` is written when no model succeeded, for example after a refusal or a failed Claude Code turn.
+- A missing or refused API key is named once, with the variable to fix, before anything is sent.
+- A resumed batch reports what the whole batch cost, and `--resume` works across operating systems.
+- `markitai serve` reports a history save that failed instead of calling the job `done`.
+- Setup works on Windows PowerShell 5.1 and on Windows on Arm, and install hints keep the extras you already have.
 
 ### Security
 
-- **`markitai serve` never sends the server's credentials to an address a caller picks**: a model saved or tested without a key uses the `markitai-no-key` placeholder instead of the server's key variable, Vertex AI, watsonx and GigaChat models with a caller's address are refused, a user token's models never use the server's keys, and `env:` references are limited to provider key variables at their default endpoints.
-- **A user token cannot reach the server's own network**: its URLs, the redirects they lead to (now followed and checked by markitai) and its own models' connections resolve to public addresses only, which closes a path to the admin's API over loopback.
-- **Credentials stay out of answers, URLs and logs**: stored keys and secrets in a saved API base are returned masked, downloads use single-use tickets instead of `?token=`, the request log and `markitai-mcp`'s log mask tokens and URL credentials, screenshot names and the SPA-domain file no longer carry `user:password@`, and the OpenAPI document needs the token.
-- **LLM errors and crash tracebacks no longer show API keys or document text**, on stderr, in logs, `--json`, reports and `markitai serve`.
-- **A downloaded folder's `.env` and `markitai.json` can no longer redirect programs, endpoints, proxies or credentials**: `./.env` only sets keys and options, and a local `markitai.json` sends no environment key to an address of its own.
-- **LibreOffice is hardened**: a file name starting with `-` is never read as an option, and slide rendering blocks linked content and macros.
-- **Claude Agent and Copilot run with no tools**, so a prompt-injected document or page cannot run commands as you.
-- **Cloudflare processing is the admin's alone**, writes from other `localhost` ports are refused, and Playwright's `extra_http_headers` go to the first origin only.
-- **Untrusted content is checked more closely**: invisible PDF text counts as a scan's OCR layer only on a scanned page (a payload over a small picture is reported and dropped under `remove` again), `remove` no longer deletes visible text a hidden span repeats, `--ocr --llm` checks the text it sends, and web extraction removes `javascript:` links in SVG, `srcset`, `poster`, `data` and obfuscated spellings.
-- **The caches are readable by their owner only** (`cache.db` and the fetch cache).
-- **Pillow 13 (24 CVEs fixed) and certifi 2026.10.19 (compromised emSign intermediates removed) in the lock**; the sdist no longer ships tests with third-party web captures, a job's archive never follows a symlink out of the job, and the build backend is pinned.
+- `markitai serve` never sends the server's own API keys or cloud logins to an address a settings caller chooses.
+- A user token can no longer reach the server's own network or API keys through its URLs, their redirects or its own models.
+- Stored keys, access tokens and credentials in URLs are kept out of API answers, download links, file names and logs.
+- LLM errors and crash tracebacks no longer show API keys or document text.
+- A downloaded folder's `.env` and `markitai.json` can no longer redirect programs, endpoints, proxies or credentials.
+- LibreOffice never reads a file name as an option and no longer loads linked content or macros during slide rendering.
+- Claude Agent and Copilot run with no tools, so a prompt-injected document cannot run commands as you.
+- Cloudflare processing is the admin's alone, and writes from other `localhost` ports are refused.
+- Playwright's `extra_http_headers` are sent only to the page's first origin, not to other hosts the page loads.
+- Invisible PDF text counts as an OCR layer only on a scanned page, so a hidden prompt injection is reported again.
+- `security.pdf_sanitize: remove` no longer deletes visible text, and `--ocr --llm` checks the text it sends to the model.
+- Web extraction removes `javascript:` links hidden in SVG, image source sets and obfuscated spellings.
+- The caches are readable by their owner only.
+- The lock moves to Pillow 13, which fixes 24 CVEs, and to certifi 2026.10.19, which drops compromised certificates.
+- The source package no longer ships the test suite, which held third-party web captures.
+- A job's download archive never follows a symlink out of the job, and the build backend is pinned.
 
 ## [1.2.0] - 2026-09-28
 

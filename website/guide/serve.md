@@ -121,7 +121,7 @@ An `--llm-batch` run that stopped waiting while its provider batch was still run
 
 ## API Overview
 
-The workbench runs on a small REST + SSE API that scripts can call directly. Errors are JSON `{"detail", "code", "reason"}`: `detail` is an English sentence, `reason` a stable cause such as `llm_unavailable` or `file_too_large`.
+The workbench runs on a small REST + SSE API that scripts can call directly. Errors are JSON `{"detail", "code", "reason"}`: `detail` is an English sentence, `reason` a stable cause such as `llm_unavailable` or `file_too_large`. Job options are checked strictly: an unknown option or a value of the wrong type is 422 `invalid_options` (`invalid_retry_body` on a retry), and URLs are checked when they are submitted (422 `invalid_url` or `unsupported_url_scheme`). A user token that chooses `jina`, `defuddle` or `cloudflare` gets 403 `remote_processing_forbidden`, and under `--no-auth` a URL from another machine gets 403 `remote_url_forbidden`. The OpenAPI document is `GET /api/openapi.json`, behind the same token as the rest of the API.
 
 | Endpoint | Description |
 |----------|-------------|

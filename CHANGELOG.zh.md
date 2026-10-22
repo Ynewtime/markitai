@@ -9,55 +9,72 @@
 
 ### 新增
 
-- **全新的 `markitai serve` 工作台**，与 markitai 的 Rust 实现共用同一个：侧边栏里是转换、转换记录和设置（手机上是底部栏）；文件、文件夹、粘贴的 URL 和 `.urls` 列表先暂存，再合成一次提交；所有转换在一个列表里，可筛选，可停止尚未开始的条目，可多选删除；转换窗口有详情、预览（渲染、源码、差异、文件；基础版 | LLM 版）和对比。React 网页应用已移除，构建 markitai 不需要 Node 也不需要 Rust。
-- **对比视图把原件放在 Markdown 旁边**，逐块对应：PDF 页面连同其中的图片和书签、图片，以及网页保存下来的副本和截图。网站显示的是验证页或空白页而不是内容时，它会说明。
-- **`markitai serve` 的用户令牌、用户自己的模型和编辑配置。** 设置 → 访问令牌可以创建有名称、可吊销的令牌（只显示一次，附登录链接和二维码；只保存摘要）。用户令牌只能看到自己的转换，使用自己的模型和管理员共享的模型，并有自己的权重和测试。管理员可以在浏览器里编辑配置文件（密钥打码，输入时即检查，保存前审阅）；新建转换的选项从服务器的默认值开始，管理员可以保存默认值，用户也可以为自己保存。
-- **能识别读错的 PDF 文字层，每一页也会说明文字来自哪里。** 私用区或 `(cid:NN)` 编码、被当成 Windows-1252 读出的 UTF-8、倒序存放的从右到左文字，以及在 `--ocr` 下编码代表的字母与画出的字形不符的字体，都会让该页进入扫描页提示并改用 OCR。`page_sources`（在 `--json`、Python API、历史记录和 serve 条目中）给出每页文字的来源和原因。这种检查文字层的思路来自 [Indra OCR](https://github.com/datalab-to/indra)，代码由 markitai 自己实现。
+- 全新的 `markitai serve` 工作台与 markitai 的 Rust 实现共用，取代了 React 网页应用，构建时不再需要 Node 或 Rust。
+- 对比视图把原始的 PDF、图片或网页放在 Markdown 旁边，并逐块对应两者。
+- `markitai serve` 新增用户令牌，它只能看到自己的转换，可以使用自己的模型或管理员共享的模型。
+- 管理员可以在浏览器里编辑配置文件，新建的转换从服务器保存的默认选项开始。
+- 读错的 PDF 文字层现在会触发扫描页提示并改用 OCR，这种检查的思路来自 [Indra OCR](https://github.com/datalab-to/indra)。
+- 每个 PDF 页面都会在 `page_sources` 中说明文字来自哪里，见于 `--json`、Python API 和 `markitai serve`。
 
 ### 变更
 
-- **更快，输出不变**：长 PDF 用上所有核心提取，不再拖住其他文档（4 核上 409 页：54 秒 → 30 秒）；扫描版 PDF 由工作进程逐页做 OCR（490 页的扫描件：约 290 秒，原来约 500 秒）；网页正文提取快约一倍；`markitai doctor` 和 `markitai --version` 启动很快。PDF 工作进程因此占用更多内存（四个提取进程约 1.3 GB）。
-- **新的默认模型**：`deepseek/deepseek-flash`（DeepSeek 已停用 V4-Flash，配置里仍写着它会收到警告）、`openai/gpt-6-luna`、`anthropic/claude-haiku-5-5`、`chatgpt/gpt-6-luna`、`copilot/auto`、`openrouter/~anthropic/claude-haiku-latest` 和 `claude-agent/haiku`。在 LiteLLM 列出之前，markitai 自带 Claude Haiku 5.5、Claude Sonnet 5.5 和 GPT-6.1 Sol 的价格。
-- **面向客户端的 `markitai serve` API**：任务选项严格检查（未知的键或类型不对返回 422），URL 在提交时检查，422 用一句话说明原因，请求 LLM 处理却没有可用模型返回 422 `llm_unavailable`，Cloudflare 需要请求本身的同意（`"remote_processing": "cloudflare"`），超过 64 MiB 的结果返回 413，错误带 `reason`，OpenAPI 文档改到 `/api/openapi.json` 并需要令牌（`/docs` 和 `/redoc` 已移除）。
-- **`markitai serve` 的访问**：LLM 设置对每个客户端都需要令牌，本机也一样；使用 `--no-auth` 时只有本机可以提交 URL（403 `remote_url_forbidden`）。
-- **用户令牌的转换不离开公网，也不使用远程服务**：它的 URL 和它的文档引用的图片只从公网地址抓取；选择 defuddle.md、Jina Reader 或 Cloudflare 会被拒绝（403 `remote_processing_forbidden`）；服务器的远程默认策略对它按 `auto` 运行；远程回退和 X/Twitter 嵌入查询会被跳过并给出警告。管理员的任务和命令行仍按 `fetch.remote_consent` 处理。
-- **提示进入 `--json`，页码列表写成区间**：条目的 `warnings` 包含打印在 stderr 上的提示（看起来是扫描件的页面、隐藏文字、被重发的请求），例如 `4 of 120 pages look scanned/garbled (pages 3–5, 9)`。
-- **`markitai doctor` 直接说明 markitai 是否可用**（中文终端下显示中文），`markitai init` 会说明它没有使用哪些密钥以及原因。
-- **批处理**：文件夹批处理跳过隐藏文件夹、`node_modules` 和 Office 锁文件，除非 glob 明确写出它们；`--resume` 为不同的输出设置（`--pure`、`--keep-base`、`--screenshot-only`、输出配置、`-s`）分别保存状态；`--llm-batch` 拒绝 URL，而不是按全价逐个请求。
-- **MCP `job_status`**：`done` 只计成功的条目；新增的 `finished` 计成功和失败的总数。
-- **LLM 请求**：DeepSeek 的思考模型和 Claude Haiku 5.5 不再先推理再作答；请求的就是配置的 `max_tokens`；发出后超时的请求最多再发一次，并把文档的费用标为不完整。
-- **依赖**：安装包要求 `litellm>=1.83.0,!=1.92.0,<1.105` 和 `anthropic>=1.0.0,<2`（更新的版本会改变 OpenRouter 的上限、Claude 的价格和 Batch API 的认证方式），并声明自己直接导入的包（PyYAML、beautifulsoup4、soupsieve、defusedxml、PyMuPDF、openpyxl、numpy、olefile、`xlrd`；不再声明 pandas）。
-- **移除**：没有用到的 Python API（`LLMProcessor.clean_markdown`、`get_usage`、`get_total_cost`、`reset_call_counter`、`enhance_url_with_vision`、`BatchProcessor.process_batch` 等；`SingleFileWorkflow` 需要传 `processor=`）以及从未使用的 `prompts.url_enhance_*` 设置。
-- **升级之后**：现有的 LLM 缓存条目在升级后首次运行时会失效一次（缓存键现在覆盖全文和图片字节），`cache.enabled: false` 也会关闭它；`markitai serve` 的历史记录从任务完成时开始计算保留期，所以七天前就已完成的历史会在首次启动时删除。
+- 长 PDF、扫描版 PDF 和网页的转换快了很多且输出不变，但 PDF 提取会占用更多内存。
+- 默认模型改为 `deepseek/deepseek-flash`、`openai/gpt-6-luna` 和 `anthropic/claude-haiku-5-5`，ChatGPT、Copilot、OpenRouter 和 Claude Code 的默认模型也相应更新。
+- `markitai serve` 的 API 会严格检查任务选项和 URL，每个错误都带有稳定的 `reason`。
+- 没有可用模型时 `markitai serve` 会拒绝 LLM 处理，并且只有在请求本身同意时才使用 Cloudflare。
+- serve 的 API 描述移到需要访问令牌的 `/api/openapi.json`，`/docs` 和 `/redoc` 页面已移除。
+- `markitai serve` 的 LLM 设置对每个客户端都需要令牌，使用 `--no-auth` 时只有本机可以提交 URL。
+- 用户令牌的转换只从公网抓取，绝不使用 defuddle.md、Jina Reader、Cloudflare 或 X/Twitter 嵌入查询。
+- 转换打印在 stderr 上的提示，例如看起来是扫描件的页面，现在也会出现在 `--json` 条目的 `warnings` 里。
+- `markitai doctor` 现在直接说明 markitai 是否可用，`markitai init` 会解释它没有使用哪些 API 密钥。
+- 文件夹批处理会跳过隐藏文件夹、`node_modules` 和 Office 锁文件，除非 glob 明确指定它们。
+- `--resume` 为不同的输出设置分别保存状态，`--llm-batch` 会拒绝 URL，而不是按全价逐个请求。
+- MCP `job_status` 的 `done` 现在只计成功的条目，并新增 `finished` 统计成功和失败的条目总数。
+- 推理模型现在不再先思考再作答，markitai 请求的就是配置中设置的 `max_tokens`。
+- 超时的请求最多再发一次，之后该文档的费用会被标为不完整。
+- 安装包要求 `litellm<1.105` 和 `anthropic<2`，因为更新的版本会改变价格、OpenRouter 的上限和 Batch API 的认证方式。
+- 安装包声明了它直接导入的库，其中包括 `xlrd`，并且不再声明 pandas。
+- 移除了没有用到的 Python API 和从未使用的 `prompts.url_enhance_*` 设置。
+- 现有的 LLM 缓存条目在升级后首次运行时会失效一次，因为缓存键现在覆盖全文和图片。
+- `cache.enabled: false` 现在除了抓取缓存也会关闭 LLM 结果缓存。
+- `markitai serve` 的历史记录现在从任务完成时开始计算保留期，所以超过七天的历史会在首次启动时删除。
 
 ### 修复
 
-- **PDF**：设了密码或没有页面的 PDF 会说明原因；海报尺寸的页面能转换；无边框表格仍是表格；页眉、页脚和页码不进正文，也不会连带删掉带编号的正文行；一行文字不再变成这行文字的图片；Chrome 生成的中日韩部首字符换成正确的字；标题是纯文本；以文字为主的图片显示其文字。
-- **OCR**：`--ocr --llm` 保留扫描页的识别结果；可搜索扫描件的 OCR 文字层不再被报告为隐藏文字；字形检查兼容 RapidOCR 3.10。
-- **Office 和表格**：空单元格保持为空（不再是 `NaN` 或 `Unnamed: 1`），单元格按 Excel 的数字格式和日期显示，隐藏工作表会标出，ODS 保留空单元格，单元格里的换行不再打断表格，比表头长的 CSV 行保留所有单元格，UTF-8 BOM 不再算进第一列的列名；ODT 和 RTF 保留格式、列表、脚注和图片；PPTX 中表格后面的形状是独立的块。
-- **EPUB 和本地 HTML**：图片保存为资源，EPUB 的元数据进入 front matter，本地网页的相对链接保持相对（不再是 `file:///home/<user>/…`），名称带 `#` 或 `%` 的文件夹能正常处理，旧编码能正确读取，名不副实的文件会说明它实际是什么，没有 `-b cloudflare` 时 `.numbers` 会说明原因并失败。
-- **网页**：维基文章从正文开始（没有语言列表、编辑链接和 "Retrieved from"），保留文章的侧栏、摘要、表头和嵌套列表，词语不再粘连，代码保留画成按钮的名称，X 帖子链接到真实目标，并能在对比视图中显示。
-- **抓取**：普通请求以 markitai 的身份发出，需要浏览器的页面因此更少；页面稳定后浏览器即停止等待；人机验证页（Cloudflare、DataDome、PerimeterX 等）不会被当成内容，只是提到 验证码 的中文页面也不再被当成验证页；UTF-8 文本 URL 不再乱码；macOS 能检测到系统代理；`NO_PROXY` 覆盖子域名；超过 500 MB 的响应会失败。
-- **Markdown 清理**：多余的 `[` 不再吞掉直到下一个链接的文字（有个文档 16,003 行只剩 141 行），长文档不再让 `markitai serve` 在这一步卡住一分钟，重复的表格分隔行会被删除，模型粘在段落后面的页面引用重新成为独立的块。
-- **LLM 费用**：被拒绝的回答、失败的 Batch 回答和失败的 URL 都会计入；未知的价格在命令行、`markitai serve` 和历史记录中都显示为未知，不再是 $0；Claude Batch 的费用包含缓存；DeepSeek 的节假日价格和 Gemini 2027 年的价格正确；订阅费用估算对应正确的模型；一个文档共用一份请求预算；Claude Code 请求使用你的订阅，而不是 `ANTHROPIC_API_KEY`。
-- **LLM 回答**：没有模型成功时不生成 `.llm.md`（拒答、被过滤或被截断的回答、失败的 Claude Code 轮次）；缺少 API 密钥时在发出任何请求之前就指出变量名，密钥被拒时只报告一次，并说明要修改的变量；默认的 DeepSeek 和 OpenAI 模型不再以一次失败的请求开始；Copilot 提供方重新兼容其 SDK；ChatGPT 的限流只让那一个请求失败。
-- **批处理和续跑**：续跑后的批处理报告整批的费用；`--resume` 支持相对路径的输入文件夹，也能跨操作系统使用；符号链接有自己的条目；摘要把失败列为错误。
-- **`markitai serve`**：保存历史失败时会报告（`persistence_error`），而不是 `done`；来自环境变量卡片或服务器密钥的模型能加载；模型测试或空的模型列表会说明原因；只在有用时才提供重试；浏览器启动时按 Ctrl-C 不再卡住；重试不会让刚删除的任务复活。
-- **安装和 Windows**：`setup.ps1` 能在 Windows PowerShell 5.1 上运行，并在 Windows on Arm 上安装到 x64 Python；安装程序只安装一次，并能找到 uv 安装 markitai 的位置；安装提示保留你已装的扩展；不再每次运行都查询 WMI；`doctor` 允许 Chromium 第一次启动较慢；终端输出在文字下方折行；不再出现 "leaked semaphore objects" 警告。
+- PDF 转换能处理设了密码、没有页面和海报尺寸的文件，以及无边框表格、页眉页脚和 Chrome 生成的中日韩字符。
+- `--ocr --llm` 会保留扫描页的识别结果，PDF 字形检查也兼容 RapidOCR 3.10。
+- 表格文件中的空单元格显示为空，数字和日期按 Excel 显示的格式输出。
+- ODT、RTF、ODS、PPTX 和 CSV 文件会保留以前丢失的脚注、图片、空单元格和较长的行。
+- EPUB 和本地 HTML 的图片保存为资源，本地网页的相对链接不再变成绝对路径。
+- 网页提取保留更多正文，并去掉维基语言列表和编辑链接之类的页面杂项。
+- URL 抓取需要浏览器的情况更少，也不再把人机验证页当成内容。
+- 多余的 `[` 不再吞掉直到下一个链接的文字，这个问题曾让文档的大部分内容丢失。
+- 被拒绝、失败和未定价的 LLM 请求现在都会计入，未知的价格也绝不会显示为 $0。
+- Claude Code 请求现在使用你的订阅，而不是 `ANTHROPIC_API_KEY`。
+- 没有模型成功时不再生成 `.llm.md`，例如模型拒答或 Claude Code 轮次失败时。
+- 缺少或被拒的 API 密钥会在发出任何请求之前报告一次，并指出要修改的变量。
+- 续跑的批处理会报告整批的费用，`--resume` 也能跨操作系统使用。
+- 保存历史失败时，`markitai serve` 会报告这个失败，而不是把任务标为 `done`。
+- 安装程序能在 Windows PowerShell 5.1 和 Windows on Arm 上运行，安装提示也会保留你已装的扩展。
 
 ### 安全
 
-- **`markitai serve` 不再把服务器的凭据发往调用方指定的地址**：没有密钥而保存或测试的模型使用占位密钥 `markitai-no-key`，而不是服务器的密钥变量；带调用方地址的 Vertex AI、watsonx 和 GigaChat 模型会被拒绝；用户令牌的模型从不使用服务器的密钥；`env:` 引用只限于提供方密钥变量及其默认端点。
-- **用户令牌无法访问服务器自己的网络**：它的 URL、这些 URL 导向的重定向（现在由 markitai 自己跟随并检查）以及它自己模型的连接都只能解析到公网地址，堵住了经由回环地址访问管理员 API 的途径。
-- **凭据不再出现在响应、URL 和日志里**：已保存的密钥和保存的 API 地址中的机密以打码形式返回，下载改用一次性票据而不是 `?token=`，请求日志和 `markitai-mcp` 的日志会遮盖令牌和 URL 中的凭据，截图文件名和 SPA 域名文件不再带 `user:password@`，OpenAPI 文档需要令牌。
-- **LLM 错误和崩溃回溯不再显示 API 密钥或文档文字**，无论在 stderr、日志、`--json`、报告还是 `markitai serve` 中。
-- **下载来的文件夹里的 `.env` 和 `markitai.json` 不能再改变程序、端点、代理或凭据**：`./.env` 只能设置密钥和选项，本地的 `markitai.json` 不会把环境中的密钥发往它自己的地址。
-- **LibreOffice 更安全**：以 `-` 开头的文件名不会被当成选项，幻灯片渲染会阻止链接内容和宏。
-- **Claude Agent 和 Copilot 在没有任何工具的情况下运行**，被提示注入的文档或网页无法以你的身份执行命令。
-- **Cloudflare 处理只限管理员**，来自其他 `localhost` 端口的写请求会被拒绝，Playwright 的 `extra_http_headers` 只发往最初的源。
-- **不可信内容检查得更仔细**：不可见的 PDF 文字只在扫描页上才算作 OCR 文字层（盖在小图片上的注入内容会再次被报告，并在 `remove` 下删除），`remove` 不再删掉隐藏文字重复的可见文字，`--ocr --llm` 会检查它发送的文字，网页提取会删除 SVG、`srcset`、`poster`、`data` 中以及经过混淆写法的 `javascript:` 链接。
-- **缓存只有所有者可读**（`cache.db` 和抓取缓存）。
-- **锁文件更新到 Pillow 13（修复 24 个 CVE）和 certifi 2026.10.19（移除被攻破的 emSign 中间证书）**；sdist 不再附带含第三方网页抓取内容的测试，任务归档不会跟随指向任务以外的符号链接，构建后端固定了版本。
+- `markitai serve` 绝不会把服务器自己的 API 密钥或云登录凭据发往设置调用方指定的地址。
+- 用户令牌不能再通过它的 URL、这些 URL 的重定向或它自己的模型访问服务器自己的网络或 API 密钥。
+- 已保存的密钥、访问令牌和 URL 中的凭据不再出现在 API 响应、下载链接、文件名和日志里。
+- LLM 错误和崩溃回溯不再显示 API 密钥或文档文字。
+- 下载来的文件夹里的 `.env` 和 `markitai.json` 不能再改变程序、端点、代理或凭据。
+- LibreOffice 绝不会把文件名当成选项，渲染幻灯片时也不再加载链接内容或宏。
+- Claude Agent 和 Copilot 在没有任何工具的情况下运行，被提示注入的文档无法以你的身份执行命令。
+- Cloudflare 处理只限管理员使用，来自其他 `localhost` 端口的写请求会被拒绝。
+- Playwright 的 `extra_http_headers` 只发往页面最初的源，不再发给页面加载的其他主机。
+- 不可见的 PDF 文字只在扫描页上才算作 OCR 文字层，所以隐藏的提示注入会再次被报告。
+- `security.pdf_sanitize: remove` 不再删除可见文字，`--ocr --llm` 也会检查它发给模型的文字。
+- 网页提取会删除藏在 SVG、图片源集合和混淆写法中的 `javascript:` 链接。
+- 缓存只有所有者可以读取。
+- 锁文件更新到修复了 24 个 CVE 的 Pillow 13，以及移除了被攻破证书的 certifi 2026.10.19。
+- 源码包不再附带测试套件，其中含有第三方网页的抓取内容。
+- 任务的下载归档绝不跟随指向任务以外的符号链接，构建后端也固定了版本。
 
 ## [1.2.0] - 2026-09-28
 

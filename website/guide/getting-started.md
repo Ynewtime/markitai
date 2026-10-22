@@ -94,6 +94,8 @@ uv pip install markitai      # into the active virtual environment
 
 A manual install has no optional pieces. Run `markitai doctor` to see what is available, and `markitai init` to set up an LLM provider.
 
+markitai 1.2.1 requires `litellm>=1.83.0,!=1.92.0,<1.105` and `anthropic>=1.0.0,<2`: newer LiteLLM releases change model prices and OpenRouter limits markitai relies on, and Anthropic SDK 2 sends the API key as a Bearer token, which gateways that read `X-Api-Key` refuse for `--llm-batch`. Installing markitai into an environment that needs newer versions of either package is not supported.
+
 ## Feature Notes
 
 **Presets** bundle the common flags. `minimal` does plain conversion, `standard` adds LLM cleanup and image analysis, `rich` adds page screenshots. Turn any part off with `--no-*`, for example `--preset rich --no-desc`.
