@@ -40,7 +40,8 @@ stage times before claiming a speedup.
 ## Running package acceptance
 
 From a clean committed checkout, with Rust, Node/npm, Python with venv/pip,
-`maturin>=1.9,<2`, and Go/cgo available:
+maturin 1.15.0 (the version `bindings/python/pyproject.toml` pins; the driver
+refuses another), and Go/cgo available:
 
 ```text
 python scripts/ci_packages.py --expected-host <rustc-host-triple> --output .local/ci-artifacts

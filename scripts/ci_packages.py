@@ -98,6 +98,15 @@ def windows_cli_build(root, target, environment):
     return command, cli_environment, directory / target / "release"
 
 
+def pinned_maturin(pyproject):
+    """The exact maturin version `bindings/python/pyproject.toml` builds with."""
+    import re
+    match = re.search(r'requires\s*=\s*\[\s*"maturin==([0-9][0-9.]*)"\s*\]', pyproject)
+    if not match:
+        raise RuntimeError("bindings/python/pyproject.toml must pin maturin exactly")
+    return match.group(1)
+
+
 def identity(path):
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -843,9 +852,13 @@ def main():
         wheels.mkdir()
         raw_wheels = wheels / "original"
         raw_wheels.mkdir()
+        pinned = pinned_maturin((root / "bindings/python/pyproject.toml").read_text(encoding="utf-8"))
         maturin = shutil.which("maturin")
         if not maturin:
-            raise RuntimeError("Install maturin>=1.9,<2 before package validation")
+            raise RuntimeError(f"Install maturin=={pinned} before package validation")
+        found = run("maturin-version", [maturin, "--version"]).split()
+        if found[-1:] != [pinned]:
+            raise RuntimeError(f"The release wheel is built with maturin {pinned}, not {' '.join(found)}")
         run("python-wheel", [maturin, "build", "--release", "--locked", "--out", raw_wheels,
                              "--interpreter", sys.executable], cwd=root / "bindings/python")
         record["source_after_wheel_build"] = snapshot()

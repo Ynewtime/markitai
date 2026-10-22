@@ -41,7 +41,7 @@ internal npm name, so keep their external archive names or directories distinct.
 
 ```sh
 python3 -m venv .local/py                  # Python 3.10 or later; Apple's /usr/bin/python3 may be older
-.local/py/bin/python -m pip install 'maturin>=1.9,<2'
+.local/py/bin/python -m pip install 'maturin==1.15.0'   # the version pyproject.toml and CI pin
 (cd bindings/python && ../../.local/py/bin/maturin build --release --locked --out ../../dist/python)
 .local/py/bin/python -m pip install /path/to/the-matching-markitai.whl
 .local/py/bin/python -c 'import markitai; print(markitai.__version__)'
@@ -70,6 +70,13 @@ nothing, so an existing `pip install "markitai[serve]"` still resolves: the
 wheel needs no other Python package (Chromium and the subscription runtimes
 are installed as [browser installation](browser-installation.md) and
 [subscriptions](subscriptions.md) describe).
+
+Publish wheels only. A source distribution (`maturin sdist`) carries the
+workspace crates the extension needs (the command-line crate included),
+`vendor/rav1d`, `Cargo.lock` and the package's Python files, but not the
+vendored crates the workspace's `[patch.crates-io]` names (`anydoc`, `htmd`,
+`lopdf`, `pdf-inspector`): maturin copies path dependencies, not patches, and
+refuses include patterns outside `bindings/python`, so it does not build.
 
 ### Node.js
 

@@ -20,7 +20,7 @@ import zipfile
 
 from ci_packages import (apply_path_remap, _sbom_without_local_paths, npm_command, packed_filename, source_snapshot, stage_node_licenses, supplement_wheel_licenses,
                          verify_node_licenses, write_cli_zip, extract_cli_zip, doctor_probe, mcp_probe, identity, package_attribution,
-                         write_single_binary_tar, extract_single_binary_tar, windows_cli_build, main)
+                         write_single_binary_tar, extract_single_binary_tar, windows_cli_build, main, pinned_maturin)
 from cli_documentation import DOCUMENTATION_PATHS
 
 
@@ -71,6 +71,14 @@ class PackageValidationTests(unittest.TestCase):
                     self.assertNotIn("--bins", command)
                     self.assertEqual(command[command.index("--bin") + 1], "markitai")
                     self.assertEqual(command[command.index("-p") + 1], "markitai-cli")
+
+    def test_the_wheel_and_ci_pin_one_exact_maturin(self):
+        root = Path(__file__).resolve().parents[1]
+        pinned = pinned_maturin((root / "bindings/python/pyproject.toml").read_text(encoding="utf-8"))
+        workflow = (root / ".github/workflows/native.yml").read_text(encoding="utf-8")
+        self.assertIn(f'pip install "maturin=={pinned}"', workflow)
+        with self.assertRaises(RuntimeError):
+            pinned_maturin('requires = ["maturin>=1.9,<2"]')
 
     def test_path_remap_appends_to_flags_and_covers_the_build_tree(self):
         root = self.root / "checkout"

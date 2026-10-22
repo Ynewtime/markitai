@@ -1,5 +1,7 @@
 [build-system]
-requires = ["maturin>=1.9,<2"]
+# Pinned exactly: a release is built with one known maturin (CI installs the
+# same version, .github/workflows/native.yml).
+requires = ["maturin==1.15.0"]
 build-backend = "maturin"
 
 [project]
