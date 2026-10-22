@@ -116,6 +116,8 @@ impl Plan {
         let mut items = Vec::with_capacity(records.len());
         // Insertion order matters: a later root receives collision suffixes.
         let mut roots = indexmap::IndexMap::<PathBuf, Vec<(PathBuf, usize)>>::new();
+        // The recorded outputs of each root: only their assets are copied.
+        let mut owners = HashMap::<PathBuf, assets::Owners>::new();
         for (index, item) in records.into_iter().enumerate() {
             if crate::signals::interrupted().is_some() {
                 return Ok(None);
@@ -158,6 +160,22 @@ impl Plan {
                     assets::find_root(source, ascend, &boundary, self.allow_symlinks)?
                 {
                     let documents = roots.entry(root.clone()).or_default();
+                    if let Some(name) = &copied {
+                        let markdown = name.to_ascii_lowercase().ends_with(".md");
+                        // The copy just made: a regular file in the private stage.
+                        let text = markdown
+                            .then(|| out.join(name))
+                            .filter(|path| {
+                                fs::metadata(path).is_ok_and(|m| m.len() <= MAX_MARKDOWN)
+                            })
+                            .and_then(|path| fs::read(path).ok())
+                            .map(|bytes| String::from_utf8_lossy(&bytes).into_owned());
+                        let filename = source.file_name().and_then(|s| s.to_str());
+                        owners
+                            .entry(root.clone())
+                            .or_default()
+                            .add(filename.unwrap_or(name), text);
+                    }
                     if let Some(name) = &copied
                         && source
                             .extension()
@@ -187,10 +205,13 @@ impl Plan {
             if crate::signals::interrupted().is_some() {
                 return Ok(None);
             }
-            let mapping = assets::merge_root(&root, &out, &mut budget, self.allow_symlinks)?;
+            let owned = owners.remove(&root).unwrap_or_default();
+            let mapping =
+                assets::merge_root(&root, &out, &mut budget, self.allow_symlinks, Some(&owned))?;
             image_indexes.merge(
                 &root,
                 &mapping,
+                &budget.take_skipped(),
                 budget.take_image_indexes(),
                 self.allow_symlinks,
             )?;
@@ -963,6 +984,79 @@ mod tests {
         }
     }
     #[test]
+    fn only_the_recorded_outputs_own_assets_are_copied_from_a_shared_folder() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let output = root.join("output");
+        // Earlier runs left other documents' pictures, screenshots and index
+        // records in the same folder.
+        let document = output.join("report.pdf.md");
+        put(
+            &document,
+            "![a](.markitai/assets/0a1b.png)\n![b](.markitai/assets/caf%C3%A9.png)\n".as_bytes(),
+        );
+        for (name, bytes) in [
+            (".markitai/assets/0a1b.png", "mine"),
+            (".markitai/assets/café.png", "mine, encoded"),
+            (
+                ".markitai/screenshots/report.pdf.page0001.jpg",
+                "my screenshot",
+            ),
+            ("assets/report.pdf-0001-01.jpg", "my named picture"),
+            (".markitai/assets/ffee.png", "another document's"),
+            (
+                ".markitai/screenshots/other.pdf.page0001.jpg",
+                "another screenshot",
+            ),
+            ("assets/report.pdfx.page0001.jpg", "a longer name"),
+            ("assets/nested/other.png", "another nested"),
+        ] {
+            put(&output.join(name), bytes.as_bytes());
+        }
+        let index = serde_json::json!({"version":"1.0","images":[
+            {"path":output.join(".markitai/assets/0a1b.png"),"alt":"mine"},
+            {"path":output.join(".markitai/assets/ffee.png"),"alt":"another"}
+        ]});
+        put(
+            &output.join(".markitai/assets/images.json"),
+            index.to_string().as_bytes(),
+        );
+        let job = plan(root, RunMode::SingleFile)
+            .publish(&[record(0, "report.pdf", Some(document))])
+            .unwrap()
+            .unwrap();
+        let mut copied: Vec<String> = walkdir::WalkDir::new(job.join("out"))
+            .into_iter()
+            .map(Result::unwrap)
+            .filter(|entry| entry.file_type().is_file())
+            .map(|entry| {
+                let path = entry.path().strip_prefix(job.join("out")).unwrap();
+                path.to_string_lossy().replace('\\', "/")
+            })
+            .collect();
+        copied.sort();
+        assert_eq!(
+            copied,
+            [
+                ".markitai/assets/0a1b.png",
+                ".markitai/assets/café.png",
+                ".markitai/assets/images.json",
+                ".markitai/screenshots/report.pdf.page0001.jpg",
+                "assets/report.pdf-0001-01.jpg",
+                "report.pdf.md",
+            ]
+        );
+        // No empty directory is left for a tree nothing was copied from.
+        assert!(!job.join("out/assets/nested").exists());
+        let index: Value = serde_json::from_slice(
+            &fs::read(job.join("out/.markitai/assets/images.json")).unwrap(),
+        )
+        .unwrap();
+        let images = index["images"].as_array().unwrap();
+        assert_eq!(images.len(), 1);
+        assert_eq!(images[0]["alt"], "mine");
+    }
+    #[test]
     fn image_indexes_merge_relocate_collisions_and_survive_source_removal() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
@@ -970,7 +1064,10 @@ mod tests {
         for (index, folder) in ["a", "b"].iter().enumerate() {
             let source = root.join("output").join(folder);
             let document = source.join("doc.md");
-            put(&document, b"![image](.markitai/assets/p.png)\n");
+            put(
+                &document,
+                b"![image](.markitai/assets/p.png)\n![shared](.markitai/assets/shared.png)\n",
+            );
             let picture = source.join(".markitai/assets/p.png");
             let shared = source.join(".markitai/assets/shared.png");
             put(&picture, folder.as_bytes());

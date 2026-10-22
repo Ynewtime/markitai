@@ -1,7 +1,7 @@
 //! Relocate only indexed, copied assets; image descriptions keep their other fields.
 use super::{assets, invalid};
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
@@ -21,6 +21,7 @@ impl Indexes {
         &mut self,
         root: &Path,
         mapping: &HashMap<String, String>,
+        skipped: &HashSet<String>,
         indexes: Vec<(PathBuf, PathBuf)>,
         allow_symlinks: bool,
     ) -> io::Result<()> {
@@ -48,14 +49,18 @@ impl Indexes {
                 if self.entries > MAX_ENTRIES {
                     return Err(invalid("History image index exceeds the entry limit"));
                 }
-                let relocated = entry
+                let relative = entry
                     .get("path")
                     .and_then(Value::as_str)
-                    .and_then(|path| copied_path(path, root, mapping));
-                let Some(relocated) = relocated else {
-                    self.filtered += 1;
+                    .and_then(|path| root_relative(path, root));
+                let Some(relocated) = relative.as_ref().and_then(|path| mapping.get(path)) else {
+                    // Another document's picture is left out on purpose.
+                    if !relative.is_some_and(|path| skipped.contains(&path)) {
+                        self.filtered += 1;
+                    }
                     continue;
                 };
+                let relocated = relocated.clone();
                 entry["path"] = relocated.into();
                 // Different analyses of one deduplicated asset are still distinct
                 // records. Replacing by path here would lose source descriptions.
@@ -106,7 +111,8 @@ impl Indexes {
     }
 }
 
-fn copied_path(path: &str, root: &Path, mapping: &HashMap<String, String>) -> Option<String> {
+/// An indexed path relative to its asset root, `/`-separated.
+fn root_relative(path: &str, root: &Path) -> Option<String> {
     if path.is_empty() || path.contains('\0') || path.contains("://") || path.starts_with("data:") {
         return None;
     }
@@ -123,5 +129,5 @@ fn copied_path(path: &str, root: &Path, mapping: &HashMap<String, String>) -> Op
         .map(|part| part.to_str())
         .collect::<Option<Vec<_>>>()?
         .join("/");
-    mapping.get(&relative).cloned()
+    Some(relative)
 }

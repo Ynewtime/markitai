@@ -1,7 +1,7 @@
 use caseless::default_case_fold_str as fold;
 use markitai_core::platform::{self, Status};
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, File, Metadata, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
@@ -57,11 +57,19 @@ pub(super) struct Budget {
     directories: HashMap<PathBuf, Directory>,
     fingerprints: HashMap<PathBuf, Fingerprint>,
     image_indexes: Vec<(PathBuf, PathBuf)>,
+    // Root-relative assets of the last merged root that no recorded output owns.
+    skipped: HashSet<String>,
 }
 
 impl Budget {
     pub(super) fn take_image_indexes(&mut self) -> Vec<(PathBuf, PathBuf)> {
         std::mem::take(&mut self.image_indexes)
+    }
+
+    /// The assets of the last merged root left out because no recorded
+    /// output owns them, relative to that root.
+    pub(super) fn take_skipped(&mut self) -> HashSet<String> {
+        std::mem::take(&mut self.skipped)
     }
 
     pub(super) fn bytes(&self) -> u64 {
@@ -519,16 +527,106 @@ fn target_file(
     Ok(path)
 }
 
+/// The recorded outputs that use one asset root, and so own its assets.
+/// The output folder may hold the assets of every document ever converted
+/// there; history keeps only those of the recorded outputs. An asset belongs
+/// to an output when its name starts with the output's name (`report.pdf.md`
+/// owns `report.pdf.page0001.jpg`, a screenshot `page.full.jpg` its tile
+/// `page.full--1.jpg`), or when the output mentions it
+/// (`.markitai/assets/4ff6….png`, also percent-encoded). Read loosely, as
+/// Python markitai reads it, so it errs only on the side of copying.
+#[derive(Default)]
+pub(super) struct Owners {
+    bases: Vec<String>,
+    texts: Vec<String>,
+}
+
+impl Owners {
+    /// Add a recorded output: its file name and, for Markdown, its text.
+    pub(super) fn add(&mut self, filename: &str, text: Option<String>) {
+        let lower = filename.to_ascii_lowercase();
+        let base = if lower.ends_with(".llm.md") {
+            &filename[..filename.len() - ".llm.md".len()]
+        } else if lower.ends_with(".md") {
+            &filename[..filename.len() - ".md".len()]
+        } else {
+            filename.rsplit_once('.').map_or(filename, |(stem, _)| stem)
+        };
+        if !base.is_empty() {
+            self.bases.push(base.to_owned());
+        }
+        self.texts.extend(text);
+    }
+
+    /// Whether `name` (relative to the asset directory `directory`) belongs
+    /// to one of the outputs.
+    fn own(&self, directory: &str, name: &str) -> bool {
+        if self.bases.iter().any(|base| {
+            name.strip_prefix(base.as_str())
+                .is_some_and(|rest| rest.starts_with(['.', '-']))
+        }) {
+            return true;
+        }
+        let path = format!("{directory}/{name}");
+        let encoded = percent_encode(&path);
+        self.texts
+            .iter()
+            .any(|text| text.contains(&path) || text.contains(&encoded))
+    }
+}
+
+/// `path` with every byte but ASCII letters, digits and `/._~-` as `%XX`.
+fn percent_encode(path: &str) -> String {
+    let mut encoded = String::with_capacity(path.len());
+    for byte in path.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'.' | b'_' | b'~' | b'-') {
+            encoded.push(byte as char);
+        } else {
+            encoded.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    encoded
+}
+
 struct Merge<'a> {
     source: &'a Path,
     out: &'a Path,
     budget: &'a mut Budget,
     allow_symlinks: bool,
+    owners: Option<&'a Owners>,
     replacements: HashMap<String, String>,
+    // Destination directories by (parent, name), created on first use so an
+    // asset tree whose files are all left out adds no empty directory.
+    directories: HashMap<(PathBuf, String), PathBuf>,
 }
 
 impl Merge<'_> {
-    fn walk(&mut self, source: &Path, target: &Path, depth: usize) -> io::Result<()> {
+    /// The destination directory of `components` below the output, created
+    /// (or a renamed sibling chosen) the first time it is needed.
+    fn destination(&mut self, components: &[String]) -> io::Result<PathBuf> {
+        let mut target = self.out.to_owned();
+        for component in components {
+            let key = (target.clone(), component.clone());
+            target = match self.directories.get(&key) {
+                Some(path) => path.clone(),
+                None => {
+                    let path =
+                        target_directory(&target, component, self.budget, self.allow_symlinks)?;
+                    self.directories.insert(key, path.clone());
+                    path
+                }
+            };
+        }
+        Ok(target)
+    }
+
+    fn walk(
+        &mut self,
+        source: &Path,
+        asset_dir: &str,
+        target: &[String],
+        depth: usize,
+    ) -> io::Result<()> {
         if depth > self.budget.limits.depth {
             return Err(limit_error());
         }
@@ -548,17 +646,26 @@ impl Merge<'_> {
                 ".markitai/assets/images.json" | "assets/images.json"
             ) {
                 regular(&metadata)?;
+                let target = self.destination(target)?;
                 self.budget.image_indexes.push((path, target.join(name)));
                 continue;
             }
             if metadata.file_type().is_dir() {
-                let destination =
-                    target_directory(target, &name, self.budget, self.allow_symlinks)?;
-                self.walk(&path, &destination, depth + 1)?;
+                let mut nested = target.to_vec();
+                nested.push(name);
+                self.walk(&path, asset_dir, &nested, depth + 1)?;
             } else if metadata.file_type().is_file() {
+                let within = &old[asset_dir.len() + 1..];
+                if self
+                    .owners
+                    .is_some_and(|owners| !owners.own(asset_dir, within))
+                {
+                    self.budget.skipped.insert(old);
+                    continue;
+                }
+                let parent = self.destination(target)?;
                 let destination =
-                    target_file(&path, target, &name, self.budget, self.allow_symlinks)?;
-                let old = relative(&path, self.source)?;
+                    target_file(&path, &parent, &name, self.budget, self.allow_symlinks)?;
                 let new = relative(&destination, self.out)?;
                 self.replacements.insert(old, new);
             } else {
@@ -585,12 +692,15 @@ fn relative(path: &Path, root: &Path) -> io::Result<String> {
         .map(|components| components.join("/"))
 }
 
-/// An error invalidates the whole private archive stage, including earlier copies.
+/// An error invalidates the whole private archive stage, including earlier
+/// copies. With `owners`, only the assets they own are copied; the others
+/// are left in [`Budget::take_skipped`].
 pub(super) fn merge_root(
     source: &Path,
     out: &Path,
     budget: &mut Budget,
     allow_symlinks: bool,
+    owners: Option<&Owners>,
 ) -> io::Result<HashMap<String, String>> {
     if !directory(source, allow_symlinks)? || !directory(out, allow_symlinks)? {
         return Err(invalid("History asset root is missing"));
@@ -605,8 +715,11 @@ pub(super) fn merge_root(
         out: &out,
         budget,
         allow_symlinks,
+        owners,
         replacements: HashMap::new(),
+        directories: HashMap::new(),
     };
+    merge.budget.skipped.clear();
     for rel in ASSET_DIRS {
         // Check each selected component, even when ancestor symlinks are allowed.
         let mut input = source.clone();
@@ -627,11 +740,8 @@ pub(super) fn merge_root(
         if input == out || out.starts_with(&input) || input.starts_with(&out) {
             return Err(invalid("History asset source and destination overlap"));
         }
-        let mut target = out.clone();
-        for component in rel.split('/') {
-            target = target_directory(&target, component, merge.budget, allow_symlinks)?;
-        }
-        merge.walk(&input, &target, 0)?;
+        let target: Vec<String> = rel.split('/').map(str::to_owned).collect();
+        merge.walk(&input, rel, &target, 0)?;
     }
     Ok(merge.replacements)
 }
@@ -793,7 +903,7 @@ mod tests {
         write(&source, ".markitai/reports/report.json", b"private");
         write(&source, "unrelated.bin", b"private");
         let mut budget = Budget::default();
-        let mapping = merge_root(&source, &out, &mut budget, false).unwrap();
+        let mapping = merge_root(&source, &out, &mut budget, false, None).unwrap();
         assert_eq!(mapping.len(), 3);
         for key in [
             ".markitai/assets/nested/p.png",
@@ -825,12 +935,12 @@ mod tests {
         write(&roots[2], "assets/strasse.png", b"BBBB");
         write(&roots[3], "assets/STRASSE.png", b"BBBB");
         let mut budget = Budget::default();
-        merge_root(&roots[0], &out, &mut budget, false).unwrap();
-        let identical = merge_root(&roots[1], &out, &mut budget, false).unwrap();
+        merge_root(&roots[0], &out, &mut budget, false, None).unwrap();
+        let identical = merge_root(&roots[1], &out, &mut budget, false, None).unwrap();
         assert_eq!(identical["assets/STRASSE.png"], "assets/Straße.png");
-        let different = merge_root(&roots[2], &out, &mut budget, false).unwrap();
+        let different = merge_root(&roots[2], &out, &mut budget, false, None).unwrap();
         assert_eq!(different["assets/strasse.png"], "assets/strasse-2.png");
-        let repeat = merge_root(&roots[3], &out, &mut budget, false).unwrap();
+        let repeat = merge_root(&roots[3], &out, &mut budget, false, None).unwrap();
         assert_eq!(repeat["assets/STRASSE.png"], "assets/strasse-2.png");
         assert_eq!((budget.bytes(), budget.files), (8, 2));
         assert_eq!(fs::read(out.join("assets/Straße.png")).unwrap(), b"AAAA");
@@ -845,11 +955,11 @@ mod tests {
         write(&first, "assets/p-2.png", b"reserved");
         write(&first, "assets/p.png", b"original");
         let mut budget = Budget::default();
-        merge_root(&first, &out, &mut budget, false).unwrap();
+        merge_root(&first, &out, &mut budget, false, None).unwrap();
         for number in 3..20 {
             let source = temp.path().join(number.to_string());
             write(&source, "assets/p.png", number.to_string().as_bytes());
-            let mapping = merge_root(&source, &out, &mut budget, false).unwrap();
+            let mapping = merge_root(&source, &out, &mut budget, false, None).unwrap();
             assert_eq!(mapping["assets/p.png"], format!("assets/p-{number}.png"));
         }
         assert_eq!(fs::read(out.join("assets/p-2.png")).unwrap(), b"reserved");
@@ -867,8 +977,8 @@ mod tests {
         write(&first, "assets/Straße/a.png", b"one");
         write(&second, "assets/STRASSE/b.png", b"two");
         let mut budget = Budget::default();
-        merge_root(&first, &out, &mut budget, false).unwrap();
-        let mapping = merge_root(&second, &out, &mut budget, false).unwrap();
+        merge_root(&first, &out, &mut budget, false, None).unwrap();
+        let mapping = merge_root(&second, &out, &mut budget, false, None).unwrap();
         assert_eq!(mapping["assets/STRASSE/b.png"], "assets/Straße/b.png");
         assert_eq!(fs::read_dir(out.join("assets")).unwrap().count(), 1);
     }
@@ -883,8 +993,8 @@ mod tests {
         write(&first, "assets/name.png", b"file");
         write(&second, "assets/name.png/inside", b"nested");
         let mut budget = Budget::default();
-        merge_root(&first, &out, &mut budget, false).unwrap();
-        let mapping = merge_root(&second, &out, &mut budget, false).unwrap();
+        merge_root(&first, &out, &mut budget, false, None).unwrap();
+        let mapping = merge_root(&second, &out, &mut budget, false, None).unwrap();
         assert_eq!(
             mapping["assets/name.png/inside"],
             "assets/name-2.png/inside"
@@ -900,12 +1010,12 @@ mod tests {
         let out = temp.path().join("out");
         fs::create_dir(&out).unwrap();
         let mut shallow = limited_budget(100, 100, 100, 1);
-        assert!(merge_root(&source, &out, &mut shallow, false).is_err());
+        assert!(merge_root(&source, &out, &mut shallow, false, None).is_err());
         assert_eq!(shallow.bytes(), 0);
         let out2 = temp.path().join("out2");
         fs::create_dir(&out2).unwrap();
         let mut few = limited_budget(100, 100, 1, 64);
-        assert!(merge_root(&source, &out2, &mut few, false).is_err());
+        assert!(merge_root(&source, &out2, &mut few, false, None).is_err());
         assert_eq!(few.bytes(), 0);
     }
 
@@ -915,7 +1025,7 @@ mod tests {
         write(temp.path(), "assets/a", b"a");
         let out = temp.path().join(".markitai/serve/jobs/stage/out");
         fs::create_dir_all(&out).unwrap();
-        let mapping = merge_root(temp.path(), &out, &mut Budget::default(), false).unwrap();
+        let mapping = merge_root(temp.path(), &out, &mut Budget::default(), false, None).unwrap();
         assert_eq!(mapping["assets/a"], "assets/a");
         assert_eq!(fs::read(out.join("assets/a")).unwrap(), b"a");
         assert!(!out.join(".markitai").exists());
@@ -927,9 +1037,18 @@ mod tests {
         write(temp.path(), "assets/a", b"a");
         let out = temp.path().join("assets/archive/out");
         fs::create_dir_all(&out).unwrap();
-        assert!(merge_root(temp.path(), &out, &mut Budget::default(), false).is_err());
+        assert!(merge_root(temp.path(), &out, &mut Budget::default(), false, None).is_err());
         assert_eq!(fs::read_dir(&out).unwrap().count(), 0);
-        assert!(merge_root(temp.path(), temp.path(), &mut Budget::default(), false).is_err());
+        assert!(
+            merge_root(
+                temp.path(),
+                temp.path(),
+                &mut Budget::default(),
+                false,
+                None
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -974,7 +1093,7 @@ mod tests {
         symlink(&actual, source.join("assets/link")).unwrap();
         let out = temp.path().join("out");
         fs::create_dir(&out).unwrap();
-        assert!(merge_root(&source, &out, &mut budget, true).is_err());
+        assert!(merge_root(&source, &out, &mut budget, true, None).is_err());
         assert_eq!((budget.bytes(), budget.files), (0, 0));
     }
 

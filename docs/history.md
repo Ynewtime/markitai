@@ -96,8 +96,14 @@ Asset discovery starts at the output's parent and stays within the planned
 output directory. File items may ascend by their relative source depth; URLs
 remain at their output parent. The nearest `.markitai/` or `assets/` directory
 stops the search, including a `.markitai/` containing only recovery metadata.
-Only `.markitai/assets`, `.markitai/screenshots` and `assets` are copied. Original
-inputs, reports, state files and ownership receipts are excluded.
+Only `.markitai/assets`, `.markitai/screenshots` and `assets` are copied, and of
+them only the files the recorded outputs own, as in Python markitai: a file whose
+name starts with an output's name and `.` or `-` (`report.pdf.md` owns
+`report.pdf.page0001.jpg`), or one an output mentions by its path
+(`.markitai/assets/4ff6….png`, also percent-encoded). A shared `-o` folder holds
+the assets of every document converted there; the others stay out, and so do
+their `images.json` records. Original inputs, reports, state files and ownership
+receipts are excluded.
 
 Assets with the same destination and bytes are shared. Different contents get
 `-2`, `-3` before the final extension. Unicode case aliases are reserved across
