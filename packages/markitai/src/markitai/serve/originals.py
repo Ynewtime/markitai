@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import io
 import json
+import math
 import mimetypes
 import os
 import re
@@ -31,6 +32,8 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from loguru import logger
 
 from markitai.constants import SCREENSHOTS_REL_PATH
 
@@ -89,6 +92,10 @@ TEXT_EXTENSIONS = frozenset(
 MAX_LISTED_PAGES = 2000
 #: Lines of one page's text layer at most.
 MAX_TEXT_LINES = 5000
+#: A page's text answer lists at most this many picture boxes, and none
+#: smaller than this many points on a side (a rule or a dot).
+MAX_PAGE_IMAGES = 500
+MIN_IMAGE_SIDE = 4.0
 #: Pixels of one rendered page at most.
 MAX_RENDER_PIXELS = 32_000_000
 #: An image original larger than this is not decoded for a preview (a JPEG
@@ -886,7 +893,9 @@ def render_image(path: Path, width: int) -> tuple[bytes, str]:
 
 
 def pdf_page_text(path: Path, page_number: int) -> dict[str, Any]:
-    """Positioned text lines of one PDF page, top-left origin, in points."""
+    """Positioned text lines of one PDF page, and the boxes it draws its
+    pictures in (``images``, in drawing order), top-left origin, in points
+    (contract v1.12)."""
     import pymupdf
 
     with pymupdf.open(path) as document:
@@ -927,11 +936,33 @@ def pdf_page_text(path: Path, page_number: int) -> dict[str, Any]:
                     break
             if len(lines) >= MAX_TEXT_LINES:
                 break
+        images: list[dict[str, Any]] = []
+        try:
+            infos = page.get_image_info()
+        except Exception as e:
+            logger.debug("Pictures of page {} not read: {}", page_number, e)
+            infos = []
+        for info in infos:
+            box = pymupdf.Rect(info.get("bbox", (0, 0, 0, 0)))
+            if page.rotation:
+                box = (box * rotate).normalize()
+            x0, y0 = max(0.0, box.x0), max(0.0, box.y0)
+            x1, y1 = min(rect.width, box.x1), min(rect.height, box.y1)
+            if not all(math.isfinite(v) for v in (x0, y0, x1, y1)):
+                continue
+            if x1 - x0 < MIN_IMAGE_SIDE or y1 - y0 < MIN_IMAGE_SIDE:
+                continue
+            images.append(
+                {"bbox": [round(x0, 2), round(y0, 2), round(x1, 2), round(y1, 2)]}
+            )
+            if len(images) >= MAX_PAGE_IMAGES:
+                break
     return {
         "page": page_number,
         "width": round(float(rect.width), 2),
         "height": round(float(rect.height), 2),
         "lines": lines,
+        "images": images,
     }
 
 

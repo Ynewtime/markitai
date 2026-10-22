@@ -361,11 +361,14 @@ SHAPES: dict[str, dict[str, F]] = {
         "bbox": F(["num"]),
     },
     "PageTextLine": {"text": F("str"), "bbox": F(["num"])},
+    "PageTextImage": {"bbox": F(["num"])},
     "PageText": {
         "page": F("int"),
         "width": F("num"),
         "height": F("num"),
         "lines": F(["@PageTextLine"]),
+        # v1.12: where the page draws its pictures (optional in the contract)
+        "images": F(["@PageTextImage"]),
     },
     "PdfOutlineEntry": {"title": F("str"), "page": F("int"), "level": F("int")},
     "PdfOutline": {"items": F(["@PdfOutlineEntry"]), "truncated": F("bool")},
@@ -752,7 +755,7 @@ async def _job(client: httpx.AsyncClient, **form: Any) -> tuple[str, dict[str, A
     return job_id, await _done(client, job_id)
 
 
-def _pdf_bytes(pages: int = 2, *, rotate: int = 0) -> bytes:
+def _pdf_bytes(pages: int = 2, *, rotate: int = 0, pictures: bool = False) -> bytes:
     import pymupdf
 
     document = pymupdf.open()
@@ -760,6 +763,15 @@ def _pdf_bytes(pages: int = 2, *, rotate: int = 0) -> bytes:
         page = document.new_page(width=612, height=792)
         page.insert_text((72, 100), f"Heading {index + 1}", fontsize=24)
         page.insert_text((72, 140), "Body text on the page.", fontsize=11)
+        if pictures:
+            picture = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 8, 8), False)
+            picture.clear_with(120)
+            png = picture.tobytes("png")
+            page.insert_image(pymupdf.Rect(100, 200, 300, 350), stream=png)
+            # A rule drawn as a picture: under 4 points tall, left out
+            page.insert_image(pymupdf.Rect(72, 400, 540, 402), stream=png)
+            # Partly off the page: clipped to it
+            page.insert_image(pymupdf.Rect(500, 700, 700, 900), stream=png)
         if rotate:
             page.set_rotation(rotate)
     data = document.tobytes()
@@ -1694,6 +1706,42 @@ class TestOriginals:
         check_error(zero, 404, "page_not_found")
         check_error(bad_number, 422, "invalid_page_request")
         check_error(bad_width, 422, "invalid_page_request")
+
+    async def test_page_text_lists_where_the_pictures_are(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """v1.12 (Rust cc4b06b): Compare outlines a PDF's pictures from
+        ``images``, top-left origin, clipped, no rules or dots."""
+        async with _client(_make_app(tmp_path)) as client:
+            job_id = await self._job_of(
+                client, monkeypatch, "pics.pdf", _pdf_bytes(1, pictures=True)
+            )
+            base = f"/api/jobs/{job_id}/items/i1/original"
+            text = (await client.get(f"{base}/pages/1/text")).json()
+            turned_id = await self._job_of(
+                client,
+                monkeypatch,
+                "turned.pdf",
+                _pdf_bytes(1, pictures=True, rotate=90),
+            )
+            turned = (
+                await client.get(
+                    f"/api/jobs/{turned_id}/items/i1/original/pages/1/text"
+                )
+            ).json()
+        check_shape("PageText", text)
+        assert text["images"] == [
+            {"bbox": [100, 200, 300, 350]},
+            {"bbox": [500, 700, 612, 792]},
+        ]
+        assert (turned["width"], turned["height"]) == (792, 612)
+        assert len(turned["images"]) == 2
+        for image in turned["images"]:
+            x0, y0, x1, y1 = image["bbox"]
+            assert 0 <= x0 < x1 <= 792 and 0 <= y0 < y1 <= 612
+        # The 200 x 150 picture turns into a 150 x 200 box
+        x0, y0, x1, y1 = turned["images"][0]["bbox"]
+        assert (x1 - x0, y1 - y0) == (150, 200)
 
     async def test_rotated_pdf_reports_the_visible_box(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

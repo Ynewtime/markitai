@@ -1029,6 +1029,14 @@ class PageTextLine(BaseModel):
     bbox: tuple[float, float, float, float]
 
 
+class PageTextImage(BaseModel):
+    """Where a page draws one picture; bbox from the page's top-left, in points."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    bbox: tuple[float, float, float, float]
+
+
 class PageText(BaseModel):
     """Response of ``GET .../original/pages/{n}/text``."""
 
@@ -1038,6 +1046,9 @@ class PageText(BaseModel):
     width: float
     height: float
     lines: list[PageTextLine]
+    #: The page's pictures in drawing order (at most 500, none under 4
+    #: points on a side), for Compare to outline them (contract v1.12).
+    images: list[PageTextImage] = []
 
 
 class PdfOutlineEntry(BaseModel):
