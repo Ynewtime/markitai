@@ -393,10 +393,19 @@ _HIDDEN_MAX_FONT_SIZE = 2.0
 _HIDDEN_MIN_LUMINANCE = 0.95
 # Scale of the page render the background is sampled from (36 dpi).
 _BACKGROUND_SAMPLE_SCALE = 0.5
-# Invisible text with a picture under this share of its bbox is an OCR layer.
+# Invisible text with a picture under this share of its bbox is an OCR layer,
+# on a page that looks scanned: a picture covers this share of the page, or
+# the page shows no other text.
 _OCR_LAYER_MIN_COVER = 0.8
+_SCAN_PICTURE_MIN_PAGE_SHARE = 0.6
 # Max characters of hidden text quoted in the consolidated warning.
 _HIDDEN_EXCERPT_MAX_CHARS = 80
+# A picture-text block "remove" left with nothing in it.
+_EMPTY_PICTURE_TEXT = re.compile(
+    r"(?:<!-- Start of picture text -->|\*\*----- Start of picture text -----\*\*<br>)"
+    r"(?:\s|<br>)*"
+    r"(?:<!-- End of picture text -->|\*\*----- End of picture text -----\*\*<br>)\n?"
+)
 
 
 def _pages_phrases(pages: Sequence[int]) -> tuple[str, str]:
@@ -474,6 +483,49 @@ def _page_pictures(page: Any) -> list[tuple[float, float, float, float]]:
         return []
 
 
+def _ocr_layer_pictures(
+    page: Any,
+    data: dict[str, Any],
+    page_rect: tuple[float, float, float, float],
+    background: Callable[[tuple[float, float, float, float]], float | None]
+    | None = None,
+) -> list[tuple[float, float, float, float]]:
+    """The pictures invisible text on *page* may be an OCR layer of.
+
+    A searchable scan's page is a picture covering most of the page, or
+    pictures with no other text a reader sees: only there is invisible text
+    over a picture taken for the scanner's OCR layer. On any other page (a
+    text page with a logo or a small decoration) invisible text is hidden
+    text, over a picture or not. *data* is the page's ``get_text("dict")``.
+    """
+    pictures = _page_pictures(page)
+    if not pictures:
+        return []
+    x0, y0, x1, y1 = page_rect
+    page_area = (x1 - x0) * (y1 - y0)
+    if page_area > 0:
+        for px0, py0, px1, py1 in pictures:
+            width = min(x1, px1) - max(x0, px0)
+            height = min(y1, py1) - max(y0, py0)
+            if (
+                width > 0
+                and height > 0
+                and width * height >= _SCAN_PICTURE_MIN_PAGE_SHARE * page_area
+            ):
+                return pictures
+    for block in data.get("blocks", []):
+        for line in block.get("lines", []):
+            for span in line.get("spans", []):
+                text = span.get("text", "")
+                if (
+                    isinstance(text, str)
+                    and text.strip()
+                    and not _is_hidden_span(span, page_rect, background)
+                ):
+                    return []
+    return pictures
+
+
 def _over_picture(
     bbox: Any, pictures: Sequence[tuple[float, float, float, float]]
 ) -> bool:
@@ -507,7 +559,8 @@ def _is_hidden_span(
     on a near-white background (sampled with *background*; assumed white
     without one), or its bbox lies fully outside the page CropBox.
 
-    Invisible text over a picture is a searchable scan's OCR layer
+    Invisible text over a picture of a scanned page (the *pictures* of
+    :func:`_ocr_layer_pictures`) is a searchable scan's OCR layer
     (OCRmyPDF, Acrobat, ABBYY and scanners write one): it says what the
     picture shows, and is the only text such a document has.
     """
@@ -567,7 +620,7 @@ def collect_hidden_text(
             logger.debug("[PDF] Hidden-text scan failed for page {}: {}", i + 1, e)
             continue
         background = _background_sampler(page)
-        pictures = _page_pictures(page)
+        pictures = _ocr_layer_pictures(page, data, page_rect, background)
         texts: list[str] = []
         for block in data.get("blocks", []):
             for line in block.get("lines", []):
@@ -603,7 +656,7 @@ def _scan_visible_text(
                     ),
                 )
                 background = _background_sampler(page)
-                pictures = _page_pictures(page)
+                pictures = _ocr_layer_pictures(page, data, page_rect, background)
                 visible[i + 1] = "\n".join(
                     "".join(
                         span.get("text", "")
@@ -1483,6 +1536,8 @@ class PdfConverter(BaseConverter):
                     )
                     continue
                 result[idx] = result[idx].replace(text, "")
+            # A picture whose text was all hidden keeps no empty text block.
+            result[idx] = _EMPTY_PICTURE_TEXT.sub("", result[idx])
         return result
 
     def _warn_scanned_or_garbled(

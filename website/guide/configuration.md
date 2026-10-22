@@ -653,7 +653,7 @@ File logging starts when `dir` is set.
 
 ## Security Configuration
 
-PDFs can carry invisible text (white on white, zero size, off page) that would silently end up in the Markdown and in any LLM prompt built from it. Invisible text over a picture is not counted: that is the OCR layer of a searchable scan (as OCRmyPDF, Acrobat and scanners write it), the only text such a PDF has.
+PDFs can carry invisible text (white on white, zero size, off page) that would silently end up in the Markdown and in any LLM prompt built from it. Invisible text over the picture of a scanned page (a picture covering most of the page, or a page with no other visible text) is not counted: that is the OCR layer of a searchable scan (as OCRmyPDF, Acrobat and scanners write it), the only text such a PDF has. Invisible text over a logo or a small picture on a text page still counts.
 
 | Setting | Options | Default | Description |
 |---------|---------|---------|-------------|

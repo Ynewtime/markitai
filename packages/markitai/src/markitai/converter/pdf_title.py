@@ -46,14 +46,14 @@ def _lines(page: Any) -> list[tuple[float, float, float, str]]:
     from markitai.converter.pdf import (
         _background_sampler,
         _is_hidden_span,
-        _page_pictures,
+        _ocr_layer_pictures,
     )
 
     page_rect = tuple(page.rect)
     background = _background_sampler(page)
-    pictures = _page_pictures(page)
     lines: list[tuple[float, float, float, str]] = []
     data = page.get_text("dict", flags=0)
+    pictures = _ocr_layer_pictures(page, data, page_rect, background)
     for block in data.get("blocks", []):
         for line in block.get("lines", []):
             spans = [
