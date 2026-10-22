@@ -1354,18 +1354,33 @@ pub(crate) fn batch_summary_lines(
         detail.push_str(detail_separator);
         detail.push_str(&text!(lang => "cost incomplete", "费用不完整"));
     }
+    let failures = records
+        .iter()
+        .filter(|record| record.status == ItemStatus::Failed)
+        .count();
+    let unfinished = unprocessed.len()
+        + records
+            .iter()
+            .filter(|record| record.status == ItemStatus::Pending)
+            .count();
+    let skips = resumed.skipped
+        + records
+            .iter()
+            .filter(|record| record.status == ItemStatus::Skipped)
+            .count();
     let converted = if finished == 0 {
         text!(lang => "nothing converted", "没有转换任何内容")
     } else if finished < total || resumed.converted + resumed.skipped > 0 {
-        // Out of how many: a count alone cannot tell a finished batch from one
-        // that lost items, and a resumed run counts the work of its first run.
+        // Out of how many, and what became of the others, as Python
+        // markitai says it: a count alone cannot tell a finished batch from
+        // one that lost items, and a resumed run counts its first run's work.
         let kinds = |kind: ItemKind| records.iter().all(|record| record.kind == kind);
-        if !records.is_empty() && kinds(ItemKind::File) {
+        let head = if !records.is_empty() && kinds(ItemKind::File) {
             let noun = if total == 1 { "file" } else { "files" };
-            text!(lang => "{finished}/{total} {noun}", "{finished}/{total} 个文件")
+            text!(lang => "{finished} of {total} {noun} converted", "{total} 个文件中已转换 {finished} 个")
         } else if !records.is_empty() && kinds(ItemKind::Url) {
             let noun = if total == 1 { "URL" } else { "URLs" };
-            text!(lang => "{finished}/{total} {noun}", "{finished}/{total} 个 URL")
+            text!(lang => "{finished} of {total} {noun} converted", "{total} 个 URL 中已转换 {finished} 个")
         } else if unprocessed.is_empty() && resumed.converted + resumed.skipped == 0 {
             // Files and URLs together: each kind out of its own count.
             let mut parts = Vec::new();
@@ -1374,26 +1389,51 @@ pub(crate) fn batch_summary_lines(
                 if all == 0 {
                     continue;
                 }
-                let shown = if done < all {
-                    format!("{done}/{all}")
-                } else {
-                    done.to_string()
-                };
-                parts.push(match (kind, lang) {
-                    (ItemKind::File, Lang::En) => {
-                        format!("{shown} {}", if all == 1 { "file" } else { "files" })
+                parts.push(match (kind, lang, done < all) {
+                    (ItemKind::File, Lang::En, true) => {
+                        format!(
+                            "{done} of {all} {}",
+                            if all == 1 { "file" } else { "files" }
+                        )
                     }
-                    (ItemKind::File, Lang::Zh) => format!("{shown} 个文件"),
-                    (_, Lang::En) => format!("{shown} {}", if all == 1 { "URL" } else { "URLs" }),
-                    (_, Lang::Zh) => format!("{shown} 个 URL"),
+                    (ItemKind::File, Lang::En, false) => {
+                        format!("{done} {}", if all == 1 { "file" } else { "files" })
+                    }
+                    (ItemKind::File, Lang::Zh, true) => format!("{all} 个文件中的 {done} 个"),
+                    (ItemKind::File, Lang::Zh, false) => format!("{done} 个文件"),
+                    (_, Lang::En, true) => {
+                        format!("{done} of {all} {}", if all == 1 { "URL" } else { "URLs" })
+                    }
+                    (_, Lang::En, false) => {
+                        format!("{done} {}", if all == 1 { "URL" } else { "URLs" })
+                    }
+                    (_, Lang::Zh, true) => format!("{all} 个 URL 中的 {done} 个"),
+                    (_, Lang::Zh, false) => format!("{done} 个 URL"),
                 });
             }
-            parts.join(list_separator)
+            match lang {
+                Lang::En => format!("{} converted", parts.join(" and ")),
+                Lang::Zh => format!("已转换 {}", parts.join("、")),
+            }
         } else {
             // Items not started or finished by an earlier run have no kind here.
             let noun = if total == 1 { "item" } else { "items" };
-            text!(lang => "{finished}/{total} {noun}", "{finished}/{total} 项")
+            text!(lang => "{finished} of {total} {noun} converted", "{total} 项中已转换 {finished} 项")
+        };
+        let mut parts = vec![head];
+        for (count, english, chinese) in [
+            (skips, "skipped", "跳过"),
+            (failures, "failed", "失败"),
+            (unfinished, "not finished", "未完成"),
+        ] {
+            if count > 0 {
+                parts.push(match lang {
+                    Lang::En => format!("{count} {english}"),
+                    Lang::Zh => format!("{chinese} {count} 个"),
+                });
+            }
         }
+        parts.join(detail_separator)
     } else {
         let mut parts = Vec::new();
         if files > 0 {
@@ -1406,15 +1446,6 @@ pub(crate) fn batch_summary_lines(
         }
         parts.join(list_separator)
     };
-    let failures = records
-        .iter()
-        .filter(|record| record.status == ItemStatus::Failed)
-        .count();
-    let unfinished = unprocessed.len()
-        + records
-            .iter()
-            .filter(|record| record.status == ItemStatus::Pending)
-            .count();
     let verdict = if failures + unfinished == 0 {
         Mark::Success
     } else if finished == 0 && failures > 0 {
@@ -1688,7 +1719,7 @@ mod tests {
             ),
             [
                 // Two of six finished: the line says out of how many.
-                "Done: 1/3 files, 1/3 URLs (1:15, $0.013, cost incomplete)",
+                "Done: 1 of 3 files and 1 of 3 URLs converted, 3 skipped, 1 failed (1:15, $0.013, cost incomplete)",
                 "Skipped 3 items (images with no text): display-k1, display-k2 and 1 more. Use --llm or --ocr for content extraction.",
                 "Failed 1 item: display-k5. See the errors above.",
                 "Output: out",
@@ -1779,7 +1810,7 @@ mod tests {
         assert_eq!(
             summary(&records, Lang::Zh),
             [
-                "完成：1/3 个文件、1/3 个 URL（1:15，$0.013，费用不完整）",
+                "完成：已转换 3 个文件中的 1 个、3 个 URL 中的 1 个，跳过 3 个，失败 1 个（1:15，$0.013，费用不完整）",
                 "已跳过 1 项（输出已存在）：display-k4。将 output.on_conflict 设为 overwrite 或 rename 可重新转换。",
                 "已跳过 2 项（图片，没有可提取的文字）：display-k1、display-k2。请使用 --llm 或 --ocr 提取内容。",
                 "失败 1 项：display-k5。详见上方的错误信息。",
@@ -1845,7 +1876,7 @@ mod tests {
         assert_eq!(
             summary(&names[..1], Lang::En),
             [
-                "Done: 2/3 files (0:03)",
+                "Done: 2 of 3 files converted, 1 not finished (0:03)",
                 "Not processed 1 item: a.pdf. Run the same command with --resume to continue.",
                 "Output: out",
             ]
@@ -1854,7 +1885,7 @@ mod tests {
         assert_eq!(
             summary(&names, Lang::En),
             [
-                "Done: 2/5 files (0:03)",
+                "Done: 2 of 5 files converted, 3 not finished (0:03)",
                 "Not processed 3 items: a.pdf, b.pdf and 1 more. Run the same command with --resume to continue.",
                 "Output: out",
             ]
@@ -1862,7 +1893,7 @@ mod tests {
         assert_eq!(
             summary(&names, Lang::Zh),
             [
-                "完成：2/5 个文件（0:03）",
+                "完成：5 个文件中已转换 2 个，未完成 3 个（0:03）",
                 "未处理 3 项：a.pdf、b.pdf 及另外 1 项。使用相同命令并加上 --resume 可继续。",
                 "输出目录：out",
             ]
@@ -1896,17 +1927,17 @@ mod tests {
         };
         assert_eq!(
             summary(&records, Lang::En),
-            "Done: 3/4 files, 2 URLs (0:03)"
+            "Done: 3 of 4 files and 2 URLs converted, 1 skipped (0:03)"
         );
         assert_eq!(
             summary(&records, Lang::Zh),
-            "完成：3/4 个文件、2 个 URL（0:03）"
+            "完成：已转换 4 个文件中的 3 个、2 个 URL，跳过 1 个（0:03）"
         );
         records[3].status = ItemStatus::Completed;
         records[5].status = ItemStatus::Failed;
         assert_eq!(
             summary(&records, Lang::En),
-            "Done: 4 files, 1/2 URLs (0:03)"
+            "Done: 4 files and 1 of 2 URLs converted, 1 failed (0:03)"
         );
     }
 
@@ -1933,11 +1964,11 @@ mod tests {
         };
         assert_eq!(
             summary(&records, earlier, false, Lang::En)[0],
-            "Done: 10/10 files (0:03)"
+            "Done: 10 of 10 files converted (0:03)"
         );
         assert_eq!(
             summary(&records, earlier, false, Lang::Zh)[0],
-            "完成：10/10 个文件（0:03）"
+            "完成：10 个文件中已转换 10 个（0:03）"
         );
         // Items an earlier run skipped count toward the total, not the done.
         let with_skips = Resumed {
@@ -1946,7 +1977,7 @@ mod tests {
         };
         assert_eq!(
             summary(&records, with_skips, false, Lang::En)[0],
-            "Done: 8/10 files (0:03)"
+            "Done: 8 of 10 files converted, 2 skipped (0:03)"
         );
         // Everything was finished before: nothing is converted now, all 34 are done.
         let all = Resumed {
@@ -1955,7 +1986,7 @@ mod tests {
         };
         assert_eq!(
             summary(&[], all, false, Lang::En)[0],
-            "Done: 34/34 items (0:03)"
+            "Done: 34 of 34 items converted (0:03)"
         );
         // Without an earlier run a complete batch keeps its plain line.
         assert_eq!(

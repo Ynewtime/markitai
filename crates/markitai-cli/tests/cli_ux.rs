@@ -473,7 +473,7 @@ fn resume_says_where_it_picks_up_and_counts_every_item() {
     let first = setup.run(&["in", "-o", "out"]);
     assert_eq!(first.status.code(), Some(10));
     assert!(
-        stderr(&first).contains("Done: 2/3 files ("),
+        stderr(&first).contains("Done: 2 of 3 files converted, 1 failed ("),
         "{}",
         stderr(&first)
     );
@@ -487,7 +487,7 @@ fn resume_says_where_it_picks_up_and_counts_every_item() {
         "{text}"
     );
     // All three items count, not just the one converted now.
-    assert!(text.contains("Done: 3/3 files ("), "{text}");
+    assert!(text.contains("Done: 3 of 3 files converted ("), "{text}");
     // Nothing left: everything is reported as already done.
     let again = setup.run(&["in", "-o", "out", "--resume"]);
     let text = stderr(&again);
@@ -495,7 +495,7 @@ fn resume_says_where_it_picks_up_and_counts_every_item() {
         text.starts_with("  → Resuming: 3 already done, 0 remaining\n"),
         "{text}"
     );
-    assert!(text.contains("Done: 3/3 items ("), "{text}");
+    assert!(text.contains("Done: 3 of 3 items converted ("), "{text}");
     // Quiet and JSON runs say nothing extra.
     for flag in ["-q", "--json"] {
         let output = setup.run(&["in", "-o", "out", "--resume", flag]);

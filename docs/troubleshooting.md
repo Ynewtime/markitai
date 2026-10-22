@@ -394,7 +394,7 @@ what was done and then the items that were never started, for example
 `! Not processed 72 items: a.pdf, b.pdf and 70 more. Run the same command with --resume to continue.`
 (exit status 130 or 143; `-v` lists every name). The resumed run starts with
 `→ Resuming: 6 already done, 72 remaining` and its closing line counts all items
-(`✓ Done: 78/78 files`). `--quiet` leaves the summary out, and `--json` carries
+(`✓ Done: 78 of 78 files converted`). `--quiet` leaves the summary out, and `--json` carries
 only the items that finished.
 
 **`✗ Native PDF conversion failed: the PDF is encrypted and needs a password to open …`.**

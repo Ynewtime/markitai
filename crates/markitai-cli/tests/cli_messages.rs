@@ -438,7 +438,10 @@ fn batch_summary_names_failures_and_where_results_went() {
     assert_eq!(output.status.code(), Some(10));
     let message = stderr(&output);
     assert!(message.contains("  ✗ broken.docx: "), "{message}");
-    assert!(message.contains("\n! Done: 1/2 files ("), "{message}");
+    assert!(
+        message.contains("\n! Done: 1 of 2 files converted, 1 failed ("),
+        "{message}"
+    );
     assert!(
         message.contains("\n  ✗ Failed 1 item: broken.docx. See the errors above."),
         "{message}"

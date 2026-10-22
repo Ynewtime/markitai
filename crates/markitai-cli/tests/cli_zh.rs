@@ -104,7 +104,10 @@ fn batch_summary_and_item_lines_are_chinese_with_the_converters_reasons_kept() {
     // Two of the four items were converted: the line says out of how many,
     // with a warning mark because not all were.
     assert_eq!(lines[1], "", "{lines:?}");
-    assert!(lines[2].starts_with("! 完成：2/4 个文件（0:0"), "{lines:?}");
+    assert!(
+        lines[2].starts_with("! 完成：4 个文件中已转换 2 个，跳过 1 个，失败 1 个（0:0"),
+        "{lines:?}"
+    );
     assert_eq!(
         &lines[3..],
         [
@@ -135,7 +138,10 @@ fn batch_summary_and_item_lines_are_chinese_with_the_converters_reasons_kept() {
     // The same run in English prints the English lines it always did.
     let english = run(root.path(), EN, &["docs", "-o", "english"]);
     let message = stderr(&english);
-    assert!(message.contains("Done: 2/4 files ("), "{message}");
+    assert!(
+        message.contains("Done: 2 of 4 files converted, 1 skipped, 1 failed ("),
+        "{message}"
+    );
     assert!(
         message.contains(
             "Skipped 1 item (images with no text): pic.png. Use --llm or --ocr for content extraction."
@@ -208,7 +214,7 @@ fn the_file_log_of_a_chinese_run_holds_the_english_lines_of_the_console() {
     );
     assert_eq!(output.status.code(), Some(10));
     let console = stderr(&output);
-    assert!(console.contains("完成：2/4 个文件"), "{console}");
+    assert!(console.contains("完成：4 个文件中已转换 2 个"), "{console}");
     let file = std::fs::read_dir(&log)
         .unwrap()
         .next()
@@ -218,7 +224,7 @@ fn the_file_log_of_a_chinese_run_holds_the_english_lines_of_the_console() {
     let text = std::fs::read_to_string(file).unwrap();
     for line in [
         "| ERROR | cli | Error: broken.docx: The file appears to be damaged or truncated (Native document conversion failed: ",
-        "| INFO  | cli | Done: 2/4 files (0:0",
+        "| INFO  | cli | Done: 2 of 4 files converted, 1 skipped, 1 failed (0:0",
         "| INFO  | cli | Skipped 1 item (images with no text): pic.png. Use --llm or --ocr for content extraction.",
         "| INFO  | cli | Failed 1 item: broken.docx. See the errors above.",
         "| INFO  | cli | Output: out",
