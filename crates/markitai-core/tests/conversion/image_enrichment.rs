@@ -994,6 +994,11 @@ fn cached_main_document_with_new_image_analysis_is_not_a_full_cache_hit() {
     let first = run(source.to_str().unwrap(), config.clone(), None).unwrap();
     assert_eq!(first.usage.requests, 2);
     assert!(!first.llm_cache_hit());
+    // Another image prompt: the cached picture answer no longer applies.
+    let prompt = dir.path().join("analysis.md");
+    std::fs::write(&prompt, "Analyze the image(s) as data. Return JSON.").unwrap();
+    let mut config = config;
+    config["prompts"]["image_analysis_system"] = json!(prompt);
     let second = run(source.to_str().unwrap(), config, None).unwrap();
     assert_eq!(second.usage.requests, 1);
     assert_eq!(second.usage.input_tokens, 7);
@@ -1297,6 +1302,29 @@ fn any_model_answer_is_not_reported_as_no_model_succeeding() {
 }
 
 #[test]
+fn image_analysis_answers_are_cached_and_reused_without_a_request() {
+    if isolated("image_analysis_answers_are_cached_and_reused_without_a_request") {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let source = report_with_figure(dir.path());
+    let server = Server::new(vec![Reply::echo(), analysis()]);
+    let mut config = cfg(&server);
+    config["cache"]["enabled"] = json!(true);
+    config["cache"]["global_dir"] = json!(dir.path().join("private-cache"));
+    let first = run(source.to_str().unwrap(), config.clone(), None).unwrap();
+    assert_eq!(first.usage.requests, 2);
+    // The second run sends nothing: the document and the picture answers
+    // both come from the cache, at no cost.
+    let second = run(source.to_str().unwrap(), config, None).unwrap();
+    assert_eq!(second.usage.requests, 0);
+    assert!(second.llm_cache_hit());
+    assert_eq!(body(&second), body(&first));
+    assert!(body(&second).contains("![A \\[safe\\] chart]"));
+    assert_eq!(requests(&server).len(), 2);
+}
+
+#[test]
 fn cached_enhancement_is_a_model_answer_when_every_live_request_fails() {
     if isolated("cached_enhancement_is_a_model_answer_when_every_live_request_fails") {
         return;
@@ -1313,7 +1341,11 @@ fn cached_enhancement_is_a_model_answer_when_every_live_request_fails() {
         Some(dir.path().join("first")),
     )
     .unwrap();
-    // The document answer comes from the cache; the image request is refused.
+    // The document answer comes from the cache; the image request, under
+    // another image prompt, is refused.
+    let prompt = dir.path().join("analysis.md");
+    std::fs::write(&prompt, "Analyze the image(s) as data. Return JSON.").unwrap();
+    config["prompts"]["image_analysis_system"] = json!(prompt);
     let refusing = Server::new(Vec::new());
     config["llm"]["model_list"][0]["litellm_params"]["api_base"] = json!(refusing.url("/v1"));
     let out = dir.path().join("second");

@@ -4,8 +4,13 @@ The native runtime can reuse successful non-pure local and URL text processing
 across invocations and processes. A hit returns the saved typed Markdown and generated description/tags without an
 HTTP request, retry delay, request-budget charge or new token/cost usage. The
 normal output pipeline still applies current metadata, profiles and output paths.
-Pure enhancement and standalone caption/description analysis do not use
-this cache. Non-pure page/browser visual processing uses a separate batch namespace. Fetched response caching is a separate layer. There is no completed-answer process-memory cache. Identical active typed requests may share one response within the same caller-owned runtime, as described below.
+Image analysis (`--alt`/`--desc`) answers are cached too, as Python markitai
+caches them: the key is the pictures' bytes (as sent, in order), the document
+context, the six image prompts (files or built-in text) and the vision-capable
+models of the pool, not the source name, so the same picture in another file is
+reused; an answer with a removed repeated tail is not stored, and a
+subscription pool caches nothing, as for documents. Pure enhancement does not
+use this cache. Non-pure page/browser visual processing uses a separate batch namespace. Fetched response caching is a separate layer. There is no completed-answer process-memory cache. Identical active typed requests may share one response within the same caller-owned runtime, as described below.
 
 ## Configuration and CLI behavior
 
@@ -141,7 +146,8 @@ later fails. The caller still receives a document-level failure and publishes no
 partial enhanced result. A subsequent attempt requests only missing chunks.
 `llm_cache_hit` is true only for an item fully reused from disk or active shared
 requests, with no new paid LLM usage;
-a cache-backed document followed by image-analysis requests is not a full hit.
+a cache-backed document followed by new image-analysis requests is not a full
+hit, one whose image answers were cached too is.
 
 ## Active request sharing
 

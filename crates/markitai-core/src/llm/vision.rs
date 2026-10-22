@@ -110,32 +110,7 @@ pub(crate) fn process_vision_with_runtime(
         automatic = automatic_entries(environment());
         &automatic
     };
-    let subscription_pool = claude::subscription_pool(models);
-    let cache = if subscription_pool {
-        None
-    } else {
-        llm_cache::Cache::configured(cfg, request.cache_context)
-    };
-    let pool = llm_cache::model_scope(
-        models
-            .iter()
-            .filter(|entry| {
-                entry
-                    .pointer("/litellm_params/weight")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(1)
-                    > 0
-                    && entry
-                        .pointer("/model_info/supports_vision")
-                        .and_then(Value::as_bool)
-                        != Some(false)
-            })
-            .filter_map(|entry| {
-                entry
-                    .pointer("/litellm_params/model")
-                    .and_then(Value::as_str)
-            }),
-    );
+    let (cache, pool) = vision_cache(cfg, request.cache_context, models);
     let width = if request.kind == VisionKind::WebCapture {
         request.frames.len()
     } else {
@@ -347,6 +322,41 @@ pub(crate) fn process_vision_with_runtime(
     };
     drop(own_scope);
     Ok(output)
+}
+
+/// The persistent cache for answers about pictures, and the identity of the
+/// vision models that may give them. A subscription pool caches nothing.
+pub(super) fn vision_cache(
+    cfg: &Value,
+    context: &str,
+    models: &[Value],
+) -> (Option<llm_cache::Cache>, String) {
+    let cache = if claude::subscription_pool(models) {
+        None
+    } else {
+        llm_cache::Cache::configured(cfg, context)
+    };
+    let pool = llm_cache::model_scope(
+        models
+            .iter()
+            .filter(|entry| {
+                entry
+                    .pointer("/litellm_params/weight")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(1)
+                    > 0
+                    && entry
+                        .pointer("/model_info/supports_vision")
+                        .and_then(Value::as_bool)
+                        != Some(false)
+            })
+            .filter_map(|entry| {
+                entry
+                    .pointer("/litellm_params/model")
+                    .and_then(Value::as_str)
+            }),
+    );
+    (cache, pool)
 }
 
 fn validate_frames(frames: &[VisionFrame<'_>], cfg: &Value) -> Result<()> {
