@@ -113,8 +113,10 @@ fn failure(error: subscription::chatgpt::Failure) -> Failure {
     };
     // A rate limit or a failed turn (an HTTP 5xx, a dropped stream) may pass:
     // the request is sent again within the retry policy, or to a sibling,
-    // instead of failing the document.
-    let transient = matches!(error.kind, K::RateLimit | K::Transport);
+    // instead of failing the document. Not after a completed turn reported
+    // its usage: that answer was paid for, and is not paid for twice.
+    let transient =
+        matches!(error.kind, K::RateLimit | K::Transport) && error.usage.aggregate.is_none();
     Failure {
         kind,
         error: error.error,
