@@ -230,7 +230,10 @@ and refused if any of its addresses is not public, and only then is the
 request handed to the proxy (a `CONNECT` for HTTPS). A `serve` URL job a user
 token owns, or an untrusted caller submits, is held to public addresses from
 its first host too, and connects directly, without a proxy (see
-[serve](serve.md)).
+[serve](serve.md)). A refused address fails with `Fetch target refused: a
+private or local address (this fetch may reach public addresses only)`, on the
+static route and in the local browser alike (where Chromium itself would say
+only `net::ERR_BLOCKED_BY_CLIENT`).
 
 ## Pages that need JavaScript
 

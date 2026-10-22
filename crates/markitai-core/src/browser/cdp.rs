@@ -260,6 +260,9 @@ pub(super) struct Browser {
     pub main_frame: Option<String>,
     pub status: Option<u64>,
     pub navigation_failed: bool,
+    /// The page's own document (or a redirect of it) was refused as a private
+    /// or local address; Chromium reports only `net::ERR_BLOCKED_BY_CLIENT`.
+    pub navigation_refused: bool,
     navigation_id: Option<u64>,
     navigation_reply: Option<Value>,
     document_response_seen: bool,
@@ -325,6 +328,7 @@ impl Browser {
             main_frame: None,
             status: None,
             navigation_failed: false,
+            navigation_refused: false,
             navigation_id: None,
             navigation_reply: None,
             document_response_seen: false,
@@ -351,6 +355,7 @@ impl Browser {
         self.main_frame = None;
         self.status = None;
         self.navigation_failed = false;
+        self.navigation_refused = false;
         self.navigation_id = None;
         self.navigation_reply = None;
         self.document_response_seen = false;
@@ -629,15 +634,16 @@ impl Browser {
                     && parsed.as_ref().is_some_and(|url| {
                         matches!(url.scheme(), "http" | "https") && !self.host_is_public(url)
                     });
+                let main_document = self.navigation_id.is_some()
+                    && params["resourceType"].as_str() == Some("Document")
+                    && self.main_frame.as_deref() == params["frameId"].as_str();
+                self.navigation_refused |= private && main_document;
                 if !safe || private || self.blocked.iter().any(|pattern| pattern.is_match(url)) {
                     self.send(
                         "Fetch.failRequest",
                         json!({"requestId":id,"errorReason":"BlockedByClient"}),
                     )?;
                 } else {
-                    let main_document = self.navigation_id.is_some()
-                        && params["resourceType"].as_str() == Some("Document")
-                        && self.main_frame.as_deref() == params["frameId"].as_str();
                     if main_document && params.get("responseStatusCode").is_some() {
                         let status = params["responseStatusCode"].as_u64().unwrap_or(0);
                         if !matches!(status, 301 | 302 | 303 | 307 | 308) {
@@ -711,6 +717,7 @@ impl Browser {
                 .to_owned(),
         );
         self.document_response_seen = false;
+        self.navigation_refused = false;
         self.navigation_reply = None;
         self.navigation_id = Some(self.send("Page.navigate", json!({"url":source}))?);
         loop {
@@ -995,6 +1002,7 @@ mod tests {
                 main_frame: Some("main".into()),
                 status: None,
                 navigation_failed: false,
+                navigation_refused: false,
                 navigation_id: None,
                 navigation_reply: None,
                 document_response_seen: false,

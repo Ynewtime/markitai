@@ -108,6 +108,10 @@ impl Drop for Fixture {
 }
 
 fn convert(url: &str, public_only: bool) -> markitai_core::Result<String> {
+    convert_by(url, public_only, "static")
+}
+
+fn convert_by(url: &str, public_only: bool, strategy: &str) -> markitai_core::Result<String> {
     LazyLock::force(&ALLOW);
     let output = tempfile::tempdir().unwrap();
     let context = ConvertContext {
@@ -116,30 +120,28 @@ fn convert(url: &str, public_only: bool) -> markitai_core::Result<String> {
     };
     let options = ConvertOptions {
         output_dir: Some(output.path().to_path_buf()),
-        config: Some(serde_json::json!({"fetch": {"strategy": "static"}})),
+        config: Some(serde_json::json!({"fetch": {"strategy": strategy}})),
         ..Default::default()
     };
     markitai_core::convert_with_context(url, options, context).map(|out| out.markdown)
 }
 
+/// A refused page fetch says so as a page's refusal, not a model's.
+const REFUSED: &str =
+    "Fetch target refused: a private or local address (this fetch may reach public addresses only)";
+
 #[test]
 fn a_public_only_fetch_refuses_a_redirect_into_a_private_address() {
     let site = Fixture::new();
     let error = convert(&site.url("/redirect-private"), true).unwrap_err();
-    assert!(
-        error.to_string().contains("not on the public internet"),
-        "{error}"
-    );
+    assert!(error.to_string().contains(REFUSED), "{error}");
 }
 
 #[test]
 fn a_public_only_fetch_refuses_a_meta_refresh_into_a_private_address() {
     let site = Fixture::new();
     let error = convert(&site.url("/meta-private"), true).unwrap_err();
-    assert!(
-        error.to_string().contains("not on the public internet"),
-        "{error}"
-    );
+    assert!(error.to_string().contains(REFUSED), "{error}");
 }
 
 #[test]
@@ -155,8 +157,22 @@ fn a_public_requested_host_cannot_redirect_inward_without_the_user_flag() {
     // a redirect into a private address is still refused (CLI and admin too).
     let site = Fixture::new();
     let error = convert(&site.url("/redirect-private"), false).unwrap_err();
-    assert!(
-        error.to_string().contains("not on the public internet"),
-        "{error}"
-    );
+    assert!(error.to_string().contains(REFUSED), "{error}");
+}
+
+#[test]
+fn a_users_private_address_is_refused_as_a_page_before_any_request() {
+    let error = convert("http://10.255.255.1/page", true).unwrap_err();
+    assert!(error.to_string().contains(REFUSED), "{error}");
+}
+
+/// The browser route words the refusal as the static route does, not as
+/// Chromium's `net::ERR_BLOCKED_BY_CLIENT`.
+#[test]
+#[ignore = "requires installed Chromium; loopback fixture only"]
+fn the_browser_names_a_refused_redirect_as_the_static_route_does() {
+    let site = Fixture::new();
+    let error = convert_by(&site.url("/redirect-private"), true, "playwright").unwrap_err();
+    assert!(error.to_string().contains(REFUSED), "{error}");
+    assert!(!error.to_string().contains("BLOCKED_BY_CLIENT"), "{error}");
 }

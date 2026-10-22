@@ -122,7 +122,9 @@ fn a_public_host_is_fetched_through_the_proxy() {
 fn a_redirect_into_a_private_address_is_refused_before_the_proxy() {
     let error = convert("/redirect-private").unwrap_err();
     assert!(
-        error.to_string().contains("not on the public internet"),
+        error
+            .to_string()
+            .contains("Fetch target refused: a private or local address"),
         "{error}"
     );
     assert!(
@@ -136,7 +138,9 @@ fn a_redirect_into_a_private_address_is_refused_before_the_proxy() {
 fn a_meta_refresh_into_a_private_address_is_refused_before_the_proxy() {
     let error = convert("/meta-private").unwrap_err();
     assert!(
-        error.to_string().contains("not on the public internet"),
+        error
+            .to_string()
+            .contains("Fetch target refused: a private or local address"),
         "{error}"
     );
     assert!(

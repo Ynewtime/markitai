@@ -15,6 +15,11 @@ use std::task::{Context, Poll, Waker};
 
 /// The reason a public-only request was refused, without its address.
 pub(crate) const REFUSED: &str = "this model's address is not on the public internet";
+/// The same refusal of a page fetch (a user token's URL, or a hop of a public
+/// page into this machine or its network), on the static and browser routes
+/// alike.
+pub(crate) const PAGE_REFUSED: &str =
+    "Fetch target refused: a private or local address (this fetch may reach public addresses only)";
 
 /// Whether `ip` is outside the public internet for these requests. A debug
 /// build (never a release) also lets through the addresses listed in the

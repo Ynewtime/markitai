@@ -666,6 +666,10 @@ fn fetch_page(
         ));
     }
     if let Some(reason) = navigation.get("errorText") {
+        // Worded as the static route words it.
+        if browser.navigation_refused {
+            return Err(Error::Fetch(crate::public_net::PAGE_REFUSED.into()));
+        }
         return Err(Error::Fetch(navigation_failure(reason)));
     }
     browser.main_frame = navigation

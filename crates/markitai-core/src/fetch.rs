@@ -73,6 +73,9 @@ pub(crate) fn client(timeout: u64) -> Result<Client> {
 /// connection or a name that does not resolve), without the URL, which can
 /// carry credentials.
 pub(crate) fn request_error(error: reqwest::Error) -> Error {
+    if public_net::refused(&error) {
+        return Error::Fetch(public_net::PAGE_REFUSED.into());
+    }
     let error = error.without_url();
     let mut message = error.to_string();
     let mut source = std::error::Error::source(&error);
@@ -664,7 +667,7 @@ fn fetch_with_services(
     // no longer redirect, meta-refresh or navigate into this machine or its
     // network; a deliberately local URL (loopback, LAN) stays unrestricted.
     if public_only && !public_net::url_allowed(&url) {
-        return Err(Error::Fetch(public_net::REFUSED.into()));
+        return Err(Error::Fetch(public_net::PAGE_REFUSED.into()));
     }
     let _restriction = public_net::restrict(if public_only {
         public_net::Level::PublicOnly
@@ -1432,7 +1435,7 @@ fn follow_meta_refresh(client: &Client, page: &mut StaticPage, defer_pdf: bool) 
             )));
         }
         if public_net::restricted() && !public_net::hop_allowed(&target) {
-            return Err(Error::Fetch(public_net::REFUSED.into()));
+            return Err(Error::Fetch(public_net::PAGE_REFUSED.into()));
         }
         *page = decode_static(
             send(
