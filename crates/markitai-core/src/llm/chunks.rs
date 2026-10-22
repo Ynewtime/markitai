@@ -422,12 +422,101 @@ impl Protected {
     pub fn validate(&self, original: &str, answer: &str) -> Result<()> {
         let expected = self.tokens(original);
         let actual = self.tokens(answer);
-        if expected != actual {
-            return Err(Error::Conversion(
-                "the answer changed, dropped, repeated or moved one of the markers that keep the document's pages, pictures, links and code exactly as they are".into(),
-            ));
+        if expected == actual {
+            return Ok(());
         }
-        Ok(())
+        // Name what went wrong and which markers, as Python markitai does:
+        // the user sees what was at stake, and a resend tells the model.
+        let mut left: Vec<&String> = actual.iter().collect();
+        let mut dropped = Vec::new();
+        for token in &expected {
+            match left.iter().position(|seen| *seen == token) {
+                Some(index) => {
+                    left.remove(index);
+                }
+                None => dropped.push(token),
+            }
+        }
+        let (what, tokens): (&str, Vec<&String>) = if !dropped.is_empty() {
+            ("dropped", dropped)
+        } else if !left.is_empty() {
+            ("repeated or changed", left)
+        } else {
+            let moved = expected
+                .iter()
+                .zip(&actual)
+                .filter(|(want, got)| want != got)
+                .map(|(want, _)| want)
+                .collect();
+            ("moved", moved)
+        };
+        let mut names: Vec<String> = tokens
+            .iter()
+            .take(5)
+            .map(|token| self.describe(token))
+            .collect();
+        if tokens.len() > 5 {
+            names.push(format!("{} more", tokens.len() - 5));
+        }
+        Err(Error::Conversion(format!(
+            "the answer {what} {} of the {} markers that keep the document's pages, pictures, links and code exactly as they are ({})",
+            tokens.len(),
+            expected.len(),
+            names.join("; ")
+        )))
+    }
+
+    /// A marker as a person and a model can tell it: what it stands for,
+    /// then the marker itself.
+    fn describe(&self, token: &str) -> String {
+        let literal = self
+            .literals
+            .iter()
+            .find(|(marker, _)| marker == token)
+            .map_or("", |(_, literal)| literal.trim());
+        let short = |text: &str| {
+            let text: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
+            if text.chars().count() > 40 {
+                format!("{}…", text.chars().take(40).collect::<String>())
+            } else {
+                text
+            }
+        };
+        let what = if let Some(page) = literal
+            .strip_prefix("<!-- Page number: ")
+            .and_then(|rest| rest.strip_suffix("-->"))
+        {
+            format!("the start of page {}", page.trim())
+        } else if let Some(page) = literal
+            .strip_prefix("<!-- ![Page ")
+            .and_then(|rest| rest.split_once(']'))
+            .map(|(page, _)| page)
+        {
+            format!("the screenshot of page {page}")
+        } else if let Some(alt) = literal
+            .strip_prefix("![")
+            .and_then(|rest| rest.split_once("]("))
+            .map(|(alt, _)| alt)
+        {
+            format!("the picture “{}”", short(alt))
+        } else if let Some(text) = literal
+            .strip_prefix('[')
+            .and_then(|rest| rest.split_once("]("))
+            .map(|(text, _)| text)
+        {
+            format!("the link “{}”", short(text))
+        } else if literal.starts_with("```") || literal.starts_with("~~~") {
+            "a code block".into()
+        } else if literal.starts_with('`') {
+            format!("the code {}", short(literal))
+        } else if literal.starts_with('$') {
+            "a formula".into()
+        } else if literal.is_empty() {
+            "a marker".into()
+        } else {
+            format!("“{}”", short(literal))
+        };
+        format!("{what} {token}")
     }
 
     /// Reject an answer that re-creates the content a marker already stands
@@ -881,6 +970,31 @@ mod tests {
         );
         assert!(protected.repair(text, &moved).is_none());
         assert!(protected.validate(text, &moved).is_err());
+        // The error names what went wrong and the markers concerned.
+        let error = protected
+            .validate(text, &lost_code)
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            error,
+            format!(
+                "the answer dropped 1 of the 3 markers that keep the document's pages, pictures, links and code exactly as they are (the code `cargo test` {})",
+                tokens[1]
+            )
+        );
+        let error = protected.validate(text, &moved).unwrap_err().to_string();
+        assert!(
+            error.starts_with("the answer moved 2 of the 3 markers")
+                && error.contains(&format!("the start of page 1 {}", tokens[0]))
+                && error.contains(&format!("the start of page 2 {}", tokens[2])),
+            "{error}"
+        );
+        let repeated = format!("{}\n\n{}\n\n{text}", tokens[0], tokens[0]);
+        let error = protected.validate(text, &repeated).unwrap_err().to_string();
+        assert!(
+            error.starts_with("the answer repeated or changed 2 of the 3"),
+            "{error}"
+        );
     }
 
     use super::*;
