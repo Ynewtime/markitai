@@ -50,7 +50,7 @@ fn noninteractive_edit_and_wizard_refuse_but_quick_init_preserves_existing_setti
     let mut last = Vec::new();
     for _ in 0..2 {
         let output = command(root.path())
-            .env("MODEL", "openai/new")
+            .env("MODEL", "anthropic/new")
             .env("OPENAI_API_KEY", "never-write-this-key")
             .args(["init", "-y", "--local"])
             .output()
