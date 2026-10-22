@@ -685,6 +685,31 @@ fn screenshots_without_libreoffice_still_publish_the_text_with_one_warning() {
 // ---- previews -----------------------------------------------------------------
 
 #[test]
+fn a_preview_with_the_llm_and_no_model_warns_and_still_lists_targets() {
+    let setup = Setup::new();
+    setup.write("note.txt", "N\n");
+    let preview = setup.run(&["note.txt", "--llm", "-o", "out", "--dry-run"]);
+    assert!(preview.status.success(), "{}", stderr(&preview));
+    assert!(
+        stderr(&preview).contains("LLM enabled but no models configured"),
+        "{}",
+        stderr(&preview)
+    );
+    assert!(
+        stdout(&preview).contains("note.txt.llm.md"),
+        "{}",
+        stdout(&preview)
+    );
+    assert!(!setup.path("out").exists());
+    // The real run stops where the preview warned.
+    let real = setup.run(&["note.txt", "--llm", "-o", "out"]);
+    assert_eq!(real.status.code(), Some(1), "{}", stderr(&real));
+    // Without the LLM there is nothing to warn about.
+    let plain = setup.run(&["note.txt", "-o", "out", "--dry-run"]);
+    assert!(!stderr(&plain).contains("no models"), "{}", stderr(&plain));
+}
+
+#[test]
 fn a_preview_names_each_final_file_and_what_would_be_skipped() {
     let setup = Setup::new();
     setup.write("in/report.txt", "R\n");

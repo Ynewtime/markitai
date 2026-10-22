@@ -1537,6 +1537,13 @@ fn check_llm_keys(cfg: &Value, cli: &Cli) -> CliResult<()> {
     }
     let (missing, usable) = markitai_core::llm_keys::check(cfg);
     if missing.is_empty() {
+        // A real run stops for want of a model; a preview says so and goes on.
+        if cli.dry_run && !markitai_core::llm_capabilities(cfg).routable {
+            say!(
+                "Warning: LLM enabled but no models configured; set MODEL and a provider API key, or add models to llm.model_list (a real run stops here)",
+                "Warning: 已启用 LLM，但没有配置模型；请设置 MODEL 和供应商的 API key，或在 llm.model_list 中添加模型（实际运行会在此停止）"
+            );
+        }
         return Ok(());
     }
     if !usable {

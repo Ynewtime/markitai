@@ -60,7 +60,7 @@ OCR 模型不随归档提供；按[本地 OCR](ocr.md)提前准备。
 | `-j`、`--url-concurrency`、`--llm-concurrency` | 文件转换、URL 转换、模型在途请求三个独立上限 |
 | `-g/--glob`、`--max-depth` | 批处理筛选与扫描深度；glob 必须加引号，`!` 排除 |
 | `--resume` | 目录或 URL 列表断点续跑；单项输入不支持 |
-| `--dry-run` | 预览目标、冲突改名与跳过，不转换、不创建输出目录 |
+| `--dry-run` | 预览目标、冲突改名与跳过，不转换、不创建输出目录；启用 LLM 却没有可用模型时给出警告（实际运行会以退出码 1 停止） |
 | `--no-cache`、`--no-cache-for` | 绕过缓存读取，成功结果仍可写缓存 |
 | `--record-history` | 保存供工作台查看的[历史](history.md) |
 | `-q/--quiet`、`-v/--verbose` | 仅错误、更多诊断；quiet 不会弹出远程授权询问 |
