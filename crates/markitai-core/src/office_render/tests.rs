@@ -717,11 +717,14 @@ fn a_metafile_is_drawn_as_a_png_in_a_process_of_its_own_within_limits() {
     let dir = tempfile::tempdir().unwrap();
     let fixture = dir.path().join("drawn.png");
     fs::write(&fixture, png(100, 80)).unwrap();
-    // The fake reads the metafile it is given and writes picture.png.
+    // The fake reads the metafile it is given, records its workspace and
+    // writes picture.png.
+    let recorded = dir.path().join("workspace");
     let program = mock(
         dir.path(),
         &format!(
-            "test -s \"$(dirname \"$out\")/picture.emf\"\ncp {} \"$out/picture.png\"",
+            "test -s \"$(dirname \"$out\")/picture.emf\"\ndirname \"$out\" > {}\ncp {} \"$out/picture.png\"",
+            quote(&recorded),
             quote(&fixture)
         ),
     );
@@ -736,17 +739,17 @@ fn a_metafile_is_drawn_as_a_png_in_a_process_of_its_own_within_limits() {
     )
     .unwrap();
     assert_eq!(made, fs::read(&fixture).unwrap());
-    // The private workspace is gone with the call.
+    // The private workspace is gone with the call. Only this call's own: the
+    // other tests here draw metafiles in workspaces of the same name at once.
+    let workspace = PathBuf::from(fs::read_to_string(&recorded).unwrap().trim_end());
     assert!(
-        fs::read_dir(std::env::temp_dir())
+        workspace
+            .file_name()
             .unwrap()
-            .flatten()
-            .all(|entry| !entry
-                .file_name()
-                .to_string_lossy()
-                .starts_with("markitai-metafile-")
-                || !entry.path().join("picture.emf").exists()),
+            .to_string_lossy()
+            .starts_with("markitai-metafile-")
     );
+    assert!(!workspace.exists());
     // What is refused: another extension, a picture over the input limit.
     assert!(
         metafile_png_with(
