@@ -1,8 +1,5 @@
 """Synthetic workbooks shared by correctness and performance audits."""
 
-# Excel stores naive dates and times; retain them as fixture inputs.
-# ruff: noqa: DTZ001
-
 from __future__ import annotations
 
 import datetime as dt

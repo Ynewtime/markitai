@@ -26,7 +26,10 @@ License v3.0 **or** a commercial licence from Artifex:
     Licensed under AGPL-3.0-or-later, or a commercial licence from Artifex.
 
 These provide markitai's PDF text and layout extraction. They are core, not
-optional: PDF conversion does not work without them.
+optional: PDF conversion does not work without them. From PyMuPDF 2.0 the
+`pymupdf` package itself carries the layout engine and the `pymupdf4llm`
+module, under the same dual licence; `pymupdf-layout` 2.0 and `pymupdf4llm`
+2.0 are empty packages kept for upgrades.
 
 What this means for you
 -----------------------
@@ -151,7 +154,7 @@ Apache-2.0, and pillow-heif and uvicorn under BSD-3-Clause.
 webextract/markdownify_compat.py adapts the narrow HTML rendering rules from
 microsoft/markitdown 0.1.7, converters/_markdownify.py. The CSV and notebook
 rendering rules in converter/structured_text.py follow its _csv_converter.py
-and _ipynb_converter.py. converter/pptx.py adapts the rendering rules from
+(0.1.9's ragged-row rule) and _ipynb_converter.py. converter/pptx.py adapts the rendering rules from
 _pptx_converter.py, including images, charts, shape ordering and notes.
 These isolate known-format conversion from unrelated
 file-format detector imports; the output rules are preserved.

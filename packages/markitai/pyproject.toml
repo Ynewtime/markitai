@@ -27,7 +27,7 @@ classifiers = [
     "Topic :: Utilities",
 ]
 dependencies = [
-    "pymupdf4llm>=1.28.2",  # >=1.28.2 is a licence floor, not a feature floor: pymupdf4llm hard-depends on a pinned pymupdf-layout, and 1.28.0 shipped that layout engine as "Polyform Noncommercial or Artifex Commercial" — a non-commercial licence inside an MIT tool. 1.28.2 restored AGPL-3.0 dual licensing (see NOTICE). Never pin back: 1.27.2.x pins pymupdf_layout==1.27.2.3, which has the same problem
+    "pymupdf4llm>=1.28.2",  # >=1.28.2 is a licence floor, not a feature floor: pymupdf4llm hard-depends on a pinned pymupdf-layout, and 1.28.0 shipped that layout engine as "Polyform Noncommercial or Artifex Commercial" — a non-commercial licence inside an MIT tool. 1.28.2 restored AGPL-3.0 dual licensing (see NOTICE). Never pin back: 1.27.2.x pins pymupdf_layout==1.27.2.3, which has the same problem. From 2.0 the layout and 4llm code ship inside pymupdf itself (same dual licence) and pymupdf4llm/pymupdf-layout are empty packages
     "anthropic>=1.0.0",  # Message Batches API only: litellm implements the retrieve
                          # half for Anthropic and raises NotImplementedError on create.
                          # Pure Python; httpx2/pydantic/anyio already come with litellm
