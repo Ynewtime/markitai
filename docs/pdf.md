@@ -563,7 +563,9 @@ A line ending short of its column starts a new paragraph even without extra
 spacing: wrapped text fills every line but a paragraph's last, so when the
 next line's first word and an em and a quarter would have fitted after it
 (the column's right edge is the farthest any line starting at the same left
-edge reaches on the page), the next line begins a new block. Rows of a link
+edge reaches on the page), the next line begins a new block. CJK text breaks
+between any two characters, so its first "word" is two characters: a CJK
+paragraph's short last line ends it however evenly the page spaces its lines. Rows of a link
 list, byline and metadata lines and paragraphs printed without spacing are
 separated this way. A line continues its paragraph when it ends in a hyphen,
 when it is a label of its own (at most four characters without a letter: a
@@ -598,15 +600,24 @@ text, or runs on past `，` for twelve characters or more) or, below 1.2 times
 the body size, as a `label：value` field (a label of up to twelve characters
 before a full-width colon, a value after it). Items numbered `1．`, `1）`, `1、`
 or `（1）` are list items, written `- 1）…` since Markdown does not read those
-markers. A line ending in CJK text more than four em short of its column (the
-farthest any line beside or under it reaches) ends its paragraph, and a line
+markers; a step so numbered standing alone (no list item within three lines
+above or below it, no line ending in a colon leading into it) stays a
+paragraph with its number, `2、…`, as Python markitai 1.2.1 writes it. A line
+ending in CJK text more than four em short of its column (the
+farthest any line beside or under it reaches) ends its paragraph, as does a
+line of other text ending a sentence (`.`, `!`, `?`) that far short when the
+next line does not go on in lower case (a short page of one- and two-line
+paragraphs makes the paragraph gap its most common one), and a line
 holding runs four em or more apart (a row of fields) is a paragraph of its own.
 A line ending in CJK text other than a sentence end (`。！？；：`) within an em
 and a half of its column's edge continues into the next line, a list item's
 too, when that follows within 2.6 lines at the same size and starts between
 three em before it and six after (a clause hanging past its number), however
 widely the page spaces its lines; the layout pass applies the same rule
-against the right edge of its flow's text.
+against the right edge of its flow's text. A wrapped CJK line joins the next
+without a space when CJK text stands on both sides of the break (the layout
+pass: any two lines of a paragraph with CJK text at the break); lines broken
+short keep the space.
 
 The page reader keeps a paragraph set in a heading size together: three or
 more consecutive lines at the same heading level, each at wrap spacing below

@@ -137,6 +137,27 @@ fn cjk_enumerators_are_list_items() {
         "{markdown}"
     );
     assert!(markdown.contains("\n\n说明\n\n"), "{markdown}");
+    // An item a line leads into (`…：`) is a list of one.
+    assert!(
+        markdown.contains("\n- 1）楷书基础、行书进阶(1-3级)、素描基础(3课时及以下)。"),
+        "{markdown}"
+    );
+}
+
+#[test]
+fn a_short_last_line_ending_in_a_full_stop_ends_its_paragraph() {
+    // Paragraphs set without spacing: each one's first line runs to the
+    // column's edge, its last stops short after `。`. A step numbered `2、`
+    // standing alone is no bullet.
+    let markdown = markdown(include_bytes!("fixtures/cjk-course/short-last-lines.pdf"));
+    for paragraph in [
+        "\n\n本报名单由课程简章、报名表、缴费凭证、课程安排和其他书面约定构成，报名人与学习中心应当共同遵守约定。\n\n",
+        "\n\n学员在课程期间内因故缺课或需要调课的，应当提前告知学习中心，学习中心按照简章约定安排相应的补课课时。\n\n",
+        "\n\n报名人应当按照简章约定按时交纳课程费用，未按约定交纳的，学习中心可以暂停相应的课程并书面告知报名人。\n\n",
+        "\n\n2、登录报名系统后，在课程列表中选择 1 门你要报名的课程\n\n",
+    ] {
+        assert!(markdown.contains(paragraph), "{paragraph}: {markdown}");
+    }
 }
 
 #[test]
@@ -146,9 +167,9 @@ fn double_spaced_cjk_lines_join_their_paragraph() {
     // ems past its number.
     let markdown = markdown(include_bytes!("fixtures/cjk-course/double-spaced.pdf"));
     for paragraph in [
-        "\n\n第一条 本附加服务约定（以下简称“本附加约定”）需附加于各类线下课程报名协议、 各类线上课程报名协议（以下简称“主协议”）上方可生效。\n\n",
-        "\n\n第二条 本附加约定与主协议相悖之处，以本附加约定为准；本附加约定未尽事宜，以 主协议为准。\n\n",
-        "1.1 报名学员范围 首次报名或非连续报名本课程时年满十八周岁至七十周岁的个人可作 为报名学员参加本课程，且报名时需符合本中心当时的报名规定。\n\n",
+        "\n\n第一条 本附加服务约定（以下简称“本附加约定”）需附加于各类线下课程报名协议、各类线上课程报名协议（以下简称“主协议”）上方可生效。\n\n",
+        "\n\n第二条 本附加约定与主协议相悖之处，以本附加约定为准；本附加约定未尽事宜，以主协议为准。\n\n",
+        "1.1 报名学员范围 首次报名或非连续报名本课程时年满十八周岁至七十周岁的个人可作为报名学员参加本课程，且报名时需符合本中心当时的报名规定。\n\n",
     ] {
         assert!(markdown.contains(paragraph), "{paragraph}: {markdown}");
     }

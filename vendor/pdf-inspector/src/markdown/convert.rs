@@ -892,7 +892,9 @@ fn heading_tiers(lines: &[TextLine], base_size: f32, options: &MarkdownOptions) 
 /// three ems before and six after it (a clause's text hangs past its
 /// number), however widely the page spaces its lines. The column is the
 /// lines of the page beside or under this one (a centred title measures
-/// against the text below it).
+/// against the text below it). A line of other text ending a sentence
+/// (`.`, `!`, `?`) more than four ems before that edge ends its paragraph
+/// when the next line does not go on in lower case.
 fn cjk_line_breaks(lines: &[TextLine]) -> (HashSet<usize>, HashSet<usize>) {
     let extent = |line: &TextLine| {
         let left = line.items.iter().map(|i| i.x).fold(f32::INFINITY, f32::min);
@@ -912,12 +914,7 @@ fn cjk_line_breaks(lines: &[TextLine]) -> (HashSet<usize>, HashSet<usize>) {
         let extents: Vec<(f32, f32)> = lines[start..end].iter().map(extent).collect();
         for (offset, line) in lines[start..end].iter().enumerate() {
             let text = line.text();
-            let Some(last) = text
-                .trim_end()
-                .chars()
-                .next_back()
-                .filter(|&c| crate::text_utils::is_cjk_char(c))
-            else {
+            let Some(last) = text.trim_end().chars().next_back() else {
                 continue;
             };
             let size = line_font_size(line);
@@ -927,6 +924,22 @@ fn cjk_line_breaks(lines: &[TextLine]) -> (HashSet<usize>, HashSet<usize>) {
                 .filter(|(other_left, other_right)| *other_left < right && *other_right > left)
                 .map(|&(_, other_right)| other_right)
                 .fold(right, f32::max);
+            if !crate::text_utils::is_cjk_char(last) {
+                // A sentence ending more than four ems short of the column,
+                // the next line opening another (not in lower case), ends
+                // its paragraph too, however the page spaces them: a short
+                // page of one- and two-line paragraphs makes the paragraph
+                // gap the common one, which the gap threshold reads as
+                // leading.
+                let opens = lines[start..end]
+                    .get(offset + 1)
+                    .and_then(|next| next.text().trim_start().chars().next())
+                    .is_some_and(|c| !c.is_lowercase());
+                if matches!(last, '.' | '!' | '?') && opens && right < column - size * 4.0 {
+                    ends.insert(start + offset);
+                }
+                continue;
+            }
             if right < column - size * 4.0 {
                 ends.insert(start + offset);
             } else if right >= column - size * 1.5
@@ -949,6 +962,52 @@ fn cjk_line_breaks(lines: &[TextLine]) -> (HashSet<usize>, HashSet<usize>) {
         start = end;
     }
     (ends, wraps)
+}
+
+/// markitai: whether line `index` is a step numbered with a CJK enumerator
+/// (`2、`, `3．`) standing alone: no list item within three of its lines'
+/// heights above or below it on its page, and no line leading into it
+/// (ending in a colon) right above. Such a step stays a paragraph
+/// with its number (`2、列表加载后…`), as Python markitai 1.2.1 writes it;
+/// an item next to others is a list item (`- 1．…`).
+fn lone_cjk_enumerator(lines: &[TextLine], index: usize) -> bool {
+    let line = &lines[index];
+    if super::classify::full_width_enumerator(line.text().trim()).is_none() {
+        return false;
+    }
+    let reach = line_font_size(line) * 3.0;
+    let close = |other: &TextLine| other.page == line.page && (other.y - line.y).abs() <= reach;
+    let near = |other: &TextLine| close(other) && is_list_item(other.text().trim());
+    // A line leading into it (`下述情况，仍可正常报名：`) makes it a list of one.
+    let led_in = |other: &TextLine| close(other) && other.text().trim_end().ends_with(['：', ':']);
+    !(index
+        .checked_sub(1)
+        .is_some_and(|before| near(&lines[before]) || led_in(&lines[before]))
+        || lines.get(index + 1).is_some_and(near))
+}
+
+/// markitai: joins a line to the text `output` ends with in a paragraph
+/// and returns how much of the line's start `next` the join took up: a
+/// space, but nothing where CJK text `wrapped` (see [`cjk_line_breaks`])
+/// with CJK text on both sides of the break; then the emphasis closing the
+/// line above and the same emphasis opening this one (`**…任**` and
+/// `**何…**`) become one. Lines broken short keep the space (two fields on
+/// two lines stay apart).
+fn join_line(output: &mut String, next: &str, wrapped: bool) -> usize {
+    let cjk = |c: Option<char>| c.is_some_and(crate::text_utils::is_cjk_char);
+    let marks = ['*', '_', '~'];
+    let before = output.trim_end_matches(marks).len();
+    let after = next.trim_start_matches(marks);
+    let opening = next.len() - after.len();
+    if !(wrapped && cjk(output[..before].chars().next_back()) && cjk(after.chars().next())) {
+        output.push(' ');
+        return 0;
+    }
+    if before < output.len() && output[before..] == next[..opening] {
+        output.truncate(before);
+        return opening;
+    }
+    0
 }
 
 /// markitai: lines that set runs four ems or more apart, a row of fields
@@ -1028,6 +1087,9 @@ pub(super) fn to_markdown_from_lines_with_tables_and_images(
     let isolated_lines = find_isolated_lines(&lines, base_size, para_threshold);
     // markitai: lines that end or stand apart from their paragraph.
     let (cjk_paragraph_ends, cjk_wraps) = cjk_line_breaks(&lines);
+    let lone_steps: HashSet<usize> = (0..lines.len())
+        .filter(|&index| lone_cjk_enumerator(&lines, index))
+        .collect();
     let field_rows = field_rows(&lines);
     let (wrapped_bold_paragraph_lines, wrapped_quoted_paragraph_lines) =
         find_wrapped_bold_paragraph_lines(&lines, base_size, para_threshold);
@@ -1235,6 +1297,8 @@ pub(super) fn to_markdown_from_lines_with_tables_and_images(
         let set_apart = line_idx > 0
             && lines[line_idx - 1].page == line.page
             && (cjk_paragraph_ends.contains(&(line_idx - 1))
+                || lone_steps.contains(&line_idx)
+                || lone_steps.contains(&(line_idx - 1))
                 || field_rows.contains(&line_idx)
                 || field_rows.contains(&(line_idx - 1)));
         let is_para_break = ((y_gap.abs() > para_threshold && !cjk_wraps.contains(&line_idx))
@@ -1539,7 +1603,7 @@ pub(super) fn to_markdown_from_lines_with_tables_and_images(
         }
 
         // Detect list items
-        if options.detect_lists && is_list_item(plain_trimmed) {
+        if options.detect_lists && is_list_item(plain_trimmed) && !lone_steps.contains(&line_idx) {
             if in_paragraph {
                 output.push_str("\n\n");
                 in_paragraph = false;
@@ -1572,12 +1636,14 @@ pub(super) fn to_markdown_from_lines_with_tables_and_images(
             };
 
             if is_continuation {
-                // Append to previous list item with a space
+                // Append to previous list item with a space (markitai:
+                // none between CJK text)
+                let mut skip = 0;
                 if output.ends_with('\n') {
                     output.pop();
-                    output.push(' ');
+                    skip = join_line(&mut output, trimmed, cjk_wraps.contains(&line_idx));
                 }
-                output.push_str(trimmed);
+                output.push_str(&trimmed[skip..]);
                 output.push('\n');
                 continue;
             } else {
@@ -1636,14 +1702,15 @@ pub(super) fn to_markdown_from_lines_with_tables_and_images(
 
         // Regular text - join lines within same paragraph with space
         let cur_dot_leaders = has_dot_leaders(plain_trimmed);
+        let mut skip = 0;
         if in_paragraph {
             if cur_dot_leaders || prev_had_dot_leaders {
                 output.push('\n');
             } else {
-                output.push(' ');
+                skip = join_line(&mut output, trimmed, cjk_wraps.contains(&line_idx));
             }
         }
-        output.push_str(trimmed);
+        output.push_str(&trimmed[skip..]);
         paragraph_in_wrapped_bold_run = if in_paragraph {
             paragraph_in_wrapped_bold_run || line_in_wrapped_bold_run
         } else {
@@ -1875,6 +1942,9 @@ pub fn to_markdown_from_lines(lines: Vec<TextLine>, options: MarkdownOptions) ->
     let isolated_lines = find_isolated_lines(&lines, base_size, para_threshold);
     // markitai: lines that end or stand apart from their paragraph.
     let (cjk_paragraph_ends, cjk_wraps) = cjk_line_breaks(&lines);
+    let lone_steps: HashSet<usize> = (0..lines.len())
+        .filter(|&index| lone_cjk_enumerator(&lines, index))
+        .collect();
     let field_rows = field_rows(&lines);
     let (wrapped_bold_paragraph_lines, wrapped_quoted_paragraph_lines) =
         find_wrapped_bold_paragraph_lines(&lines, base_size, para_threshold);
@@ -1935,6 +2005,8 @@ pub fn to_markdown_from_lines(lines: Vec<TextLine>, options: MarkdownOptions) ->
         let set_apart = line_idx > 0
             && lines[line_idx - 1].page == line.page
             && (cjk_paragraph_ends.contains(&(line_idx - 1))
+                || lone_steps.contains(&line_idx)
+                || lone_steps.contains(&(line_idx - 1))
                 || field_rows.contains(&line_idx)
                 || field_rows.contains(&(line_idx - 1)));
         let is_para_break = ((y_gap.abs() > para_threshold && !cjk_wraps.contains(&line_idx))
@@ -2077,7 +2149,7 @@ pub fn to_markdown_from_lines(lines: Vec<TextLine>, options: MarkdownOptions) ->
         }
 
         // Detect list items
-        if options.detect_lists && is_list_item(plain_trimmed) {
+        if options.detect_lists && is_list_item(plain_trimmed) && !lone_steps.contains(&line_idx) {
             if in_paragraph {
                 output.push_str("\n\n");
                 in_paragraph = false;
@@ -2109,12 +2181,14 @@ pub fn to_markdown_from_lines(lines: Vec<TextLine>, options: MarkdownOptions) ->
             };
 
             if is_continuation {
-                // Append to previous list item with a space
+                // Append to previous list item with a space (markitai:
+                // none between CJK text)
+                let mut skip = 0;
                 if output.ends_with('\n') {
                     output.pop();
-                    output.push(' ');
+                    skip = join_line(&mut output, trimmed, cjk_wraps.contains(&line_idx));
                 }
-                output.push_str(trimmed);
+                output.push_str(&trimmed[skip..]);
                 output.push('\n');
                 continue;
             } else {
@@ -2138,14 +2212,15 @@ pub fn to_markdown_from_lines(lines: Vec<TextLine>, options: MarkdownOptions) ->
 
         // Regular text - join lines within same paragraph with space
         let cur_dot_leaders = has_dot_leaders(plain_trimmed);
+        let mut skip = 0;
         if in_paragraph {
             if cur_dot_leaders || prev_had_dot_leaders {
                 output.push('\n');
             } else {
-                output.push(' ');
+                skip = join_line(&mut output, trimmed, cjk_wraps.contains(&line_idx));
             }
         }
-        output.push_str(trimmed);
+        output.push_str(&trimmed[skip..]);
         paragraph_in_wrapped_bold_run = if in_paragraph {
             paragraph_in_wrapped_bold_run || line_in_wrapped_bold_run
         } else {

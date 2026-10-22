@@ -47,6 +47,12 @@
       "bytes": 6470,
       "sha256": "f9680b8064ab44120dc0e87682189956ef7faf0aae3b34ff8e41595d230bf911",
       "provenance": "Authored minimal PDF operators and invented text; no external or personal input."
+    },
+    {
+      "file": "short-last-lines.pdf",
+      "bytes": 7070,
+      "sha256": "4e3ab3ae609a551ef3bec8be901c3e719507f58386c38a810c2808493c7043a8",
+      "provenance": "Authored minimal PDF operators and invented text; no external or personal input."
     }
   ]
 }

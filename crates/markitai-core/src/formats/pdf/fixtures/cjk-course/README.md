@@ -30,3 +30,6 @@ bytes; `author-fixtures.json` records the SHA-256 and size of each.
 - `double-spaced.pdf`: clauses at 10.4 pt on 20 pt leading, justified, the
   first line indented, one clause's text hanging past its number `1.1`,
   under a centred `总则`.
+- `short-last-lines.pdf`: paragraphs set without spacing, each first line
+  running to the column's edge and the last stopping short after `。`, then
+  a step numbered `2、` standing alone.

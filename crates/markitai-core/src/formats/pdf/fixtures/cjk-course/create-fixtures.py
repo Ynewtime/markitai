@@ -319,6 +319,23 @@ def double_spaced(page, yahei, bold, simsun):
         page.text(simsun, 10.4, 90, y, BODY[(570 - y) // 20 % len(BODY)], 530)
 
 
+def short_last_lines(page, yahei, bold, simsun):
+    # Paragraphs set without spacing: every line but a paragraph's last runs
+    # as far as the longest line of the page, the last stops short after
+    # its sentence's `。`. Then a step numbered `2、` standing alone between
+    # two paragraphs.
+    page.text(bold, 14, 45, 730, "报名流程")
+    top = 700
+    for paragraph in [
+        "本报名单由课程简章、报名表、缴费凭证、课程安排和其他书面约定构成，报名人与学习中心应当共同遵守约定。",
+        "学员在课程期间内因故缺课或需要调课的，应当提前告知学习中心，学习中心按照简章约定安排相应的补课课时。",
+        "报名人应当按照简章约定按时交纳课程费用，未按约定交纳的，学习中心可以暂停相应的课程并书面告知报名人。",
+    ]:
+        top = page.lines(yahei, 10, 45, top, [paragraph[:42], paragraph[42:]], 14)
+    page.text(yahei, 10, 45, top - 14, "2、登录报名系统后，在课程列表中选择 1 门你要报名的课程")
+    body(page, yahei, top - 48)
+
+
 def main():
     records = [
         build("nul-separated.pdf", nul_separated, separator=b" \x00 "),
@@ -329,6 +346,7 @@ def main():
         build("notdef-ffff.pdf", notdef_ffff, form=notdef_form),
         build("cjk-enumerators.pdf", cjk_enumerators),
         build("double-spaced.pdf", double_spaced),
+        build("short-last-lines.pdf", short_last_lines),
     ]
     (ROOT / "author-fixtures.json").write_text(json.dumps({"fixtures": records}, indent=2) + "\n")
     print(json.dumps(records, indent=2))

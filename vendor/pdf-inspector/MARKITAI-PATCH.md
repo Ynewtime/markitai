@@ -845,3 +845,19 @@ Run in an isolated copy with the vendored lopdf patched in (`cargo test --lib`,
 default features), the crate's unit tests give 1,732 passed and the same 21
 failed by name as the 1.25.1 copy (1,727 passed).
 
+
+## CJK paragraphs and lone steps (parity round 4)
+
+- `src/markdown/convert.rs` (both renderers): `cjk_line_breaks` also ends a
+  paragraph at a line of other text ending a sentence (`.`, `!`, `?`) more
+  than four ems short of its column when the next line does not go on in
+  lower case (a short page of one- and two-line paragraphs made the
+  paragraph gap the median, and the threshold read it as leading);
+  `lone_cjk_enumerator`: a step numbered `2、`/`3．` with no list item within
+  three lines and no lead-in line ending in a colon above it is a paragraph
+  of its own, not `- 2、…`; `join_line`: a wrapped CJK line (`cjk_wraps`)
+  joins the next without a space when CJK text stands on both sides, and
+  the emphasis closing one line and opening the next becomes one.
+
+  Run in the isolated copy (as above), the crate's unit tests give 1,732
+  passed and the same 21 failed by name.

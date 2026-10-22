@@ -658,23 +658,36 @@ fn runs(line: &Line) -> Vec<Run> {
 
 fn append_runs(output: &mut Vec<Run>, source: Vec<Run>) {
     for (index, run) in source.into_iter().enumerate() {
+        // A line joins the one above with a space, but for CJK text on both
+        // sides of the break, which has none between its words.
+        let spaced = |last: &Run| {
+            !last.text.ends_with(char::is_whitespace)
+                && !(last.text.chars().next_back().is_some_and(cjk_text)
+                    && run.text.chars().next().is_some_and(cjk_text))
+        };
         if let Some(last) = output.last_mut()
             && last.joins(run.style, run.link.as_ref())
         {
-            if index == 0 && !last.text.ends_with(char::is_whitespace) {
+            if index == 0 && spaced(last) {
                 last.text.push(' ');
             }
             last.text.push_str(&run.text);
         } else {
             if index == 0
                 && let Some(last) = output.last_mut()
-                && !last.text.ends_with(char::is_whitespace)
+                && spaced(last)
             {
                 last.text.push(' ');
             }
             output.push(run);
         }
     }
+}
+
+/// A CJK character or CJK punctuation (full-width forms included), which
+/// a wrapped line joins without a space.
+fn cjk_text(c: char) -> bool {
+    is_cjk(c) || matches!(c as u32, 0x3000..=0x303F | 0xFF00..=0xFFEF)
 }
 
 /// The Markdown of a block's runs. Text is escaped as the other readers
@@ -992,10 +1005,16 @@ fn ended_early(lines: &[Line], above: usize, below: usize, right: f32) -> bool {
         return false;
     }
     let chars = text.chars().count().max(1);
-    let word = text
-        .split_whitespace()
-        .next()
-        .map_or(0, |w| w.chars().count());
+    // CJK text breaks between any two characters (a closing mark goes with
+    // the one before it), so the first unit that could have stood on the
+    // line above is two characters, not a run up to the next space.
+    let word = if text.starts_with(is_cjk) {
+        2.min(chars)
+    } else {
+        text.split_whitespace()
+            .next()
+            .map_or(0, |w| w.chars().count())
+    };
     let word_width = first.width * word as f32 / chars as f32;
     right - end(upper) > word_width + lower.size.max(upper.size) * 1.25
 }

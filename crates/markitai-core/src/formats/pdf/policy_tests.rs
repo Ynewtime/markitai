@@ -416,6 +416,16 @@ fn a_chromium_how_to_loses_its_footer_and_keeps_steps_after_their_pictures() {
     let second = picture(first + 1).unwrap();
     let step3 = page.find("3、最后").unwrap();
     assert!(first < step2 && step2 < second && second < step3, "{page}");
+    // Steps standing alone keep their numbers as paragraphs, not bullets.
+    assert!(!page.contains("- 2、") && !page.contains("- 3、"), "{page}");
+    // Page 1's one- and two-line paragraphs, spaced alike, stay apart.
+    for paragraph in [
+        "\n\nThis guide walks through the three steps to set up the desk lamp proxy client on a laptop.\n\n",
+        "\n\nStep one: download and install the client from the vendor page, then start it once.\n\n",
+        "\n\nStep two: import the settings file the support desk sent you by email.\n\n",
+    ] {
+        assert!(markdown.contains(paragraph), "{paragraph}: {markdown}");
+    }
 }
 
 #[test]
