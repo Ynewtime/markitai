@@ -185,7 +185,11 @@ height proportionally when it exceeds `max_height`. Payloads return to the core
 publication layer; the browser module does not publish output files itself.
 Screenshot and subsequent extraction have separate time budgets. Extraction
 serializes the rendered DOM and flattens accessible open shadow roots after
-capture; closed roots and browser-internal content remain opaque.
+capture; closed roots and browser-internal content remain opaque. Before it,
+style rules a script inserted through the CSSOM (CSS-in-JS, as on X) are written
+into their `<style>` elements and constructed style sheets are added as
+`<style>` elements, so the page `markitai serve` keeps for Compare looks as
+drawn rather than unstyled.
 
 The core publishes JPEGs under `.markitai/screenshots` and returns every tile in
 the result. Identical captures reuse existing files; changed captures receive a

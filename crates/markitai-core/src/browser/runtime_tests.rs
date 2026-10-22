@@ -943,6 +943,12 @@ fn settle_site() -> (String, Arc<AtomicBool>, thread::JoinHandle<()>) {
                         }
                         return;
                     }
+                    "/css" => (
+                        "text/html",
+                        page(
+                            "<article><h1 class=x>Styled</h1><p class=y>Styled by scripts through the CSSOM.</p></article><style id=s></style><script>document.getElementById('s').sheet.insertRule('.x { color: rgb(1, 2, 3); }');const sheet=new CSSStyleSheet();sheet.replaceSync('.y { color: rgb(4, 5, 6); }');document.adoptedStyleSheets=[sheet];</script>",
+                        ),
+                    ),
                     "/slow" => (
                         "text/html",
                         page(
@@ -960,6 +966,26 @@ fn settle_site() -> (String, Arc<AtomicBool>, thread::JoinHandle<()>) {
         }
     });
     (base, stop, worker)
+}
+
+#[test]
+#[ignore = "requires installed Chromium; private process and loopback only"]
+fn the_kept_page_carries_the_style_rules_scripts_inserted() {
+    if isolated("the_kept_page_carries_the_style_rules_scripts_inserted") {
+        return;
+    }
+    assert!(available());
+    let (base, stop, worker) = settle_site();
+    let cfg =
+        json!({"fetch":{"playwright":{"timeout":15000,"extra_wait_ms":0,"skip_auto_scroll":true}}});
+    let html = fetch(&format!("{base}/css"), &cfg, false)
+        .unwrap()
+        .page()
+        .html;
+    assert!(html.contains(".x { color: rgb(1, 2, 3); }"), "{html}");
+    assert!(html.contains(".y { color: rgb(4, 5, 6); }"), "{html}");
+    stop.store(true, Ordering::Relaxed);
+    worker.join().unwrap();
 }
 
 #[test]
