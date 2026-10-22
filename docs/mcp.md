@@ -132,7 +132,9 @@ Each batch shares an [LLM runtime](llm.md); the conversion concurrency and the
 LLM request cap are separate limits.
 
 `job_status` takes `job_id` and returns `job_id`, `status`, `total`, `done`,
-`failed`, `output_dir` and `results`. `done` counts both successes and failures.
+`failed`, `finished`, `output_dir` and `results`. `done` counts successes, as
+`markitai serve` does, `failed` counts failures and `finished` counts both
+(earlier releases reported that number as `done`).
 The results array contains finished items in input order, omitting unfinished
 slots while running. Once completed, each result corresponds to the same input
 index. A completed job may contain failures, including failure of every item.

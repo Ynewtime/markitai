@@ -12,7 +12,8 @@ struct Job {
     directory: PathBuf,
     status: &'static str,
     slots: Vec<Option<Value>>,
-    done: usize,
+    /// Items that ended, failed ones included.
+    finished: usize,
     failed: usize,
 }
 
@@ -35,8 +36,10 @@ impl Table {
                 )
             });
         };
-        let mut value = json!({"job_id":id,"status":job.status,"total":job.slots.len(),"done":job.done,
-            "failed":job.failed,"output_dir":job.directory,"results":job.slots.iter().flatten().collect::<Vec<_>>()});
+        // `done` counts successes, as `markitai serve` and Python markitai
+        // do; `finished` (done + failed) is the number `done` once was.
+        let mut value = json!({"job_id":id,"status":job.status,"total":job.slots.len(),
+            "done":job.finished - job.failed,"failed":job.failed,"finished":job.finished,"output_dir":job.directory,"results":job.slots.iter().flatten().collect::<Vec<_>>()});
         let summaries: Vec<crate::pricing::Pricing> = job
             .slots
             .iter()
@@ -66,7 +69,7 @@ impl Table {
 
     fn finish(&mut self, id: &str, cancelled: bool) {
         if let Some(job) = self.jobs.get_mut(id) {
-            job.status = if cancelled && job.done < job.slots.len() {
+            job.status = if cancelled && job.finished < job.slots.len() {
                 "cancelled"
             } else {
                 "completed"
@@ -131,7 +134,7 @@ pub(super) fn start(
             directory: directory.clone(),
             status: "running",
             slots: vec![None; total],
-            done: 0,
+            finished: 0,
             failed: 0,
         },
     );
@@ -179,7 +182,7 @@ pub(super) fn start(
             };
             if let Some(job) = state.jobs.lock().unwrap().jobs.get_mut(&id) {
                 job.slots[index] = Some(value);
-                job.done += 1;
+                job.finished += 1;
                 job.failed += usize::from(failed);
             }
         }
@@ -194,7 +197,7 @@ mod tests {
     #[test]
     fn batch_pricing_combines_success_and_failure_observations_once() {
         let mut table = Table::default();
-        table.jobs.insert("priced".into(), Job { directory:PathBuf::from("/isolated"), status:"completed", done:2, failed:1, slots:vec![
+        table.jobs.insert("priced".into(), Job { directory:PathBuf::from("/isolated"), status:"completed", finished:2, failed:1, slots:vec![
             Some(json!({"source":"a","status":"ok","cost_usd":0.5,"pricing":{"priced_requests":1,"unpriced_requests":0,"cost_status":"complete","pricing_snapshots":["catalog-v1"]},"diagnostics":{"last_attempt":{"usage":{"cost_usd":0.5}}}})),
             Some(json!({"source":"b","status":"error","pricing":{"priced_requests":0,"unpriced_requests":1,"cost_status":"unknown","pricing_snapshots":[]},"diagnostics":{"last_attempt":{"usage":{"cost_usd":0.0}}}})),
         ] });
@@ -205,6 +208,10 @@ mod tests {
             json!({"priced_requests":1,"unpriced_requests":1,"cost_status":"partial","pricing_snapshots":["catalog-v1"]})
         );
         assert_eq!(value["results"].as_array().unwrap().len(), 2);
+        assert_eq!(
+            (&value["done"], &value["failed"], &value["finished"]),
+            (&json!(1), &json!(1), &json!(2))
+        );
     }
     #[test]
     fn retention_preserves_running_jobs_and_distinguishes_expired_ids() {
@@ -215,7 +222,7 @@ mod tests {
                 directory: PathBuf::from("/isolated"),
                 status: "running",
                 slots: vec![None],
-                done: 0,
+                finished: 0,
                 failed: 0,
             },
         );
@@ -229,7 +236,7 @@ mod tests {
                     slots: vec![Some(
                         json!({"source":"x","status":"error","error":"missing"}),
                     )],
-                    done: 1,
+                    finished: 1,
                     failed: 1,
                 },
             );
@@ -241,8 +248,10 @@ mod tests {
         assert!(table.snapshot("job-0").unwrap_err().contains("Unknown"));
         assert!(table.snapshot("job-5").unwrap_err().contains("forgotten"));
         let status = table.snapshot("job-604").unwrap();
-        assert_eq!(status["done"], 1);
+        // One failed item: no success, one finished.
+        assert_eq!(status["done"], 0);
         assert_eq!(status["failed"], 1);
+        assert_eq!(status["finished"], 1);
         assert_eq!(status["status"], "completed");
     }
 }

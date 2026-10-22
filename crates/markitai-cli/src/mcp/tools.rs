@@ -389,13 +389,14 @@ pub(super) fn definitions() -> Vec<Tool> {
         &["job_id", "status", "total", "output_dir"],
     );
     let status_output = object(
-        json!({"job_id":{"type":"string"},"status":{"type":"string"},"total":{"type":"integer"},"done":{"type":"integer"},"failed":{"type":"integer"},"output_dir":{"type":"string"},"pricing":crate::pricing::schema(),"cost_usd":{"type":"number"},"results":{"type":"array","items":{"type":"object","properties":{"diagnostics":diagnostics_schema(),"pricing":crate::pricing::schema()}}}}),
+        json!({"job_id":{"type":"string"},"status":{"type":"string"},"total":{"type":"integer"},"done":{"type":"integer"},"failed":{"type":"integer"},"finished":{"type":"integer"},"output_dir":{"type":"string"},"pricing":crate::pricing::schema(),"cost_usd":{"type":"number"},"results":{"type":"array","items":{"type":"object","properties":{"diagnostics":diagnostics_schema(),"pricing":crate::pricing::schema()}}}}),
         &[
             "job_id",
             "status",
             "total",
             "done",
             "failed",
+            "finished",
             "output_dir",
             "results",
         ],
@@ -462,7 +463,7 @@ pub(super) fn definitions() -> Vec<Tool> {
             ))),
         );
     }
-    tools.push(Tool::new("job_status", "Return batch progress and finished results in input order. done counts successes and failures; failed counts errors. Unknown and forgotten jobs have distinct errors. Files remain on disk after job eviction or restart.", object(json!({"job_id":{"type":"string"}}), &["job_id"]))
+    tools.push(Tool::new("job_status", "Return batch progress and finished results in input order. done counts successes, failed counts errors and finished counts both. Unknown and forgotten jobs have distinct errors. Files remain on disk after job eviction or restart.", object(json!({"job_id":{"type":"string"}}), &["job_id"]))
         .with_raw_output_schema(Arc::new(with_error_schema(status_output))));
     tools
 }

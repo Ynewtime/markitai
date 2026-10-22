@@ -295,7 +295,18 @@ fn both_protocol_eras_list_the_four_typed_tools_and_continue_after_errors() {
         for tool in tools {
             assert_eq!(tool["inputSchema"]["type"], "object");
             assert_eq!(tool["outputSchema"]["type"], "object");
-            if tool["name"] != "job_status" {
+            if tool["name"] == "job_status" {
+                let success = &tool["outputSchema"]["anyOf"][0];
+                for field in ["done", "failed", "finished"] {
+                    assert!(
+                        success["required"]
+                            .as_array()
+                            .unwrap()
+                            .contains(&json!(field)),
+                        "{field}"
+                    );
+                }
+            } else {
                 assert!(tool["description"].as_str().unwrap().contains("MODEL"));
                 assert_eq!(
                     tool["inputSchema"]["properties"]["llm"]["default"],
@@ -509,8 +520,10 @@ fn batch_files_isolate_duplicate_names_and_keep_error_slots() {
     let id = ack["job_id"].as_str().unwrap();
     assert_eq!(id.len(), 8);
     let status = client.completed(id);
-    assert_eq!(status["done"], 4);
+    // done counts successes; finished counts failures too.
+    assert_eq!(status["done"], 3);
     assert_eq!(status["failed"], 1);
+    assert_eq!(status["finished"], 4);
     assert_eq!(status["results"][2]["status"], "error");
     assert_eq!(status["results"][2].as_object().unwrap().len(), 3);
     for (index, expected) in [(0, "first"), (1, "second"), (3, "first")] {
@@ -632,7 +645,7 @@ fn url_tool_and_background_polling_preserve_source_order() {
     let deadline = Instant::now() + Duration::from_secs(6);
     loop {
         let status = client.status(id);
-        if status["done"] == 2 {
+        if status["finished"] == 2 {
             assert_eq!(status["status"], "running");
             assert_eq!(status["results"][0]["source"], fast);
             assert_eq!(status["results"][1]["status"], "error");
@@ -646,8 +659,9 @@ fn url_tool_and_background_polling_preserve_source_order() {
     }
     pages.release();
     let status = client.completed(id);
-    assert_eq!(status["done"], 3);
+    assert_eq!(status["done"], 2);
     assert_eq!(status["failed"], 1);
+    assert_eq!(status["finished"], 3);
     assert_eq!(status["results"][0]["source"], slow);
     assert_eq!(status["results"][1]["source"], fast);
     client.stop();

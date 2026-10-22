@@ -292,7 +292,7 @@ fn batch_keeps_out_of_order_observations_attached_to_their_input_slots() {
     let deadline = Instant::now() + Duration::from_secs(8);
     loop {
         let status = client.status(id);
-        if status["done"] == 3 {
+        if status["finished"] == 3 {
             let slots = status["results"].as_array().unwrap();
             assert_eq!(slots[0]["source"], json!(paid));
             attempt(&slots[0], "error", 13, 2);
@@ -306,8 +306,9 @@ fn batch_keeps_out_of_order_observations_attached_to_their_input_slots() {
     }
     model.release();
     let status = client.completed(id);
-    assert_eq!(status["done"], 4);
+    assert_eq!(status["done"], 2);
     assert_eq!(status["failed"], 2);
+    assert_eq!(status["finished"], 4);
     for (index, slot) in status["results"].as_array().unwrap().iter().enumerate() {
         assert_eq!(slot["source"], sources[index]);
     }
@@ -384,8 +385,9 @@ fn failed_shared_owner_and_later_waiter_keep_separate_attempts() {
     thread::sleep(Duration::from_millis(200));
     model.release();
     let status = client.completed(ack["job_id"].as_str().unwrap());
-    assert_eq!(status["done"], 2);
+    assert_eq!(status["done"], 1);
     assert_eq!(status["failed"], 1, "{status}");
+    assert_eq!(status["finished"], 2);
     for slot in status["results"].as_array().unwrap() {
         if slot["status"] == "error" {
             attempt(slot, "error", 9, 1);
