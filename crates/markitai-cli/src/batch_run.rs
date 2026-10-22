@@ -197,6 +197,44 @@ fn options(cli: &Cli, cfg: &Value, scope: &Scope) -> Value {
         }
         options["concurrency"] = cfg["batch"]["concurrency"].clone();
     }
+    for (key, value) in output_options(cli, cfg) {
+        options[key] = value;
+    }
+    options
+}
+
+/// The settings that change what each item writes, present only when not
+/// the default, so a default run keeps the state (and state file name) it
+/// had: a resumed run with another of them is another batch and converts its
+/// items again. Python markitai's five (`pure`, `keep_base`,
+/// `screenshot_only`, `profile` and a `-s` strategy, under its names), then
+/// this implementation's own output settings.
+fn output_options(cli: &Cli, cfg: &Value) -> Vec<(&'static str, Value)> {
+    let llm = config::enabled(cfg, "/llm/enabled");
+    let mut options = Vec::new();
+    if llm && config::enabled(cfg, "/llm/pure") {
+        options.push(("pure", json!(true)));
+    }
+    if llm && config::enabled(cfg, "/llm/keep_base") {
+        options.push(("keep_base", json!(true)));
+    }
+    if config::enabled(cfg, "/screenshot/screenshot_only") {
+        options.push(("screenshot_only", json!(true)));
+    }
+    if let Some(profile) = cfg["output"]["profile"].as_str() {
+        options.push(("profile", json!(profile)));
+    }
+    if let Some(strategy) = &cli.strategy {
+        options.push(("fetch_strategy", json!(strategy)));
+    }
+    if cfg["output"]["format"].as_str() == Some("json") {
+        options.push(("format", json!("json")));
+    }
+    for key in ["text_only", "page_markers", "wikilinks"] {
+        if cfg["output"][key].as_bool() == Some(true) {
+            options.push((key, json!(true)));
+        }
+    }
     options
 }
 /// The short state filename is only a lookup hint. Reusing completed entries
@@ -2762,6 +2800,59 @@ mod resume_options_tests {
                 "ocr (saved false, now true)",
             ]
         );
+    }
+
+    #[test]
+    fn output_settings_are_recorded_only_when_not_the_default() {
+        let root = tempfile::tempdir().unwrap();
+        let cli = |args: &[&str]| {
+            let mut all = vec!["markitai", "in"];
+            all.extend_from_slice(args);
+            Cli::from_arg_matches(&cli_command().try_get_matches_from(all).unwrap()).unwrap()
+        };
+        let base = config::normalize(&json!({})).unwrap();
+        assert!(output_options(&cli(&[]), &base).is_empty());
+        let mut cfg = base.clone();
+        cfg["llm"]["enabled"] = json!(true);
+        cfg["llm"]["pure"] = json!(true);
+        cfg["llm"]["keep_base"] = json!(true);
+        cfg["screenshot"]["screenshot_only"] = json!(true);
+        cfg["output"]["profile"] = json!("rag");
+        cfg["output"]["format"] = json!("json");
+        cfg["output"]["text_only"] = json!(true);
+        let names: Vec<_> = output_options(&cli(&["-s", "static"]), &cfg)
+            .into_iter()
+            .map(|(key, _)| key)
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "pure",
+                "keep_base",
+                "screenshot_only",
+                "profile",
+                "fetch_strategy",
+                "format",
+                "text_only"
+            ]
+        );
+        // Pure and keep-base mean nothing without a model.
+        cfg["llm"]["enabled"] = json!(false);
+        assert!(
+            !output_options(&cli(&[]), &cfg)
+                .iter()
+                .any(|(key, _)| matches!(*key, "pure" | "keep_base"))
+        );
+        // Each changes the state's file name; the default keeps it.
+        let scope = Scope::new(Mode::Directory, root.path(), &root.path().join("out")).unwrap();
+        let hash = |options: Value| codec::task_hash(&scope, &options).unwrap();
+        let default = json!({"llm":false,"ocr":false,"screenshot":false,"alt":false,"desc":false,"scan_max_depth":5});
+        let mut rag = default.clone();
+        rag["profile"] = json!("rag");
+        assert_ne!(hash(default.clone()), hash(rag));
+        let mut later = default.clone();
+        later["concurrency"] = json!(4);
+        assert_eq!(hash(default), hash(later));
     }
 
     #[test]

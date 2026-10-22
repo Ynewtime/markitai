@@ -66,7 +66,12 @@ races are not closed by these path checks.
 ## Legacy codec and ordered data
 
 Legacy snapshots retain the `"1.0"` envelope with `options`, `documents` and
-`urls`. Documents serialize by key; URLs preserve encounter order. State options
+`urls`. Options also record, only when not the default, the settings that
+change what each item writes: Python markitai's `pure`, `keep_base`,
+`screenshot_only`, `profile` and `fetch_strategy` (a `-s` choice), then
+`format`, `text_only`, `page_markers` and `wikilinks`. They enter the state
+file's hash as in Python markitai, so a run with another of them resumes
+another batch and a default run keeps its old file name. Documents serialize by key; URLs preserve encounter order. State options
 put the reference's preferred fields first and retain remaining top-level option
 order. These use local ordered maps without changing global binding JSON order.
 

@@ -154,8 +154,11 @@ MARKITAI_LANG=zh markitai doctor
   重试未完成项并发现新增输入。恢复比对保存的功能开关（LLM/OCR/截图/alt/desc）、
   输入输出路径及目录扫描深度/glob，不比对文件并发（`-j`），也不是整个配置文件的比较。
   找到的状态若以其他选项保存，`--resume` 以退出码 1 停止并列出各项不同选项的
-  保存值与当前值，保留已保存的进度，不会重新开始。更换模型、
-  prompt 或输出 profile 后要重新转换时，使用新的输出目录并省略 `--resume`。
+  保存值与当前值，保留已保存的进度，不会重新开始。改变输出的设置（`--profile`、
+  `--keep-base`、`--pure`、`--screenshot-only`、`-s`，以及 `-f json`、`--text-only`、
+  `output.page_markers`、`output.wikilinks`）不是默认值时也记入状态及其文件名，与 Python 版
+  markitai 一致：换一种设置续跑就是另一个批次，会重新转换各项；回到原设置仍找到原来的进度。
+  更换模型或 prompt 后要重新转换时，使用新的输出目录并省略 `--resume`。
   Unix 首次中断停止派发并等待在途工作，再次中断终止所启动的外部进程组。
   详见[恢复状态](state-storage.md)。
 - 批量默认在输出目录 `.markitai/reports/` 写[报告](reports.md)，单项默认不写。

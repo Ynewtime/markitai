@@ -299,6 +299,30 @@ fn a_folder_batch_names_the_symbolic_links_it_does_not_follow() {
 }
 
 #[test]
+fn a_resumed_batch_with_other_output_settings_converts_its_items_again() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir(root.path().join("in")).unwrap();
+    std::fs::write(root.path().join("in/note.txt"), "Resumed text\n").unwrap();
+    let run = |extra: &[&str]| {
+        let mut args = vec!["in", "-o", "out", "--json"];
+        args.extend_from_slice(extra);
+        let result = output(root.path(), &args);
+        assert!(result.status.success(), "{result:?}");
+        let parsed: Value = serde_json::from_slice(&result.stdout).unwrap();
+        parsed["items"][0]["earlier_run"].as_bool().unwrap()
+    };
+    run(&[]);
+    // The same settings: done before.
+    assert!(run(&["--resume"]));
+    // Another profile, then another strategy: another batch, converted again.
+    assert!(!run(&["--resume", "--profile", "rag"]));
+    assert!(run(&["--resume", "--profile", "rag"]));
+    assert!(!run(&["--resume", "-s", "static"]));
+    // The default settings still find their own state.
+    assert!(run(&["--resume"]));
+}
+
+#[test]
 fn conversion_json_orders_success_failure_and_empty_envelopes() {
     let root = tempfile::tempdir().unwrap();
     std::fs::write(root.path().join("note.txt"), "Ordered JSON\n").unwrap();

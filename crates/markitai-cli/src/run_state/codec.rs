@@ -1146,11 +1146,26 @@ pub(crate) fn task_hash(scope: &Scope, options: &Value) -> Result<String> {
         "scan_max_depth",
         "glob_patterns",
     ];
-    let keys = if scope.mode == Mode::Directory {
+    // The output settings a state records only when they are not the
+    // default: Python markitai's five, which its hash takes for both modes,
+    // then this implementation's.
+    let output_keys = [
+        "pure",
+        "keep_base",
+        "screenshot_only",
+        "profile",
+        "fetch_strategy",
+        "format",
+        "text_only",
+        "page_markers",
+        "wikilinks",
+    ];
+    let mode_keys = if scope.mode == Mode::Directory {
         &directory_keys[..]
     } else {
         &directory_keys[..5]
     };
+    let keys: Vec<&str> = mode_keys.iter().chain(&output_keys).copied().collect();
     // Entry by entry: collecting into a map sorts the pairs first, a compiled
     // sort of its own for every iterator type (`crate::sort`).
     let mut selected = serde_json::Map::new();
