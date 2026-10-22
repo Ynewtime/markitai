@@ -4,6 +4,9 @@
 //! internet is dropped, so a name that points at (or rebinds to) this machine
 //! or its network fails; an address written in the URL is checked the same
 //! way; no proxy carries the request elsewhere and no redirect is followed.
+//! Page fetches follow redirects under the same check ([`Level`]): a user
+//! token's directly, a CLI or admin fetch of a public host through the proxy,
+//! with each hop's name checked here first.
 use std::future::Future;
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::pin::Pin;
@@ -57,29 +60,47 @@ pub(crate) fn client(
     builder
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
-        .dns_resolver(Arc::new(PublicResolver))
+        .dns_resolver(Arc::new(PublicResolver::default()))
+}
+
+/// How a fetch on this thread is held to public addresses.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum Level {
+    /// Unrestricted: a deliberately local URL, or nothing entered.
+    Open,
+    /// The requested host is public (a CLI or admin fetch): every hop must
+    /// be public too, and the proxy still carries the requests, each target
+    /// name checked here before it is handed to the proxy.
+    PublicHost,
+    /// A user token's job: public addresses only, connected directly.
+    PublicOnly,
 }
 
 std::thread_local! {
-    /// Whether fetches on this thread must reach public addresses only.
-    static RESTRICTED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// How fetches on this thread are held to public addresses.
+    static RESTRICTED: std::cell::Cell<Level> = const { std::cell::Cell::new(Level::Open) };
 }
 
 /// Whether the current fetch is restricted to public addresses (see
 /// [`restrict`]). [`crate::fetch::client`] builds a public-only client then.
 pub(crate) fn restricted() -> bool {
+    level() != Level::Open
+}
+
+/// The current fetch's restriction level (see [`restrict`]).
+pub(crate) fn level() -> Level {
     RESTRICTED.with(std::cell::Cell::get)
 }
 
-/// Restricts every fetch on this thread to public addresses until the returned
-/// guard drops. A fetch already restricted stays restricted (nesting keeps
-/// the stricter state).
+/// Restricts every fetch on this thread to `level` until the returned guard
+/// drops. A fetch already restricted stays restricted (nesting keeps the
+/// stricter level).
 #[must_use]
-pub(crate) fn restrict(restricted: bool) -> Restriction {
-    Restriction(RESTRICTED.with(|cell| cell.replace(restricted || cell.get())))
+pub(crate) fn restrict(level: Level) -> Restriction {
+    Restriction(RESTRICTED.with(|cell| cell.replace(level.max(cell.get()))))
 }
 
-pub(crate) struct Restriction(bool);
+pub(crate) struct Restriction(Level);
 
 impl Drop for Restriction {
     fn drop(&mut self) {
@@ -130,23 +151,71 @@ pub(crate) fn host_all_public(url: &url::Url) -> bool {
 
 /// `builder` restricted to public addresses but following redirects (up to
 /// ten), each target's literal address checked and its name resolved through
-/// the public resolver, without a proxy. For page fetches, where redirects are
-/// followed; model requests use [`client`], which follows none.
+/// the public resolver, without a proxy. For a user token's page fetches,
+/// where redirects are followed; model requests use [`client`], which follows
+/// none.
 pub(crate) fn following_client(
     builder: reqwest::blocking::ClientBuilder,
 ) -> reqwest::blocking::ClientBuilder {
     builder
         .no_proxy()
-        .redirect(reqwest::redirect::Policy::custom(|attempt| {
-            if attempt.previous().len() >= 10 {
-                attempt.error("too many redirects")
-            } else if url_allowed(attempt.url()) {
-                attempt.follow()
-            } else {
-                attempt.error(REFUSED)
+        .redirect(following(url_allowed))
+        .dns_resolver(Arc::new(PublicResolver::default()))
+}
+
+/// [`following_client`] that keeps the shared proxy decision, for a CLI or
+/// admin fetch of a public host. A proxy resolves the target itself, so each
+/// hop's name is resolved here first ([`hop_allowed`]) and the request is
+/// refused unless every address is public; only then does it go to the proxy
+/// (a CONNECT for HTTPS). A direct hop (no proxy, or a `NO_PROXY` host) still
+/// connects through the public resolver, which lets the proxy's own name
+/// through.
+pub(crate) fn proxied_following_client(
+    builder: reqwest::blocking::ClientBuilder,
+) -> crate::Result<reqwest::blocking::ClientBuilder> {
+    let resolver = PublicResolver::default();
+    let proxies = Arc::clone(&resolver.proxies);
+    let builder = crate::proxy::http_observed(builder, move |endpoint| {
+        if let Some(host) = endpoint.host_str() {
+            let host = host.trim_end_matches('.').to_ascii_lowercase();
+            let mut proxies = proxies.lock().unwrap_or_else(|error| error.into_inner());
+            if !proxies.contains(&host) {
+                proxies.push(host);
             }
-        }))
-        .dns_resolver(Arc::new(PublicResolver))
+        }
+    })?;
+    Ok(builder
+        .redirect(following(hop_allowed))
+        .dns_resolver(Arc::new(resolver)))
+}
+
+/// Follows up to ten redirects whose target `allowed` accepts.
+fn following(allowed: fn(&url::Url) -> bool) -> reqwest::redirect::Policy {
+    reqwest::redirect::Policy::custom(move |attempt| {
+        if attempt.previous().len() >= 10 {
+            attempt.error("too many redirects")
+        } else if allowed(attempt.url()) {
+            attempt.follow()
+        } else {
+            attempt.error(REFUSED)
+        }
+    })
+}
+
+/// Whether a later hop of a restricted fetch (a redirect or `<meta>` refresh
+/// target) may be requested: an IP literal must be public, and a name that
+/// resolves here must resolve to public addresses only. A name that does not
+/// resolve here is left to the connection: a direct one fails in the public
+/// resolver, and a proxy-only network resolves it at the proxy.
+pub(crate) fn hop_allowed(url: &url::Url) -> bool {
+    match url.host() {
+        Some(url::Host::Domain(host)) => (host, url.port_or_known_default().unwrap_or(443))
+            .to_socket_addrs()
+            .map_or(true, |mut addresses| {
+                addresses.all(|address| !refused_address(address.ip()))
+            }),
+        _ => url_allowed(url),
+    }
 }
 
 /// The public addresses among `addresses`, or an error naming none of them.
@@ -164,18 +233,37 @@ fn public(addresses: impl Iterator<Item = SocketAddr>) -> std::io::Result<Vec<So
     }
 }
 
-struct PublicResolver;
+/// Resolves names to their public addresses only. The proxy endpoints the
+/// client chose (named by the proxy decision before it connects) resolve
+/// unfiltered, since a proxy is commonly on this machine or its network.
+#[derive(Default)]
+struct PublicResolver {
+    proxies: Arc<Mutex<Vec<String>>>,
+}
 
 impl reqwest::dns::Resolve for PublicResolver {
     fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
         let host = name.as_str().to_owned();
+        let proxy = {
+            let key = host.trim_end_matches('.').to_ascii_lowercase();
+            self.proxies
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .contains(&key)
+        };
         let lookup = Lookup::default();
         let shared = lookup.state.clone();
         // The system resolver blocks; it runs beside the client's runtime.
         let spawned = std::thread::Builder::new()
             .name("markitai-public-dns".into())
             .spawn(move || {
-                let result = (host.as_str(), 0).to_socket_addrs().and_then(public);
+                let result = (host.as_str(), 0).to_socket_addrs().and_then(|addresses| {
+                    if proxy {
+                        Ok(addresses.collect())
+                    } else {
+                        public(addresses)
+                    }
+                });
                 let mut state = shared.lock().unwrap_or_else(|error| error.into_inner());
                 state.0 = Some(result);
                 if let Some(waker) = state.1.take() {

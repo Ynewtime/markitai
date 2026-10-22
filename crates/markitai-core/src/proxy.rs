@@ -248,11 +248,24 @@ fn system(env: &HashMap<String, String>) -> System {
 /// through the same custom selection; reqwest's own environment resolver is
 /// disabled so a direct decision cannot be overridden.
 pub(crate) fn http(builder: ClientBuilder) -> Result<ClientBuilder> {
+    http_observed(builder, |_| {})
+}
+
+/// [`http`] that tells `observe` each proxy endpoint it chooses, before the
+/// client connects to it.
+pub(crate) fn http_observed(
+    builder: ClientBuilder,
+    observe: impl Fn(&Url) + Send + Sync + 'static,
+) -> Result<ClientBuilder> {
     let env = crate::config::environment();
     let settings = Settings::resolve(&env)?;
     settings.static_client()?;
     Ok(builder.no_proxy().proxy(reqwest::Proxy::custom(move |url| {
-        settings.for_url(url, || system(&env))
+        let endpoint = settings.for_url(url, || system(&env));
+        if let Some(endpoint) = &endpoint {
+            observe(endpoint);
+        }
+        endpoint
     })))
 }
 

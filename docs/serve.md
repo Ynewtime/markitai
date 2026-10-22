@@ -664,7 +664,7 @@ connection is made and refused if the address is not on the public internet
 (loopback, private ranges, link-local such as cloud metadata, unique-local), so
 a URL cannot read the server's own loopback API, its network or a cloud
 metadata service. A user's fetch uses no proxy. The admin's own URL jobs are
-unchanged, except that a public page may no longer redirect or navigate into a
+unchanged (they keep the proxy), except that a public page may no longer redirect or navigate into a
 private address (see [fetching](fetch.md)).
 
 Only each user token's SHA-256 is kept, in `MARKITAI_HOME/serve/access.json`

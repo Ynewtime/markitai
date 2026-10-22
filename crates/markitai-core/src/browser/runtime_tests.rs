@@ -844,7 +844,7 @@ fn a_restricted_browser_fetch_refuses_a_redirect_to_a_host_on_this_machine() {
     let site = Site::new();
     let runtime = BrowserRuntime::new(1).unwrap();
     let cfg = config(false);
-    let _restriction = crate::public_net::restrict(true);
+    let _restriction = crate::public_net::restrict(crate::public_net::Level::PublicOnly);
     // The allowed start is fetched under the restriction.
     let page = fetch_with_runtime(&site.url("/seed"), &cfg, false, Some(&runtime))
         .unwrap()
@@ -877,7 +877,7 @@ fn a_restricted_browser_fetch_refuses_a_host_on_this_machine() {
     assert!(html(&site, "/seed", &cfg, &runtime).contains("Runtime fixture"));
     // A restricted fetch (a user token's job, or a public requested host)
     // refuses the navigation, because the host is on this machine.
-    let _restriction = crate::public_net::restrict(true);
+    let _restriction = crate::public_net::restrict(crate::public_net::Level::PublicOnly);
     let error = fetch_with_runtime(&site.url("/seed"), &cfg, false, Some(&runtime))
         .err()
         .unwrap()

@@ -198,9 +198,13 @@ connection is made and refused if it is not public (loopback, private ranges,
 link-local such as cloud metadata, unique-local, with an IP literal in a URL
 checked directly), so a public page cannot send the fetch into this machine or
 its network. A deliberately local URL (a loopback or LAN host requested
-directly) is not restricted. A `serve` URL job a user token owns, or an
-untrusted caller submits, is held to public addresses from its first host too,
-and uses no proxy (see [serve](serve.md)).
+directly) is not restricted. Such a fetch keeps the [proxy](#proxies): a
+proxy resolves the target itself, so each hop's name is resolved here first
+and refused if any of its addresses is not public, and only then is the
+request handed to the proxy (a `CONNECT` for HTTPS). A `serve` URL job a user
+token owns, or an untrusted caller submits, is held to public addresses from
+its first host too, and connects directly, without a proxy (see
+[serve](serve.md)).
 
 ## Pages that need JavaScript
 

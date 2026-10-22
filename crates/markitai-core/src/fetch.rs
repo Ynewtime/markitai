@@ -26,14 +26,17 @@ pub(crate) fn client(timeout: u64) -> Result<Client> {
         .timeout(Duration::from_secs(timeout))
         .connect_timeout(Duration::from_secs(15))
         .user_agent(concat!("markitai/", env!("CARGO_PKG_VERSION")));
-    // A restricted fetch (a user token's job, or any fetch whose requested
-    // host is public) reaches public addresses only, without a proxy and with
-    // every redirect target checked; others keep the proxy and follow up to
-    // ten redirects.
-    let builder = if public_net::restricted() {
-        public_net::following_client(builder)
-    } else {
-        crate::proxy::http(builder.redirect(reqwest::redirect::Policy::limited(10)))?
+    // A restricted fetch reaches public addresses only, with every redirect
+    // target checked: a user token's job connects directly, any other fetch
+    // whose requested host is public keeps the proxy (each target checked
+    // here before the proxy is asked for it). Others keep the proxy and
+    // follow up to ten redirects.
+    let builder = match public_net::level() {
+        public_net::Level::PublicOnly => public_net::following_client(builder),
+        public_net::Level::PublicHost => public_net::proxied_following_client(builder)?,
+        public_net::Level::Open => {
+            crate::proxy::http(builder.redirect(reqwest::redirect::Policy::limited(10)))?
+        }
     };
     builder.build().map_err(request_error)
 }
@@ -562,7 +565,13 @@ fn fetch_with_services(
     if public_only && !public_net::url_allowed(&url) {
         return Err(Error::Fetch(public_net::REFUSED.into()));
     }
-    let _restriction = public_net::restrict(public_only || public_net::public_host(&url));
+    let _restriction = public_net::restrict(if public_only {
+        public_net::Level::PublicOnly
+    } else if public_net::public_host(&url) {
+        public_net::Level::PublicHost
+    } else {
+        public_net::Level::Open
+    });
     // An X post named through a mirror host answers with a redirect page; fetch the post itself.
     let canonical = formats::canonical_status_url(&url);
     let (url, source) = match &canonical {
@@ -1221,7 +1230,7 @@ fn follow_meta_refresh(client: &Client, page: &mut StaticPage, defer_pdf: bool) 
                 "Too many <meta> refresh redirects (more than {MAX_REFRESHES})"
             )));
         }
-        if public_net::restricted() && !public_net::url_allowed(&target) {
+        if public_net::restricted() && !public_net::hop_allowed(&target) {
             return Err(Error::Fetch(public_net::REFUSED.into()));
         }
         *page = decode_static(
