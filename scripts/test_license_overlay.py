@@ -35,8 +35,6 @@ class LicenseOverlayTests(unittest.TestCase):
             source = self.root / "registry" / label
             source.mkdir(parents=True)
             for name in [".cargo_vcs_info.json", "Cargo.toml.orig"]:
-                if item.get("vcs_record") == "absent" and name == ".cargo_vcs_info.json":
-                    continue
                 shutil.copyfile(self.vendor / "local-evidence" / label / name, source / name)
             if item["name"] in {"nom-language", "tract-extra"}:
                 with tarfile.open(self.vendor / "source-archives" / (label + ".crate")) as archive:
@@ -672,41 +670,40 @@ class LicenseOverlayTests(unittest.TestCase):
             self.assertEqual(sorted(Path(text["path"]).name for text in record["texts"]),
                              ["LICENSE-APACHE", "LICENSE-MIT"])
 
-    def test_qppocr_terms_cover_crates_published_without_a_vcs_record(self):
+    def test_qppocr_terms_are_the_published_commit_root_licenses(self):
         self.assertEqual(len(self.qpp_packages), 3)
         result = stage_overlay(self.vendor, self.destination, self.packages + self.qpp_packages)
         self.assertEqual(result["record"]["matched_packages"], 20)
         for package in self.qpp_packages:
             entry = next(p for p in self.manifest["packages"] if p["id"] == package["id"])
-            self.assertEqual(entry["vcs_record"], "absent")
-            self.assertFalse((self.vendor / "local-evidence" / f"{package['name']}-{package['version']}"
-                              / ".cargo_vcs_info.json").exists())
+            self.assertNotIn("vcs_record", entry)
+            vcs = json.loads((self.vendor / "local-evidence" / f"{package['name']}-{package['version']}"
+                              / ".cargo_vcs_info.json").read_text())
+            self.assertEqual((vcs["git"]["sha1"], vcs["path_in_vcs"]), (entry["commit"], entry["path_in_vcs"]))
             record = result["packages"][package["id"]]
             self.assertEqual(record["manifest_provenance"], "raw_exact_match")
             self.assertTrue(record["complete_text"])
             self.assertEqual(sorted(Path(text["path"]).name for text in record["texts"]),
                              ["LICENSE-APACHE", "LICENSE-MIT"])
 
-    def test_a_missing_vcs_record_is_accepted_only_for_the_reviewed_qppocr_tuples(self):
-        # Another package cannot claim the exception ...
-        entry = next(p for p in self.manifest["packages"] if p["name"] == "heifer")
-        entry["vcs_record"] = "absent"
-        self.save_manifest()
-        with self.assertRaisesRegex(RuntimeError, "Unreviewed package without a VCS record"):
-            stage_overlay(self.vendor, self.destination, self.packages)
-
-    def test_a_qppocr_crate_cannot_drop_its_exception_marker(self):
-        # ... and a reviewed package without the marker needs its VCS record.
+    def test_every_package_needs_its_published_vcs_record(self):
+        # The evidence names the commit the crate says it was published from.
+        name = "local-evidence/qppocr-core-0.3.1/.cargo_vcs_info.json"
+        (self.vendor / name).unlink()
+        value = json.loads((self.vendor / "inventory.json").read_text())
+        value["files"] = [row for row in value["files"] if row["path"] != name]
+        (self.vendor / "inventory.json").write_text(json.dumps(value))
         entry = next(p for p in self.manifest["packages"] if p["name"] == "qppocr-core")
-        del entry["vcs_record"]
+        entry["evidence"] = [proof for proof in entry["evidence"] if proof["path"] != name]
         self.save_manifest()
         with self.assertRaisesRegex(RuntimeError, "Missing exact-version package evidence"):
             stage_overlay(self.vendor, self.destination, self.packages)
+        self.assertFalse(self.destination.exists())
 
-    def test_a_qppocr_crate_that_gains_a_vcs_record_is_rejected(self):
+    def test_a_qppocr_crate_whose_published_vcs_record_differs_is_rejected(self):
         directory = Path(self.qpp_packages[0]["manifest_path"]).parent
         (directory / ".cargo_vcs_info.json").write_text("{}")
-        with self.assertRaisesRegex(RuntimeError, "has a VCS record the evidence lacks"):
+        with self.assertRaisesRegex(RuntimeError, "Current package source differs"):
             stage_overlay(self.vendor, self.destination, self.packages + self.qpp_packages)
 
     def test_atomig_macro_terms_are_the_published_commit_root_licenses(self):

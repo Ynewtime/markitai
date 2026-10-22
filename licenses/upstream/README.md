@@ -53,17 +53,18 @@ overlay files. Legal review remains not_performed.
 
 ## qppocr 0.3.1 crates
 
-qppocr, qppocr-core and qppocr-kernels 0.3.1 (the opt-in local OCR engine) publish no license file and no `.cargo_vcs_info.json`. Each exact
-published `Cargo.toml.orig` is byte-identical to the crate manifest of
-qinwenhui/qppocr at commit `3e53bbc2…` (the repository's only commit, version
-0.3.1), which inherits `license = "MIT OR Apache-2.0"` from its workspace
-manifest. The commit is therefore attributed by manifest identity, not by a VCS
-stamp: the validator accepts the missing record only for these three reviewed
-tuples (`vcs_record: "absent"`). The same-commit root LICENSE-MIT and
-LICENSE-APACHE are copied unchanged as the complete terms of both options; the
-retrievals are listed under `qppocr_license_collection` in the manifest. The
-repository NOTICE (remarks on the PP-OCR models, which are not distributed) is
-not copied. Legal review remains not_performed.
+qppocr, qppocr-core and qppocr-kernels 0.3.1 (the opt-in local OCR engine)
+publish no license file. Each published crate's `.cargo_vcs_info.json` names
+qinwenhui/qppocr commit `5163e38d…` and its crate path, and its exact published
+`Cargo.toml.orig` equals the same-commit crate manifest, which inherits
+`license = "MIT OR Apache-2.0"` from the workspace manifest. The same-commit
+root LICENSE-MIT and LICENSE-APACHE are copied unchanged as the complete terms
+of both options; the retrievals are listed under `qppocr_license_collection` in
+the manifest. (The 2026-10-16 collection attributed these crates to `3e53bbc2…`,
+whose files are byte-identical, as if they had no VCS record; the validator no
+longer has that exception.) The repository NOTICE (remarks on the PP-OCR
+models, which are not distributed) is not copied. Legal review remains
+not_performed.
 
 ## Original seventeen-version collection and retained history
 

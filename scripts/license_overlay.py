@@ -146,15 +146,6 @@ _SOURCE_PACKAGES.update({
     ('napi-derive', '3.6.10', '37109f133043aff379a38edfb8b1548e7e9309e5'): {'sha256': 'd11174f7507d7f6cdd69874f541eff194e81c95652b775e69036bcf8d5b7a805', 'path_in_vcs': 'crates/macro', 'members': 16, 'repository': 'napi-rs/napi-rs', 'declared_license': 'MIT', 'terms': {'LICENSE': '3f1ce66533302df3a32edbfdfc0b78f0dd34659e4c1f5817162e5ea3c2297215'}, 'parent_manifest_sha256': 'f2110059925ada6800f0d3e8a7976f6967803686d6a87d68f2c67ce5974b6261', 'package_manifest_sha256': 'b35f32f10608df47a94f28d391c0b5d0cd88c3b51823131e07efa2cc028f6ad3', 'vcs_sha256': '4dc7f324179df88dfeef2476de23487cc069d14b2cef9881e7e5dafb363be64e'},
     ('napi-sys', '3.4.0', '37109f133043aff379a38edfb8b1548e7e9309e5'): {'sha256': 'e22a4f25c16a5c5411d987cd6fbd48313522ae1789ade2d6dd3efdc6d40a0fc8', 'path_in_vcs': 'crates/sys', 'members': 11, 'repository': 'napi-rs/napi-rs', 'declared_license': 'MIT', 'terms': {'LICENSE': '3f1ce66533302df3a32edbfdfc0b78f0dd34659e4c1f5817162e5ea3c2297215'}, 'parent_manifest_sha256': 'f2110059925ada6800f0d3e8a7976f6967803686d6a87d68f2c67ce5974b6261', 'package_manifest_sha256': 'fd25505b1dcd4c6886df2f42e5072af24da3a8b026bc0a202f680a07dbf18c02', 'vcs_sha256': 'e83464a4c378004e398379bcf42e57189e8840f671bc3ed57d12917a7d4dd9f1'},
 })
-# Published without a .cargo_vcs_info.json (qppocr was published from an
-# unrecorded checkout): the exact published manifest is byte-identical to the
-# same-commit crate manifest, and the repository's one commit carries the same
-# version. Only these reviewed tuples may omit the VCS record.
-_NO_VCS_RECORD = {
-    ("qppocr", "0.3.1", "3e53bbc258b7df930bb0695fad7fa7c1175c383c"): ("qinwenhui/qppocr", "crates/qppocr"),
-    ("qppocr-core", "0.3.1", "3e53bbc258b7df930bb0695fad7fa7c1175c383c"): ("qinwenhui/qppocr", "crates/qppocr-core"),
-    ("qppocr-kernels", "0.3.1", "3e53bbc258b7df930bb0695fad7fa7c1175c383c"): ("qinwenhui/qppocr", "crates/qppocr-kernels"),
-}
 _TRACT_IDENTITY = ("tract-extra", "0.23.8", "248335349c0f59a5772d737480b8b39250097374")
 _TRACT_STAMP = {"kind": "reviewed_publication_version_stamp", "upstream_version": "0.23.8-pre",
                 "published_version": "0.23.8", "legal_review": "not_performed"}
@@ -388,27 +379,17 @@ def stage_overlay(source, destination, packages):
         upstream_manifest = root + (path + "/" if path else "") + "Cargo.toml"
         for proof in entry["evidence"]:
             recorded(proof)
-        identity = (entry["name"], entry["version"], commit)
-        no_vcs = entry.get("vcs_record") == "absent"
-        if no_vcs:
-            if (_NO_VCS_RECORD.get(identity) != (repo, path)
-                    or original + ".cargo_vcs_info.json" in data
-                    or entry.get("package_manifest_matches_published_original") is not True):
-                raise RuntimeError("Unreviewed package without a VCS record")
-        elif original + ".cargo_vcs_info.json" not in data:
+        if any(name not in data for name in [original + ".cargo_vcs_info.json",
+                                              original + "Cargo.toml.orig", upstream_manifest]):
             raise RuntimeError("Missing exact-version package evidence")
-        if any(name not in data for name in [original + "Cargo.toml.orig", upstream_manifest]):
-            raise RuntimeError("Missing exact-version package evidence")
-        vcs = {} if no_vcs else _json(data[original + ".cargo_vcs_info.json"])
-        if not no_vcs and (vcs.get("git", {}).get("sha1") != commit or vcs.get("path_in_vcs") != path):
+        vcs = _json(data[original + ".cargo_vcs_info.json"])
+        if vcs.get("git", {}).get("sha1") != commit or vcs.get("path_in_vcs") != path:
             raise RuntimeError("License overlay VCS attribution differs")
         provenance = _manifest_provenance(entry, repo, vcs, data[upstream_manifest],
                                           data[original + "Cargo.toml.orig"], published_sources)
         exact_matches += provenance == "raw_exact_match"
         publication_stamps += provenance == "reviewed_publication_version_stamp"
         reviewed = _SOURCE_PACKAGES.get((entry["name"], entry["version"], commit), {})
-        if no_vcs and provenance != "raw_exact_match":
-            raise RuntimeError("A package without a VCS record needs a raw exact manifest match")
         if "parent_manifest_sha256" in reviewed:
             if (hashlib.sha256(data.get(root + "Cargo.toml", b"")).hexdigest()
                     != reviewed["parent_manifest_sha256"]
@@ -492,9 +473,7 @@ def stage_overlay(source, destination, packages):
         if any(package.get(field) != entry[field] for field in ["name", "version"]) or package.get("license") != entry["declared_license"] or _repo(package.get("repository")) != repo:
             raise RuntimeError("License overlay package metadata differs")
         directory = Path(package["manifest_path"]).parent
-        if no_vcs and (directory / ".cargo_vcs_info.json").exists():
-            raise RuntimeError("Current package source has a VCS record the evidence lacks")
-        for name in ["Cargo.toml.orig"] if no_vcs else [".cargo_vcs_info.json", "Cargo.toml.orig"]:
+        for name in [".cargo_vcs_info.json", "Cargo.toml.orig"]:
             if _read(directory, name) != data[original + name]:
                 raise RuntimeError("Current package source differs from exact-commit evidence")
         for name in reviewed.get("rust", {}):

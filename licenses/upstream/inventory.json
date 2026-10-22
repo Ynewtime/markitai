@@ -3,8 +3,8 @@
   "files": [
     {
       "path": "README.md",
-      "bytes": 8835,
-      "sha256": "6951d4ed63c045587ffb568826d880e91d55a23bd5b262a0c8a4335a29edb365"
+      "bytes": 8821,
+      "sha256": "51bbd58ca1ccf35ef64b1e8d1f20f4dfa1eaa44a0ad335149a821fd0c0493064"
     },
     {
       "path": "input-manifest.json",
@@ -297,14 +297,29 @@
       "sha256": "9f7365ebd648c5ef1c23fe3cfd962bc7784b0316871cb7c2ebd4c9f6dc266e40"
     },
     {
+      "path": "local-evidence/qppocr-0.3.1/.cargo_vcs_info.json",
+      "bytes": 107,
+      "sha256": "3630b65d7673a70efb8531ce0404e10ebdbe5c6c1ab2e6b8ddd9c67da498c24e"
+    },
+    {
       "path": "local-evidence/qppocr-0.3.1/Cargo.toml.orig",
       "bytes": 1543,
       "sha256": "350b5274a211804e0f0a26626cc0b8951df549baa46592359bbeebd741db6291"
     },
     {
+      "path": "local-evidence/qppocr-core-0.3.1/.cargo_vcs_info.json",
+      "bytes": 112,
+      "sha256": "f178e2ea2db78e2a7afd19c5e0071aa2359e48c7ef5417a3402754e02e1f6cd1"
+    },
+    {
       "path": "local-evidence/qppocr-core-0.3.1/Cargo.toml.orig",
       "bytes": 837,
       "sha256": "856f3420fd5cb9c637264540c095b6f16961e91ea6a0f14f0a94ab7edb8df8fb"
+    },
+    {
+      "path": "local-evidence/qppocr-kernels-0.3.1/.cargo_vcs_info.json",
+      "bytes": 115,
+      "sha256": "a7d3ac8209ca22476c3f2fb20903660be038765d7a1aebbf3a534ba55555e668"
     },
     {
       "path": "local-evidence/qppocr-kernels-0.3.1/Cargo.toml.orig",
@@ -368,8 +383,8 @@
     },
     {
       "path": "manifest.json",
-      "bytes": 115462,
-      "sha256": "52859a0d0d6bb815a90ad02ea7fd4c598bf36bce542a1a418d80eb8beb5ae10c"
+      "bytes": 116167,
+      "sha256": "4d0492c85f750f0a1580c69a8c2caa143d241d67b2428cd6ccb9d23a482e2654"
     },
     {
       "path": "napi-license-provenance.json",
@@ -952,32 +967,32 @@
       "sha256": "db03f6809e261fef67c4fad525bb43e7474c393845b7a129956dbac21cfed148"
     },
     {
-      "path": "upstream/qinwenhui/qppocr/3e53bbc258b7df930bb0695fad7fa7c1175c383c/Cargo.toml",
+      "path": "upstream/qinwenhui/qppocr/5163e38d2543773717c5268f001c7b6426f0580e/Cargo.toml",
       "bytes": 617,
       "sha256": "a49fb27846dbc37cc46c92cf78273f241e2ed59b7261e9592e135cf7c481b8f4"
     },
     {
-      "path": "upstream/qinwenhui/qppocr/3e53bbc258b7df930bb0695fad7fa7c1175c383c/LICENSE-APACHE",
+      "path": "upstream/qinwenhui/qppocr/5163e38d2543773717c5268f001c7b6426f0580e/LICENSE-APACHE",
       "bytes": 11345,
       "sha256": "dd2e0dff0e0e893e4dfbd1c95cf4e8a123e4e4bd2aea200cfd60ec90571f2f15"
     },
     {
-      "path": "upstream/qinwenhui/qppocr/3e53bbc258b7df930bb0695fad7fa7c1175c383c/LICENSE-MIT",
+      "path": "upstream/qinwenhui/qppocr/5163e38d2543773717c5268f001c7b6426f0580e/LICENSE-MIT",
       "bytes": 1062,
       "sha256": "c35891753c5c6cb003289b1bc5ccf03564127d9e24ae6352a428a6dcd9ba4001"
     },
     {
-      "path": "upstream/qinwenhui/qppocr/3e53bbc258b7df930bb0695fad7fa7c1175c383c/crates/qppocr-core/Cargo.toml",
+      "path": "upstream/qinwenhui/qppocr/5163e38d2543773717c5268f001c7b6426f0580e/crates/qppocr-core/Cargo.toml",
       "bytes": 837,
       "sha256": "856f3420fd5cb9c637264540c095b6f16961e91ea6a0f14f0a94ab7edb8df8fb"
     },
     {
-      "path": "upstream/qinwenhui/qppocr/3e53bbc258b7df930bb0695fad7fa7c1175c383c/crates/qppocr-kernels/Cargo.toml",
+      "path": "upstream/qinwenhui/qppocr/5163e38d2543773717c5268f001c7b6426f0580e/crates/qppocr-kernels/Cargo.toml",
       "bytes": 480,
       "sha256": "5cb1a405a87ac90cf55965ef7d486b15ec30ab5a9afa0823526d3510514efdeb"
     },
     {
-      "path": "upstream/qinwenhui/qppocr/3e53bbc258b7df930bb0695fad7fa7c1175c383c/crates/qppocr/Cargo.toml",
+      "path": "upstream/qinwenhui/qppocr/5163e38d2543773717c5268f001c7b6426f0580e/crates/qppocr/Cargo.toml",
       "bytes": 1543,
       "sha256": "350b5274a211804e0f0a26626cc0b8951df549baa46592359bbeebd741db6291"
     },

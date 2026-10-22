@@ -1844,25 +1844,24 @@
       "version": "0.3.1",
       "declared_license": "MIT OR Apache-2.0",
       "repository": "https://github.com/qinwenhui/qppocr",
-      "commit": "3e53bbc258b7df930bb0695fad7fa7c1175c383c",
+      "commit": "5163e38d2543773717c5268f001c7b6426f0580e",
       "path_in_vcs": "crates/qppocr",
       "package_manifest_matches_published_original": true,
       "license_inherited_from_workspace": true,
       "version_inherited_from_workspace": true,
-      "vcs_record": "absent",
       "content_kind": "full_license_text",
       "complete_license_options_present": [
         "MIT",
         "Apache-2.0"
       ],
-      "applicability": "The exact package manifest inherits workspace.package.license = \"MIT OR Apache-2.0\" from the same-commit root Cargo.toml; the same-commit root LICENSE-MIT and LICENSE-APACHE are the complete terms of both options. The published crate has no .cargo_vcs_info.json: it is attributed to this commit by its byte-identical manifest and version.",
+      "applicability": "The exact package manifest inherits workspace.package.license = \"MIT OR Apache-2.0\" from the same-commit root Cargo.toml; the same-commit root LICENSE-MIT and LICENSE-APACHE are the complete terms of both options. The published .cargo_vcs_info.json names this commit and path, and the published Cargo.toml.orig equals the same-commit crate manifest.",
       "unresolved_full_text_reason": null,
       "evidence": [
         {
-          "path": "upstream/qinwenhui/qppocr/3e53bbc258b7df930bb0695fad7fa7c1175c383c/crates/qppocr/Cargo.toml",
+          "path": "upstream/qinwenhui/qppocr/5163e38d2543773717c5268f001c7b6426f0580e/crates/qppocr/Cargo.toml",
           "bytes": 1543,
           "sha256": "350b5274a211804e0f0a26626cc0b8951df549baa46592359bbeebd741db6291",
-          "source_url": "https://raw.githubusercontent.com/qinwenhui/qppocr/3e53bbc258b7df930bb0695fad7fa7c1175c383c/crates/qppocr/Cargo.toml"
+          "source_url": "https://raw.githubusercontent.com/qinwenhui/qppocr/5163e38d2543773717c5268f001c7b6426f0580e/crates/qppocr/Cargo.toml"
         },
         {
           "path": "local-evidence/qppocr-0.3.1/Cargo.toml.orig",
@@ -1870,10 +1869,15 @@
           "sha256": "350b5274a211804e0f0a26626cc0b8951df549baa46592359bbeebd741db6291"
         },
         {
-          "path": "upstream/qinwenhui/qppocr/3e53bbc258b7df930bb0695fad7fa7c1175c383c/Cargo.toml",
+          "path": "local-evidence/qppocr-0.3.1/.cargo_vcs_info.json",
+          "bytes": 107,
+          "sha256": "3630b65d7673a70efb8531ce0404e10ebdbe5c6c1ab2e6b8ddd9c67da498c24e"
+        },
+        {
+          "path": "upstream/qinwenhui/qppocr/5163e38d2543773717c5268f001c7b6426f0580e/Cargo.toml",
           "bytes": 617,
           "sha256": "a49fb27846dbc37cc46c92cf78273f241e2ed59b7261e9592e135cf7c481b8f4",
-          "source_url": "https://raw.githubusercontent.com/qinwenhui/qppocr/3e53bbc258b7df930bb0695fad7fa7c1175c383c/Cargo.toml"
+          "source_url": "https://raw.githubusercontent.com/qinwenhui/qppocr/5163e38d2543773717c5268f001c7b6426f0580e/Cargo.toml"
         }
       ],
       "assets": [
@@ -1882,8 +1886,8 @@
           "bytes": 1062,
           "sha256": "c35891753c5c6cb003289b1bc5ccf03564127d9e24ae6352a428a6dcd9ba4001",
           "destination": "licenses/qppocr-0.3.1/LICENSE-MIT",
-          "source_path": "upstream/qinwenhui/qppocr/3e53bbc258b7df930bb0695fad7fa7c1175c383c/LICENSE-MIT",
-          "source_url": "https://raw.githubusercontent.com/qinwenhui/qppocr/3e53bbc258b7df930bb0695fad7fa7c1175c383c/LICENSE-MIT",
+          "source_path": "upstream/qinwenhui/qppocr/5163e38d2543773717c5268f001c7b6426f0580e/LICENSE-MIT",
+          "source_url": "https://raw.githubusercontent.com/qinwenhui/qppocr/5163e38d2543773717c5268f001c7b6426f0580e/LICENSE-MIT",
           "source_sha256": "c35891753c5c6cb003289b1bc5ccf03564127d9e24ae6352a428a6dcd9ba4001",
           "content_kind": "full_license_text"
         },
@@ -1892,8 +1896,8 @@
           "bytes": 11345,
           "sha256": "dd2e0dff0e0e893e4dfbd1c95cf4e8a123e4e4bd2aea200cfd60ec90571f2f15",
           "destination": "licenses/qppocr-0.3.1/LICENSE-APACHE",
-          "source_path": "upstream/qinwenhui/qppocr/3e53bbc258b7df930bb0695fad7fa7c1175c383c/LICENSE-APACHE",
-          "source_url": "https://raw.githubusercontent.com/qinwenhui/qppocr/3e53bbc258b7df930bb0695fad7fa7c1175c383c/LICENSE-APACHE",
+          "source_path": "upstream/qinwenhui/qppocr/5163e38d2543773717c5268f001c7b6426f0580e/LICENSE-APACHE",
+          "source_url": "https://raw.githubusercontent.com/qinwenhui/qppocr/5163e38d2543773717c5268f001c7b6426f0580e/LICENSE-APACHE",
           "source_sha256": "dd2e0dff0e0e893e4dfbd1c95cf4e8a123e4e4bd2aea200cfd60ec90571f2f15",
           "content_kind": "full_license_text"
         }
@@ -1905,25 +1909,24 @@
       "version": "0.3.1",
       "declared_license": "MIT OR Apache-2.0",
       "repository": "https://github.com/qinwenhui/qppocr",
-      "commit": "3e53bbc258b7df930bb0695fad7fa7c1175c383c",
+      "commit": "5163e38d2543773717c5268f001c7b6426f0580e",
       "path_in_vcs": "crates/qppocr-core",
       "package_manifest_matches_published_original": true,
       "license_inherited_from_workspace": true,
       "version_inherited_from_workspace": true,
-      "vcs_record": "absent",
       "content_kind": "full_license_text",
       "complete_license_options_present": [
         "MIT",
         "Apache-2.0"
       ],
-      "applicability": "The exact package manifest inherits workspace.package.license = \"MIT OR Apache-2.0\" from the same-commit root Cargo.toml; the same-commit root LICENSE-MIT and LICENSE-APACHE are the complete terms of both options. The published crate has no .cargo_vcs_info.json: it is attributed to this commit by its byte-identical manifest and version.",
+      "applicability": "The exact package manifest inherits workspace.package.license = \"MIT OR Apache-2.0\" from the same-commit root Cargo.toml; the same-commit root LICENSE-MIT and LICENSE-APACHE are the complete terms of both options. The published .cargo_vcs_info.json names this commit and path, and the published Cargo.toml.orig equals the same-commit crate manifest.",
       "unresolved_full_text_reason": null,
       "evidence": [
         {
-          "path": "upstream/qinwenhui/qppocr/3e53bbc258b7df930bb0695fad7fa7c1175c383c/crates/qppocr-core/Cargo.toml",
+          "path": "upstream/qinwenhui/qppocr/5163e38d2543773717c5268f001c7b6426f0580e/crates/qppocr-core/Cargo.toml",
           "bytes": 837,
           "sha256": "856f3420fd5cb9c637264540c095b6f16961e91ea6a0f14f0a94ab7edb8df8fb",
-          "source_url": "https://raw.githubusercontent.com/qinwenhui/qppocr/3e53bbc258b7df930bb0695fad7fa7c1175c383c/crates/qppocr-core/Cargo.toml"
+          "source_url": "https://raw.githubusercontent.com/qinwenhui/qppocr/5163e38d2543773717c5268f001c7b6426f0580e/crates/qppocr-core/Cargo.toml"
         },
         {
           "path": "local-evidence/qppocr-core-0.3.1/Cargo.toml.orig",
@@ -1931,10 +1934,15 @@
           "sha256": "856f3420fd5cb9c637264540c095b6f16961e91ea6a0f14f0a94ab7edb8df8fb"
         },
         {
-          "path": "upstream/qinwenhui/qppocr/3e53bbc258b7df930bb0695fad7fa7c1175c383c/Cargo.toml",
+          "path": "local-evidence/qppocr-core-0.3.1/.cargo_vcs_info.json",
+          "bytes": 112,
+          "sha256": "f178e2ea2db78e2a7afd19c5e0071aa2359e48c7ef5417a3402754e02e1f6cd1"
+        },
+        {
+          "path": "upstream/qinwenhui/qppocr/5163e38d2543773717c5268f001c7b6426f0580e/Cargo.toml",
           "bytes": 617,
           "sha256": "a49fb27846dbc37cc46c92cf78273f241e2ed59b7261e9592e135cf7c481b8f4",
-          "source_url": "https://raw.githubusercontent.com/qinwenhui/qppocr/3e53bbc258b7df930bb0695fad7fa7c1175c383c/Cargo.toml"
+          "source_url": "https://raw.githubusercontent.com/qinwenhui/qppocr/5163e38d2543773717c5268f001c7b6426f0580e/Cargo.toml"
         }
       ],
       "assets": [
@@ -1943,8 +1951,8 @@
           "bytes": 1062,
           "sha256": "c35891753c5c6cb003289b1bc5ccf03564127d9e24ae6352a428a6dcd9ba4001",
           "destination": "licenses/qppocr-core-0.3.1/LICENSE-MIT",
-          "source_path": "upstream/qinwenhui/qppocr/3e53bbc258b7df930bb0695fad7fa7c1175c383c/LICENSE-MIT",
-          "source_url": "https://raw.githubusercontent.com/qinwenhui/qppocr/3e53bbc258b7df930bb0695fad7fa7c1175c383c/LICENSE-MIT",
+          "source_path": "upstream/qinwenhui/qppocr/5163e38d2543773717c5268f001c7b6426f0580e/LICENSE-MIT",
+          "source_url": "https://raw.githubusercontent.com/qinwenhui/qppocr/5163e38d2543773717c5268f001c7b6426f0580e/LICENSE-MIT",
           "source_sha256": "c35891753c5c6cb003289b1bc5ccf03564127d9e24ae6352a428a6dcd9ba4001",
           "content_kind": "full_license_text"
         },
@@ -1953,8 +1961,8 @@
           "bytes": 11345,
           "sha256": "dd2e0dff0e0e893e4dfbd1c95cf4e8a123e4e4bd2aea200cfd60ec90571f2f15",
           "destination": "licenses/qppocr-core-0.3.1/LICENSE-APACHE",
-          "source_path": "upstream/qinwenhui/qppocr/3e53bbc258b7df930bb0695fad7fa7c1175c383c/LICENSE-APACHE",
-          "source_url": "https://raw.githubusercontent.com/qinwenhui/qppocr/3e53bbc258b7df930bb0695fad7fa7c1175c383c/LICENSE-APACHE",
+          "source_path": "upstream/qinwenhui/qppocr/5163e38d2543773717c5268f001c7b6426f0580e/LICENSE-APACHE",
+          "source_url": "https://raw.githubusercontent.com/qinwenhui/qppocr/5163e38d2543773717c5268f001c7b6426f0580e/LICENSE-APACHE",
           "source_sha256": "dd2e0dff0e0e893e4dfbd1c95cf4e8a123e4e4bd2aea200cfd60ec90571f2f15",
           "content_kind": "full_license_text"
         }
@@ -1966,25 +1974,24 @@
       "version": "0.3.1",
       "declared_license": "MIT OR Apache-2.0",
       "repository": "https://github.com/qinwenhui/qppocr",
-      "commit": "3e53bbc258b7df930bb0695fad7fa7c1175c383c",
+      "commit": "5163e38d2543773717c5268f001c7b6426f0580e",
       "path_in_vcs": "crates/qppocr-kernels",
       "package_manifest_matches_published_original": true,
       "license_inherited_from_workspace": true,
       "version_inherited_from_workspace": true,
-      "vcs_record": "absent",
       "content_kind": "full_license_text",
       "complete_license_options_present": [
         "MIT",
         "Apache-2.0"
       ],
-      "applicability": "The exact package manifest inherits workspace.package.license = \"MIT OR Apache-2.0\" from the same-commit root Cargo.toml; the same-commit root LICENSE-MIT and LICENSE-APACHE are the complete terms of both options. The published crate has no .cargo_vcs_info.json: it is attributed to this commit by its byte-identical manifest and version.",
+      "applicability": "The exact package manifest inherits workspace.package.license = \"MIT OR Apache-2.0\" from the same-commit root Cargo.toml; the same-commit root LICENSE-MIT and LICENSE-APACHE are the complete terms of both options. The published .cargo_vcs_info.json names this commit and path, and the published Cargo.toml.orig equals the same-commit crate manifest.",
       "unresolved_full_text_reason": null,
       "evidence": [
         {
-          "path": "upstream/qinwenhui/qppocr/3e53bbc258b7df930bb0695fad7fa7c1175c383c/crates/qppocr-kernels/Cargo.toml",
+          "path": "upstream/qinwenhui/qppocr/5163e38d2543773717c5268f001c7b6426f0580e/crates/qppocr-kernels/Cargo.toml",
           "bytes": 480,
           "sha256": "5cb1a405a87ac90cf55965ef7d486b15ec30ab5a9afa0823526d3510514efdeb",
-          "source_url": "https://raw.githubusercontent.com/qinwenhui/qppocr/3e53bbc258b7df930bb0695fad7fa7c1175c383c/crates/qppocr-kernels/Cargo.toml"
+          "source_url": "https://raw.githubusercontent.com/qinwenhui/qppocr/5163e38d2543773717c5268f001c7b6426f0580e/crates/qppocr-kernels/Cargo.toml"
         },
         {
           "path": "local-evidence/qppocr-kernels-0.3.1/Cargo.toml.orig",
@@ -1992,10 +1999,15 @@
           "sha256": "5cb1a405a87ac90cf55965ef7d486b15ec30ab5a9afa0823526d3510514efdeb"
         },
         {
-          "path": "upstream/qinwenhui/qppocr/3e53bbc258b7df930bb0695fad7fa7c1175c383c/Cargo.toml",
+          "path": "local-evidence/qppocr-kernels-0.3.1/.cargo_vcs_info.json",
+          "bytes": 115,
+          "sha256": "a7d3ac8209ca22476c3f2fb20903660be038765d7a1aebbf3a534ba55555e668"
+        },
+        {
+          "path": "upstream/qinwenhui/qppocr/5163e38d2543773717c5268f001c7b6426f0580e/Cargo.toml",
           "bytes": 617,
           "sha256": "a49fb27846dbc37cc46c92cf78273f241e2ed59b7261e9592e135cf7c481b8f4",
-          "source_url": "https://raw.githubusercontent.com/qinwenhui/qppocr/3e53bbc258b7df930bb0695fad7fa7c1175c383c/Cargo.toml"
+          "source_url": "https://raw.githubusercontent.com/qinwenhui/qppocr/5163e38d2543773717c5268f001c7b6426f0580e/Cargo.toml"
         }
       ],
       "assets": [
@@ -2004,8 +2016,8 @@
           "bytes": 1062,
           "sha256": "c35891753c5c6cb003289b1bc5ccf03564127d9e24ae6352a428a6dcd9ba4001",
           "destination": "licenses/qppocr-kernels-0.3.1/LICENSE-MIT",
-          "source_path": "upstream/qinwenhui/qppocr/3e53bbc258b7df930bb0695fad7fa7c1175c383c/LICENSE-MIT",
-          "source_url": "https://raw.githubusercontent.com/qinwenhui/qppocr/3e53bbc258b7df930bb0695fad7fa7c1175c383c/LICENSE-MIT",
+          "source_path": "upstream/qinwenhui/qppocr/5163e38d2543773717c5268f001c7b6426f0580e/LICENSE-MIT",
+          "source_url": "https://raw.githubusercontent.com/qinwenhui/qppocr/5163e38d2543773717c5268f001c7b6426f0580e/LICENSE-MIT",
           "source_sha256": "c35891753c5c6cb003289b1bc5ccf03564127d9e24ae6352a428a6dcd9ba4001",
           "content_kind": "full_license_text"
         },
@@ -2014,8 +2026,8 @@
           "bytes": 11345,
           "sha256": "dd2e0dff0e0e893e4dfbd1c95cf4e8a123e4e4bd2aea200cfd60ec90571f2f15",
           "destination": "licenses/qppocr-kernels-0.3.1/LICENSE-APACHE",
-          "source_path": "upstream/qinwenhui/qppocr/3e53bbc258b7df930bb0695fad7fa7c1175c383c/LICENSE-APACHE",
-          "source_url": "https://raw.githubusercontent.com/qinwenhui/qppocr/3e53bbc258b7df930bb0695fad7fa7c1175c383c/LICENSE-APACHE",
+          "source_path": "upstream/qinwenhui/qppocr/5163e38d2543773717c5268f001c7b6426f0580e/LICENSE-APACHE",
+          "source_url": "https://raw.githubusercontent.com/qinwenhui/qppocr/5163e38d2543773717c5268f001c7b6426f0580e/LICENSE-APACHE",
           "source_sha256": "dd2e0dff0e0e893e4dfbd1c95cf4e8a123e4e4bd2aea200cfd60ec90571f2f15",
           "content_kind": "full_license_text"
         }
@@ -2159,19 +2171,19 @@
     "legal_review": "not_performed"
   },
   "qppocr_license_collection": {
-    "date": "2026-10-16",
+    "date": "2026-10-22",
     "repository": "https://github.com/qinwenhui/qppocr",
-    "commit": "3e53bbc258b7df930bb0695fad7fa7c1175c383c",
+    "commit": "5163e38d2543773717c5268f001c7b6426f0580e",
     "retrieved": [
-      "https://raw.githubusercontent.com/qinwenhui/qppocr/3e53bbc258b7df930bb0695fad7fa7c1175c383c/Cargo.toml",
-      "https://raw.githubusercontent.com/qinwenhui/qppocr/3e53bbc258b7df930bb0695fad7fa7c1175c383c/LICENSE-MIT",
-      "https://raw.githubusercontent.com/qinwenhui/qppocr/3e53bbc258b7df930bb0695fad7fa7c1175c383c/LICENSE-APACHE",
-      "https://raw.githubusercontent.com/qinwenhui/qppocr/3e53bbc258b7df930bb0695fad7fa7c1175c383c/crates/qppocr/Cargo.toml",
-      "https://raw.githubusercontent.com/qinwenhui/qppocr/3e53bbc258b7df930bb0695fad7fa7c1175c383c/crates/qppocr-core/Cargo.toml",
-      "https://raw.githubusercontent.com/qinwenhui/qppocr/3e53bbc258b7df930bb0695fad7fa7c1175c383c/crates/qppocr-kernels/Cargo.toml"
+      "https://raw.githubusercontent.com/qinwenhui/qppocr/5163e38d2543773717c5268f001c7b6426f0580e/Cargo.toml",
+      "https://raw.githubusercontent.com/qinwenhui/qppocr/5163e38d2543773717c5268f001c7b6426f0580e/LICENSE-MIT",
+      "https://raw.githubusercontent.com/qinwenhui/qppocr/5163e38d2543773717c5268f001c7b6426f0580e/LICENSE-APACHE",
+      "https://raw.githubusercontent.com/qinwenhui/qppocr/5163e38d2543773717c5268f001c7b6426f0580e/crates/qppocr/Cargo.toml",
+      "https://raw.githubusercontent.com/qinwenhui/qppocr/5163e38d2543773717c5268f001c7b6426f0580e/crates/qppocr-core/Cargo.toml",
+      "https://raw.githubusercontent.com/qinwenhui/qppocr/5163e38d2543773717c5268f001c7b6426f0580e/crates/qppocr-kernels/Cargo.toml"
     ],
     "authenticated_requests": false,
-    "checks": "Each published Cargo.toml.orig (local registry source) equals the same-commit crate manifest; the published crates carry neither a license file nor a .cargo_vcs_info.json. The repository's only commit declares version 0.3.1 and license MIT OR Apache-2.0 in its workspace manifest. The repository NOTICE (remarks on the PP-OCR models, which are not distributed) is not copied.",
+    "checks": "Each published crate (static.crates.io archive, SHA-256 equal to the Cargo.lock checksum) carries a .cargo_vcs_info.json naming this commit and its crate path, and its Cargo.toml.orig equals the same-commit crate manifest. The workspace manifest declares version 0.3.1 and license MIT OR Apache-2.0. Corrects the 2026-10-16 collection, which attributed the crates to 3e53bbc2 (identical bytes) as if they had no VCS record. The repository NOTICE (remarks on the PP-OCR models, which are not distributed) is not copied.",
     "legal_review": "not_performed"
   }
 }
