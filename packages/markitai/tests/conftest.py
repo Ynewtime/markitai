@@ -278,6 +278,31 @@ def _x_posts_use_the_default_browser(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(fetch_playwright, "X_CAPTURE", "embed")
 
 
+def _installed_playwright_browsers() -> Path | None:
+    """Playwright's browser folder in the real home, when it exists.
+
+    Read once at import, before any test moves the home: Playwright looks
+    for its browsers under the home (``~/.cache/ms-playwright``, or
+    ``$XDG_CACHE_HOME``; ``~/Library/Caches`` on macOS; ``%LOCALAPPDATA%``
+    on Windows), so a moved home hid them and every real-browser test
+    skipped, also where a browser is installed.
+    """
+    configured = os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "").strip()
+    if configured:
+        return None  # Playwright reads it as it is
+    if sys.platform == "win32":
+        root = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData/Local")
+    elif sys.platform == "darwin":
+        root = Path.home() / "Library" / "Caches"
+    else:
+        root = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache")
+    folder = root / "ms-playwright"
+    return folder if folder.is_dir() else None
+
+
+_PLAYWRIGHT_BROWSERS = _installed_playwright_browsers()
+
+
 @pytest.fixture(autouse=True)
 def _isolate_user_config_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """Point ``Path.home()`` at a temp dir so no test reads the developer's
@@ -294,12 +319,18 @@ def _isolate_user_config_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     Tests that intentionally probe config resolution set ``MARKITAI_CONFIG``
     or a config path themselves and are unaffected (their own monkeypatch
     runs after this fixture).
+
+    Playwright's installed browsers stay reachable through
+    ``PLAYWRIGHT_BROWSERS_PATH``, so real-browser tests run wherever a
+    browser is installed instead of skipping.
     """
     fake_home = tmp_path / "fake-home"
     fake_home.mkdir()
     monkeypatch.setattr(Path, "home", staticmethod(lambda: fake_home))
     monkeypatch.setenv("HOME", str(fake_home))  # expanduser("~") follows too
     monkeypatch.setenv("USERPROFILE", str(fake_home))  # ...on Windows, via this one
+    if _PLAYWRIGHT_BROWSERS is not None:
+        monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(_PLAYWRIGHT_BROWSERS))
     # DEFAULT_USER_CONFIG_DIR is computed at import time from Path.home();
     # re-point it so ConfigManager/auth/init never see the developer's real
     # ~/.markitai/config.json either.

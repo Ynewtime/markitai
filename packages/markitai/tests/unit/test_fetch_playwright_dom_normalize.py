@@ -16,19 +16,19 @@ SHADOW_DOM_FIXTURE = FIXTURES_DIR / "shadow_dom_page.html"
 
 
 def _skip_if_no_playwright_browser() -> None:
-    """Skip test if Playwright is not installed or browsers are missing."""
-    from markitai.fetch_playwright import is_playwright_available
+    """Skip test if Playwright is not installed or browsers are missing.
+
+    The sync API cannot launch inside these async tests' event loop (the
+    probe failed and skipped them everywhere), so check the install on disk.
+    """
+    from markitai.fetch_playwright import (
+        is_playwright_available,
+        is_playwright_browser_installed,
+    )
 
     if not is_playwright_available():
         pytest.skip("playwright not installed")
-
-    try:
-        from playwright.sync_api import sync_playwright  # type: ignore[import]
-
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            browser.close()
-    except Exception:
+    if not is_playwright_browser_installed(use_cache=False):
         pytest.skip("playwright browsers not installed")
 
 
