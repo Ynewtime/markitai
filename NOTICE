@@ -27,7 +27,7 @@ vendor/web/KaTeX-LICENSE, vendor/web/phosphor-LICENSE and vendor/web/Inter-OFL.t
 upstream package integrity and embedded-file hashes are recorded in
 vendor/web/provenance.json.
 
-Windows and Linux builds render PDF pages with hayro 0.7.1 (MIT/Apache-2.0),
+Windows and Linux builds render PDF pages with hayro 0.8.0 (MIT/Apache-2.0),
 which embeds the Foxit standard-14 substitute fonts from PDFium (BSD-3-Clause),
 Adobe's predefined CMaps (BSD-3-Clause) and a CC0 CMYK profile; their notices
 are in licenses/hayro/.

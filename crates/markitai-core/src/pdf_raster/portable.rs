@@ -10,10 +10,13 @@
 
 use super::{RasterSize, Result, failure, raster_size};
 use crate::Error;
+use hayro::hayro_interpret::util::TransformExt;
 use hayro::hayro_interpret::{InterpreterSettings, InterpreterWarning};
 use hayro::hayro_syntax::page::{Page, Rotation};
 use hayro::hayro_syntax::{DecryptionError, LoadPdfError, Pdf};
+use hayro::kurbo::Affine;
 use hayro::vello_cpu::color::palette::css::WHITE;
+use hayro::vello_cpu::{Pixmap, RasterizerSettings, RenderContext, Resources, TargetInit};
 use hayro::{RenderCache, RenderSettings};
 use image::RgbImage;
 use std::marker::PhantomData;
@@ -117,6 +120,9 @@ impl PdfRasterSession {
                 let counter = match warning {
                     InterpreterWarning::UnsupportedFont => &sink.fonts,
                     InterpreterWarning::ImageDecodeFailure => &sink.images,
+                    // An annotation whose appearance cannot be drawn is left
+                    // out, as before hayro reported it.
+                    _ => return,
                 };
                 counter.fetch_add(1, Ordering::Relaxed);
             }),
@@ -195,20 +201,35 @@ impl PdfRasterSession {
 
     pub(crate) fn render(&self, page_1_based: usize, dpi: f64) -> Result<RgbImage> {
         let (page, size) = self.frame(page_1_based, dpi)?;
-        let scale = (dpi / 72.) as f32;
-        let target = RenderSettings {
-            x_scale: scale,
-            y_scale: scale,
-            width: Some(size.width as u16),
-            height: Some(size.height as u16),
-            bg_color: WHITE,
-        };
+        // `hayro::render` floors the scaled page size; the frame is the
+        // ceil-rounded one, so the page is drawn into a context of that size
+        // with the transform `hayro::render` uses.
+        let scale = Affine::scale(dpi / 72.) * page.initial_transform(true).to_kurbo();
         // hayro is young; a page it cannot handle must fail this conversion,
         // not the process. Nothing the closure touches outlives it except the
         // immutable document, so a caught panic leaves the session usable.
         let pixmap = catch_unwind(AssertUnwindSafe(|| {
             let cache = RenderCache::new();
-            hayro::render(page, &cache, &self.settings, &target)
+            let mut context = RenderContext::new(size.width as u16, size.height as u16);
+            hayro::render_into(
+                page,
+                &cache,
+                &self.settings,
+                &RenderSettings::default(),
+                &mut context,
+                scale,
+            );
+            context.flush();
+            let mut pixmap = Pixmap::new(context.width(), context.height());
+            context.render_with(
+                &mut pixmap,
+                &mut Resources::default(),
+                RasterizerSettings {
+                    target_init: TargetInit::Clear(WHITE),
+                    ..Default::default()
+                },
+            );
+            pixmap
         }))
         .map_err(|_| failure("the portable renderer failed on this page"))?;
         if (u32::from(pixmap.width()), u32::from(pixmap.height())) != (size.width, size.height) {

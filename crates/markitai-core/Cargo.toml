@@ -70,7 +70,10 @@ pulldown-cmark = { version = "0.13.4", default-features = false }
 # feature, which brings the portable OCR engine that macOS reads with by default. `embed-fonts` adds the standard-14
 # substitutes (PDFium's Foxit faces, BSD-3-Clause, ~264 KB) and `embed-cmaps`
 # the 61 predefined CJK CMaps (Adobe, BSD-3-Clause, ~251 KB compressed).
-hayro = { version = "=0.7.1", default-features = false, features = ["embed-fonts", "embed-cmaps"], optional = true }
+# `simd` keeps pic-scale's NEON/SSE/AVX image scaling, which hayro 0.8 puts
+# behind that feature: without it a page with a scaled image costs up to 27%
+# more instructions than with hayro 0.7.1.
+hayro = { version = "=0.8.0", default-features = false, features = ["embed-fonts", "embed-cmaps", "simd"], optional = true }
 memchr = { version = "2", optional = true }
 
 [features]
@@ -83,7 +86,7 @@ default = ["portable-media"]
 portable-media = ["dep:hayro", "dep:memchr", "dep:tract-onnx", "dep:tract-linalg", "dep:rayon", "dep:qppocr"]
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
-hayro = { version = "=0.7.1", default-features = false, features = ["embed-fonts", "embed-cmaps"] }
+hayro = { version = "=0.8.0", default-features = false, features = ["embed-fonts", "embed-cmaps", "simd"] }
 memchr = "2"
 tract-onnx = { version = "=0.23.8", default-features = false }
 tract-linalg = { version = "=0.23.8", default-features = false, features = ["multithread-mm"] }

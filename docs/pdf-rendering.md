@@ -7,7 +7,7 @@ command-line renderer is involved, and the renderer writes no files.
 | Platform | Backend | Notes |
 |---|---|---|
 | macOS | CoreGraphics | the system PDF renderer |
-| Windows, Linux | [hayro](https://github.com/LaurenzV/hayro) 0.7.1, pinned exactly | pure Rust, compiled into every non-macOS build |
+| Windows, Linux | [hayro](https://github.com/LaurenzV/hayro) 0.8.0, pinned exactly | pure Rust, compiled into every non-macOS build |
 | macOS with `--features markitai-core/portable-media` | both | CoreGraphics by default; `MARKITAI_PDF_RENDERER=portable` selects hayro |
 
 `MARKITAI_PDF_RENDERER` exists for development and comparison. It accepts
