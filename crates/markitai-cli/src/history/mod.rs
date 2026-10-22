@@ -340,8 +340,10 @@ struct Item<'a> {
     duration_ms: Option<u64>,
     finished_at: &'a str,
     cost_usd: f64,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    // Always written, as Python markitai writes them: `null` when no request
+    // was priced or observed, and no models for a base-only result.
     pricing: Option<crate::pricing::Pricing>,
+    models: Vec<&'a str>,
     llm_enhanced: bool,
     operation: &'static str,
     skipped: bool,
@@ -364,6 +366,10 @@ impl<'a> Item<'a> {
         let pending = item.status == ItemStatus::Pending;
         let skipped = pending || item.status == ItemStatus::Skipped || item.skip_reason.is_some();
         let mut seen = HashSet::new();
+        let llm_enhanced = !skipped
+            && output
+                .as_ref()
+                .is_some_and(|name| name.ends_with(".llm.md"));
         let duration = if item.status == ItemStatus::Completed && mode != RunMode::UrlList {
             item.conversion_duration_s
         } else {
@@ -399,10 +405,18 @@ impl<'a> Item<'a> {
                 name.strip_suffix(".llm.md")
                     .map_or_else(|| name.clone(), |stem| format!("{stem}.md"))
             }),
-            llm_enhanced: !skipped
-                && output
-                    .as_ref()
-                    .is_some_and(|name| name.ends_with(".llm.md")),
+            llm_enhanced,
+            // The models that answered the item's requests, first use first.
+            models: if llm_enhanced {
+                item.usage
+                    .by_model
+                    .iter()
+                    .filter(|(_, stats)| stats["requests"].as_u64().is_some_and(|n| n > 0))
+                    .map(|(model, _)| model.as_str())
+                    .collect()
+            } else {
+                Vec::new()
+            },
             output,
             duration_ms: duration
                 .filter(|value| value.is_finite())
@@ -822,7 +836,9 @@ mod tests {
             json!({"preset":null,"llm":false,"ocr":false,"origin":"cli"})
         );
         for item in meta["items"].as_array().unwrap() {
-            assert_eq!(item.as_object().unwrap().len(), 17);
+            assert_eq!(item.as_object().unwrap().len(), 19);
+            assert!(item["pricing"].is_null());
+            assert_eq!(item["models"], json!([]));
             assert_eq!(item["finished_at"], meta["finished_at"]);
             assert_eq!(item["warnings"], json!(["first", "second"]));
         }
@@ -1225,7 +1241,8 @@ mod tests {
             fs::read(job.join("out").join(entry["output"].as_str().unwrap())).unwrap(),
             fs::read(source).unwrap()
         );
-        assert!(entry.get("pricing").is_none());
+        assert!(entry["pricing"].is_null());
+        assert_eq!(entry["models"], json!([]));
     }
 
     #[test]
@@ -1246,5 +1263,32 @@ mod tests {
             entry["pricing"],
             json!({"priced_requests":1,"unpriced_requests":1,"cost_status":"partial","pricing_snapshots":["catalog-v1"]})
         );
+        // A base-only result names no model, whatever its requests cost.
+        assert_eq!(entry["models"], json!([]));
+        current
+            .usage
+            .by_model
+            .insert("unsent".into(), json!({"requests":0}));
+        let entry = serde_json::to_value(Item::from_record(
+            0,
+            &current,
+            Some("base.llm.md".into()),
+            "finished",
+            RunMode::SingleFile,
+        ))
+        .unwrap();
+        assert_eq!(entry["models"], json!(["known", "old"]));
+        // Nothing observed: both keys are still written.
+        let plain = record(0, "plain.txt", None);
+        let entry = serde_json::to_value(Item::from_record(
+            0,
+            &plain,
+            Some("plain.md".into()),
+            "finished",
+            RunMode::SingleFile,
+        ))
+        .unwrap();
+        assert!(entry["pricing"].is_null());
+        assert_eq!(entry["models"], json!([]));
     }
 }

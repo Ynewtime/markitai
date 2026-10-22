@@ -48,10 +48,14 @@ Options are exactly `preset`, `llm`, `ocr`, `origin:"cli"`. Size counts copied
 outputs and assets after rewriting, excluding metadata.
 
 Each item stores `item_id`, `name`, `kind`, `status`, `error`, `output`,
-`output_name`, `duration_ms`, `finished_at`, `cost_usd`, `llm_enhanced`,
-`operation`, `skipped`, `skip_reason`, `retryable`, `warnings`, `page_sources`
-(a PDF's pages with where each page's text came from, as in
-[PDF](pdf.md#where-each-pages-text-came-from); empty otherwise). Names are source
+`output_name`, `duration_ms`, `finished_at`, `cost_usd`, `pricing` (the
+coverage of that cost, as in [serve](serve.md#output-cost-and-pricing-coverage);
+`null` when no request was observed), `models` (the models that answered an
+enhanced result's requests, first use first; `[]` for a base-only result),
+`llm_enhanced`, `operation`, `skipped`, `skip_reason`, `retryable`, `warnings`,
+`page_sources` (a PDF's pages with where each page's text came from, as in
+[PDF](pdf.md#where-each-pages-text-came-from); empty otherwise). `pricing` and
+`models` are always written, as Python markitai writes them. Names are source
 basenames for single files, relative paths for directory files and bare URLs for
 URLs. Durations use nonnegative milliseconds with ties-to-even rounding. Local
 RFC3339 timestamps have millisecond precision, with one finish timestamp shared

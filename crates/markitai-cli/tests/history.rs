@@ -480,6 +480,8 @@ fn read_job(path: &Path) -> Value {
             "duration_ms",
             "finished_at",
             "cost_usd",
+            "pricing",
+            "models",
             "llm_enhanced",
             "operation",
             "skipped",
@@ -488,6 +490,11 @@ fn read_job(path: &Path) -> Value {
             "warnings",
             "page_sources",
         ];
+        // Both always present, as Python markitai writes them.
+        let models = item["models"].as_array().unwrap();
+        if item["llm_enhanced"] != true {
+            assert!(models.is_empty(), "{item}");
+        }
         // No PDF among these: no page records where its text came from.
         assert_eq!(item["page_sources"], json!([]));
         if let Some(diagnostics) = item.get("diagnostics") {
@@ -516,8 +523,8 @@ fn read_job(path: &Path) -> Value {
                     || !usage["by_model"].as_object().unwrap().is_empty()
             );
         }
-        if let Some(pricing) = item.get("pricing") {
-            item_keys.push("pricing");
+        let pricing = &item["pricing"];
+        if !pricing.is_null() {
             keys(
                 pricing,
                 &[
