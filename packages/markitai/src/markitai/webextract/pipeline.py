@@ -7,6 +7,7 @@ from bs4 import BeautifulSoup, Tag
 
 from markitai.webextract.constants import HIDDEN_EXACT_SKIP_SELECTOR
 from markitai.webextract.dom import parse_fragment, parse_html
+from markitai.webextract.elements.code import keep_code_line_buttons
 from markitai.webextract.elements.footnotes import (
     adopt_external_footnotes,
     standardize_footnotes,
@@ -352,6 +353,9 @@ def _extract_once(
         # footnote sections would be stripped by selector/scoring removal).
         adopt_external_footnotes(root)
         standardize_footnotes(root)
+        # Names a code line draws as buttons (Twoslash) are code, not the
+        # buttons the removals strip.
+        keep_code_line_buttons(root)
     # Canonicalize known video/social embed iframes to plain links BEFORE
     # removals and sanitization — sanitize_tag_tree strips every remaining
     # <iframe>, so this is the only chance to preserve the video URL.

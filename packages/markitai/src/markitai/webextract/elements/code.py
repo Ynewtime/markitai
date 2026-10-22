@@ -40,6 +40,68 @@ _LINE_NUMBER_GUTTER_SELECTOR = ", ".join(
 )
 
 
+# Highlighted-line wrappers (Shiki/rehype-pretty ``span.line``, CodeMirror,
+# Expressive Code ``.ec-line``, ``data-line`` rows): a word inside one is code.
+_CODE_LINE_CLASSES = frozenset({"line", "cm-line", "CodeMirror-line", "ec-line"})
+# A type popup inside a Twoslash name: what the name is, not code.
+_CODE_POPUP_SELECTOR = ".twoslash-popup-container, .hover-container, .hover-info"
+_HIDDEN_STYLE_RE = re.compile(
+    r"display\s*:\s*none|visibility\s*:\s*hidden", re.IGNORECASE
+)
+
+
+def keep_code_line_buttons(root: Tag) -> None:
+    """Turn the names a code line draws as buttons back into code text.
+
+    Twoslash (nodejs.org, the TypeScript and Vue docs) wraps each name that
+    has a type popup in ``<button class="twoslash-hover">``. Every button is
+    page chrome to the removals, so ``const { createServer } =
+    require('node:http');`` came out as ``const {  } = ('node:http');``.
+    Inside a highlighted line, a visible button of plain text (no nested
+    button, picture or icon) becomes its text, without its popup; buttons
+    outside the lines (Copy) and hidden ones are left to the removals, as in
+    markitai-rust.
+
+    Args:
+        root: Content root, before the removals.
+    """
+    for button in root.find_all(_is_button):
+        if button.parent is None or not _in_code_line(button) or _hidden(button):
+            continue
+        if button.find(["button", "svg", "img"]):
+            continue
+        for popup in _css_select(button, _CODE_POPUP_SELECTOR):
+            popup.decompose()
+        if button.name == "button":
+            button.unwrap()
+
+
+def _is_button(tag: Tag) -> bool:
+    return tag.name == "button" or tag.get("role") == "button"
+
+
+def _in_code_line(tag: Tag) -> bool:
+    """Whether *tag* sits in a highlighted line of a ``pre``/``code`` block."""
+    in_line = False
+    for parent in tag.parents:
+        if parent.name in ("pre", "code"):
+            return in_line
+        classes = parent.get("class")
+        if parent.has_attr("data-line") or (
+            isinstance(classes, list) and not _CODE_LINE_CLASSES.isdisjoint(classes)
+        ):
+            in_line = True
+    return False
+
+
+def _hidden(tag: Tag) -> bool:
+    return (
+        tag.has_attr("hidden")
+        or str(tag.get("aria-hidden", "")).lower() == "true"
+        or bool(_HIDDEN_STYLE_RE.search(str(tag.get("style") or "")))
+    )
+
+
 def normalize_code_blocks(root: Tag) -> None:
     """Normalize code blocks: wrap in pre, detect and normalize language class.
 
