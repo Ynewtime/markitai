@@ -20,7 +20,9 @@ mod sites;
 pub(crate) use policy::secret_parameter;
 use remote::{Service, Services};
 
-const MAX_RESPONSE: u64 = 100 * 1024 * 1024;
+/// A fetched response body at most: the limit of a local input file
+/// ([`crate::MAX_INPUT_BYTES`]), as Python markitai caps both.
+const MAX_RESPONSE: u64 = crate::MAX_INPUT_BYTES;
 
 /// The User-Agent of markitai's own requests: name, version and the contact
 /// address Wikimedia's User-Agent policy asks automated clients for. The
@@ -361,11 +363,11 @@ fn read_body(response: Response, service: Option<&str>) -> Result<Vec<u8>> {
         return Err(http_failure(status, service, &url, &evidence));
     }
     if response.content_length().is_some_and(|n| n > MAX_RESPONSE) {
-        return Err(Error::Fetch("Response exceeds 100 MiB".into()));
+        return Err(Error::Fetch("Response exceeds 500 MiB".into()));
     }
     crate::platform::read_limited(response, MAX_RESPONSE)
         .map_err(|e| Error::Fetch(format!("Cannot read HTTP response: {e}")))?
-        .ok_or_else(|| Error::Fetch("Response exceeds 100 MiB".into()))
+        .ok_or_else(|| Error::Fetch("Response exceeds 500 MiB".into()))
 }
 
 /// Whether an address is outside the public internet. IPv6 forms that carry

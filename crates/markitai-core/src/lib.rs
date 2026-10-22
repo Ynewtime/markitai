@@ -137,6 +137,9 @@ pub fn office_render_available() -> bool {
 }
 
 /// Launch and close an isolated browser session; no document or provider request is made.
+/// The largest local input file, and the largest fetched response body.
+pub(crate) const MAX_INPUT_BYTES: u64 = 500 * 1024 * 1024;
+
 /// The browser startup failure [`browser_diagnostic`] reports when Chromium
 /// refuses to run as root, a fixed text that names no path or output.
 pub const BROWSER_ROOT_SANDBOX_REFUSED: &str = browser::ROOT_SANDBOX_REFUSED;
@@ -436,7 +439,7 @@ fn convert_inner(
                 "Input is not a file: {source}"
             )));
         }
-        if meta.is_file() && meta.len() > 500 * 1024 * 1024 {
+        if meta.is_file() && meta.len() > MAX_INPUT_BYTES {
             return Err(Error::InvalidInput(
                 "Input exceeds the 500 MiB limit".into(),
             ));

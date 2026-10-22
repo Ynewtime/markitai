@@ -336,8 +336,10 @@ fn auto_probe_does_not_hide_status_or_body_limits_behind_browser_fallback() {
             .err()
             .unwrap()
             .to_string()
-            .contains("Response exceeds 100 MiB")
+            .contains("Response exceeds 500 MiB")
     );
+    // The local-file limit, as Python markitai caps a response.
+    assert_eq!(MAX_RESPONSE, 500 * 1024 * 1024);
 }
 
 #[cfg(test)]

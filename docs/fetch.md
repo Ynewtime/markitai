@@ -4,7 +4,8 @@ The native `static` strategy and anonymous `auto` strategy fetch HTTP(S) directl
 HTML, plain text and Markdown, or dispatch supported downloaded documents to
 the local format readers. Requests negotiate
 `Accept: text/markdown, text/html;q=0.9, */*;q=0.5`, follow at most ten redirects
-and bound response bodies to 100 MiB. HTML links resolve against the final
+and bound response bodies to 500 MiB, the limit of a local input file (a
+larger declared length fails before reading). HTML links resolve against the final
 response URL. Both initial and conditional responses use the same charset and
 format decoder. Explicit plain-text and Markdown MIME types keep literal HTML
 examples as text rather than triggering HTML challenge detection.
