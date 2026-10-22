@@ -57,6 +57,15 @@ without the browser's identity, not made when a browser identity is
 configured) for the video files only, so the video is linked as on the static
 path. A failure leaves the poster alone.
 
+X wraps every link of a post in a `https://t.co/<code>` shortlink. A shortlink
+left in an X page's Markdown, whichever strategy read it, is replaced by where
+it leads: one `HEAD` request to `t.co` per link, whose redirect is read and not
+followed (a redirect back to `t.co` or to anything but an http(s) address is
+ignored), at most 20 links a page, 4 at a time, 5 seconds each and 10 seconds in
+all. Answers, failures too, are kept for the process; a static fetch's cache
+keeps the page with its destinations. A link that is not resolved stays as it
+was.
+
 ## Character encodings
 
 HTML bytes become text by a BOM, then the first declaration they fit: the HTTP

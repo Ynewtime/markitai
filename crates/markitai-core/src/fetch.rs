@@ -14,6 +14,7 @@ pub(crate) mod cloudflare;
 pub(crate) mod consent;
 mod policy;
 mod remote;
+mod shortlinks;
 mod sites;
 
 pub(crate) use policy::secret_parameter;
@@ -676,6 +677,41 @@ fn fetch_with_services(
         Some(canonical) => (canonical.clone(), canonical.as_str()),
         None => (url, source),
     };
+    let mut result = fetch_strategies(
+        source,
+        url.clone(),
+        cfg,
+        explicit_strategy,
+        output_available,
+        runtime,
+        public_only,
+        services,
+    );
+    // Links X left as t.co shortlinks: their destinations.
+    if let Ok(FetchOutcome {
+        content: FetchContent::Document(document),
+        ..
+    }) = &mut result
+        && shortlinks::is_x_page(&url)
+        && let Some(expanded) = shortlinks::expand(&document.markdown)
+    {
+        document.markdown = expanded;
+    }
+    result
+}
+
+/// [`fetch_with_services`] of the canonical address, under its restriction.
+#[allow(clippy::too_many_arguments)]
+fn fetch_strategies(
+    source: &str,
+    url: Url,
+    cfg: &Value,
+    explicit_strategy: Option<&str>,
+    output_available: bool,
+    runtime: Option<&crate::BrowserRuntime>,
+    public_only: bool,
+    services: &Services<'_>,
+) -> Result<FetchOutcome> {
     let strategy = cfg
         .pointer("/fetch/strategy")
         .and_then(Value::as_str)
@@ -1506,6 +1542,13 @@ fn fetch_static(
         None => decode_static(get_page(&client, url)?, defer_pdf(cfg))?,
     };
     follow_meta_refresh(&client, &mut page, defer_pdf(cfg))?;
+    // An X page is stored with its shortlinks' destinations.
+    if let FetchContent::Document(document) = &mut page.content
+        && Url::parse(&page.final_url).is_ok_and(|url| shortlinks::is_x_page(&url))
+        && let Some(expanded) = shortlinks::expand(&document.markdown)
+    {
+        document.markdown = expanded;
+    }
     let html_url = page.html.as_ref().map(|_| page.final_url.clone());
     if let Some(cache) = cache {
         if page.cache_eligible
