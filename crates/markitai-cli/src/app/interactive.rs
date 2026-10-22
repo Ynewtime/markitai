@@ -589,13 +589,21 @@ fn merge_models(existing: &mut Value, detected: &Value) -> CliResult<usize> {
                 "已有的 model_list 必须是数组"
             ))
         })?;
+    // A detected model joins only for a provider the list does not use yet:
+    // `deepseek/deepseek-chat` already there keeps `deepseek/deepseek-flash`
+    // out, as in Python markitai.
+    let provider = |entry: &Value| {
+        entry["litellm_params"]["model"].as_str().map(|model| {
+            model
+                .split_once('/')
+                .map_or("openai", |(prefix, _)| prefix)
+                .to_owned()
+        })
+    };
     let mut count = 0;
     for model in incoming {
-        let name = &model["litellm_params"]["model"];
-        if !list
-            .iter()
-            .any(|entry| &entry["litellm_params"]["model"] == name)
-        {
+        let wanted = provider(model);
+        if !list.iter().any(|entry| provider(entry) == wanted) {
             list.push(model.clone());
             count += 1;
         }
@@ -974,6 +982,29 @@ mod tests {
             "env:PRIVATE"
         );
         assert_eq!(existing["custom"], 1);
+        // A provider the list already uses gets no second, detected model.
+        let mut existing = json!({"llm":{"model_list":[
+            {"model_name":"default","litellm_params":{"model":"deepseek/deepseek-chat"}},
+            {"model_name":"default","litellm_params":{"model":"gpt-4.1"}}]}});
+        let fresh = json!({"llm":{"model_list":[
+            {"model_name":"default","litellm_params":{"model":"deepseek/deepseek-flash"}},
+            {"model_name":"default","litellm_params":{"model":"openai/gpt-6-luna"}},
+            {"model_name":"default","litellm_params":{"model":"gemini/gemini-flash-lite-latest"}}]}});
+        assert_eq!(merge_models(&mut existing, &fresh).unwrap(), 1);
+        let models: Vec<_> = existing["llm"]["model_list"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| entry["litellm_params"]["model"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            models,
+            [
+                "deepseek/deepseek-chat",
+                "gpt-4.1",
+                "gemini/gemini-flash-lite-latest"
+            ]
+        );
     }
     #[test]
     fn scalar_catalog_omits_complex_sections_and_external_edits_block_save() {
