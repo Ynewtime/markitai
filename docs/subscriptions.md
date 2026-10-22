@@ -100,6 +100,11 @@ which refuses arguments it cannot pass safely; the native `copilot.exe`,
 `claude.exe` and `codex.exe` avoid that extra process. Status reports a resolved
 path without the `\\?\` prefix.
 
+A request's time limit is `llm.router_settings.timeout` (120 seconds by
+default); a Copilot request may take longer for its size, as Python markitai
+allows: 60 seconds plus one per 500 characters, half again with pictures and 10
+seconds per further picture, at most 600 seconds.
+
 Each runtime starts as the root of its own process tree: a new process group on
 Unix; on Windows a new process group and a hidden console, suspended until it
 has been placed in a Job Object that kills the tree when closed. A timeout,

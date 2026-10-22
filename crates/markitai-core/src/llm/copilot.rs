@@ -146,6 +146,20 @@ fn failure(error: subscription::Failure) -> Failure {
         deployment: None,
     }
 }
+/// How long a Copilot request may take for its size, as Python markitai
+/// scales it: 60 seconds plus one per 500 characters of text, half again for
+/// pictures and 10 seconds per further picture, within 60 to 600 seconds. A
+/// longer configured `router_settings.timeout` still applies.
+fn scaled_timeout(prompts: &Prompts) -> Duration {
+    let characters = prompts.system.chars().count() + prompts.user.chars().count();
+    let mut seconds = 60.0 + characters as f64 / 500.0;
+    let pictures = prompts.image.as_ref().map_or(0, Vec::len);
+    if pictures > 0 {
+        seconds = seconds * 1.5 + 10.0 * (pictures - 1) as f64;
+    }
+    Duration::from_secs(seconds.clamp(60.0, 600.0) as u64)
+}
+
 pub(super) fn request(
     entry: &Deployment,
     prompts: &Prompts,
@@ -198,7 +212,7 @@ pub(super) fn request(
             system: &prompts.system,
             user: &prompts.user,
             images: &images,
-            timeout,
+            timeout: timeout.max(scaled_timeout(prompts)),
             cancel: stop,
         },
     );
@@ -242,6 +256,27 @@ pub(super) fn request(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_timeout_grows_with_the_request() {
+        let prompts = |characters: usize, pictures: usize| Prompts {
+            system: String::new(),
+            user: "x".repeat(characters),
+            image: (pictures > 0).then(|| vec![("image/png".to_owned(), String::new()); pictures]),
+            labels: Vec::new(),
+            cache_scope: String::new(),
+        };
+        assert_eq!(scaled_timeout(&prompts(1_000, 0)), Duration::from_secs(62));
+        assert_eq!(
+            scaled_timeout(&prompts(100_000, 0)),
+            Duration::from_secs(260)
+        );
+        assert_eq!(scaled_timeout(&prompts(1_000, 3)), Duration::from_secs(113));
+        assert_eq!(
+            scaled_timeout(&prompts(1_000_000, 0)),
+            Duration::from_secs(600)
+        );
+    }
     #[test]
     fn an_unauthenticated_runtime_is_an_authentication_refusal_and_policy_stays_fatal() {
         use subscription::FailureKind as K;
