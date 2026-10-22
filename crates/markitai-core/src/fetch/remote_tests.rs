@@ -530,6 +530,130 @@ fn a_user_tokens_conversion_never_reaches_a_remote_service() {
     assert!(terminal.notices.lock().unwrap().is_empty());
 }
 
+/// Owner decision 11 (2026-10-22): a chosen remote strategy that is refused
+/// or fails falls back to the local fetch (static, then the browser), with a
+/// warning, and never to another remote service, whatever consent says.
+#[test]
+fn a_chosen_remote_strategy_that_fails_is_read_locally_and_no_other_service_is_asked() {
+    let (_directory, mut cfg) = auto_settings();
+    cfg["fetch"]["remote_consent"] = json!("always");
+    cfg["fetch"]["strategy"] = json!("jina");
+    let page = PageServer::new(vec![
+        Reply::text("Local words of the page."),
+        Reply::text("no").status(403),
+    ]);
+    let service = Mock::new(vec![
+        Answer::text(451, "blocked"),
+        Answer::text(503, "busy"),
+    ]);
+    let terminal = Arc::new(Terminal::default());
+    let fixture = Fixture::new(gate(&terminal, true, None, None));
+    let mut services = fixture.services(&service.origin);
+    services.local_fallback = true;
+    let outcome = fetch_with_services(
+        &page.url("/a"),
+        &cfg,
+        Some("jina"),
+        true,
+        None,
+        false,
+        &services,
+    )
+    .unwrap();
+    assert_eq!(markdown(&outcome), "Local words of the page.");
+    assert_ne!(outcome.document().metadata["fetch_strategy"], "jina");
+    let warning = outcome
+        .document()
+        .warnings
+        .iter()
+        .find(|warning| {
+            warning.starts_with("Jina Reader, the chosen strategy, could not read the page (")
+        })
+        .unwrap_or_else(|| panic!("{:?}", outcome.document().warnings));
+    assert!(
+        warning.ends_with("; it was read locally instead, and no other remote service was asked."),
+        "{warning}"
+    );
+    // The local fetch fails too: its failure leads, the service's follows.
+    let Err(Error::Fetch(message)) = fetch_with_services(
+        &page.url("/b"),
+        &cfg,
+        Some("jina"),
+        true,
+        None,
+        false,
+        &services,
+    ) else {
+        panic!("both failed");
+    };
+    assert!(message.starts_with(REFUSED), "{message}");
+    assert!(
+        message.contains("; Jina Reader, the chosen strategy, could not read it either (HTTP 503"),
+        "{message}"
+    );
+    // Only Jina was asked, once per page: never defuddle or Cloudflare.
+    let asked: Vec<String> = service
+        .requests()
+        .iter()
+        .map(|request| request.target.clone())
+        .collect();
+    assert_eq!(asked.len(), 2, "{asked:?}");
+    assert!(
+        asked.iter().all(|target| target.starts_with("/jina/")),
+        "{asked:?}"
+    );
+
+    // Refused by the user's policy: read locally, nothing sent.
+    cfg["fetch"]["remote_consent"] = json!("never");
+    let page = PageServer::new(vec![Reply::text("Read here.")]);
+    let service = Mock::new(Vec::new());
+    let mut services = fixture.services(&service.origin);
+    services.local_fallback = true;
+    let outcome = fetch_with_services(
+        &page.url("/c"),
+        &cfg,
+        Some("jina"),
+        true,
+        None,
+        false,
+        &services,
+    )
+    .unwrap();
+    assert_eq!(markdown(&outcome), "Read here.");
+    assert!(
+        outcome.document().warnings.iter().any(|warning| warning
+            .contains("could not read the page (Remote fetching is disabled by policy")),
+        "{:?}",
+        outcome.document().warnings
+    );
+    assert!(service.requests().is_empty());
+
+    // A strategy from the configuration is not a choice of this run, and a
+    // configuration problem (Cloudflare without credentials) stays itself:
+    // no local fetch either way.
+    cfg["fetch"]["remote_consent"] = json!("always");
+    let page = PageServer::new(Vec::new());
+    for explicit in [None, Some("cloudflare")] {
+        cfg["fetch"]["strategy"] = json!(explicit.unwrap_or("defuddle"));
+        let service = Mock::new(vec![Answer::text(503, "busy")]);
+        let mut services = fixture.services(&service.origin);
+        services.local_fallback = true;
+        let error = fetch_with_services(
+            &page.url("/d"),
+            &cfg,
+            explicit,
+            true,
+            None,
+            false,
+            &services,
+        )
+        .err()
+        .unwrap();
+        assert!(!error.to_string().contains("chosen strategy"), "{error}");
+    }
+    assert!(page.requests().is_empty());
+}
+
 #[test]
 fn ask_asks_once_per_process_and_a_no_keeps_every_later_page_local() {
     let (_directory, mut cfg) = auto_settings();

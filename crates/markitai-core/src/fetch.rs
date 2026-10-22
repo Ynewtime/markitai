@@ -565,6 +565,53 @@ pub(crate) fn refused_service_message(service: &str) -> String {
     )
 }
 
+/// The local fetch after a chosen remote strategy (`-s jina`, a job's
+/// strategy) was refused or failed: `auto` with its local steps only
+/// (static, then the browser), so the page reaches no other remote service.
+/// A page read so carries a warning naming the service and why; when the
+/// local steps fail too, their failure leads and the service's follows.
+#[allow(clippy::too_many_arguments)]
+fn local_after(
+    source: &str,
+    cfg: &Value,
+    output_available: bool,
+    runtime: Option<&crate::BrowserRuntime>,
+    public_only: bool,
+    services: &Services<'_>,
+    strategy: &str,
+    failure: Error,
+) -> Result<FetchOutcome> {
+    let label = service_label(strategy);
+    let mut local_cfg = cfg.clone();
+    local_cfg["fetch"]["strategy"] = json!("auto");
+    let mut local = services.clone();
+    local.local_only = true;
+    match fetch_with_services(
+        source,
+        &local_cfg,
+        None,
+        output_available,
+        runtime,
+        public_only,
+        &local,
+    ) {
+        Ok(mut outcome) => {
+            outcome.content.warnings_mut().push(format!(
+                "{label}, the chosen strategy, could not read the page ({failure}); it was read locally instead, and no other remote service was asked."
+            ));
+            Ok(outcome)
+        }
+        Err(Error::Fetch(local)) => Err(Error::Fetch(format!(
+            "{local}; {label}, the chosen strategy, could not read it either ({failure})"
+        ))),
+        Err(Error::Conversion(local)) => Err(Error::Conversion(format!(
+            "{local}; {label}, the chosen strategy, could not read it either ({failure})"
+        ))),
+        // A local configuration or input problem is its own failure.
+        Err(other) => Err(other),
+    }
+}
+
 /// What a user token's failed `auto` fetch says when its remote fallbacks
 /// were left out.
 pub(crate) const REMOTE_FALLBACK_SKIPPED: &str = "the remote fallback (defuddle.md, Jina Reader, Cloudflare) was skipped: a user token's conversion never sends its URL to remote services";
@@ -735,28 +782,50 @@ fn fetch_with_services(
             // `-s` for this run answers `ask`; a strategy from the
             // configuration does not, and honours local-only patterns.
             let chosen = explicit_strategy == Some(strategy);
-            services.gate.selected(cfg, &services.vars, chosen, || {
-                consent_request(&url, &[service])
-            })?;
-            if service == Service::Cloudflare {
-                cloudflare::credentials(cfg, &services.vars, true)?
-                    .ok_or_else(cloudflare::missing_credentials)?;
+            let remote = (|| {
+                services.gate.selected(cfg, &services.vars, chosen, || {
+                    consent_request(&url, &[service])
+                })?;
+                if service == Service::Cloudflare {
+                    cloudflare::credentials(cfg, &services.vars, true)?
+                        .ok_or_else(cloudflare::missing_credentials)?;
+                }
+                if !chosen && policy::local_only(&url, cfg, &services.vars) {
+                    return Err(Error::Fetch(format!(
+                        "{} cannot fetch a URL that fetch.policy.local_only_patterns (or NO_PROXY) keeps local; use static or playwright, or select it with -s for this run",
+                        service.name()
+                    )));
+                }
+                remote_target(&url, services)?;
+                services.gate.strategy(service.name());
+                let document = remote::fetch(service, source, &url, cfg, services)
+                    .map_err(|error| with_what_works(error, &url))?;
+                let mut outcome = remote::outcome(document);
+                if capture {
+                    attach_screenshot(source, cfg, &mut outcome, runtime)?;
+                }
+                Ok(outcome)
+            })();
+            match remote {
+                // A chosen service that was refused or failed: the page is
+                // read locally, and no other remote service is asked. A
+                // configuration or input error stays what it is.
+                Err(error @ (Error::Fetch(_) | Error::Conversion(_)))
+                    if chosen && services.local_fallback =>
+                {
+                    local_after(
+                        source,
+                        cfg,
+                        output_available,
+                        runtime,
+                        public_only,
+                        services,
+                        strategy,
+                        error,
+                    )
+                }
+                result => result,
             }
-            if !chosen && policy::local_only(&url, cfg, &services.vars) {
-                return Err(Error::Fetch(format!(
-                    "{} cannot fetch a URL that fetch.policy.local_only_patterns (or NO_PROXY) keeps local; use static or playwright, or select it with -s for this run",
-                    service.name()
-                )));
-            }
-            remote_target(&url, services)?;
-            services.gate.strategy(service.name());
-            let document = remote::fetch(service, source, &url, cfg, services)
-                .map_err(|error| with_what_works(error, &url))?;
-            let mut outcome = remote::outcome(document);
-            if capture {
-                attach_screenshot(source, cfg, &mut outcome, runtime)?;
-            }
-            Ok(outcome)
         }
         _ => Err(Error::Unsupported(format!(
             "Fetch strategy '{strategy}' is not implemented in this development build"
@@ -923,7 +992,7 @@ fn chain_after(
     let mut steps = auto_order(url, cfg, learned_route, services);
     // A user token's job: the remote readers are off for it.
     let remote_left_out = services.refused && steps.iter().any(|step| step.remote().is_some());
-    if services.refused {
+    if services.refused || services.local_only {
         steps.retain(|step| step.remote().is_none());
     }
     let mut rendered = rendered;
@@ -1007,6 +1076,7 @@ fn chain_after(
 /// host, local-only pattern, credential material or local priority).
 fn remote_could_help(url: &Url, cfg: &Value, learned_route: bool, services: &Services<'_>) -> bool {
     !services.refused
+        && !services.local_only
         && services.gate.could_opt_in(cfg, &services.vars)
         && policy::order(
             url,

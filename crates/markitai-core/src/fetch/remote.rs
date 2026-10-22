@@ -51,6 +51,7 @@ pub(crate) const CLOUDFLARE: &str = "https://api.cloudflare.com/client/v4";
 /// Where remote requests go and the process facts they read. Production uses
 /// the real endpoints and environment; tests point every field at loopback
 /// fixtures, so no test reads the user's environment or `.env` files.
+#[derive(Clone)]
 pub(crate) struct Services<'a> {
     pub defuddle: String,
     pub jina: String,
@@ -71,6 +72,13 @@ pub(crate) struct Services<'a> {
     /// serve job): a remote strategy is refused and `auto` leaves its remote
     /// steps out, whatever consent says.
     pub refused: bool,
+    /// The local fetch after a chosen remote strategy failed: `auto` without
+    /// its remote steps, so no other remote service is asked.
+    pub local_only: bool,
+    /// Whether a chosen remote strategy that was refused or failed falls back
+    /// to the local fetch. Off in [`Fixture`]: its pages name real hosts,
+    /// which a local fetch would reach.
+    pub local_fallback: bool,
 }
 
 static LIMITS: LazyLock<Limits> = LazyLock::new(|| Limits::new(Duration::from_secs(60)));
@@ -92,6 +100,8 @@ impl Services<'static> {
             gate: Gate::installed(),
             retry_pause: Duration::from_secs(2),
             refused: false,
+            local_only: false,
+            local_fallback: true,
         }
     }
 }
@@ -130,6 +140,8 @@ impl Fixture {
             gate: &self.gate,
             retry_pause: Duration::from_millis(5),
             refused: false,
+            local_only: false,
+            local_fallback: false,
         }
     }
 }

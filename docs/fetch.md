@@ -471,6 +471,19 @@ A strategy selected with `-s` reports its service's failure the same way:
 `The jina service was shown Zhihu's login page instead of the content; Zhihu
 refuses automated clients; …`.
 
+A strategy chosen for the run (`-s defuddle`, `-s jina`, `-s cloudflare`, or a
+`serve` job's `strategy`) that is refused (by consent or the URL policy) or
+fails does not end the conversion: the page is then read locally, with `auto`'s
+local steps only (static, then the browser), and no other remote service is
+asked, whatever `fetch.remote_consent` says. A page read so carries the warning
+`Jina Reader, the chosen strategy, could not read the page (<why>); it was read
+locally instead, and no other remote service was asked.`; when the local steps
+fail too, their failure leads and the service's follows: `HTTP 403 for …: …;
+Jina Reader, the chosen strategy, could not read it either (<why>)`. A
+configuration or input problem (Cloudflare without credentials, a
+screenshot-only run without an output folder) and a strategy that comes from
+the configuration rather than the run stay failures of their own.
+
 ### Consent
 
 `auto` never sends a URL to a remote service unless the user opted in. The
@@ -485,7 +498,7 @@ before defaults are filled in:
 | default (`always`, not written) | never | runs | runs |
 | `always`, written by the user | runs; a one-line disclosure the first time | runs | runs |
 | `ask` | asks once per run on a terminal before the first remote fallback; otherwise skipped with one note | runs (choosing it is the answer) | asks like the fallback; refused without a terminal |
-| `never`, or `--no-remote-fetch` | never | refused | refused |
+| `never`, or `--no-remote-fetch` | never | refused, then read locally | refused |
 
 Remote fetching stays opt-in, so an `auto` failure that a remote reader could
 have repaired says how to allow one when the user has not: with the default
@@ -510,7 +523,8 @@ skipped: fetch.remote_consent is ask and there is no terminal to ask. …`. The
 disclosure for `always` is printed once per `MARKITAI_HOME` (a marker file
 `notices/remote-fetch`, which holds nothing, records it; a `--quiet` run does not
 print it and leaves it due). Refusals of a selected strategy start with
-`Remote fetching is disabled by policy`. A configured remote strategy also
+`Remote fetching is disabled by policy` (for `-s`, inside the local fetch's
+warning or failure, see [above](#remote-readings-that-are-refusals)). A configured remote strategy also
 honours local-only patterns; `-s` for the run overrides them for a public URL.
 Credential material and private hosts are refused whatever was chosen.
 
@@ -534,8 +548,10 @@ Differences from the reference, kept on purpose: the reference's default
 `always` sends URLs to the remote services whenever local strategies fail, and
 its default `fallback_patterns` make X and the other listed sites browser-first;
 a browser-first domain there tries the remote services before static, and a
-learned route retries static last. A refused explicit remote strategy does not
-fall back to the `auto` chain here; it fails with the service's reason.
+learned route retries static last. A refused or failed explicit remote strategy
+falls back to the local steps only (the reference falls back to the whole
+`auto` chain, whose remote services then follow `remote_consent`), so no
+service the user did not choose receives the URL.
 
 ## Remote services
 
