@@ -257,7 +257,13 @@ async fn replace(
 ) -> ApiResult<Json<Value>> {
     let shape =
         || invalid("send a JSON body {\"expected_revision\": string, \"defaults\": object}");
-    let Json(body) = body.map_err(|_| shape())?;
+    let Json(body) = body.map_err(|rejection| {
+        if rejection.status() == axum::http::StatusCode::PAYLOAD_TOO_LARGE {
+            ApiError::new(413, "request_too_large", "request exceeds 64 KiB")
+        } else {
+            shape()
+        }
+    })?;
     let fields = body
         .as_object()
         .filter(|fields| {

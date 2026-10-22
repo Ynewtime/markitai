@@ -761,7 +761,8 @@ configuration, so requests that leave an option out follow them too; a user
 token's into its own file under `serve/user-models/` (`defaults: null` removes
 them). Cloudflare can never be a default (it needs a confirmation in each
 request): `strategy: "cloudflare"` or any other option is 422
-`invalid_convert_defaults`; a stale revision is 409 `stale_revision`; an
+`invalid_convert_defaults`; a body over 64 KiB is 413 `request_too_large`; a
+stale revision is 409 `stale_revision`; an
 anonymous caller gets 403 `settings_forbidden`. A user token's conversions use
 no remote service, so a user sees a `defuddle` or `jina` strategy of the
 server's (or its own, saved earlier) as `auto`, and a user's `PUT` naming one

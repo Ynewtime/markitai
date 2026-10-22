@@ -168,6 +168,7 @@ fn format(name: &str) -> (Format, &'static str) {
         "epub" => (Format::Other, "application/epub+zip"),
         "eml" => (Format::Other, "message/rfc822"),
         "msg" => (Format::Other, "application/vnd.ms-outlook"),
+        "ipynb" => (Format::Other, "application/x-ipynb+json"),
         "zip" => (Format::Other, "application/zip"),
         _ => (Format::Other, "application/octet-stream"),
     }
@@ -1059,6 +1060,10 @@ mod tests {
         assert_eq!(format("deck.pptx").0, Format::Other);
         assert_eq!(format("drawing.svg").0, Format::Other);
         assert_eq!(format("no-extension").1, "application/octet-stream");
+        assert_eq!(
+            format("Analysis.IPYNB"),
+            (Format::Other, "application/x-ipynb+json")
+        );
         for name in ["page.html", "page.htm", "page.xhtml", "drawing.svg"] {
             let (format, media) = format(name);
             assert_eq!(

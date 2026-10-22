@@ -62,6 +62,18 @@ fn defaults_are_saved_by_the_admin_and_kept_per_user() {
             (422, json!("invalid_convert_defaults"))
         );
     }
+    // An oversized body is refused as too large, not as a wrong shape.
+    let padding = "x".repeat(65 * 1024);
+    let reply = call(
+        &server,
+        "PUT",
+        ADMIN,
+        Some(json!({"expected_revision":view["revision"],"defaults":{},"padding":padding})),
+    );
+    assert_eq!(
+        (reply.status, reply.json()["reason"].clone()),
+        (413, json!("request_too_large"))
+    );
     // The admin's save goes into config.json at the CLI's keys.
     let saved = call(
         &server,
