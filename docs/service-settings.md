@@ -96,11 +96,14 @@ references are rejected before any environment lookup. Server configuration file
 may still use them. Discovery can select a saved `provider_id`/`deployment_id`, or
 a known environment card such as `provider_id: "env:openai"`; adding a deployment
 uses `credential_provider_id`/`credential_deployment_id`. Environment card IDs are
-catalog provider names, never arbitrary environment variable names.
+catalog provider names, never arbitrary environment variable names. The 422
+names both ways out: enter the key itself, or set the pair up in the
+configuration file (Edit config, or `markitai config`).
 
 A server credential is bound to its provider and full configured endpoint.
 Changing the provider or endpoint requires an explicit replacement key or
-`api_key: null`; changing the endpoint without either returns 422. Default ports
+`api_key: null`; changing the endpoint without either returns 422, saying to
+enter the key itself or change `api_base` in the configuration file. Default ports
 and trailing slashes may normalize, but paths and query strings still matter.
 An implicit server endpoint cannot be replaced with a client-supplied URL.
 Custom endpoints without credential references use only the caller's literal key;

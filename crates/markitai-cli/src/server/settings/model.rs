@@ -5,6 +5,10 @@ use std::collections::HashMap;
 
 /// The refusal of a change that would leave a keyed connection keyless at
 /// another host; the same words as Python markitai 1.2.1's.
+/// Both ways out of a refused `env:` value, as Python markitai words them.
+pub(super) const ENV_REFERENCE: &str = "env: references cannot be sent from the web API; to use another variable or endpoint, enter the key itself or set the pair up in the config file (a provider's own key variable is offered in the provider list)";
+/// Both ways out of a saved key sent to another address or provider.
+pub(super) const KEY_REUSE: &str = "stored credentials only work with their saved provider and api_base; to use a different endpoint, enter the key itself (or clear it) or change api_base in the config file";
 pub(super) const KEYLESS_MOVE: &str = "a connection with a key cannot become one without a key at another address; add a new connection for that server instead";
 
 /// Model prefixes whose requests sign in with the server's own cloud login
@@ -228,9 +232,7 @@ pub(super) fn client_field(body: &Value, field: &str) -> ApiResult<Option<String
         .as_deref()
         .is_some_and(|v| v.trim_start().starts_with("env:"))
     {
-        return Err(invalid(
-            "environment references must be configured on the server",
-        ));
+        return Err(invalid(ENV_REFERENCE));
     }
     // A masked value sent back would replace the secret with its own mask.
     if value.as_deref().is_some_and(|v| v.contains(MASK)) {
@@ -316,9 +318,7 @@ pub(super) fn check_reuse(
     supplies_key: bool,
 ) -> ApiResult<()> {
     if !supplies_key && (old_provider != provider || !same_base(old_base, base)) {
-        return Err(invalid(
-            "changing a saved credential endpoint or provider requires an explicit API key (or explicit clear)",
-        ));
+        return Err(invalid(KEY_REUSE));
     }
     Ok(())
 }

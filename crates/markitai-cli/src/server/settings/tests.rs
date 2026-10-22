@@ -629,6 +629,10 @@ fn http_credentials_reject_environment_references_before_resolution() {
                     .as_u16(),
                 422
             );
+            assert_eq!(
+                store.resolve_discovery(&discovery).err().unwrap().detail,
+                model::ENV_REFERENCE
+            );
             let mut probe = json!({"model":"openai/old"});
             probe[field] = json!(value);
             assert_eq!(
@@ -662,15 +666,10 @@ fn stored_credentials_bind_provider_and_complete_endpoint() {
         json!({"provider":"openai","deployment_id":id,"api_base":"http://127.0.0.1:9/v1"}),
         json!({"provider":"openai","deployment_id":id,"api_base":null}),
     ] {
-        assert_eq!(
-            store
-                .resolve_discovery(&body)
-                .err()
-                .unwrap()
-                .status
-                .as_u16(),
-            422
-        );
+        let refused = store.resolve_discovery(&body).err().unwrap();
+        assert_eq!(refused.status.as_u16(), 422);
+        // Both ways out are named, as Python markitai names them.
+        assert_eq!(refused.detail, model::KEY_REUSE);
     }
     assert!(
         store

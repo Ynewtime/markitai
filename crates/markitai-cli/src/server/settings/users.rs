@@ -406,7 +406,7 @@ fn check_connection(provider: &str, key: &Value, base: &Value) -> ApiResult<()> 
             .is_some_and(|v| v.trim_start().starts_with("env:"))
     }) {
         return Err(invalid(
-            "environment references must be configured on the server",
+            "environment variables are the server's own; enter the key itself",
         ));
     }
     let base = text(base);
