@@ -18,6 +18,7 @@ import { cardFacts, parseFrontMatter } from "../lib/frontmatter.ts";
 import { FrontCard } from "./front-matter.tsx";
 import { loadArtifactImages, renderMarkdown, splitFrontmatter, type ImageLoads } from "../lib/markdown.ts";
 import { docsPage } from "../lib/docs.ts";
+import { drawDiagrams } from "../lib/diagram.ts";
 import { typeset } from "../lib/math.ts";
 import { groupNotices, type NoticeGroup } from "../lib/notices.ts";
 import { cachedExcerpt, loadExcerpt, resultKey } from "../lib/results.ts";
@@ -334,6 +335,7 @@ function Excerpt({ ctx, item, onOpen }: { ctx: InspectorContext; item: SessionIt
         for (const image of fragment.querySelectorAll("img")) image.setAttribute("loading", "eager");
         target.replaceChildren(fragment);
         void typeset(target);
+        void drawDiagrams(target, t, { links: false });
         loads = loadArtifactImages(
           target,
           (path) => fetchBlob(imagePath(item.jobId, item.itemId, path)).then((file) => file.blob),

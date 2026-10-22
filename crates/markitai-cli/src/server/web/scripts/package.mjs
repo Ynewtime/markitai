@@ -62,7 +62,7 @@ for (const subset of ["latin", "latin-ext", "cyrillic", "cyrillic-ext", "greek",
 for (const name of readdirSync(vendor).filter((file) => /^KaTeX_.*\.woff2$/.test(file)).sort()) files.set(`ui/${name}`, readFileSync(join(vendor, name)));
 // The backends' block reader: Rust compiles it in; Python evaluates this copy.
 files.set("capture/page-blocks.js", readFileSync(join(root, capture)));
-for (const name of ["marked-LICENSE", "DOMPurify-LICENSE", "Inter-OFL.txt", "phosphor-LICENSE", "lobehub-icons-LICENSE", "preact-LICENSE", "KaTeX-LICENSE"]) {
+for (const name of ["marked-LICENSE", "DOMPurify-LICENSE", "Inter-OFL.txt", "phosphor-LICENSE", "lobehub-icons-LICENSE", "preact-LICENSE", "KaTeX-LICENSE", "pele-LICENSE"]) {
   files.set(`LICENSES/${name}`, readFileSync(join(vendor, name)));
 }
 

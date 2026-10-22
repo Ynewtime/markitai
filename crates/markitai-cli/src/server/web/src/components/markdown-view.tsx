@@ -2,7 +2,8 @@
 // pair) and Files, with the Base | LLM switch. Rendered starts with the
 // front-matter card and the conversion's notices; long tables show their first
 // 500 rows with a sticky header and "Show all rows"; code blocks are
-// highlighted by a module loaded only when there is code. Every pane has the
+// highlighted by a module loaded only when there is code, and ```mermaid
+// blocks drawn as diagrams by one loaded only when there is one. Every pane has the
 // same fixed height, so switching tabs never moves the frame. Rendering is
 // sanitized and pinned to the result's own files.
 //
@@ -42,6 +43,7 @@ import {
   splitFrontmatter,
   splitMarkdown,
 } from "../lib/markdown.ts";
+import { drawDiagrams } from "../lib/diagram.ts";
 import { typeset } from "../lib/math.ts";
 import { groupNotices } from "../lib/notices.ts";
 import { cachedExcerpt, resultKey } from "../lib/results.ts";
@@ -403,6 +405,7 @@ export function MarkdownView({
             }
             target.append(chunk);
             void typeset(chunk);
+            void drawDiagrams(chunk, t);
             current.nodes.push(chunk);
             loads.add(chunk);
             highlight(chunk);

@@ -19,11 +19,13 @@ fixture hashes and never redistribute them as newly authored fixtures.
 The embedded browser workspace includes Marked 18.0.14 (MIT), DOMPurify
 3.4.16 (Apache-2.0), Preact 11.0.1 (MIT), KaTeX 0.19.0 (MIT) with the web fonts its package ships
 (from the KaTeX/katex-fonts repository, also MIT),
+Pele 1.9.0 (MIT, the Mermaid diagram renderer, with one Lucide icon under ISC),
 icon path data from Phosphor Icons 2.1.10 (MIT) and the Inter 5.3.0 variable
 font (SIL Open Font License 1.1).
 Their complete notices are in vendor/web/marked-LICENSE,
 vendor/web/DOMPurify-LICENSE, vendor/web/preact-LICENSE,
-vendor/web/KaTeX-LICENSE, vendor/web/phosphor-LICENSE and vendor/web/Inter-OFL.txt. Download provenance,
+vendor/web/KaTeX-LICENSE, vendor/web/pele-LICENSE, vendor/web/phosphor-LICENSE
+and vendor/web/Inter-OFL.txt. Download provenance,
 upstream package integrity and embedded-file hashes are recorded in
 vendor/web/provenance.json.
 

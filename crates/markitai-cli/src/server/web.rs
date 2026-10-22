@@ -94,6 +94,7 @@ static I18N_ZH: Asset = Asset::gzip(dist!("i18n-zh.js.gz"), JS);
 static I18N_JA: Asset = Asset::gzip(dist!("i18n-ja.js.gz"), JS);
 static MATH_JS: Asset = Asset::gzip(dist!("math.js.gz"), JS);
 static MATH_CSS: Asset = Asset::gzip(dist!("math.css.gz"), "text/css; charset=utf-8");
+static MERMAID_JS: Asset = Asset::gzip(dist!("mermaid.js.gz"), JS);
 static LOGO: Asset = Asset::raw(dist!("logo.svg"), "image/svg+xml");
 static MARKED: Asset = Asset::gzip(dist!("marked.js.gz"), JS);
 static PURIFY: Asset = Asset::gzip(dist!("purify.js.gz"), JS);
@@ -258,6 +259,7 @@ pub(super) fn routes() -> Router<Arc<State>> {
         .route("/ui/brands.js", route(&BRANDS_JS))
         .route("/ui/math.js", route(&MATH_JS))
         .route("/ui/math.css", route(&MATH_CSS))
+        .route("/ui/mermaid.js", route(&MERMAID_JS))
         .route("/ui/i18n-zh.js", route(&I18N_ZH))
         .route("/ui/i18n-ja.js", route(&I18N_JA))
         .route("/ui/logo.svg", route(&LOGO))
@@ -332,6 +334,7 @@ mod tests {
             &BRANDS_JS,
             &MATH_JS,
             &MATH_CSS,
+            &MERMAID_JS,
             &I18N_ZH,
             &I18N_JA,
             &MARKED,

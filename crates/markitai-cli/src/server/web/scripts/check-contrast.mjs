@@ -154,6 +154,9 @@ export const PAIRS = [
   ["var(--code-number)", ["var(--strip)"], T, "highlighted numbers and types"],
   ["var(--code-call)", ["var(--strip)"], T, "highlighted calls and keys"],
   ["var(--text-3)", ["var(--strip)"], T, "highlighted comments"],
+  ["var(--text-1)", ["var(--sel-strong)"], T, "diagram node labels"],
+  ["var(--text-1)", ["color-mix(in srgb, var(--text-1) 3%, var(--surface))"], T, "diagram group labels"],
+  ["var(--text-2)", ["var(--surface)"], G, "diagram lines and arrowheads"],
 ];
 
 export function check(source) {

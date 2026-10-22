@@ -448,6 +448,16 @@ export function remotePicture(source: string): string | null {
   }
 }
 
+/** An absolute `https`, `http` or `mailto` address without user information, as a link may open it; else null. */
+export function webLink(href: string): string | null {
+  try {
+    const url = new URL(href);
+    return ["https:", "http:", "mailto:"].includes(url.protocol) && !url.username && !url.password ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
 /** A picture's placeholder once it could not load, and back: Compare keeps
  * outlining the block that stands in for a picture it paired. */
 const placeholders = new WeakMap<Element, Element>();
@@ -565,13 +575,7 @@ export function rewrite(fragment: DocumentFragment, context: RenderContext, numb
       link.setAttribute("download", "");
       link.setAttribute("data-artifact", path);
     } else {
-      let safe: string | null = null;
-      try {
-        const url = new URL(href);
-        if (["https:", "http:", "mailto:"].includes(url.protocol) && !url.username && !url.password) safe = url.href;
-      } catch {
-        safe = null;
-      }
+      const safe = webLink(href);
       if (safe === null) {
         link.removeAttribute("href");
         continue;

@@ -218,7 +218,17 @@ drawn by KaTeX 0.19.0 in a separate module (`/ui/math.js`, with `/ui/math.css`
 and the woff2 fonts `/ui/KaTeX_*.woff2`, all vendored and served by the binary)
 fetched only when a preview holds one; they also draw in headings and in the
 Contents. A `$` follows Pandoc's rules, so `$5 and $6` stays text, and a formula
-that does not parse stays as its source. While a result loads, Rendered, Source and Files show
+that does not parse stays as its source. A fenced block marked `mermaid` is drawn
+as its diagram (every diagram type of Mermaid 12.1) by Pele 1.9.0 in a separate
+module (`/ui/mermaid.js`, about 260 KB compressed) fetched only when a preview
+holds one; Source, the downloads and the Markdown itself keep the code. The
+diagram's SVG is rebuilt from an allowlist of drawing elements and attributes,
+its styles set through the page's script under the same Content Security Policy;
+its links open in a new tab without a referrer, and it loads no pictures. Its
+colours follow the theme without being drawn again. A block that does not parse,
+holds a diagram type Pele does not know, or is too large (over 50,000 characters,
+2,000 flowchart edges or 2,000,000 characters of SVG) stays a code block with a
+note saying why. While a result loads, Rendered, Source and Files show
 its shape in grey lines inside the same frame (with the size of a large result),
 so nothing moves when it arrives.
 

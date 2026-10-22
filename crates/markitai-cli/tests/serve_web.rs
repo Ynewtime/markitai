@@ -226,7 +226,7 @@ fn built_assets_are_sent_compressed_or_plain_and_revalidate() {
     let directory = tempfile::tempdir().unwrap();
     let server = Server::start(directory.path());
     let js = "text/javascript; charset=utf-8";
-    let compressed: [(&str, &[u8], &[u8], &str); 6] = [
+    let compressed: [(&str, &[u8], &[u8], &str); 7] = [
         (
             "/ui/app.js",
             include_bytes!("../src/server/web/dist/app.js.gz"),
@@ -250,6 +250,12 @@ fn built_assets_are_sent_compressed_or_plain_and_revalidate() {
             include_bytes!("../src/server/web/dist/math.css.gz"),
             include_bytes!("../src/server/web/dist/math.css"),
             "text/css; charset=utf-8",
+        ),
+        (
+            "/ui/mermaid.js",
+            include_bytes!("../src/server/web/dist/mermaid.js.gz"),
+            include_bytes!("../src/server/web/dist/mermaid.js"),
+            js,
         ),
         (
             "/ui/marked.js",
