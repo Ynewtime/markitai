@@ -63,7 +63,8 @@ environment, from `bindings/python`) installs the package in place.
 The wheel installs the commands `markitai`, `mkai` and `markitai-mcp`, as the
 Python markitai package did: each runs the command-line program, which the
 wheel's native extension carries, in its own process (the same program as the
-`markitai` executable; `markitai-mcp` is `markitai mcp`). Python markitai's
+`markitai` executable; `markitai-mcp` is `markitai mcp`), and so does
+`python -m markitai`. Python markitai's
 extras (`ocr`, `serve`, `mcp`, `claude-agent`, `copilot`, `browser`,
 `extra-fetch`, `svg`, `heif`, `legacy`, `all`) are kept as names that add
 nothing, so an existing `pip install "markitai[serve]"` still resolves: the

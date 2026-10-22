@@ -55,6 +55,11 @@ class CommandTests(unittest.TestCase):
                                   "raise SystemExit('the program returned')")
             self.assertEqual(run.returncode, 0, run.stderr.decode(errors="replace"))
             self.assertIn(version, run.stdout.decode())
+        # `python -m markitai` is `markitai`, as with Python markitai.
+        run = subprocess.run([sys.executable, "-m", "markitai", "--version"], env=self.environment,
+                             cwd=self.root, capture_output=True, timeout=120)
+        self.assertEqual(run.returncode, 0, run.stderr.decode(errors="replace"))
+        self.assertEqual(run.stdout.decode().split(), ["markitai", version])
         # The MCP name is the MCP server, its usage under that name.
         run = self.run_python("import sys\nsys.argv[1:] = ['--help']\n"
                               "from markitai._cli import markitai_mcp\nmarkitai_mcp()")
