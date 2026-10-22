@@ -1098,11 +1098,11 @@ mod tests {
         let ids = left_out(&format!(
             r##"<body><div><div class="post"><h1>Title</h1>{}</div>
             <div id="bio"><h3>About the author</h3><p>Jane writes about databases.</p><a href="/jane">More</a></div>
-            <div id="signup"><p>Subscribe to our newsletter for updates.</p></div>
+            <div id="plea"><p>Subscribe to our newsletter for updates.</p></div>
             <div id="cards"><article><h3><a href="/a">Other post</a></h3></article><article><h3><a href="/b">Another post</a></h3></article></div></div></body>"##,
             body()
         ));
-        assert_eq!(ids, ["bio", "cards", "signup"]);
+        assert_eq!(ids, ["bio", "cards", "plea"]);
     }
 
     #[test]
@@ -1485,7 +1485,7 @@ mod tests {
     fn a_conclusion_or_a_list_the_body_introduces_stays() {
         let page = |intro: &str, after: &str| {
             format!(
-                r#"<body><main><div class="intro">{}{intro}</div>{after}<div id="share"><a href="/s">Share</a> <a href="/t">Post</a></div></main></body>"#,
+                r#"<body><main><div class="intro">{}{intro}</div>{after}<div id="tail-links"><a href="/s">Share</a> <a href="/t">Post</a></div></main></body>"#,
                 body()
             )
         };
@@ -1493,7 +1493,7 @@ mod tests {
         // A sentence ending with a colon introduces the list after it.
         assert_eq!(
             left_out(&page("<p>Here are the notes I wrote this year:</p>", list)),
-            ["share"]
+            ["tail-links"]
         );
         // A label is not a sentence; a list after other text is not introduced.
         for intro in [
@@ -1501,7 +1501,11 @@ mod tests {
             "<p>Related posts:</p>",
             "<p>Here are my notes.</p>",
         ] {
-            assert_eq!(left_out(&page(intro, list)), ["list", "share"], "{intro}");
+            assert_eq!(
+                left_out(&page(intro, list)),
+                ["list", "tail-links"],
+                "{intro}"
+            );
         }
         // A line of its own after a break is a label too.
         assert_eq!(
@@ -1509,7 +1513,7 @@ mod tests {
                 "<p>The essay ends here.<br><br><b>Related:</b></p>",
                 list
             )),
-            ["list", "share"]
+            ["list", "tail-links"]
         );
         // A conclusion of plain prose right after the body stays, under a
         // heading or not ...
@@ -1520,38 +1524,42 @@ mod tests {
             ),
             format!(r#"<p id="end">{}</p>"#, prose(16)),
         ] {
-            assert_eq!(left_out(&page("", &conclusion)), ["share"], "{conclusion}");
+            assert_eq!(
+                left_out(&page("", &conclusion)),
+                ["tail-links"],
+                "{conclusion}"
+            );
         }
         // ... but not a short line, a bio with a link or picture, or prose
         // that does not follow the body directly.
         for (after, gone) in [
             (
                 "<p id=\"end\">Thanks for reading.</p>".to_owned(),
-                vec!["end", "share"],
+                vec!["end", "tail-links"],
             ),
             (
                 format!(
                     r#"<div id="end"><p>{}</p><a href="/jane">Jane</a></div>"#,
                     prose(20)
                 ),
-                vec!["end", "share"],
+                vec!["end", "tail-links"],
             ),
             (
                 format!(
                     r#"<div id="end"><img src="jane.jpg"><p>{}</p></div>"#,
                     prose(20)
                 ),
-                vec!["end", "share"],
+                vec!["end", "tail-links"],
             ),
         ] {
             assert_eq!(left_out(&page("", &after)), gone, "{after}");
         }
         let late = format!(
-            r#"<body><main><div>{}</div><div id="share"><a href="/s">Share</a> <a href="/t">Post</a></div><p id="end">{}</p></main></body>"#,
+            r#"<body><main><div>{}</div><div id="tail-links"><a href="/s">Share</a> <a href="/t">Post</a></div><p id="end">{}</p></main></body>"#,
             body(),
             prose(16)
         );
-        assert_eq!(left_out(&late), ["end", "share"]);
+        assert_eq!(left_out(&late), ["end", "tail-links"]);
     }
 
     #[test]

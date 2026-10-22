@@ -286,9 +286,12 @@ as furniture; several full articles keep their page. Names only weigh the
 choice: nothing is removed for its name. GitHub's Primer page sidebar and
 MediaWiki's section edit links, tagline, redirect note, skip links and the menu
 of the article in other languages (`#p-lang-btn`, `mw-portlet-lang`: the "57
-languages" list the Vector 2022 skin writes above the article) and its notices
+languages" list the Vector 2022 skin writes above the article), its notices
 to editors (`ambox`: "This article relies excessively on references to primary
-sources… Find sources: …") are page chrome, and so are arXiv's abstract-page
+sources… Find sources: …") and its closing `Retrieved from "…"` line
+(`printfooter`) are page chrome, and so are any site's language switchers,
+share bars and short promotion boxes
+([article boundaries](html-article.md)), arXiv's abstract-page
 column of download, browse, citation and bookmark links, its arXivLabs tool tabs
 and its endorser and MathJax switches (`extra-services`, `labstabs`,
 `endorsers`, which the reference removes by name), a picture-only link to the

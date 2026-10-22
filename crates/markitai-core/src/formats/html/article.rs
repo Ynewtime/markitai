@@ -498,14 +498,16 @@ fn chrome(facts: &Facts, element: ElementRef<'_>) -> bool {
     // MediaWiki's section edit links, "From Wikipedia" tagline, redirect
     // note, skip links, the menu of the article in other languages (the
     // Vector 2022 skin writes it above the article, with its "30 languages"
-    // label and the link that edits the list) and the notices to editors
+    // label and the link that edits the list), the notices to editors
     // about the article's state (`ambox`: "This article relies excessively on
-    // references to primary sources… Find sources: …").
+    // references to primary sources… Find sources: …") and the closing
+    // `Retrieved from "…"` line (`printfooter`).
     if named(
         element,
         &[
             "ambox",
             "mw-editsection",
+            "printfooter",
             "mw-jump-link",
             "siteSub",
             "contentSub",
@@ -531,6 +533,9 @@ fn chrome(facts: &Facts, element: ElementRef<'_>) -> bool {
         return false;
     }
     if any_token(element, "role", &["doc-toc", "navigation"]) || poll(facts, element) {
+        return true;
+    }
+    if language_switcher(element) || share_bar(element) || promo_box(element) {
         return true;
     }
     if named(
@@ -601,6 +606,181 @@ fn chrome(facts: &Facts, element: ElementRef<'_>) -> bool {
         return true;
     }
     matches!(element.value().name(), "div" | "section" | "aside") && related_cards(facts, element)
+}
+
+fn words(element: ElementRef<'_>) -> usize {
+    element.text().flat_map(str::split_whitespace).count()
+}
+
+/// The words of a class or id name, split at `-`, `_` and spaces.
+fn name_words(element: ElementRef<'_>) -> impl Iterator<Item = &str> {
+    let value = element.value();
+    value
+        .attribute("class")
+        .into_iter()
+        .chain(value.attribute("id"))
+        .flat_map(|value| value.split(|c: char| c.is_ascii_whitespace() || matches!(c, '-' | '_')))
+        .filter(|word| !word.is_empty())
+}
+
+fn name_word(element: ElementRef<'_>, words: &[&str]) -> bool {
+    name_words(element).any(|word| words.iter().any(|name| word.eq_ignore_ascii_case(name)))
+}
+
+/// A list of the page in other languages, known by HTML's `hreflang` ("this
+/// link is the page in that language") rather than a site's class names: at
+/// least three such links and four in five of the list's links, named in a
+/// few words each (a median of four at most: language names), with at most
+/// three words outside them. A page whose content is the list (a language
+/// portal, over half its words) keeps it, and so do prose naming a few
+/// translations and a reading list of foreign-language articles.
+fn language_list(element: ElementRef<'_>) -> bool {
+    if !matches!(element.value().name(), "ul" | "ol") {
+        return false;
+    }
+    let links = element
+        .descendants()
+        .filter_map(ElementRef::wrap)
+        .filter(|node| node.value().name() == "a")
+        .collect::<Vec<_>>();
+    let marked = links
+        .iter()
+        .filter(|link| {
+            link.value()
+                .attribute("hreflang")
+                .is_some_and(|value| !value.trim().is_empty())
+        })
+        .count();
+    if marked < 3 || marked * 5 < links.len() * 4 {
+        return false;
+    }
+    let mut sizes = links.iter().map(|link| words(*link)).collect::<Vec<_>>();
+    sizes.sort_unstable();
+    let total = words(element);
+    if sizes[(sizes.len() - 1) / 2] > 4 || total - sizes.iter().sum::<usize>().min(total) > 3 {
+        return false;
+    }
+    let page = element
+        .ancestors()
+        .filter_map(ElementRef::wrap)
+        .find(|ancestor| ancestor.value().name() == "body")
+        .map_or(total, words);
+    total * 2 <= page
+}
+
+/// A language switcher: such a list, or the largest wrapper that adds only
+/// the switcher's own controls to it (the dropdown's checkbox, a "33
+/// languages" label, an "Edit links" link: at most eight words and two links,
+/// and no heading, paragraph, picture, table, code or quotation). The walk
+/// stops at the first thing a switcher's controls would not hold, so asking a
+/// large block costs little.
+fn language_switcher(element: ElementRef<'_>) -> bool {
+    struct Controls {
+        words: usize,
+        links: usize,
+        lists: usize,
+        nodes: usize,
+    }
+    fn walk(element: ElementRef<'_>, found: &mut Controls) -> bool {
+        for child in element.children() {
+            found.nodes += 1;
+            if found.nodes > 2_000 {
+                return false;
+            }
+            if let Node::Text(text) = child.value() {
+                found.words += text.split_whitespace().count();
+                if found.words > 8 {
+                    return false;
+                }
+                continue;
+            }
+            let Some(child) = ElementRef::wrap(child) else {
+                continue;
+            };
+            match child.value().name() {
+                "ul" | "ol" if language_list(child) => found.lists += 1,
+                "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "p" | "img" | "picture" | "video"
+                | "audio" | "iframe" | "table" | "pre" | "blockquote" | "figure" => return false,
+                "script" | "style" | "template" => {}
+                name => {
+                    if name == "a" {
+                        found.links += 1;
+                        if found.links > 2 {
+                            return false;
+                        }
+                    }
+                    if !walk(child, found) {
+                        return false;
+                    }
+                }
+            }
+        }
+        true
+    }
+    if language_list(element) {
+        return true;
+    }
+    let mut found = Controls {
+        words: 0,
+        links: 0,
+        lists: 0,
+        nodes: 0,
+    };
+    walk(element, &mut found) && found.lists > 0
+}
+
+/// A row of share buttons: a block named for sharing whose few words (eight
+/// at most) are all the labels of its links and buttons.
+fn share_bar(element: ElementRef<'_>) -> bool {
+    if !name_word(
+        element,
+        &["share", "shares", "sharing", "sharebar", "social"],
+    ) {
+        return false;
+    }
+    let mut labels = 0;
+    for node in element.descendants() {
+        if let Node::Text(text) = node.value() {
+            let count = text.split_whitespace().count();
+            if count == 0 {
+                continue;
+            }
+            let labelled = node
+                .ancestors()
+                .take_while(|ancestor| ancestor.id() != element.id())
+                .filter_map(ElementRef::wrap)
+                .any(|ancestor| matches!(ancestor.value().name(), "a" | "button"));
+            if !labelled {
+                return false;
+            }
+            labels += count;
+        }
+    }
+    (1..=8).contains(&labels)
+}
+
+/// A short promotion box (under 30 words, no heading) named as one: a
+/// newsletter or subscription offer, an advertisement, a sponsor's note.
+fn promo_box(element: ElementRef<'_>) -> bool {
+    name_word(
+        element,
+        &[
+            "promo",
+            "promotion",
+            "promotional",
+            "newsletter",
+            "subscribe",
+            "signup",
+            "advert",
+            "advertisement",
+            "sponsor",
+            "sponsored",
+        ],
+    ) && words(element) < 30
+        && !element
+            .descendants()
+            .filter_map(ElementRef::wrap)
+            .any(heading)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1123,6 +1303,66 @@ mod tests {
         assert!(!excluded(element(&document, ".related-postsx")));
         // An id is one name, not words.
         assert!(!excluded(element(&document, "main > div:last-child")));
+    }
+
+    fn prose(n: usize) -> String {
+        (0..n)
+            .map(|i| format!("<p>Paragraph {i} explains how small services cooperate over plain HTTP interfaces in a larger system.</p>"))
+            .collect()
+    }
+
+    #[test]
+    fn language_switchers_go_with_their_controls_but_prose_and_reading_lists_stay() {
+        let languages = ["Deutsch", "Français", "Español", "日本語", "中文"]
+            .iter()
+            .enumerate()
+            .map(|(i, name)| {
+                format!(r#"<li><a href="/l{i}/guide" hreflang="x{i}">{name}</a></li>"#)
+            })
+            .collect::<String>();
+        let document = Html::parse_document(&format!(
+            r#"<body><main><article><h1>Guide</h1>
+            <div id="picker"><input type="checkbox"><label>5 languages</label><ul id="langs">{languages}</ul><a href="/edit">Edit links</a></div>
+            {}<p id="mentions">Also in <a href="/de" hreflang="de">German</a>, <a href="/fr" hreflang="fr">French</a> and <a href="/es" hreflang="es">Spanish</a>.</p>
+            <ul id="reading"><li><a href="/a" hreflang="de">Eine Einführung in kleine Dienste und Teams</a> — an essay</li><li><a href="/b" hreflang="fr">Les petits services expliqués aux équipes</a> — an overview</li><li><a href="/c" hreflang="es">Servicios pequeños y equipos de producto</a> — a survey</li></ul>
+            <div id="section"><h2>More</h2><ul>{languages}</ul></div></article></main></body>"#,
+            prose(3)
+        ));
+        assert!(excluded(element(&document, "#picker")));
+        assert!(excluded(element(&document, "#langs")));
+        assert!(!excluded(element(&document, "#mentions")));
+        assert!(!excluded(element(&document, "#reading")));
+        // A heading beside the list is not a control of it.
+        assert!(!excluded(element(&document, "#section")));
+        assert!(!excluded(element(&document, "article")));
+        // A page whose content is the list of languages keeps it.
+        let portal = Html::parse_document(&format!(
+            "<body><main><h1>Choose a language</h1><ul>{languages}</ul></main></body>"
+        ));
+        assert!(!excluded(element(&portal, "ul")));
+    }
+
+    #[test]
+    fn share_bars_promo_boxes_and_the_mediawiki_print_footer_are_page_chrome() {
+        let document = Html::parse_document(&format!(
+            r#"<body><main><article>{}
+            <div class="share-bar" id="bar"><a href="/s/1">Tweet</a> <button>Share</button></div>
+            <div class="share-price" id="price"><p>Shares rose four percent after the report.</p></div>
+            <div class="social" id="social-prose">Write to us; we read every <a href="/m">letter</a>.</div>
+            <aside class="promo" id="promo"><p>Subscribe now!</p></aside>
+            <aside class="newsletter" id="long-promo"><h3>Our letter</h3><p>Weekly notes.</p></aside>
+            <aside class="sidebar" id="pullout"><p>A pull-out box that the article sets among its own paragraphs, written as prose about service size and team ownership over a long time.</p></aside>
+            <div class="printfooter" id="footer">Retrieved from "<a href="https://wiki.example/w?oldid=1">https://wiki.example/w?oldid=1</a>"</div>
+            </article></main></body>"#,
+            prose(3)
+        ));
+        assert!(excluded(element(&document, "#bar")));
+        assert!(excluded(element(&document, "#promo")));
+        assert!(excluded(element(&document, "#footer")));
+        assert!(!excluded(element(&document, "#price")));
+        assert!(!excluded(element(&document, "#social-prose")));
+        assert!(!excluded(element(&document, "#long-promo")));
+        assert!(!excluded(element(&document, "#pullout")));
     }
 
     #[test]

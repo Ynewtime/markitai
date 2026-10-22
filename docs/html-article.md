@@ -37,6 +37,28 @@ Related Posts/Stories heading requires at least two structurally identifiable
 linked cards and no independent prose, table, quotation or note content in the
 surrounding block. A heading by itself is insufficient.
 
+Three kinds of furniture are known by their shape wherever they stand, inside
+the article too:
+
+- a language switcher: a list whose links carry `hreflang` (HTML's "this link
+  is the page in that language"; at least three, four in five of its links),
+  named in a few words each (a median of four at most) with at most three
+  words outside them, removed with the largest wrapper that only adds its own
+  controls (a checkbox, a "33 languages" label, an "Edit links" link: at most
+  eight words and two links, no heading, paragraph, picture, table, code or
+  quotation). Prose naming a few translations, a reading list of
+  foreign-language articles and a page whose content is the list (over half
+  the words of its body) are kept;
+- a share bar: a block whose class or id words name sharing (`share`,
+  `sharing`, `social`) and whose words, eight at most, are all labels of its
+  links and buttons;
+- a promotion box: a block named `promo`, `newsletter`, `subscribe`, `signup`,
+  `advert`, `sponsor` (and their variants) with under 30 words and no
+  heading. An aside written as prose stays.
+
+MediaWiki's section edit links and its closing `Retrieved from "…"` line
+(`printfooter`) are removed by their classes.
+
 Forms and footers weigh the choice as the cleaner writes them
 ([rendering](html.md#rendering-and-url-handling)): a form's prose and the footer
 of an article, section, figure or quotation are page text, so a page an ASP.NET
