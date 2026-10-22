@@ -1277,19 +1277,22 @@ def app(
         if is_url_input:
             assert input_path_str is not None  # Guaranteed when is_url_input is True
             from markitai.cli.processors.url import process_url
+            from markitai.notices import notices_into_outcomes
 
-            await process_url(
-                input_path_str,
-                output,
-                cfg,
-                dry_run,
-                verbose,
-                log_file_path,
-                fetch_strategy=fetch_strategy,
-                explicit_fetch_strategy=explicit_fetch_strategy,
-                quiet=quiet,
-                history=history_items,
-            )
+            # --json and the report list the notices with the item's warnings
+            with notices_into_outcomes(history_items):
+                await process_url(
+                    input_path_str,
+                    output,
+                    cfg,
+                    dry_run,
+                    verbose,
+                    log_file_path,
+                    fetch_strategy=fetch_strategy,
+                    explicit_fetch_strategy=explicit_fetch_strategy,
+                    quiet=quiet,
+                    history=history_items,
+                )
             return
 
         # File/directory mode
@@ -1442,17 +1445,21 @@ def app(
         # Note: For single file mode, we do NOT use config output.dir as fallback
         # because the design specifies that no -o means stdout output
         from markitai.cli.processors.file import process_single_file
+        from markitai.notices import notices_into_outcomes
 
-        await process_single_file(
-            input_path,
-            output,
-            cfg,
-            dry_run,
-            log_file_path,
-            verbose=verbose,
-            quiet=quiet,
-            history=history_items,
-        )
+        # --json and the report list the notices (pages that look scanned,
+        # hidden text) with the item's warnings
+        with notices_into_outcomes(history_items):
+            await process_single_file(
+                input_path,
+                output,
+                cfg,
+                dry_run,
+                log_file_path,
+                verbose=verbose,
+                quiet=quiet,
+                history=history_items,
+            )
 
     async def run_workflow_with_cleanup() -> None:
         """Run workflow with explicit resource cleanup on exit."""

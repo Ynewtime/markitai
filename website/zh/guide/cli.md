@@ -201,7 +201,7 @@ markitai document.pdf -o ./output --json | jq '.items[] | select(.status == "fai
 
 文档结构是 `{version, ok, error, batch, items[], totals}`：
 
-- `items[]`：每个输入一条，含 `source`、`status`（`completed`、`failed`、`skipped`、`pending`）、`output`、`error`、`warnings`、`cost_usd`、`duration_s`、`fetch_strategy`、`screenshots`、`llm_usage` 和 `page_sources`。`pending` 只出现在不再等待的 `--llm-batch` 运行里：基础 `.md` 已写出，增强还在批次里运行。`warnings` 列出没让条目失败的问题，比如某张图片分析失败，或要求的截图没拍到。`page_sources` 对 PDF 说明每页文字的来源（见[读错的 PDF 文字层](#读错的-pdf-文字层)），其他输入为空。模型没有已知价格时，它的 `llm_usage` 条目会记 `unpriced_requests`，`cost_usd` 只含有价格的请求：费用未知，不是零。`--resume` 之后（`--llm-batch` 除外），之前的运行完成的条目排在前面，带 `earlier_run: true` 和它们完成时记下的费用、用量与耗时；这次运行做的条目 `earlier_run` 为 `false`。
+- `items[]`：每个输入一条，含 `source`、`status`（`completed`、`failed`、`skipped`、`pending`）、`output`、`error`、`warnings`、`cost_usd`、`duration_s`、`fetch_strategy`、`screenshots`、`llm_usage` 和 `page_sources`。`pending` 只出现在不再等待的 `--llm-batch` 运行里：基础 `.md` 已写出，增强还在批次里运行。`warnings` 列出没让条目失败的问题，比如某张图片分析失败、要求的截图没拍到，或在 stderr 上为该条目打印的提示（看起来是扫描件的 PDF 页面、隐藏文字）。`page_sources` 对 PDF 说明每页文字的来源（见[读错的 PDF 文字层](#读错的-pdf-文字层)），其他输入为空。模型没有已知价格时，它的 `llm_usage` 条目会记 `unpriced_requests`，`cost_usd` 只含有价格的请求：费用未知，不是零。`--resume` 之后（`--llm-batch` 除外），之前的运行完成的条目排在前面，带 `earlier_run: true` 和它们完成时记下的费用、用量与耗时；这次运行做的条目 `earlier_run` 为 `false`。
 - `error`：没产生任何条目的运行级错误，否则为 `null`。
 - `batch`：`--llm-batch` 转为后台后，是仍在运行的批次 `{id, status, collect_command}`；否则为 `null`。
 - `totals`：按状态计数，加 `cost_usd`、`this_run_cost_usd` 和 `duration_s`。`cost_usd` 统计所有费用已知的条目，`--resume` 之后就是整个批量的费用；`this_run_cost_usd` 只统计这次运行转换的条目（没有续跑时两者相等）。

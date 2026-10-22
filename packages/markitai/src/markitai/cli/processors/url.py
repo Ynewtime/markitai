@@ -23,6 +23,7 @@ from markitai.cli.console import get_console, get_stderr_console
 from markitai.config import MarkitaiConfig
 from markitai.constants import SCREENSHOTS_REL_PATH
 from markitai.json_order import order_report
+from markitai.notices import capture_task_notices, merge_item_warnings
 from markitai.runs import (
     Outcome,
     build_llm_usage_block,
@@ -1296,6 +1297,9 @@ async def process_url_batch(
         key = url_state_key(url, entry.output_name)
         item_start = time.perf_counter()
         extra_info: dict[str, Any] = {}
+        # The notices this URL raised (--json and the report list them with
+        # its warnings; the console shows them as before)
+        notices: list[str] = []
 
         def record_outcome(
             status: Literal["completed", "failed", "skipped"],
@@ -1329,7 +1333,9 @@ async def process_url_batch(
                     llm_usage=result.llm_usage if result is not None else {},
                     fetch_strategy=extra_info.get("fetch_strategy"),
                     duration=time.perf_counter() - item_start,
-                    warnings=list(extra_info.get("warnings") or []),
+                    warnings=merge_item_warnings(
+                        list(notices), list(extra_info.get("warnings") or [])
+                    ),
                 )
             )
 
@@ -1376,15 +1382,21 @@ async def process_url_batch(
                 active_urls[key] = format_url_label(url)
                 update_progress_label(progress_obj, progress_task)
 
-                with batch_item_claim_scope(
-                    reservations,
-                    url_state,
-                    requeued=key in requeued,
-                    on_claimed=record_target,
+                with (
+                    capture_task_notices() as captured,
+                    batch_item_claim_scope(
+                        reservations,
+                        url_state,
+                        requeued=key in requeued,
+                        on_claimed=record_target,
+                    ),
                 ):
-                    result, extra_info = await process_one_url(
-                        url, custom_name=entry.output_name
-                    )
+                    try:
+                        result, extra_info = await process_one_url(
+                            url, custom_name=entry.output_name
+                        )
+                    finally:
+                        notices.extend(captured)
                 url_fetch_strategy = extra_info.get("fetch_strategy", "unknown")
                 record_state(result)
 
@@ -1411,7 +1423,9 @@ async def process_url_batch(
                 results[key] = {
                     "status": "completed",
                     "error": None,
-                    "warnings": list(extra_info.get("warnings") or []),
+                    "warnings": merge_item_warnings(
+                        list(notices), list(extra_info.get("warnings") or [])
+                    ),
                     "output": result.output_path,
                     "fetch_strategy": url_fetch_strategy,
                     "images": result.images,

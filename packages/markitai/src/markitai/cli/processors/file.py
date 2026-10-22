@@ -281,13 +281,16 @@ async def process_single_file(
         # single-file conversions skip reports by default
         if not stdout_mode and cfg.output.report is True:
             assert output_dir is not None
+            from markitai.notices import merge_item_warnings, task_notices
+
             report = build_single_report(
                 Outcome(
                     kind="file",
                     source=input_path.name,
                     status="completed",
                     output_path=produced_file,
-                    warnings=list(ctx.warnings),
+                    # The notices too (pages that look scanned, hidden text)
+                    warnings=merge_item_warnings(task_notices(), list(ctx.warnings)),
                     images=ctx.embedded_images_count,
                     screenshots=ctx.screenshots_count,
                     cost_usd=ctx.llm_cost,

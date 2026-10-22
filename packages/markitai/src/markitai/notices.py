@@ -124,6 +124,13 @@ def capture_task_notices() -> Iterator[list[str]]:
         _TASK_NOTICES.reset(token)
 
 
+def task_notices() -> list[str]:
+    """The notices captured so far for the current task (none outside a
+    :func:`capture_task_notices` block)."""
+    capture = _TASK_NOTICES.get()
+    return list(capture.notices) if capture is not None else []
+
+
 def merge_item_warnings(notices: list[str], own: list[str]) -> list[str]:
     """A conversion's notices, then its own result warnings they do not repeat.
 
@@ -143,6 +150,29 @@ def merge_item_warnings(notices: list[str], own: list[str]) -> list[str]:
             continue
         merged.append(warning)
     return merged
+
+
+@contextmanager
+def notices_into_outcomes(outcomes: list[Any] | None) -> Iterator[None]:
+    """Add the notices raised by the block to the warnings of the outcomes
+    it appends to *outcomes* (a CLI run's history, read by ``--json`` and the
+    report), as ``markitai serve`` and the Python API list them on an item.
+
+    For a block that converts one item at a time (a single file or URL);
+    batches capture per item. The console shows the notices as before.
+    """
+    if outcomes is None:
+        yield
+        return
+    start = len(outcomes)
+    with capture_task_notices() as notices:
+        try:
+            yield
+        finally:
+            for outcome in outcomes[start:]:
+                outcome.warnings = merge_item_warnings(
+                    list(notices), list(outcome.warnings)
+                )
 
 
 def is_user_notice(record: Any) -> bool:

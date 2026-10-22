@@ -20,6 +20,7 @@ from markitai.cli.logging_config import restore_console_handler
 from markitai.config import MarkitaiConfig
 from markitai.constants import MAX_DOCUMENT_SIZE
 from markitai.converter.base import EXTENSION_MAP
+from markitai.notices import capture_task_notices, merge_item_warnings
 from markitai.runs import Outcome, resolve_exit_code
 from markitai.security import atomic_write_text
 from markitai.utils.cli_helpers import sanitize_filename, url_to_filename
@@ -1223,21 +1224,26 @@ async def process_batch(
 
             try:
                 batch.update_url_status(url, key=key)
-                with batch_item_claim_scope(
-                    reservations,
-                    url_state,
-                    requeued=key in requeued_urls,
-                    on_claimed=record_target,
+                with (
+                    capture_task_notices() as notices,
+                    batch_item_claim_scope(
+                        reservations,
+                        url_state,
+                        requeued=key in requeued_urls,
+                        on_claimed=record_target,
+                    ),
                 ):
                     result, extra_info = await url_processor(
                         url, source_file, custom_name
                     )
                 # Non-fatal problems (a requested screenshot not captured):
                 # printed like the URL-list batch does, and --json carries them
-                url_state.warnings = list(extra_info.get("warnings") or [])
+                # with the item's notices, which the summary already lists
+                own_warnings = list(extra_info.get("warnings") or [])
+                url_state.warnings = merge_item_warnings(list(notices), own_warnings)
 
                 if result.success:
-                    for warning in url_state.warnings:
+                    for warning in own_warnings:
                         logger.warning(f"[URL] {redact_url(url)}: {warning}")
                         if not quiet:
                             ui.warning(
@@ -1323,11 +1329,14 @@ async def process_batch(
                     except ValueError:
                         display_name = file_path.name
                 batch.set_current_file(file_key, display_name)
-                with batch_item_claim_scope(
-                    reservations,
-                    file_state,
-                    requeued=file_key in requeued_files,
-                    on_claimed=record_target,
+                with (
+                    capture_task_notices() as notices,
+                    batch_item_claim_scope(
+                        reservations,
+                        file_state,
+                        requeued=file_key in requeued_files,
+                        on_claimed=record_target,
+                    ),
                 ):
                     result = await process_file(file_path)
 
@@ -1340,10 +1349,14 @@ async def process_batch(
                     file_state.llm_usage = result.llm_usage
                     file_state.cache_hit = result.cache_hit
                     # Non-fatal problems (an image analysis that failed):
-                    # logged like a URL's, and --json carries them
-                    file_state.warnings = list(result.warnings)
+                    # logged like a URL's, and --json carries them with the
+                    # item's notices (pages that look scanned, hidden text),
+                    # which the summary already lists
+                    file_state.warnings = merge_item_warnings(
+                        list(notices), list(result.warnings)
+                    )
                     file_state.page_sources = list(result.page_sources)
-                    for warning in file_state.warnings:
+                    for warning in result.warnings:
                         logger.warning(f"[File] {display_name}: {warning}")
                         if not quiet:
                             ui.warning(
@@ -1362,6 +1375,7 @@ async def process_batch(
                 else:
                     file_state.status = FileStatus.FAILED
                     file_state.error = result.error
+                    file_state.warnings = list(notices)
                     # A failed LLM stage was still paid for
                     file_state.cost_usd = result.cost_usd
                     file_state.llm_usage = result.llm_usage

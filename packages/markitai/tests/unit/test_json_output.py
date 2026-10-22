@@ -12,6 +12,9 @@ from click.testing import CliRunner
 
 from markitai.runs import Outcome
 from markitai.runs import json_output as json_result
+from tests.unit.test_batch_resume_state import (
+    url_fakes as url_fakes,  # pytest fixture
+)
 
 
 class TestEnvelope:
@@ -448,6 +451,99 @@ class TestCliContract:
             "this_run_cost_usd": 0.0,
             "duration_s": body["totals"]["duration_s"],
         }
+
+
+def _scanned_pdf(path: Path) -> Path:
+    """Two pages: one of text, one that is only a picture (a scan)."""
+    import pymupdf
+
+    with pymupdf.open() as doc:
+        page = doc.new_page()
+        page.insert_text((72, 100), "A page of real text for the reader.", fontsize=12)
+        scan = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 600, 800), False)
+        scan.clear_with(230)
+        doc.new_page().insert_image(doc[1].rect, stream=scan.tobytes("png"))
+        doc.save(path)
+    return path
+
+
+class TestItemNotices:
+    """The notices a conversion raises (pages that look scanned, hidden
+    text) were printed on stderr only; --json left the item's ``warnings``
+    empty. Like markitai-rust, and like ``markitai serve`` already did, the
+    item lists them, once, and stderr still shows them once."""
+
+    _SCANNED = "1 of 2 pages look scanned/garbled (page 2)"
+
+    def test_single_file(self, tmp_path: Path) -> None:
+        from markitai.cli.main import app
+
+        pdf = _scanned_pdf(tmp_path / "scan.pdf")
+        result = CliRunner().invoke(
+            app, [str(pdf), "-o", str(tmp_path / "out"), "--json", "--no-cache"]
+        )
+
+        assert result.exit_code == 0, result.output
+        (item,) = json.loads(result.stdout)["items"]
+        assert len(item["warnings"]) == 1
+        assert self._SCANNED in item["warnings"][0]
+        assert result.stderr.count(self._SCANNED) == 1
+
+    def test_folder_batch(self, tmp_path: Path) -> None:
+        from markitai.cli.main import app
+
+        source = tmp_path / "in"
+        source.mkdir()
+        _scanned_pdf(source / "scan.pdf")
+        (source / "notes.txt").write_text("# notes\n", encoding="utf-8")
+        result = CliRunner().invoke(
+            app, [str(source), "-o", str(tmp_path / "out"), "--json", "--no-cache"]
+        )
+
+        assert result.exit_code == 0, result.output
+        items = {i["source"]: i for i in json.loads(result.stdout)["items"]}
+        assert len(items["scan.pdf"]["warnings"]) == 1
+        assert self._SCANNED in items["scan.pdf"]["warnings"][0]
+        assert items["notes.txt"]["warnings"] == []
+        assert result.stderr.count(self._SCANNED) == 1
+
+
+@pytest.mark.asyncio
+async def test_url_list_items_carry_their_own_notices(
+    tmp_path: Path,
+    url_fakes: dict,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each URL of a list keeps the notices it raised, not another's."""
+    from markitai.cli.processors import url as url_processor
+    from markitai.cli.processors.url import process_url_batch
+    from markitai.notices import user_notice
+    from tests.unit.test_batch_resume_state import ONE, TWO, _Entry, _llm_cfg
+
+    fake_llm = url_processor.run_url_document_llm
+
+    async def noisy_llm(markdown, url, *args, **kwargs):
+        if url == ONE:
+            user_notice("[URL] {}: the page looks like a sign-in wall", url)
+        return await fake_llm(markdown, url, *args, **kwargs)
+
+    monkeypatch.setattr(url_processor, "run_url_document_llm", noisy_llm)
+    history: list[Outcome] = []
+    await process_url_batch(
+        [_Entry(ONE), _Entry(TWO)],
+        tmp_path / "out",
+        _llm_cfg(),
+        dry_run=False,
+        verbose=False,
+        quiet=True,
+        history=history,
+    )
+
+    warnings = {outcome.source: outcome.warnings for outcome in history}
+    assert warnings == {
+        ONE: [f"[URL] {ONE}: the page looks like a sign-in wall"],
+        TWO: [],
+    }
 
 
 _OPENAI_POOL = json.dumps(
