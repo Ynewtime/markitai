@@ -1743,6 +1743,35 @@ class TestStripRepeatedPageLines:
         assert result[0].count("Confidential") == 1
         assert "Intro line one." in result[0]
 
+    def test_numbered_paragraphs_kept_in_a_pdf(self, tmp_path: Path) -> None:
+        """Body paragraphs that differ only in their numbers were taken for
+        running lines: from 4 pages on a report kept only its headings."""
+        import pymupdf
+
+        paragraph = (
+            "The committee reviewed section {}. The annual plan describes the "
+            "library, its reading rooms, the budget lines for staff and books. "
+        )
+        pdf_file = tmp_path / "report.pdf"
+        with pymupdf.open() as doc:
+            for p in range(1, 5):
+                page = doc.new_page()
+                page.insert_text((72, 60), f"Chapter {p}", fontsize=18)
+                for k in range(1, 6):
+                    y = 100 + 90 * (k - 1)
+                    page.insert_textbox(
+                        pymupdf.Rect(72, y, 523, y + 70),
+                        paragraph.format(f"{p}.{k}") * 2,
+                        fontsize=10,
+                    )
+            doc.save(pdf_file)
+
+        result = PdfConverter(MarkitaiConfig()).convert(pdf_file)
+
+        for p in range(1, 5):
+            for k in range(1, 6):
+                assert f"section {p}.{k}." in result.markdown
+
 
 class TestPageAdvisorySignals:
     """Tests for collect_page_advisories using real pymupdf documents."""

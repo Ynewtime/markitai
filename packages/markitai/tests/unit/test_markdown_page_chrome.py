@@ -4,8 +4,11 @@
 on page/slide markers and applies ``strip_repeated_page_lines``, the PDF
 converter's rule: only the first/last two lines of each page, a line must
 repeat on at least 60% of pages (and at least 3), documents under 4 pages
-are left alone, and headings and table rows are never removed. Marker
-pages get a second round, so a three-line slide footer comes off whole.
+are left alone, and headings and table rows are never removed. Only short
+lines are candidates, and a line whose form repeats within its own pages is
+body text. Marker pages also examine the third line inside two removed ones,
+so a three-line slide footer comes off whole, in one pass that does not eat
+further into the body.
 """
 
 from __future__ import annotations
@@ -106,3 +109,71 @@ class TestRunningHeadersAndFooters:
         cleaned = normalize_markdown(content)
 
         assert cleaned.count("Acme Corp") == 3
+
+    def test_numbered_body_lines_are_kept(self) -> None:
+        """Lines that differ only in their numbers looked like one running
+        line to the digit-blind match: a 4-page scan read by OCR kept 3 of
+        its 48 lines."""
+        content = _pages(
+            [
+                "\n".join(
+                    f"Page {page} line {line}: The quick brown fox jumps over "
+                    f"the lazy dog {page}{line:02d}."
+                    for line in range(1, 13)
+                )
+                for page in range(1, 5)
+            ]
+        )
+
+        cleaned = normalize_markdown(content)
+
+        assert cleaned.count("The quick brown fox") == 48
+
+    def test_numbered_paragraphs_of_a_long_report_are_kept(self) -> None:
+        paragraph = (
+            "The committee reviewed section {}. The annual plan describes the "
+            "library, its reading rooms and the budget lines for staff."
+        )
+        content = _pages(
+            [
+                f"# Chapter {page}\n\n"
+                + "\n\n".join(paragraph.format(f"{page}.{k}") for k in range(1, 10))
+                for page in range(1, 61)
+            ]
+        )
+
+        cleaned = normalize_markdown(content)
+
+        assert cleaned.count("The committee reviewed") == 540
+
+    def test_long_lines_are_never_running_lines(self) -> None:
+        notice = (
+            "This report was prepared for the members of the board and is "
+            "shared with them under the terms of the annual agreement."
+        )
+        bodies = ["Alpha", "Bravo", "Charlie", "Delta", "Echo"]
+        content = _pages(
+            [f"{notice}\n\n{body} opens.\n\n{body} ends." for body in bodies]
+        )
+
+        cleaned = normalize_markdown(content)
+
+        assert cleaned.count(notice) == 5
+
+    def test_removal_does_not_cascade_into_the_body(self) -> None:
+        """Each round used to look again at the lines the last one uncovered;
+        one pass takes at most three lines from an edge."""
+        bodies = ["Alpha", "Bravo", "Charlie", "Delta", "Echo"]
+        content = _pages(
+            [
+                "Acme Corp\n\nAnnual report\n\nDraft\n\nSee below.\n\n"
+                f"{body} one.\n\n{body} two.\n\n{body} three."
+                for body in bodies
+            ]
+        )
+
+        cleaned = normalize_markdown(content)
+
+        for line in ("Acme Corp", "Annual report", "Draft"):
+            assert line not in cleaned
+        assert cleaned.count("See below.") == 5
