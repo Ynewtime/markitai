@@ -206,7 +206,7 @@ pub(in crate::server) fn replace_config(
                 json!({"code":"stale_revision","current_revision":current}),
             ));
         }
-        serde_json::from_str::<Value>(text).map_err(|error| refused(editor::position(&error)))?;
+        editor::parse(text).map_err(refused)?;
         let saved = editor::unmask(text, Some(&document(lists, &shared))).map_err(refused)?;
         let parsed: Value = serde_json::from_str(&saved).map_err(|_| failure())?;
         let mut next = parse(&parsed, lists, &shared)?;

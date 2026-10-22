@@ -1689,6 +1689,33 @@ fn config_edit_masks_secrets_and_a_round_trip_keeps_them() {
     );
 }
 #[test]
+fn config_edit_refuses_a_repeated_key_and_shows_neither_value() {
+    let (_dir, store) = setup(edit_fixture());
+    // JSON keeps the last of two values: the first secret was shown in clear.
+    let twice = r#"{"llm":{"model_list":[{"model_name":"d","litellm_params":{"model":"openai/x",
+"api_key":"sk-FIRST1111222233334444","api_key":"sk-SECOND555566667777"}}]}}"#;
+    fs::write(&store.source.path, twice).unwrap();
+    let view = ok(store.config_view());
+    assert_eq!(view["text"], Value::Null);
+    assert_eq!(
+        view["problem"],
+        "line 2, column 38: the key \"api_key\" appears twice in one object"
+    );
+    let shown = view.to_string();
+    assert!(
+        !shown.contains("FIRST") && !shown.contains("SECOND"),
+        "{shown}"
+    );
+    let revision = view["revision"].as_str().unwrap().to_owned();
+    let (status, reason, detail) = refused(store.replace_config(&revision, twice));
+    assert_eq!((status, reason), (422, "invalid_config"));
+    assert!(
+        detail.ends_with("the key \"api_key\" appears twice in one object"),
+        "{detail}"
+    );
+    assert_eq!(fs::read_to_string(&store.source.path).unwrap(), twice);
+}
+#[test]
 fn config_edit_refuses_stale_invalid_and_moved_masked_text() {
     let (_dir, store) = setup(edit_fixture());
     let view = ok(store.config_view());

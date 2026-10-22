@@ -155,8 +155,7 @@ impl Store {
                 json!({"code":"stale_revision","current_revision":current}),
             ));
         }
-        let parsed: Value =
-            serde_json::from_str(text).map_err(|error| refused(editor::position(&error)))?;
+        let parsed: Value = editor::parse(text).map_err(refused)?;
         if !parsed.is_object() {
             return Err(refused("the configuration must be a JSON object".into()));
         }
@@ -164,9 +163,9 @@ impl Store {
         // then there is nothing to put back.
         let current_text = match &original {
             None => None,
-            Some(bytes) => std::str::from_utf8(bytes).ok().filter(|text| {
-                serde_json::from_str::<Value>(text).is_ok_and(|value| value.is_object())
-            }),
+            Some(bytes) => std::str::from_utf8(bytes)
+                .ok()
+                .filter(|text| editor::parse(text).is_ok_and(|value| value.is_object())),
         };
         let old = match &original {
             None => Some(json!({})),

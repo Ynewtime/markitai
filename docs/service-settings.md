@@ -189,7 +189,8 @@ config). `GET /api/settings/config` answers `{"path", "origin", "exists",
 and the hex SHA-256 of the file's bytes (`absent` without a file), and `text` is
 the file's own text, layout and key order unchanged (`{}` without a file; null,
 with `problem` such as `line 3, column 9: expected …`, when the file is not UTF-8
-text or not a JSON object), with only each secret's string literal replaced by
+text, not a JSON object or writes one key twice in one object: JSON keeps the
+last value, so a secret written first would be shown in clear), with only each secret's string literal replaced by
 its masked form: a string under a key `markitai config
 show` redacts (API keys, tokens, secrets, passwords, credentials, cookies,
 authorization, and every string beneath such a key) or a value of an
@@ -202,7 +203,9 @@ authorization, and every string beneath such a key) or a value of an
 `config_too_large`). It is refused with 409 `settings_read_only` under session
 model/provider overrides, and with 409 `detail.code = "stale_revision"` (and
 `detail.current_revision`) when the file changed since it was read. `text` must
-be a JSON object (422 `invalid_config`, a parse error as `line L, column C: …`).
+be a JSON object that writes no key twice in one object (422 `invalid_config`, a
+parse error as `line L, column C: …`, a repeated key as `line L, column C: the
+key "api_key" appears twice in one object`, as Python markitai refuses it).
 A masked value sent back unchanged at the position GET sent it is put back in
 place as the stored literal; a masked value anywhere else is 422
 `invalid_config` naming its JSON pointer (type the full value or an `env:`

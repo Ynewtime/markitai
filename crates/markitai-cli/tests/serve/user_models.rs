@@ -1296,6 +1296,18 @@ fn a_users_edit_config_is_its_own_models_file() {
         .join(format!("home/serve/user-models/{a_id}.json"));
     let bytes = std::fs::read(&file).unwrap();
 
+    // A key written twice in one object is refused, as Python refuses it.
+    let twice = text.replacen("\"models\": [", "\"models\": [], \"models\": [", 1);
+    let reply = config_put(&server, &a, &document["revision"], &twice);
+    assert_eq!(
+        reason(&reply),
+        (422, json!("invalid_config")),
+        "{}",
+        reply.text()
+    );
+    assert!(reply.text().contains("appears twice"), "{}", reply.text());
+    assert_eq!(std::fs::read(&file).unwrap(), bytes);
+
     // Unchanged: nothing written, same revision.
     let reply = config_put(&server, &a, &document["revision"], &text);
     assert_eq!(reply.status, 200, "{}", reply.text());

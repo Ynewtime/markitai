@@ -75,6 +75,9 @@ struct Scanner<'a> {
     at: usize,
     path: Vec<Step>,
     found: Vec<Literal>,
+    /// The first key written twice in one object: where its second literal
+    /// starts, and the key.
+    duplicate: Option<(usize, String)>,
 }
 
 impl Scanner<'_> {
@@ -119,10 +122,15 @@ impl Scanner<'_> {
                     self.at += 1;
                     return Some(());
                 }
+                let mut keys = std::collections::HashSet::new();
                 loop {
                     self.space();
                     let span = self.string()?;
+                    let start = span.start;
                     let key: String = serde_json::from_str(&self.text[span]).ok()?;
+                    if !keys.insert(key.clone()) && self.duplicate.is_none() {
+                        self.duplicate = Some((start, key.clone()));
+                    }
                     self.expect(b':')?;
                     self.path.push(Step::Key(key));
                     self.value()?;
@@ -187,15 +195,42 @@ impl Scanner<'_> {
 /// Every string value of `text` (not object keys) in text order; `None` for a
 /// text that is not one JSON value.
 fn literals(text: &str) -> Option<Vec<Literal>> {
+    scan(text).map(|scanner| scanner.found)
+}
+
+fn scan(text: &str) -> Option<Scanner<'_>> {
     let mut scanner = Scanner {
         text,
         at: 0,
         path: Vec::new(),
         found: Vec::new(),
+        duplicate: None,
     };
     scanner.value()?;
     scanner.space();
-    (scanner.at == text.len()).then_some(scanner.found)
+    (scanner.at == text.len()).then_some(scanner)
+}
+
+/// `text` parsed as the Edit config page's JSON, or why not, as
+/// `line L, column C: message`. A key written twice in one object is refused,
+/// as Python markitai refuses it: JSON keeps the last value, so a secret
+/// written first would be neither used nor masked.
+pub(super) fn parse(text: &str) -> Result<Value, String> {
+    let value = serde_json::from_str::<Value>(text).map_err(|error| position(&error))?;
+    if let Some((at, key)) = scan(text).and_then(|scanner| scanner.duplicate) {
+        let before = &text[..at];
+        let line = before.matches('\n').count() + 1;
+        let column = before
+            .rsplit('\n')
+            .next()
+            .map_or(0, |row| row.chars().count())
+            + 1;
+        return Err(format!(
+            "line {line}, column {column}: the key {} appears twice in one object",
+            Value::String(key)
+        ));
+    }
+    Ok(value)
 }
 
 /// The file's revision: `sha256:` and the hex SHA-256 of its bytes, or
@@ -236,19 +271,22 @@ fn decoded(text: &str, span: &Range<usize>) -> Option<String> {
     serde_json::from_str(&text[span.clone()]).ok()
 }
 
-/// Each masked literal of a JSON object text: (span, stored literal, the
-/// masked value GET sends), by JSON pointer.
-fn secrets(text: &str) -> HashMap<String, (Range<usize>, String, String)> {
-    let mut found = HashMap::new();
+/// Each masked literal of a JSON object text, in text order: its JSON
+/// pointer, span, stored literal and the masked value GET sends. Every
+/// occurrence is listed, a repeated key's too.
+fn secrets(text: &str) -> Vec<(String, Range<usize>, String, String)> {
+    let mut found = Vec::new();
     for literal in literals(text).unwrap_or_default() {
         let Some(value) = decoded(text, &literal.span) else {
             continue;
         };
         if let Some(shown) = masked(&value, literal.kind()) {
-            found.insert(
+            found.push((
                 literal.pointer(),
-                (literal.span.clone(), text[literal.span].to_owned(), shown),
-            );
+                literal.span.clone(),
+                text[literal.span].to_owned(),
+                shown,
+            ));
         }
     }
     found
@@ -271,8 +309,8 @@ fn replaced(text: &str, mut replacements: Vec<(Range<usize>, String)>) -> String
 /// The file's text with each secret literal masked, and how many.
 pub(super) fn mask(text: &str) -> (String, usize) {
     let replacements: Vec<_> = secrets(text)
-        .into_values()
-        .map(|(span, _, shown)| (span, Value::String(shown).to_string()))
+        .into_iter()
+        .map(|(_, span, _, shown)| (span, Value::String(shown).to_string()))
         .collect();
     let count = replacements.len();
     (replaced(text, replacements), count)
@@ -288,8 +326,8 @@ pub(super) fn view(path: &str, origin: &str, bytes: Option<&[u8]>, read_only: bo
                 0,
                 Some("the configuration is not UTF-8 text".to_owned()),
             ),
-            Ok(text) => match serde_json::from_str::<Value>(text) {
-                Err(error) => (None, 0, Some(position(&error))),
+            Ok(text) => match parse(text) {
+                Err(problem) => (None, 0, Some(problem)),
                 Ok(value) if !value.is_object() => (
                     None,
                     0,
@@ -310,7 +348,12 @@ pub(super) fn view(path: &str, origin: &str, bytes: Option<&[u8]>, read_only: bo
 /// value it kept at the position GET sent it replaced by the stored literal
 /// of `current` (the file's text); a masked value anywhere else is refused.
 pub(super) fn unmask(text: &str, current: Option<&str>) -> Result<String, String> {
-    let stored = current.map(secrets).unwrap_or_default();
+    // A text with a repeated key is refused before it gets here; the first
+    // occurrence of a pointer is kept.
+    let mut stored = HashMap::new();
+    for (pointer, span, original, shown) in current.map(secrets).unwrap_or_default() {
+        stored.entry(pointer).or_insert((span, original, shown));
+    }
     let found = literals(text).ok_or("the configuration text could not be read")?;
     let mut replacements = Vec::new();
     for literal in found {
@@ -356,6 +399,28 @@ mod tests {
 
     /// Unusual layout, keys out of order, escapes in keys and values.
     const FILE: &str = "{\n\t\"notes\" : { \"password\":\"abc\",\"empty_secret\":\"\", \"title\":\"a \\\"quoted\\\" \\u00e9 value\" },\n   \"llm\":{\"providers\":[ {\"id\":\"p1\", \"provider\":\"openai\",\"api_key\":\"env:OPENAI_API_KEY\",\"api_base\":\"https://api.example/v1\"} ],\n  \"model_list\" :[{\"model_name\":\"default\",\"litellm_params\":{\n      \"model\":\"openai/gpt-4o-mini\",  \"api_key\":\"sk-test-abcdef1234567890\",\n      \"api_base\":\"https://user:pass@gateway.example/v1?key=s3cret&x=1\" }}]},\n\"fetch\":{\"playwright\":{\"extra_http_headers\":{\"X-Custom\":\"header-value-123\",\"Accept\":\"text/html\"}},\n \"cloudflare\":{\"api_token\":\"cf-token-abcdefghijkl\",\"account_id\":\"acct-1\", \"cookies\":[{\"a/b~c\":\"cookie-value-1\"}]}}, \"n\": [1, -2.5e3, true, false, null, {}, []]\n}";
+
+    #[test]
+    fn a_repeated_key_is_refused_and_every_occurrence_masked() {
+        let twice = "{\"a\": {\"api_key\": \"sk-first-abcdef123456\",\n \"api_key\": \"sk-second-abcdef123456\"}}";
+        assert_eq!(
+            parse(twice).unwrap_err(),
+            "line 2, column 2: the key \"api_key\" appears twice in one object"
+        );
+        // The same key in two objects is no repeat.
+        assert!(parse("{\"a\": {\"k\": 1}, \"b\": {\"k\": 1}}").is_ok());
+        assert!(
+            parse("{\"a\": 1,}")
+                .unwrap_err()
+                .starts_with("line 1, column 9: ")
+        );
+        let (masked, count) = mask(twice);
+        assert_eq!(count, 2);
+        assert!(
+            !masked.contains("first") && !masked.contains("second"),
+            "{masked}"
+        );
+    }
 
     #[test]
     fn the_scanner_finds_every_string_value_with_its_pointer_and_span() {

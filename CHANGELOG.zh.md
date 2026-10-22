@@ -125,6 +125,7 @@
 - 文件夹自带的 `.env` 和 `markitai.json` 不再能让转换反过来对付你。当前目录的 `.env` 仍可提供密钥和选项，但不再接受选择程序、路径、地址、代理、主目录或凭据文件的名称（`*_CLI_PATH`、`*_PATH`、`*_EXECUTABLE`、`*_API_BASE`、`*_BASE_URL`、`HTTP(S)_PROXY`、`AWS_*_FILE`、`GOOGLE_APPLICATION_CREDENTIALS`、`LD_*`、`HOME` 等），被忽略的名称会提示一次。在当前文件夹找到的 `./markitai.json`（未用 `-c` 或 `MARKITAI_CONFIG` 指定）不会把环境中的密钥发往它自带的地址：`api_base` 不是服务商文档地址的模型或连接只使用条目里写明的密钥，其中的 `env:` 密钥引用改为占位密钥 `markitai-no-key`（并提示）。`markitai doctor` 和 `--verbose` 会注明配置文件是在当前文件夹找到的。这类值请放在环境变量或 `~/.markitai/.env` 中，或用 `-c` 指定文件。
 
 ### 修复
+- `serve` 的编辑配置：同一对象中重复写出的键会被拒绝（与 Python markitai 一致）。此前对含两个 `api_key` 值的文件执行 `GET /api/settings/config` 会以明文显示第一个值（JSON 保留后一个，因此只有它被遮蔽）；现在不返回文本，并给出问题 `line L, column C: the key "api_key" appears twice in one object`；对 `/api/settings/config` 和 `/api/me/config` 的 `PUT` 以同样的消息返回 422 `invalid_config`。密钥的每一处出现都会被遮蔽。
 - PDF：在默认的 `security.pdf_sanitize: warn` 下，隐藏文字不再进入 Markdown（以及其后的 LLM）：透明文字、不大于 1 磅的文字，以及白色或近白背景上的白字都会去掉（与 Python markitai 一致），并由一条提示引用这些文字（`PDF hidden text: 3 span(s) on page(s) 1 left out of the Markdown (possible prompt injection; excerpt: "…")`）。对于白字，会从渲染图中采样每段白字下方页面实际显示的内容，因此深色色块上的白字保留，白色方框上的白字去掉；`remove` 不再因为页面上画了任何图形就保留该页所有白字，并且还会去掉无法判断背景的白字（`warn` 保留并提示）。可搜索扫描件的 OCR 层不受影响。
 - PDF：所用字体既未指定编码也没有 ToUnicode 映射（例如丢失了 ToUnicode 映射的中日韩字体子集）的文字不再被悄无声息地丢掉。此前标题和段落消失不见，只留下几个被读成拉丁标点的字符（`¡¢£`），页面也不要求 OCR；现在这类文字计为无法读取，页面需要 OCR，OCR（`--ocr`）可以读出；没有其他可读内容的页面会报告出来，而不是写出乱码。
 - EPUB 的脚注和尾注写成全书统一编号的 Markdown 脚注（`text.[^1]` 和 `[^1]: …`）：此前写成原始的 `<a id=…>` 锚点和指向 `#EPUB/text/ch001.xhtml#fn1` 的链接，还带着回链。链接到注释的正文保留原文。
