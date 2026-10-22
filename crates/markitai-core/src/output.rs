@@ -231,7 +231,7 @@ pub fn split_frontmatter(text: &str) -> (Map<String, Value>, &str) {
         let mut offset = 0;
         for line in rest.split_inclusive('\n') {
             if line == "---\n" || line == "---" {
-                if let Ok(Value::Object(meta)) = serde_yaml::from_str::<Value>(&rest[..offset]) {
+                if let Ok(Value::Object(meta)) = yaml_serde::from_str::<Value>(&rest[..offset]) {
                     return (meta, rest[offset + line.len()..].trim_start_matches('\n'));
                 }
                 break;
@@ -263,7 +263,7 @@ fn yaml11_implicit(text: &str) -> bool {
 }
 
 fn yaml_entry(key: &str, value: &Value) -> Result<String> {
-    let failure = |e: serde_yaml::Error| Error::Conversion(e.to_string());
+    let failure = |e: yaml_serde::Error| Error::Conversion(e.to_string());
     let quoted = |text: &str| format!("'{}'", text.replace('\'', "''"));
     let plain_key = key
         .chars()
@@ -289,12 +289,12 @@ fn yaml_entry(key: &str, value: &Value) -> Result<String> {
                     entry.push_str(&format!("- {}\n", quoted(text)));
                 } else {
                     entry.push_str("- ");
-                    entry.push_str(&serde_yaml::to_string(text).map_err(failure)?);
+                    entry.push_str(&yaml_serde::to_string(text).map_err(failure)?);
                 }
             }
             Ok(entry)
         }
-        _ => serde_yaml::to_string(&json!({key:value})).map_err(failure),
+        _ => yaml_serde::to_string(&json!({key:value})).map_err(failure),
     }
 }
 
@@ -1515,7 +1515,7 @@ mod tests {
                 "{value:?}"
             );
             let parsed: serde_json::Value =
-                serde_yaml::from_str(rendered.split("---\n").nth(1).unwrap()).unwrap();
+                yaml_serde::from_str(rendered.split("---\n").nth(1).unwrap()).unwrap();
             assert_eq!(parsed["markitai_processed"], json!(value), "{value:?}");
         }
         let mut frontmatter = Map::new();

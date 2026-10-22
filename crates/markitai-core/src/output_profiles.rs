@@ -1579,7 +1579,7 @@ fn yaml_value_edits(
     };
     let token = &text[start..end];
     let value = if quoted {
-        serde_yaml::from_str::<String>(token).ok()
+        yaml_serde::from_str::<String>(token).ok()
     } else {
         Some(token.to_owned())
     };
@@ -1595,7 +1595,7 @@ fn yaml_value_edits(
                 b'\'' => format!("'{}'", next.replace('\'', "''")),
                 b'"' => serde_json::to_string(&next).unwrap(),
                 _ if (!flow || !next.contains([',', '[', ']', '{', '}']))
-                    && serde_yaml::from_str::<String>(&next).is_ok_and(|value| value == next) =>
+                    && yaml_serde::from_str::<String>(&next).is_ok_and(|value| value == next) =>
                 {
                     next
                 }
@@ -1627,8 +1627,8 @@ fn frontmatter_prefix(source: &str, replacement: Replacements<'_>) -> Option<(St
     let (content_end, prefix_end) = closing?;
     let content = &source[first.len()..content_end];
     if !matches!(
-        serde_yaml::from_str::<serde_yaml::Value>(content),
-        Ok(serde_yaml::Value::Mapping(_))
+        yaml_serde::from_str::<yaml_serde::Value>(content),
+        Ok(yaml_serde::Value::Mapping(_))
     ) {
         return Some((source[..prefix_end].to_owned(), prefix_end));
     }
@@ -2606,7 +2606,7 @@ mod tests {
             .split_once("\r\n---")
             .unwrap()
             .0;
-        let parsed: Value = serde_yaml::from_str(yaml).unwrap();
+        let parsed: Value = yaml_serde::from_str(yaml).unwrap();
         assert_eq!(parsed["screenshot"], "assets/b.png");
     }
 

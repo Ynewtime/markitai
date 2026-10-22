@@ -34,7 +34,7 @@ tempfile.workspace = true
 clap = { version = "4", features = ["derive", "wrap_help"] }
 globset = "0.4"
 walkdir = "2"
-serde_yaml = "0.9"
+yaml_serde = "0.10.7"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 md-5 = "0.11"
 uuid = { version = "1", features = ["v4"] }

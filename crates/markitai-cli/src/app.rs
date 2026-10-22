@@ -2850,7 +2850,7 @@ fn subcommand(cli: &Cli, command: &Command, overrides: Option<Value>) -> CliResu
                     redact(&mut cfg);
                 }
                 match format.to_lowercase().as_str() {
-                    "yaml" => print!("{}", serde_yaml::to_string(&cfg).map_err(runtime)?),
+                    "yaml" => print!("{}", yaml_serde::to_string(&cfg).map_err(runtime)?),
                     "table" => print_table("", &cfg),
                     _ => println!("{}", serde_json::to_string_pretty(&cfg).map_err(runtime)?),
                 }
