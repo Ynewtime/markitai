@@ -102,9 +102,21 @@ pub(crate) fn starts_with_check_mark(text: &str) -> bool {
     }
 }
 
+/// markitai: the dingbats a symbol font's bullets map to (`❖` is Word's
+/// Wingdings diamond), read as list markers like `•`.
+const DINGBAT_BULLETS: [char; 6] = ['❖', '◆', '◇', '■', '▪', '➢'];
+
+/// markitai: whether `text` starts with a dingbat bullet and a space.
+fn starts_with_dingbat_bullet(text: &str) -> bool {
+    let mut chars = text.chars();
+    chars.next().is_some_and(|c| DINGBAT_BULLETS.contains(&c))
+        && chars.next().is_some_and(char::is_whitespace)
+}
+
 pub(crate) fn starts_with_bullet_marker(text: &str) -> bool {
     let trimmed = text.trim_start();
     starts_with_check_mark(trimmed)
+        || starts_with_dingbat_bullet(trimmed)
         || trimmed.starts_with("• ")
         || trimmed.starts_with("● ")
         || trimmed.starts_with("○ ")
@@ -119,6 +131,7 @@ pub(crate) fn is_list_item(text: &str) -> bool {
 
     // Bullet patterns
     if starts_with_check_mark(trimmed)
+        || starts_with_dingbat_bullet(trimmed)
         || trimmed.starts_with("• ")
         || trimmed.starts_with("- ")
         || trimmed.starts_with("* ")
@@ -247,6 +260,11 @@ pub(crate) fn format_list_item(text: &str) -> String {
 
     // Convert various bullet styles to markdown
     // Note: bullet characters like • are multi-byte in UTF-8, use char indices
+    if starts_with_dingbat_bullet(trimmed) {
+        let mut chars = trimmed.chars();
+        chars.next();
+        return format!("- {}", chars.as_str().trim_start());
+    }
     for bullet in &['•', '○', '●', '◦'] {
         if let Some(rest) = trimmed.strip_prefix(*bullet) {
             return format!("- {}", rest.trim_start());
@@ -490,6 +508,17 @@ mod tests {
         assert!(is_list_item("● Item"));
         assert!(is_list_item("• Item"));
         assert!(is_list_item("- Item"));
+    }
+
+    #[test]
+    fn dingbat_bullets_open_list_items() {
+        // markitai: Word's Wingdings bullets, mapped to dingbats.
+        for bullet in ['❖', '◆', '◇', '■', '▪', '➢'] {
+            let item = format!("{bullet} 课程内容以本说明为准");
+            assert!(is_list_item(&item), "{item}");
+            assert_eq!(format_list_item(&item), "- 课程内容以本说明为准");
+        }
+        assert!(!is_list_item("■■ 图例"));
     }
 
     #[test]

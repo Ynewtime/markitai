@@ -53,6 +53,18 @@
       "bytes": 7070,
       "sha256": "4e3ab3ae609a551ef3bec8be901c3e719507f58386c38a810c2808493c7043a8",
       "provenance": "Authored minimal PDF operators and invented text; no external or personal input."
+    },
+    {
+      "file": "symbol-fonts.pdf",
+      "bytes": 14391,
+      "sha256": "b9a9ab645aa01302f4b9050768a477e48e8f1ba96ea7fc9f8495ae557948edda",
+      "provenance": "Authored minimal PDF operators and invented text; no external or personal input."
+    },
+    {
+      "file": "heading-over-rule.pdf",
+      "bytes": 8418,
+      "sha256": "16facb2704908753b60f85944546ab0043deb4df9a75a70a6445e415a1e1f222",
+      "provenance": "Authored minimal PDF operators and invented text; no external or personal input."
     }
   ]
 }

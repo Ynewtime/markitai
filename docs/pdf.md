@@ -537,7 +537,10 @@ made only when the words placed in each link span most of its box (half
 their union), since word positions inside a run are estimated from typical
 (Helvetica) glyph widths. The underline a browser draws under links is link
 styling: `<u>` remains only for underlines that four fifths of the run's
-width are not under links. A heading keeps a link's text without its target:
+width are not under links. A rule drawn as segments meeting end to end (a
+table's top rule, a segment per column) underlines no text it runs past by
+more than three quarters of an em: a heading right above such a table is
+`# Course schedule`, not `# <u>Course schedule</u>`. A heading keeps a link's text without its target:
 a link there is navigation (a site's name over its home page, a post's
 permalink), and the heading may name the document. The page reader does not
 render links.
@@ -557,7 +560,16 @@ of up to 14 words and 120 characters, not ending in `.`, `,` or `;` and,
 past three words, not in `:` (a lead-in). It ranks below every heading size.
 The extractor names a run merged from several faces after its first, so
 such a line can be a bold label followed by body text; the lead-in and
-set-off rules keep the common cases text.
+set-off rules keep the common cases text. A face of its own at least 1.04
+times the body size counts as a heading face too, and one short line (up to
+24 characters, ending at least four em short of the flow's right edge) in
+such a face, or in a bold one, may sit right above its paragraph: `特别说明`
+at 11 pt over 10.4 pt body text is a heading, as in Python markitai 1.2.1.
+CJK text that reads as a sentence or a `label：value` field (the page
+reader's rules below) is no such heading. Sizes are weighed by letters and
+digits only, so a large icon (a 26 pt pointing hand before a section's
+title) sets no heading size; an icon line of pictographs or dingbats only
+at one and a half times the body size or more is left out.
 
 A line ending short of its column starts a new paragraph even without extra
 spacing: wrapped text fills every line but a paragraph's last, so when the
@@ -578,7 +590,9 @@ Lines starting with the same symbol followed by a space (check marks,
 crosses, arrows, stars, geometric shapes, pictographs), two lines of the flow
 or more, are list items that keep the symbol: `- ✅ True HEPA filter`. In the
 page reader, a check box or check mark (`✅ ✔ ✓ ☑ ☐ ☒ ✗ ✘ ❌ ❎`) followed by
-a space starts a list item the same way.
+a space starts a list item the same way. The bullets a symbol font's
+diamonds, squares and arrowheads map to (`❖ ◆ ◇ ■ ▪ ➢`) are list markers
+like `•`: `- 学员可在七日内申请退课…1.2`, one item per contents entry.
 
 A short run raised off a line that the extractor did not read as a
 superscript (a reference list's `^ a b` back-links, a footnote's number in
@@ -882,6 +896,17 @@ Probes of the CMaps listed above and of PyMuPDF's built-in CJK fonts convert to
 the text PyMuPDF reads, and a page with a run of undecodable Identity-H text
 keeps its Latin lines; the other 228 PDFs of the local corpora convert
 byte-identically.
+
+Word writes the glyphs of its Symbol, Wingdings and Wingdings 2 fonts as the
+private-use code U+F000 plus the glyph's byte. In a font so named (a subset
+tag or style suffix aside: `ABCDEF+Wingdings-Regular`, `SymbolMT`) each code
+maps through that font's table, as Python markitai 1.2.1 maps them: the Adobe
+Symbol encoding (`−`, `α`, `≤`; the pieces of large brackets and radicals
+left out) and the Wingdings bullets, check boxes and pointing hands (`❖`,
+`■`, `☐`, `✓`, `☞`); any other glyph of those fonts, and of Wingdings 3 and
+Webdings, is dropped. Before, the byte was read as a Latin letter: icon
+bullets came out as `C` and `v`, a Symbol minus as `-`. Private-use codes of
+other fonts keep that reading.
 
 A text layer that names a CJK radical for the ideograph its glyph draws reads as
 that ideograph: Chrome's "Save as PDF" writes `使⽤` and `右下⻆` (U+2F64 KANGXI

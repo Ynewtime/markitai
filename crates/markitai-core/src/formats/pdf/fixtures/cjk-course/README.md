@@ -33,3 +33,10 @@ bytes; `author-fixtures.json` records the SHA-256 and size of each.
 - `short-last-lines.pdf`: paragraphs set without spacing, each first line
   running to the column's edge and the last stopping short after `。`, then
   a step numbered `2、` standing alone.
+- `symbol-fonts.pdf`: Word's Symbol and Wingdings glyphs as non-embedded
+  TrueType fonts mapping each byte to U+F000 plus the byte: a 26 pt Wingdings
+  2 pointing hand before a section's title, contents entries after Wingdings
+  diamonds, a SymbolMT minus, and a note's title in a face of its own a
+  little larger than the body text, right above its paragraph.
+- `heading-over-rule.pdf`: a heading right above a table whose top rule is
+  drawn a segment per column under the heading's text.

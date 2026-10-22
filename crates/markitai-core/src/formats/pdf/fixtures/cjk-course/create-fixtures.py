@@ -79,6 +79,34 @@ class Font:
         ]
 
 
+class SymbolFont:
+    """A non-embedded TrueType symbol font as Word writes Symbol and Wingdings
+    into a PDF: one byte per glyph, a ToUnicode CMap mapping each byte to
+    the private-use code U+F000 plus the byte."""
+
+    def __init__(self, name, base):
+        self.name, self.base = name, base
+
+    def show(self, codes):
+        return "<" + codes.hex().upper() + ">"
+
+    def objects(self, first):
+        cmap = (
+            "/CIDInit /ProcSet findresource begin 12 dict begin begincmap\n"
+            "/CMapName /Symbolic def 1 begincodespacerange <00> <FF> endcodespacerange\n"
+            "1 beginbfrange <20> <FF> <F020> endbfrange\n"
+            "endcmap CMapName currentdict /CMap defineresource pop end end\n"
+        ).encode()
+        widths = " ".join(["900"] * 224)
+        return [
+            f"<< /Type /Font /Subtype /TrueType /BaseFont /{self.base} /FirstChar 32 /LastChar 255 "
+            f"/Widths [{widths}] /FontDescriptor {first + 1} 0 R /ToUnicode {first + 2} 0 R >>".encode(),
+            f"<< /Type /FontDescriptor /FontName /{self.base} /Flags 4 /FontBBox [0 -200 1000 800] "
+            f"/ItalicAngle 0 /Ascent 800 /Descent -200 /CapHeight 700 /StemV 80 >>".encode(),
+            stream(cmap),
+        ]
+
+
 def stream(data, extra=""):
     return f"<< /Length {len(data)}{extra} >>\nstream\n".encode() + data + b"\nendstream"
 
@@ -97,6 +125,13 @@ def fonts():
 class Page:
     def __init__(self):
         self.ops = []
+        # Symbol fonts the page draws with (see `glyphs`).
+        self.symbols = []
+
+    def glyphs(self, font, size, x, y, codes):
+        if font not in self.symbols:
+            self.symbols.append(font)
+        self.ops.append(f"BT /{font.name} {size} Tf 1 0 0 1 {x:.2f} {y:.2f} Tm {font.show(codes)} Tj ET")
 
     def text(self, font, size, x, y, value, right=None):
         # `right`: justify the line to end there with character spacing.
@@ -126,6 +161,7 @@ def build(name, draw, separator=None, form=None):
     if separator is not None:
         content = content.replace(b" ", separator)
     used = [font for font in (yahei, bold, simsun) if font.cids or (font.notdef and form)]
+    used += page.symbols
     objects = [b"<< /Type /Catalog /Pages 2 0 R >>", None, None]
     resources = {}
     for font in used:
@@ -336,6 +372,46 @@ def short_last_lines(page, yahei, bold, simsun):
     body(page, yahei, top - 48)
 
 
+def symbol_fonts(page, yahei, bold, simsun):
+    # Word's icon headings and contents: a 26 pt Wingdings 2 pointing hand
+    # before a section's title, entries after Wingdings diamonds, a SymbolMT
+    # minus in a sentence, and a note's title in a face of its own a little
+    # larger than the body text, right above its paragraph.
+    hand = SymbolFont("G1", "Wingdings2")
+    diamond = SymbolFont("G2", "ABCDEF+Wingdings-Regular")
+    symbol = SymbolFont("G3", "SymbolMT")
+    page.text(bold, 16, 45, 790, "课程服务说明")
+    page.glyphs(hand, 26, 40, 742, b"\x43")
+    page.text(bold, 12, 76, 746, "学员享有的主要权利")
+    top = 716
+    for n, entry in enumerate(["学员可在七日内申请退课", "课程内容以本说明列明的为准", "学员可随时查询上课记录"], 1):
+        page.glyphs(diamond, 10, 45, top, b"\x76")
+        page.text(yahei, 10, 57, top, entry + "…" * (24 - len(entry)) + f"{n}.{n + 1}")
+        top -= 14
+    top = body(page, yahei, top - 16)
+    page.text(yahei, 10, 45, top - 6, "当月出勤率≥（班级平均出勤率")
+    page.glyphs(symbol, 10, 185, top - 6, b"\x2d")
+    page.text(yahei, 10, 192, top - 6, " 10%）时，学习中心可调整课时。")
+    page.text(simsun, 10.5, 45, top - 40, "特别说明")
+    body(page, yahei, top - 53)
+
+
+def heading_over_rule(page, yahei, bold, simsun):
+    # A heading set right above a table whose top rule is drawn a segment
+    # per column, under the heading's text.
+    page.text(bold, 14, 45, 746, "课程安排")
+    edges = [40, 80, 280, 360, 420, 490]
+    for y in (736, 718):
+        for x0, x1 in zip(edges, edges[1:]):
+            page.rule(y, x0, x1)
+    for (x0, x1), name in zip(zip(edges, edges[1:]), ["序号", "课程名称", "课时", "周数", "材料费"]):
+        page.text(bold, 10, x0 + 6, 724, name)
+    for i, row in enumerate([["1", "社区书法进阶课程", "1,440", "52", "640.00"], ["2", "社区合唱基础课程", "2,880", "52", "320.50"]]):
+        for (x0, x1), value in zip(zip(edges, edges[1:]), row):
+            page.text(simsun, 10, x0 + 6, 704 - i * 16, value)
+    body(page, yahei, 650)
+
+
 def main():
     records = [
         build("nul-separated.pdf", nul_separated, separator=b" \x00 "),
@@ -347,6 +423,8 @@ def main():
         build("cjk-enumerators.pdf", cjk_enumerators),
         build("double-spaced.pdf", double_spaced),
         build("short-last-lines.pdf", short_last_lines),
+        build("symbol-fonts.pdf", symbol_fonts),
+        build("heading-over-rule.pdf", heading_over_rule),
     ]
     (ROOT / "author-fixtures.json").write_text(json.dumps({"fixtures": records}, indent=2) + "\n")
     print(json.dumps(records, indent=2))

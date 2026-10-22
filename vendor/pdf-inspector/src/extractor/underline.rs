@@ -680,6 +680,49 @@ fn has_connected_nonhorizontal_rect(rule: &Rule, rects: &[PdfRect], page: u32) -
     })
 }
 
+/// markitai: the rules made of two or more segments meeting end to end on
+/// one level (a table's top rule drawn a segment per column), each as one
+/// rule spanning its segments.
+fn abutting_chains(rules: &[Rule]) -> Vec<Rule> {
+    let mut sorted: Vec<&Rule> = rules.iter().collect();
+    crate::sort::total(&mut sorted, &mut |a, b| {
+        a.y.total_cmp(&b.y).then(a.x1.total_cmp(&b.x1))
+    });
+    let mut chains = Vec::new();
+    let mut start = 0;
+    while start < sorted.len() {
+        let first = sorted[start];
+        let mut chain = first.clone();
+        let mut end = start + 1;
+        while end < sorted.len() {
+            let next = sorted[end];
+            if (next.y - first.y).abs() > 1.0 || next.x1 > chain.x2 + 1.0 {
+                break;
+            }
+            chain.x2 = chain.x2.max(next.x2);
+            end += 1;
+        }
+        if end - start >= 2 {
+            chains.push(chain);
+        }
+        start = end;
+    }
+    chains
+}
+
+/// markitai: whether the chain of segments a rule belongs to runs past the
+/// item's text by more than three quarters of an em (at least 4 pt) on
+/// either side: a ruling drawn in pieces, such as the top rule of a table
+/// set under a heading, not the item's underline (which was a heading's
+/// `<u>`). Underlines drawn a word at a time join up to the text's width.
+fn chain_overshoots(chain: Option<&(f32, f32)>, item: &TextItem) -> bool {
+    let Some(&(x1, x2)) = chain else {
+        return false;
+    };
+    let pad = (item.font_size * 0.75).max(4.0);
+    x1 < item.x - pad || x2 > item.x + item.width + pad
+}
+
 /// Mark `is_underline` on text items that have a horizontal rule just
 /// below their baseline, and `is_strikeout` on items whose glyphs a rule
 /// crosses at mid x-height. `items`, `rects`, and `lines` are a single
@@ -692,13 +735,11 @@ pub(crate) fn mark_underlined_items(
     lines: &[UnderlineLine],
     page: u32,
 ) {
-    let rules = discard_repeated_ruling_rules(
-        rules_from_graphics(rects, lines, page),
-        items,
-        rects,
-        lines,
-        page,
-    );
+    let drawn = rules_from_graphics(rects, lines, page);
+    // Chains are found among every rule drawn, before those near no text
+    // are set aside: a table's top rule is mostly over no text.
+    let chained = abutting_chains(&drawn);
+    let rules = discard_repeated_ruling_rules(drawn, items, rects, lines, page);
     if rules.is_empty() {
         return;
     }
@@ -756,6 +797,19 @@ pub(crate) fn mark_underlined_items(
         .filter(|(_, rule)| has_vertical_strokes_at_ends(rule, rects, lines, page))
         .map(|(i, _)| i)
         .collect();
+    let chains: Vec<Option<(f32, f32)>> = rules
+        .iter()
+        .map(|rule| {
+            chained
+                .iter()
+                .find(|chain| {
+                    (chain.y - rule.y).abs() <= 1.0
+                        && chain.x1 <= rule.x1 + 0.5
+                        && chain.x2 >= rule.x2 - 0.5
+                })
+                .map(|chain| (chain.x1, chain.x2))
+        })
+        .collect();
     let underlined_items: HashSet<usize> = items
         .iter()
         .enumerate()
@@ -766,6 +820,7 @@ pub(crate) fn mark_underlined_items(
                         && !fraction_rules.contains(&rule_idx)
                         && !border_rules.contains(&rule_idx)
                         && rule_matches_item(rule, item)
+                        && !chain_overshoots(chains[rule_idx].as_ref(), item)
                 })
         })
         .map(|(item_idx, _)| item_idx)
@@ -869,6 +924,26 @@ mod tests {
         // The same rule without the cell's sides is an underline.
         rects.truncate(1);
         mark_underlined_items(&mut items, &rects, &[], 1);
+        assert!(items[0].is_underline);
+    }
+
+    #[test]
+    fn a_ruling_drawn_in_segments_past_the_text_is_no_underline() {
+        // markitai: a table's top rule under a heading, a segment per
+        // column; the segment under the heading covers most of its text.
+        let mut items = vec![item("Schedule", 78.0, 750.0, 112.0, 14.0)];
+        let lines = vec![
+            hline(72.0, 112.0, 740.0),
+            hline(112.0, 312.0, 740.0),
+            hline(312.0, 392.0, 740.0),
+            hline(392.0, 522.0, 740.0),
+        ];
+        mark_underlined_items(&mut items, &[], &lines, 1);
+        assert!(!items[0].is_underline);
+        // An underline drawn a word at a time joins up to the text's width.
+        let mut items = vec![item("two words", 100.0, 500.0, 60.0, 10.0)];
+        let lines = vec![hline(99.0, 140.0, 498.5), hline(140.0, 161.0, 498.5)];
+        mark_underlined_items(&mut items, &[], &lines, 1);
         assert!(items[0].is_underline);
     }
 

@@ -3485,7 +3485,7 @@ pub(crate) fn extract_text_from_operand(
         } else {
             text
         };
-        let (text, legacy_symbol_rewrite) = clean_symbol_pua(text);
+        let (text, legacy_symbol_rewrite) = clean_symbol_pua(text, base_font_name);
         let text = remap_texcm_math_symbols(text, base_font_name);
         (
             normalize_cp1252_controls(text, use_cp1252_fallback),
@@ -3661,9 +3661,26 @@ fn should_use_cp1252_single_byte_fallback(
 
 /// Apply the existing private-use cleanup without changing its output.
 /// The boolean records an actual heuristic rewrite, not a proven Unicode alias.
-fn clean_symbol_pua(text: String) -> (String, bool) {
+///
+/// markitai: in a Symbol, Wingdings, Wingdings 2/3 or Webdings font (named
+/// so, a subset tag or style suffix aside) the code is the glyph's byte in
+/// that font, not a Latin letter: it maps through the font's table
+/// ([`symbol_font_char`]), and a glyph the table leaves out (a dingbat
+/// with no Unicode counterpart, part of a large bracket) is dropped. Word's
+/// icon bullets came out as `C` and `v`, its Symbol minus as `-`.
+fn clean_symbol_pua(text: String, base_font_name: Option<&str>) -> (String, bool) {
     if !text.chars().any(|c| ('\u{F000}'..='\u{F0FF}').contains(&c)) {
         return (text, false);
+    }
+    if let Some(family) = base_font_name.and_then(symbol_family) {
+        let text = text
+            .chars()
+            .filter_map(|c| match c as u32 {
+                code @ 0xF000..=0xF0FF => symbol_font_char(family, (code - 0xF000) as u8),
+                _ => Some(c),
+            })
+            .collect();
+        return (text, true);
     }
     let mut rewritten = false;
     let text = text
@@ -3688,6 +3705,96 @@ fn clean_symbol_pua(text: String) -> (String, bool) {
         })
         .collect();
     (text, rewritten)
+}
+
+/// markitai: a legacy symbol font, by the family its name starts with once
+/// the subset tag and anything but letters and digits are gone
+/// (`ABCDEF+Wingdings-Regular`, `SymbolMT`, `Wingdings2`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SymbolFamily {
+    Symbol,
+    Wingdings,
+    Wingdings2,
+    /// Wingdings 3 and Webdings: arrows and pictures with no table here.
+    Other,
+}
+
+fn symbol_family(name: &str) -> Option<SymbolFamily> {
+    let name: String = strip_subset_prefix(name)
+        .chars()
+        .filter(char::is_ascii_alphanumeric)
+        .map(|c| c.to_ascii_lowercase())
+        .collect();
+    // The longest name first: "wingdings2…" is no "wingdings…".
+    if name.starts_with("wingdings3") || name.starts_with("webdings") {
+        Some(SymbolFamily::Other)
+    } else if name.starts_with("wingdings2") {
+        Some(SymbolFamily::Wingdings2)
+    } else if name.starts_with("wingdings") {
+        Some(SymbolFamily::Wingdings)
+    } else if name.starts_with("symbol") {
+        Some(SymbolFamily::Symbol)
+    } else {
+        None
+    }
+}
+
+/// markitai: what byte `byte` of a symbol font draws, as Python markitai
+/// 1.2.1 maps it (`converter/pdf_markdown.py`): the Adobe Symbol encoding
+/// for Symbol, less the pieces of large brackets and radicals that only
+/// draw part of a sign; the Wingdings and Wingdings 2 glyphs documents use
+/// as bullets, check boxes and pointers. Anything else is `None`.
+fn symbol_font_char(family: SymbolFamily, byte: u8) -> Option<char> {
+    const SYMBOL_20: &str = " !∀#∃%&∋()∗+,−./0123456789:;<=>?\
+                             ≅ΑΒΧΔΕΦΓΗΙϑΚΛΜΝΟΠΘΡΣΤΥςΩΞΨΖ[∴]⊥_\
+                             \0αβχδεφγηιϕκλμνοπθρστυϖωξψζ{|}∼";
+    const SYMBOL_A0: &str = "€ϒ′≤⁄∞ƒ♣♦♥♠↔←↑→↓°±″≥×∝∂•÷≠≡≈…";
+    const SYMBOL_C0: &str = "ℵℑℜ℘⊗⊕∅∩∪⊃⊇⊄⊂⊆∈∉∠∇®©™∏√⋅¬∧∨⇔⇐⇑⇒⇓◊〈®©™∑";
+    let nth = |table: &str, from: u8| table.chars().nth(usize::from(byte - from));
+    match family {
+        SymbolFamily::Symbol => match byte {
+            0x60 => None,
+            0x20..=0x7E => nth(SYMBOL_20, 0x20),
+            0xA0..=0xBC => nth(SYMBOL_A0, 0xA0),
+            0xC0..=0xE5 => nth(SYMBOL_C0, 0xC0),
+            0xF1 => Some('〉'),
+            0xF2 => Some('∫'),
+            _ => None,
+        },
+        SymbolFamily::Wingdings => match byte {
+            0x20 => Some(' '),
+            0x45 => Some('☜'),
+            0x46 => Some('☞'),
+            0x47 => Some('☝'),
+            0x48 => Some('☟'),
+            0x6C => Some('●'),
+            0x6E => Some('■'),
+            0x6F => Some('□'),
+            0x71 => Some('❑'),
+            0x75 => Some('◆'),
+            0x76 => Some('❖'),
+            0xA7 => Some('▪'),
+            0xA8 => Some('☐'),
+            0xD8 => Some('➢'),
+            0xFB => Some('✗'),
+            0xFC => Some('✓'),
+            0xFD => Some('☒'),
+            0xFE => Some('☑'),
+            _ => None,
+        },
+        SymbolFamily::Wingdings2 => match byte {
+            0x20 => Some(' '),
+            0x43 => Some('☞'),
+            0x4F => Some('✗'),
+            0x50 => Some('✓'),
+            0x52 => Some('☑'),
+            0x54 => Some('☒'),
+            0xA3 => Some('□'),
+            _ => None,
+        },
+        SymbolFamily::Other => (byte == 0x20).then_some(' '),
+    }
+    .filter(|&c| c != '\0')
 }
 
 fn decode_symbol_fallback(bytes: &[u8], base_font_name: Option<&str>) -> Option<String> {
@@ -7343,10 +7450,42 @@ mod tests {
             ("Price \u{f024}", "Price $", true),
         ] {
             assert_eq!(
-                clean_symbol_pua(source.to_string()),
+                clean_symbol_pua(source.to_string(), None),
                 (expected.to_string(), rewritten)
             );
         }
+    }
+
+    #[test]
+    fn symbol_font_glyphs_map_by_their_font() {
+        // markitai: Word's Wingdings hand and diamond, a Symbol minus and
+        // Greek letter; dingbats without a counterpart are dropped.
+        for (font, source, expected) in [
+            ("Wingdings2", "\u{f043}\u{f020}", "☞ "),
+            ("ABCDEF+Wingdings-Regular", "\u{f076}x", "❖x"),
+            ("Wingdings", "\u{f0fc}\u{f021}", "✓"),
+            ("SymbolMT", "a \u{f02d} \u{f061}\u{f0a3}", "a − α≤"),
+            ("Symbol", "\u{f060}\u{f0be}", ""),
+            ("Webdings", "\u{f041}", ""),
+        ] {
+            assert_eq!(
+                clean_symbol_pua(source.to_string(), Some(font)),
+                (expected.to_string(), true),
+                "{font}"
+            );
+        }
+        // The tables line up with the encoding's bytes.
+        let symbol = |byte| symbol_font_char(SymbolFamily::Symbol, byte);
+        assert_eq!((0x20..=0x7E).filter_map(symbol).count(), 94);
+        assert_eq!(
+            [0x40, 0x7E, 0xA0, 0xBC, 0xC0, 0xE5].map(symbol),
+            [Some('≅'), Some('∼'), Some('€'), Some('…'), Some('ℵ'), Some('∑')]
+        );
+        // Other fonts keep the long-standing reading of the block.
+        assert_eq!(
+            clean_symbol_pua("\u{f057}".to_string(), Some("Arial")),
+            ("W".to_string(), true)
+        );
     }
 
     #[test]

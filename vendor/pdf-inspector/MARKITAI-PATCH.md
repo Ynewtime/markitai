@@ -861,3 +861,23 @@ failed by name as the 1.25.1 copy (1,727 passed).
 
   Run in the isolated copy (as above), the crate's unit tests give 1,732
   passed and the same 21 failed by name.
+
+## Symbol fonts and rules drawn in segments (parity round 4)
+
+- `src/extractor/fonts.rs`: `clean_symbol_pua` takes the font's name; in a
+  Symbol, Wingdings, Wingdings 2/3 or Webdings font (`symbol_family`, subset
+  tag and style suffix aside) a U+F0xx code maps through
+  `symbol_font_char` (the Adobe Symbol encoding less bracket and radical
+  pieces; Wingdings bullets, check boxes and pointing hands, as Python
+  markitai 1.2.1 maps them) or is dropped, instead of reading as the Latin
+  letter of its byte (`C`, `v` for Word's icon bullets, `-` for a minus).
+- `src/markdown/classify.rs`: the dingbats those bullets map to
+  (`❖ ◆ ◇ ■ ▪ ➢`) followed by a space open list items like `•`.
+- `src/extractor/underline.rs`: `abutting_chains` joins rules meeting end to
+  end on one level (found among every rule drawn, before those near no text
+  are set aside); a rule whose chain runs past an item by more than three
+  quarters of an em is no underline of it (a table's top rule drawn a
+  segment per column right under a heading gave `# <u>…</u>`).
+
+  Run in the isolated copy (as above), the crate's unit tests give 1,735
+  passed (3 added) and the same 21 failed by name.

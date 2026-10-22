@@ -176,3 +176,50 @@ fn double_spaced_cjk_lines_join_their_paragraph() {
     // A centred line stopping short of the text under it ends its block.
     assert!(markdown.contains("\n\n总则\n\n"), "{markdown}");
 }
+
+#[test]
+fn symbol_font_glyphs_are_read_by_their_font() {
+    // Word's Wingdings and Symbol glyphs, mapped to U+F000 plus their byte:
+    // a pointing hand before a section's title is an icon and goes, the
+    // contents entries' diamonds are their bullets, a Symbol minus is `−`.
+    let markdown = markdown(include_bytes!("fixtures/cjk-course/symbol-fonts.pdf"));
+    assert!(
+        markdown.contains(
+            "\n\n- 学员可在七日内申请退课…………………………………1.2\n\
+             - 课程内容以本说明列明的为准……………………………2.3\n\
+             - 学员可随时查询上课记录…………………………………3.4\n\n"
+        ),
+        "{markdown}"
+    );
+    assert!(
+        markdown.contains("当月出勤率≥（班级平均出勤率 − 10%）时，学习中心可调整课时。"),
+        "{markdown}"
+    );
+    let heading = markdown
+        .lines()
+        .find(|line| line.contains("学员享有的主要权利"))
+        .unwrap();
+    assert!(heading.starts_with("## "), "{markdown}");
+    assert!(!markdown.contains(['☞', '❖', 'v', 'C']), "{markdown}");
+    assert!(
+        !markdown
+            .chars()
+            .any(|c| ('\u{e000}'..='\u{f8ff}').contains(&c)),
+        "{markdown:?}"
+    );
+    // A note's title in a face of its own a little larger than the body
+    // text, right above its paragraph, is a heading.
+    assert!(markdown.contains("\n\n### 特别说明\n\n"), "{markdown}");
+}
+
+#[test]
+fn a_tables_top_rule_under_a_heading_is_no_underline() {
+    // The rule is drawn a segment per column, right under the heading.
+    let markdown = markdown(include_bytes!("fixtures/cjk-course/heading-over-rule.pdf"));
+    assert!(markdown.contains("\n# 课程安排\n"), "{markdown}");
+    assert!(!markdown.contains("<u>"), "{markdown}");
+    assert!(
+        markdown.contains("|1|社区书法进阶课程|1,440|52|640.00|"),
+        "{markdown}"
+    );
+}

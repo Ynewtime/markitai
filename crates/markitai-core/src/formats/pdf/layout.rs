@@ -122,9 +122,13 @@ impl Layout {
             let code = item.fixed_pitch == Some(true);
             if matches!(item.item_type, ItemType::Text) && valid(&item) && !in_table && !code {
                 let key = (item.font_size * 10.).round() as i32;
-                let count = item.text.chars().filter(|c| !c.is_whitespace()).count();
-                *sizes.entry(key).or_default() += count;
-                *fonts.entry((key, item.font.clone())).or_default() += count;
+                // Letters and digits: a large icon (a dingbat before a
+                // section's title) sets no heading size.
+                let count = item.text.chars().filter(|c| c.is_alphanumeric()).count();
+                if count > 0 {
+                    *sizes.entry(key).or_default() += count;
+                    *fonts.entry((key, item.font.clone())).or_default() += count;
+                }
                 if item.is_bold && !item.is_italic {
                     bold_fonts.insert(item.font.clone());
                 }
@@ -811,9 +815,24 @@ fn markdown(runs: &[Run]) -> String {
     }
 }
 
+/// Whether `item` is an icon: pictograph or dingbat characters only, set at
+/// one and a half times the body text's size `body` or more.
+fn icon(item: &TextItem, body: f32) -> bool {
+    item.font_size >= body * 1.5
+        && item.text.chars().any(|c| !c.is_whitespace())
+        && item.text.chars().all(|c| {
+            c.is_whitespace()
+                || matches!(c as u32,
+                    0x2190..=0x21FF | 0x2300..=0x23FF | 0x25A0..=0x25FF | 0x2600..=0x27BF
+                    | 0x2900..=0x297F | 0x2B00..=0x2BFF | 0x1F300..=0x1FAFF)
+        })
+}
+
 fn list_prefix(text: &str) -> Option<&str> {
     let text = text.trim_start();
-    for bullet in ["•", "●", "◦", "▪", "- ", "* "] {
+    // A symbol font's bullets map to dingbats (`❖` is Word's Wingdings
+    // diamond); they are list markers like `•`.
+    for bullet in ["•", "●", "◦", "▪", "❖", "◆", "◇", "■", "➢", "- ", "* "] {
         if let Some(rest) = text.strip_prefix(bullet) {
             return Some(rest.trim_start());
         }
@@ -846,6 +865,34 @@ fn heading_level(line: &Line, sizes: &[f32]) -> usize {
 /// Baseline gap, in the larger line's size, from which a line starts a new
 /// block in the paragraph flow.
 const NEW_BLOCK: f32 = 1.8;
+/// How much larger than the body text a face of its own is a heading face
+/// (see [`same_size_headings`]).
+const LARGER: f32 = 1.04;
+/// The characters at most of a heading line set right above its paragraph.
+const SHORT_HEADING: usize = 24;
+
+/// CJK text that reads as a sentence or a field, not a title (the page
+/// reader's rules, Python markitai 1.2.1's too): it ends with, or holds
+/// within, `。！？；`, ends with `，`, `、` or `：`, runs on past `，` for a
+/// dozen characters, or is a `label：value` field with a label of at most
+/// twelve characters.
+fn cjk_sentence_or_field(text: &str) -> bool {
+    let text = text.trim();
+    let ends = |c: char| matches!(c, '。' | '！' | '？' | '；');
+    let field = text.split_once('：').is_some_and(|(label, value)| {
+        let label = label.trim();
+        !label.is_empty()
+            && label.chars().count() <= 12
+            && !label.contains(['。', '，', '；'])
+            && !value.trim().is_empty()
+    });
+    text.ends_with(|c: char| ends(c) || matches!(c, '，' | '、' | '：'))
+        || text
+            .char_indices()
+            .any(|(at, c)| ends(c) && !text[at + c.len_utf8()..].trim().is_empty())
+        || (text.contains('，') && text.chars().count() >= 12)
+        || field
+}
 
 /// Which lines are headings set at the body size: a block of one or two
 /// lines whose runs are all in a heading face (see [`Faces`]), neither
@@ -858,7 +905,16 @@ const NEW_BLOCK: f32 = 1.8;
 /// from several faces after its first, so a bold label opening a line
 /// (`**1** The first approach…`) can look like a line in that face: the
 /// lead-in rule and the set-off around the block keep such lines text.
+///
+/// A face of its own a little larger than the body text (by [`LARGER`])
+/// is a heading face too, and a single short line in it, or in a bold face,
+/// may sit right above its paragraph (`特别说明` at 11 pt over 10.4 pt body
+/// text, as Python markitai 1.2.1 makes it a heading): it ends short of
+/// the text's right edge and holds at most [`SHORT_HEADING`] characters.
+/// CJK text that reads as a sentence or a `label：value` field is no
+/// heading either way.
 fn same_size_headings(lines: &[Line], headings: &[f32], faces: &Faces) -> Vec<bool> {
+    let larger = |line: &Line| line.size >= faces.body * LARGER;
     let face = |line: &Line| {
         heading_level(line, headings) == 0
             && line.size >= faces.body * 0.95
@@ -868,9 +924,14 @@ fn same_size_headings(lines: &[Line], headings: &[f32], faces: &Faces) -> Vec<bo
                     && item.fixed_pitch != Some(true)
                     && item.baseline_shift == 0.
                     && faces.body_font.as_deref() != Some(item.font.as_str())
-                    && faces.heading_fonts.contains(&item.font)
+                    && (faces.heading_fonts.contains(&item.font) || larger(line))
             })
     };
+    let right = lines
+        .iter()
+        .flat_map(|line| &line.items)
+        .map(|item| item.x + item.width)
+        .fold(f32::NEG_INFINITY, f32::max);
     let faced: Vec<bool> = lines.iter().map(face).collect();
     let apart = |above: &Line, below: &Line| {
         above.y - below.y > above.size.max(below.size) * NEW_BLOCK
@@ -893,7 +954,6 @@ fn same_size_headings(lines: &[Line], headings: &[f32], faces: &Faces) -> Vec<bo
             end += 1;
         }
         let before = start == 0 || apart(&lines[start - 1], &lines[start]);
-        let after = end == lines.len() || apart(&lines[end - 1], &lines[end]);
         let text = lines[start..end]
             .iter()
             .flat_map(|line| &line.items)
@@ -901,6 +961,18 @@ fn same_size_headings(lines: &[Line], headings: &[f32], faces: &Faces) -> Vec<bo
             .collect::<Vec<_>>()
             .join(" ");
         let words = text.split_whitespace().count();
+        let line = &lines[start];
+        let after = end == lines.len()
+            || apart(&lines[end - 1], &lines[end])
+            || (end - start == 1
+                && (larger(line) || line.items.iter().all(|item| item.is_bold))
+                && text.chars().count() <= SHORT_HEADING
+                && line
+                    .items
+                    .iter()
+                    .map(|item| item.x + item.width)
+                    .fold(f32::NEG_INFINITY, f32::max)
+                    < right - line.size * 4.);
         if end - start <= 2
             && before
             && after
@@ -910,6 +982,7 @@ fn same_size_headings(lines: &[Line], headings: &[f32], faces: &Faces) -> Vec<bo
             && !text.ends_with(['.', ',', ';'])
             && !(text.ends_with(':') && words > 3)
             && list_prefix(&text).is_none()
+            && !cjk_sentence_or_field(&text)
         {
             result[start..end].fill(true);
         }
@@ -1870,6 +1943,13 @@ fn render(
         return None;
     }
     if character_counts(&all_text) != character_counts(baseline) {
+        return None;
+    }
+    // A large icon (a symbol font's pointing hand before a section's title)
+    // decorates the text beside it and is left out, as Python markitai
+    // 1.2.1 drops a heading of glyphs only.
+    items.retain(|item| !icon(item, faces.body));
+    if items.is_empty() {
         return None;
     }
     if !context.figures.is_empty() {
