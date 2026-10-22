@@ -148,7 +148,7 @@ pub(crate) fn walk_node(
 fn is_math_span(attrs: &scraper::node::Attributes) -> bool {
     attrs.len() == 1
         && attrs.iter().next().is_some_and(|(name, value)| {
-            name.local.as_ref() == "class"
+            &*name.local == "class"
                 && matches!(value.as_ref(), "math math-inline" | "math math-display")
         })
 }

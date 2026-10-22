@@ -203,3 +203,14 @@ would join one call onto a line in three unmodified upstream files
 formatting exactly, so they are kept as published and there is no
 `rustfmt.toml`. The workspace's `cargo fmt --all` does not reach this
 directory.
+
+## scraper 0.29
+
+With Markitai's move to scraper 0.29 (html5ever 0.40, selectors 0.41,
+cssparser 0.38), `Cargo.toml` asks for scraper 0.29 and html5ever 0.40 (the
+0.27 and 0.39 named above). html5ever 0.40's `LocalName` also converts to
+bytes, so `src/lib.rs` (`attr`) and `src/dom_walker.rs` (the math class
+check) compare `&*name.local` with the string instead of `as_ref()`. The
+tree construction rules `TreeWriter` follows are unchanged in 0.40. In the
+isolated copy the suite passes with the same 117 tests as before the move.
+

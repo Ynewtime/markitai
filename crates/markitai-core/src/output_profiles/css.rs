@@ -3,8 +3,7 @@
 use super::{Replacements, html_space, unquote, visible_target};
 use cssparser::{
     AtRuleParser, BasicParseErrorKind, CowRcStr, DeclarationParser, Delimiter, ParseError, Parser,
-    ParserInput, ParserState, QualifiedRuleParser, RuleBodyItemParser, RuleBodyParser,
-    StyleSheetParser, Token,
+    ParserState, QualifiedRuleParser, RuleBodyItemParser, RuleBodyParser, StyleSheetParser, Token,
 };
 use std::ops::Range;
 
@@ -42,8 +41,7 @@ pub(super) fn edits(
     visible: bool,
     stylesheet: bool,
 ) -> Vec<Edit> {
-    let mut input = ParserInput::new(source);
-    let mut parser = Parser::new(&mut input);
+    let mut parser = Parser::new(source);
     Reader {
         source,
         replacements,
@@ -59,12 +57,12 @@ pub(super) fn edits(
     .read(&mut parser)
 }
 
-fn consume(parser: &mut Parser<'_, '_>) {
+fn consume(parser: &mut Parser<'_>) {
     while parser.next_including_whitespace_and_comments().is_ok() {}
 }
 
 impl<'a> Reader<'a> {
-    fn read(&mut self, parser: &mut Parser<'a, '_>) -> Vec<Edit> {
+    fn read(&mut self, parser: &mut Parser<'a>) -> Vec<Edit> {
         if self.depth >= 64 {
             consume(parser);
             return Vec::new();
@@ -178,16 +176,13 @@ impl<'a> Reader<'a> {
         self.resource(start + open + 1 + left..start + open + 1 + right, decoded)
     }
 
-    fn quoted_url(
-        &self,
-        parser: &mut Parser<'a, '_>,
-    ) -> Result<(Option<Edit>, bool), ParseError<'a, ()>> {
+    fn quoted_url(&self, parser: &mut Parser<'a>) -> Result<(Option<Edit>, bool), ParseError<()>> {
         parser.parse_nested_block(|inside| {
             inside.skip_whitespace();
             let start = inside.position().byte_index();
             let token = inside.next()?.clone();
             let Token::QuotedString(value) = token else {
-                return Err(inside.new_custom_error(()));
+                return Err(ParseError::custom(()));
             };
             let end = inside.position().byte_index();
             let resource = self.string_resource(start, end, &value);
@@ -195,7 +190,7 @@ impl<'a> Reader<'a> {
             // not additional resource positions.
             while let Ok(token) = inside.next() {
                 if !matches!(token, Token::Ident(_) | Token::Function(_)) {
-                    return Err(inside.new_custom_error(()));
+                    return Err(ParseError::custom(()));
                 }
             }
             Ok(resource)
@@ -204,10 +199,10 @@ impl<'a> Reader<'a> {
 
     fn values(
         &self,
-        parser: &mut Parser<'a, '_>,
+        parser: &mut Parser<'a>,
         depth: usize,
         custom_property: bool,
-    ) -> Result<Vec<Edit>, ParseError<'a, ()>> {
+    ) -> Result<Vec<Edit>, ParseError<()>> {
         if depth >= 64 {
             consume(parser);
             return Ok(Vec::new());
@@ -264,14 +259,14 @@ impl<'a> Reader<'a> {
                         edits.extend(nested);
                     }
                 }
-                Token::CurlyBracketBlock => return Err(parser.new_custom_error(())),
+                Token::CurlyBracketBlock => return Err(ParseError::custom(())),
                 _ => {}
             }
         }
         Ok(edits)
     }
 
-    fn image_function(&self, parser: &mut Parser<'a, '_>) -> Result<Vec<Edit>, ParseError<'a, ()>> {
+    fn image_function(&self, parser: &mut Parser<'a>) -> Result<Vec<Edit>, ParseError<()>> {
         parser.parse_nested_block(|inside| {
             inside.skip_whitespace();
             let mut start = inside.position().byte_index();
@@ -294,12 +289,12 @@ impl<'a> Reader<'a> {
                     let (edit, remove) = self.quoted_url(inside)?;
                     (edit, remove, true)
                 }
-                _ => return Err(inside.new_custom_error(())),
+                _ => return Err(ParseError::custom(())),
             };
             let end = inside.position().byte_index();
             // The optional fallback is a color, never another resource string.
             if let Ok(token) = inside.next() {
-                if !matches!(token, Token::Comma) { return Err(inside.new_custom_error(())); }
+                if !matches!(token, Token::Comma) { return Err(ParseError::custom(())); }
                 consume(inside);
             }
             if remove && !quoted {
@@ -312,14 +307,14 @@ impl<'a> Reader<'a> {
 
     fn image_set(
         &self,
-        parser: &mut Parser<'a, '_>,
+        parser: &mut Parser<'a>,
         function_start: usize,
         depth: usize,
-    ) -> Result<Vec<Edit>, ParseError<'a, ()>> {
+    ) -> Result<Vec<Edit>, ParseError<()>> {
         if depth >= 64 {
             parser.parse_nested_block(|inside| {
                 consume(inside);
-                Ok::<_, ParseError<'a, ()>>(())
+                Ok::<_, ParseError<()>>(())
             })?;
             return Ok(Vec::new());
         }
@@ -384,7 +379,7 @@ impl<'a> Reader<'a> {
                                 self.values(nested, depth + 1, false)
                             })?);
                         }
-                        _ => return Err(candidate.new_custom_error(())),
+                        _ => return Err(ParseError::custom(())),
                     }
                     let (mut resolution, mut media_type) = (false, false);
                     while let Ok(token) = candidate.next().cloned() {
@@ -405,11 +400,11 @@ impl<'a> Reader<'a> {
                                 candidate.parse_nested_block(|nested| {
                                     nested.expect_string()?;
                                     nested.expect_exhausted()?;
-                                    Ok::<_, ParseError<'a, ()>>(())
+                                    Ok::<_, ParseError<()>>(())
                                 })?;
                                 media_type = true;
                             }
-                            _ => return Err(candidate.new_custom_error(())),
+                            _ => return Err(ParseError::custom(())),
                         }
                     }
                     Ok((edits, remove))
@@ -421,7 +416,7 @@ impl<'a> Reader<'a> {
                     break;
                 }
             }
-            Ok::<_, ParseError<'a, ()>>(())
+            Ok::<_, ParseError<()>>(())
         })?;
         let function_end = parser.position().byte_index();
         if !candidates.iter().any(|(_, _, remove)| *remove) {
@@ -464,12 +459,12 @@ impl<'a> Reader<'a> {
 impl<'i> DeclarationParser<'i> for Reader<'i> {
     type Declaration = Vec<Edit>;
     type Error = ();
-    fn parse_value<'t>(
+    fn parse_value(
         &mut self,
         name: CowRcStr<'i>,
-        parser: &mut Parser<'i, 't>,
+        parser: &mut Parser<'i>,
         _: &ParserState,
-    ) -> Result<Vec<Edit>, ParseError<'i, ()>> {
+    ) -> Result<Vec<Edit>, ParseError<()>> {
         self.values(parser, self.depth, name.starts_with("--"))
     }
 }
@@ -478,17 +473,17 @@ impl<'i> QualifiedRuleParser<'i> for Reader<'i> {
     type Prelude = ();
     type QualifiedRule = Vec<Edit>;
     type Error = ();
-    fn parse_prelude<'t>(&mut self, parser: &mut Parser<'i, 't>) -> Result<(), ParseError<'i, ()>> {
+    fn parse_prelude(&mut self, parser: &mut Parser<'i>) -> Result<(), ParseError<()>> {
         self.imports_allowed = false;
         consume(parser);
         Ok(())
     }
-    fn parse_block<'t>(
+    fn parse_block(
         &mut self,
         _: (),
         _: &ParserState,
-        parser: &mut Parser<'i, 't>,
-    ) -> Result<Vec<Edit>, ParseError<'i, ()>> {
+        parser: &mut Parser<'i>,
+    ) -> Result<Vec<Edit>, ParseError<()>> {
         Ok(self.child(Context::Body).read(parser))
     }
 }
@@ -497,17 +492,19 @@ impl<'i> AtRuleParser<'i> for Reader<'i> {
     type Prelude = Prelude;
     type AtRule = Vec<Edit>;
     type Error = ();
-    fn parse_prelude<'t>(
+    fn parse_prelude(
         &mut self,
         name: CowRcStr<'i>,
-        parser: &mut Parser<'i, 't>,
-    ) -> Result<Prelude, ParseError<'i, ()>> {
+        parser: &mut Parser<'i>,
+    ) -> Result<Prelude, ParseError<()>> {
         if self.context == Context::Inline {
-            return Err(parser.new_error(BasicParseErrorKind::AtRuleInvalid(name)));
+            return Err(ParseError::from_basic_kind(
+                BasicParseErrorKind::AtRuleInvalid,
+            ));
         }
         if name.eq_ignore_ascii_case("import") {
             if !self.imports_allowed {
-                return Err(parser.new_custom_error(()));
+                return Err(ParseError::custom(()));
             }
             parser.skip_whitespace();
             let start = parser.position().byte_index();
@@ -536,7 +533,7 @@ impl<'i> AtRuleParser<'i> for Reader<'i> {
                 {
                     self.quoted_url(parser)?
                 }
-                _ => return Err(parser.new_custom_error(())),
+                _ => return Err(ParseError::custom(())),
             };
             consume(parser);
             return Ok(Prelude::Import(edit.into_iter().collect()));
@@ -569,7 +566,9 @@ impl<'i> AtRuleParser<'i> for Reader<'i> {
                 Context::Rules
             }
         } else {
-            return Err(parser.new_error(BasicParseErrorKind::AtRuleInvalid(name)));
+            return Err(ParseError::from_basic_kind(
+                BasicParseErrorKind::AtRuleInvalid,
+            ));
         };
         consume(parser);
         Ok(Prelude::Block(context))
@@ -581,12 +580,12 @@ impl<'i> AtRuleParser<'i> for Reader<'i> {
             Prelude::Block(_) => Err(()),
         }
     }
-    fn parse_block<'t>(
+    fn parse_block(
         &mut self,
         prelude: Prelude,
         _: &ParserState,
-        parser: &mut Parser<'i, 't>,
-    ) -> Result<Vec<Edit>, ParseError<'i, ()>> {
+        parser: &mut Parser<'i>,
+    ) -> Result<Vec<Edit>, ParseError<()>> {
         self.imports_allowed = false;
         let context = match prelude {
             Prelude::Block(context) => context,
@@ -597,7 +596,7 @@ impl<'i> AtRuleParser<'i> for Reader<'i> {
                     Context::Rules
                 }
             }
-            Prelude::Import(_) => return Err(parser.new_custom_error(())),
+            Prelude::Import(_) => return Err(ParseError::custom(())),
         };
         Ok(self.child(context).read(parser))
     }

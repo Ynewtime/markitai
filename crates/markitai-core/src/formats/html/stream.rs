@@ -78,7 +78,7 @@ fn placeholder(element: ElementRef<'_>) -> bool {
             .value()
             .attrs
             .iter()
-            .all(|(name, _)| name.local.as_ref() == "id")
+            .all(|(name, _)| &*name.local == "id")
         && element.children().all(|node| match node.value() {
             Node::Fragment => node
                 .children()

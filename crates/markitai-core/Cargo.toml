@@ -53,11 +53,11 @@ zip = { version = "9.0.5", default-features = false, features = ["deflate-flate2
 cfb = "0.15"
 encoding_rs = "0.8"
 csv = "1"
-cssparser = "0.37"
-scraper = "0.27"
-markup5ever = "0.39"
+cssparser = "0.38"
+scraper = "0.29"
+markup5ever = "0.40"
 # The tokenizer and tree builder scraper uses, joined in `formats/html/parse.rs`.
-html5ever = "0.39"
+html5ever = "0.40"
 # General categories for titles (`titles.rs`) and readable addresses (`iri.rs`).
 unicode-properties = { version = "0.1.4", default-features = false, features = ["general-category"] }
 htmd = { version = "0.5", default-features = false }

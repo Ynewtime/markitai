@@ -64,7 +64,7 @@ impl<'a> Element<'a> {
     pub fn attr(&self, name: &str) -> Option<&'a str> {
         self.attrs
             .iter()
-            .find(|(attr, _)| attr.local.as_ref() == name)
+            .find(|(attr, _)| &*attr.local == name)
             .map(|(_, value)| value.as_ref())
     }
 }

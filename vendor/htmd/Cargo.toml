@@ -72,7 +72,7 @@ path = "tests/turndown_online_demo_tests.rs"
 name = "markitai_tests"
 path = "tests/markitai_tests.rs"
 
-# markitai: the converter walks the scraper (html5ever 0.39) tree that
+# markitai: the converter walks the scraper (html5ever 0.40) tree that
 # Markitai already parses with, instead of a markup5ever_rcdom 0.38 tree, so
 # the binary carries one HTML parser instantiation. Benches and examples are
 # not vendored, and scraper is a regular dependency rather than the tests'
@@ -81,14 +81,14 @@ path = "tests/markitai_tests.rs"
 version = "0.11"
 
 [dependencies.html5ever]
-version = "0.39"
+version = "0.40"
 
 [dependencies.phf]
 version = "0.13.1"
 features = ["macros"]
 
 [dependencies.scraper]
-version = "0.27"
+version = "0.29"
 default-features = false
 
 # markitai: `HtmlToMarkdownBuilder::scripting_enabled` needs this crate's own
