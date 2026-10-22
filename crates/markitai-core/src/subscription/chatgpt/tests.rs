@@ -193,7 +193,7 @@ fn unknown_version_model_and_mime_fail_without_document_execution() {
     assert_eq!(e.kind, FailureKind::Unsupported);
     assert_eq!(
         e.error.to_string(),
-        "The installed Codex does not offer chatgpt/gpt-4-retired; it offers chatgpt/gpt-6.2-nova, chatgpt/gpt-6-luna, chatgpt/gpt-5.5"
+        "The installed Codex does not offer chatgpt/gpt-4-retired; it offers chatgpt/gpt-6.2-nova, chatgpt/gpt-6-astra, chatgpt/gpt-6-luna, chatgpt/gpt-5.5"
     );
     assert!(!f.root.path().join("request.json").exists());
     let e = complete(
@@ -298,23 +298,25 @@ fn the_models_are_the_ones_the_installed_codex_offers_its_default_first() {
         names,
         [
             "chatgpt/gpt-6.2-nova",
+            "chatgpt/gpt-6-astra",
             "chatgpt/gpt-6-luna",
             "chatgpt/gpt-5.5"
         ]
     );
-    assert_eq!(list[1].label, "GPT-6-LUNA");
+    assert_eq!(list[2].label, "GPT-6-LUNA");
     assert!(list.iter().all(|model| model.supports_vision));
-    // The default is the first model of the binary's own list.
+    // The default is the lightest model of the binary's own list, not its
+    // first (gpt-6-astra).
     assert_eq!(
         default_model(&f.config, Duration::from_secs(5)),
         "gpt-6-luna"
     );
-    // A Codex that cannot list its models.
+    // A Codex that cannot list its models: no list, and Python's default.
     let f = Fixture::new("ok");
     fake_runtime::install(f.root.path(), &json!({"name":"ok","catalog":"none"}));
-    let list = models(&f.config, Duration::from_secs(5)).unwrap();
-    assert_eq!(list.len(), 1);
-    assert_eq!(list[0].model, "chatgpt/gpt-5.5");
+    let e = models(&f.config, Duration::from_secs(5)).unwrap_err();
+    assert_eq!(e.kind, FailureKind::Protocol);
+    assert!(e.error.to_string().contains("cannot list its models"));
     assert_eq!(
         default_model(&f.config, Duration::from_secs(5)),
         FALLBACK_MODEL
@@ -340,15 +342,71 @@ fn each_offered_model_runs_with_its_own_restricted_catalog_entry() {
             .unwrap();
     assert_eq!(sent["model"], "gpt-6.2-nova");
     assert!(f.root.path().join("refreshes.jsonl").exists());
-    // A Codex that cannot list its models: the compiled catalog for its
-    // model, Codex's own catalog for another one.
+    // A Codex that cannot list its models: Codex's own catalog for every
+    // model (this build compiles none in).
     let f = Fixture::new("ok");
     fake_runtime::install(f.root.path(), &json!({"name":"ok","catalog":"none"}));
-    for (model, catalog) in [("gpt-5.5", true), ("gpt-6-luna", false)] {
+    for model in ["gpt-5.5", "gpt-6-luna"] {
         complete(&f.config, f.request(model, &[])).unwrap();
         let sent: Value =
             serde_json::from_slice(&std::fs::read(f.root.path().join("request.json")).unwrap())
                 .unwrap();
-        assert_eq!(sent["catalog"], catalog, "{model}");
+        assert_eq!(sent["catalog"], false, "{model}");
     }
+}
+#[test]
+fn the_default_is_the_lightest_current_model_codex_lists() {
+    let entry = |slug: &str, description: &str, upgrade: Value| json!({"slug":slug,"description":description,"upgrade":upgrade});
+    let pick = |list: Vec<Value>| lightest(&list).map(str::to_owned);
+    // Codex 0.163.0's order: the newest current luna, not an older one that
+    // points to it, nor the first entry.
+    let codex = vec![
+        entry("gpt-6.1-sol", "Latest workhorse model", Value::Null),
+        entry("gpt-6-astra", "Frontier intelligence", Value::Null),
+        entry(
+            "gpt-5.6-luna",
+            "Older fast and efficient model.",
+            json!({"model":"gpt-6-luna"}),
+        ),
+        entry(
+            "gpt-6-luna",
+            "Fast and affordable model for easier tasks.",
+            Value::Null,
+        ),
+    ];
+    assert_eq!(pick(codex).as_deref(), Some("gpt-6-luna"));
+    // No luna: a small name, or a description that says it is affordable.
+    let small = vec![
+        entry("gpt-7", "Frontier", Value::Null),
+        entry("gpt-7-mini", "Small model", Value::Null),
+    ];
+    assert_eq!(pick(small).as_deref(), Some("gpt-7-mini"));
+    let said = vec![
+        entry("gpt-7", "Frontier", Value::Null),
+        entry(
+            "gpt-7-swift",
+            "A lower cost model for simple work",
+            Value::Null,
+        ),
+    ];
+    assert_eq!(pick(said).as_deref(), Some("gpt-7-swift"));
+    // Only an outdated luna: still the lightest.
+    let old = vec![
+        entry("gpt-7", "Frontier", Value::Null),
+        entry("gpt-5.6-luna", "Older", json!({"model":"gpt-7"})),
+    ];
+    assert_eq!(pick(old).as_deref(), Some("gpt-5.6-luna"));
+    // Nothing marked light: Codex's own default.
+    let plain = vec![
+        entry("gpt-7", "Frontier", Value::Null),
+        entry("gpt-7-pro", "Pro", Value::Null),
+    ];
+    assert_eq!(pick(plain).as_deref(), Some("gpt-7"));
+    assert_eq!(pick(Vec::new()), None);
+    // "lunar" is not the luna family.
+    let lunar = vec![
+        entry("gpt-7", "x", Value::Null),
+        entry("gpt-lunar", "y", Value::Null),
+    ];
+    assert_eq!(pick(lunar).as_deref(), Some("gpt-7"));
 }

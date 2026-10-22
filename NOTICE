@@ -69,9 +69,3 @@ These paths are relative to the archive's attribution root (the Python wheel
 uses its .dist-info/licenses/ directory). Three historical objc2-family MIT
 notices remain explicitly review-needed. This collection does not complete a
 legal review or resolve the upstream Apple SDK licensing discussion.
-
-The restricted Codex model capability catalog derives from OpenAI Codex
-rust-v0.159.0 (Apache-2.0). The complete original license/copyright notice,
-modified catalog, change description and exact source identities are included in
-licenses/codex/. Only gpt-5.5 is retained and apply_patch_tool_type is set to null;
-the official runtime executable is not modified or bundled by this adapter.

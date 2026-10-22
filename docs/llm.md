@@ -60,8 +60,8 @@ from.
 With an empty model list, a nonempty `MODEL` selects one model. Otherwise, as
 in Python markitai, the [subscription runtimes](subscriptions.md) signed in on
 this machine join the pool first (Claude Code as `claude-agent/haiku`, Copilot
-as `copilot/auto`, ChatGPT through Codex as `chatgpt/` and the first model
-Codex lists), then each available API credential: Anthropic, OpenAI, Gemini,
+as `copilot/auto`, ChatGPT through Codex as `chatgpt/` and the lightest
+current model Codex lists, `gpt-6-luna` today), then each available API credential: Anthropic, OpenAI, Gemini,
 DeepSeek and OpenRouter. Each runtime is asked once per process for its own
 sign-in status (`claude auth status`, Copilot's status call, `codex login
 status`); none of their token files is read, and a runtime signed in only with

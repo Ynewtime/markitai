@@ -240,7 +240,7 @@ mod tests {
             ("PATH".to_owned(), std::env::var("PATH").unwrap()),
         ]);
         let cfg = crate::config::normalize(&json!({"llm":{"model_list":[{"model_name":"default",
-            "litellm_params":{"model":format!("chatgpt/{}", crate::subscription::chatgpt::BUNDLED_MODEL)}}],
+            "litellm_params":{"model":"chatgpt/gpt-5.5"}}],
             "router_settings":{"timeout":20}},"cache":{"enabled":false},
             "prompts":{"dir":"/nonexistent/markitai-test-prompts"}}))
         .unwrap();
@@ -280,7 +280,7 @@ mod tests {
             ("PATH".to_owned(), std::env::var("PATH").unwrap()),
         ]);
         let cfg = crate::config::normalize(&json!({"llm":{"model_list":[{"model_name":"default",
-            "litellm_params":{"model":format!("chatgpt/{}", crate::subscription::chatgpt::BUNDLED_MODEL)}}],
+            "litellm_params":{"model":"chatgpt/gpt-5.5"}}],
             "router_settings":{"timeout":20}},"cache":{"enabled":false},
             "prompts":{"dir":"/nonexistent/markitai-test-prompts"}}))
         .unwrap();

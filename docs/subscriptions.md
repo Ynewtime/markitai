@@ -11,7 +11,7 @@ key, using the provider's separately installed official command-line runtime:
 
 `markitai auth` alone reports all three. With an empty `llm.model_list` and no
 `MODEL`, a runtime signed in with a subscription joins the automatic model pool
-(`claude-agent/haiku`, `copilot/auto`, `chatgpt/` with Codex's first model),
+(`claude-agent/haiku`, `copilot/auto`, `chatgpt/` with the lightest current model Codex lists),
 and `markitai init` offers it; see [LLM](llm.md#model-selection). `copilot/auto`
 lets Copilot choose the model; any other Copilot model must be the one that
 answers. When the workbench or

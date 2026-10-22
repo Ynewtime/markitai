@@ -17,17 +17,13 @@ use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 
 pub const CLI_VERSION: &str = "0.159.0";
-/// The model of the catalog compiled into this build, used when the
-/// installed Codex cannot list its models.
-pub const BUNDLED_MODEL: &str = "gpt-5.5";
 /// The model offered when the installed Codex cannot be asked (Python
-/// markitai's default); otherwise the first model Codex lists is the default.
+/// markitai's default); otherwise [`lightest`] picks from Codex's list.
 pub const FALLBACK_MODEL: &str = "gpt-6-luna";
 const CATALOG_LIMIT: usize = 8 * 1024 * 1024;
 const INPUT_LIMIT: usize = 10 * 1024 * 1024;
 const IMAGE_LIMIT: usize = 32 * 1024 * 1024;
 const TEXT_LIMIT: usize = 8 * 1024 * 1024;
-const CATALOG: &[u8] = include_bytes!("chatgpt/models.json");
 
 #[derive(Clone)]
 pub struct Config {
@@ -324,9 +320,9 @@ fn restricted(entry: &Value) -> Value {
 }
 
 /// The catalog an exec of `model` reads: the installed Codex's own entry,
-/// restricted; the compiled catalog for its model when Codex cannot list
-/// its models; `None` (Codex's own catalog, with a one-time warning) for
-/// another model then. A model Codex can list and does not offer is refused.
+/// restricted; `None` (Codex's own catalog, with a one-time warning) when
+/// Codex cannot list its models. A model Codex can list and does not offer
+/// is refused.
 fn catalog_for(
     config: &Config,
     installed: &str,
@@ -364,7 +360,6 @@ fn catalog_for(
                 })
             }
         },
-        None if model == BUNDLED_MODEL => Ok(Some(CATALOG.to_vec())),
         None => {
             note_unvalidated_model(model);
             Ok(None)
@@ -389,8 +384,51 @@ fn note_unvalidated_model(model: &str) {
     ));
 }
 
-/// The model `chatgpt/` defaults to: the first one the installed Codex
-/// lists (its default, the newest current model), else [`FALLBACK_MODEL`].
+/// The lightest current model of a Codex list (in Codex's own order,
+/// newest first), for markitai's clean-up and picture work: the first of the
+/// `luna` family, else the first Codex marks as small or affordable (a
+/// `mini`/`nano` name, or a description that says so), else the first entry.
+/// A model Codex points to a newer one (`upgrade`) is chosen only when no
+/// current one matches.
+fn lightest(list: &[Value]) -> Option<&str> {
+    fn slug(entry: &Value) -> Option<&str> {
+        entry["slug"].as_str()
+    }
+    let luna = |entry: &&Value| {
+        slug(entry).is_some_and(|slug| slug.split(['-', '.']).any(|part| part == "luna"))
+    };
+    let affordable = |entry: &&Value| {
+        let small = slug(entry).is_some_and(|slug| {
+            slug.split(['-', '.'])
+                .any(|part| matches!(part, "mini" | "nano"))
+        });
+        let said = entry["description"].as_str().is_some_and(|text| {
+            let text = text.to_ascii_lowercase();
+            [
+                "affordable",
+                "cheap",
+                "low cost",
+                "lower cost",
+                "lightweight",
+            ]
+            .iter()
+            .any(|word| text.contains(word))
+        });
+        small || said
+    };
+    let current = |entry: &&Value| entry["upgrade"].is_null();
+    list.iter()
+        .filter(current)
+        .find(luna)
+        .or_else(|| list.iter().filter(current).find(affordable))
+        .or_else(|| list.iter().find(luna))
+        .or_else(|| list.iter().find(affordable))
+        .or_else(|| list.first())
+        .and_then(slug)
+}
+
+/// The model `chatgpt/` defaults to: the [`lightest`] model the installed
+/// Codex lists, else [`FALLBACK_MODEL`].
 pub fn default_model(config: &Config, timeout: Duration) -> String {
     RUNTIME
         .deadline(timeout)
@@ -399,17 +437,12 @@ pub fn default_model(config: &Config, timeout: Duration) -> String {
             let (installed, _) = version(config, deadline, None).ok()?;
             bundled(config, &installed, deadline, None).ok().flatten()
         })
-        .and_then(|list| {
-            list.first()
-                .and_then(|entry| entry["slug"].as_str())
-                .map(str::to_owned)
-        })
+        .and_then(|list| lightest(&list).map(str::to_owned))
         .unwrap_or_else(|| FALLBACK_MODEL.into())
 }
 
 /// The models the signed-in account can use through the installed Codex,
-/// its default first; the compiled catalog's model when Codex cannot list
-/// them.
+/// in Codex's own order; an error when Codex cannot list them.
 pub fn models(config: &Config, timeout: Duration) -> Result<Vec<Model>, Failure> {
     if !status(config, timeout)?.authenticated {
         return Err(Failure::new(
@@ -424,11 +457,10 @@ pub fn models(config: &Config, timeout: Duration) -> Result<Vec<Model>, Failure>
         None => bundled(config, &installed, deadline, None)?,
     };
     let Some(listed) = listed else {
-        return Ok(vec![Model {
-            model: format!("chatgpt/{BUNDLED_MODEL}"),
-            label: "GPT-5.5".into(),
-            supports_vision: true,
-        }]);
+        return Err(Failure::new(
+            FailureKind::Protocol,
+            "The installed Codex cannot list its models (`codex debug models` failed)",
+        ));
     };
     Ok(listed
         .iter()

@@ -858,7 +858,8 @@ fn codex(home: &Path, scenario: &Value) -> i32 {
         };
         let mut models = vec![
             entry("gpt-5.5", 3, "list"),
-            entry("gpt-6-luna", 1, "list"),
+            entry("gpt-6-luna", 2, "list"),
+            entry("gpt-6-astra", 1, "list"),
             entry("codex-auto-review", 43, "hide"),
         ];
         // The account's list knows a model newer than the binary.
@@ -903,7 +904,7 @@ fn codex(home: &Path, scenario: &Value) -> i32 {
     assert_eq!(settings["web_search"], "disabled");
     assert_eq!(settings["features.shell_tool"], false);
     // The one model of a restricted catalog, unless this Codex cannot list
-    // its models and the model is not the compiled catalog's.
+    // its models.
     let catalog_path = settings
         .get("model_catalog_json")
         .and_then(Value::as_str)
@@ -919,7 +920,7 @@ fn codex(home: &Path, scenario: &Value) -> i32 {
             assert_eq!(models[0]["experimental_supported_tools"], json!([]));
             assert!(models[0]["multi_agent_version"].is_null());
         }
-        None => assert!(scenario["catalog"] == "none" && model != "gpt-5.5"),
+        None => assert!(scenario["catalog"] == "none"),
     }
     let images: Vec<PathBuf> = args
         .iter()

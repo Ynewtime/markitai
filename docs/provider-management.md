@@ -17,7 +17,7 @@ model list, and their model IDs are typed by hand. The subscription providers
 list on every request (never cached, because a stored login can change);
 `chatgpt` returns the models the installed Codex offers for the signed-in
 account (`codex debug models`), its default first. They reject an API key or base URL and report `unavailable`
-when the runtime or its login is missing. Markitai itself reads no browser or
+when the runtime or its login is missing (or Codex cannot list its models). Markitai itself reads no browser or
 CLI authentication store; see [subscriptions](subscriptions.md).
 Quick-add `/api/settings/llm/detected` lists the default models whose API keys
 are set in the conversion environment (process variables plus `.env` files), in
