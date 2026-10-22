@@ -163,11 +163,11 @@ auto-generated release PR, so you cut a release only when you mean to.
 2. Add a `## [X.Y.Z] - YYYY-MM-DD` section to `CHANGELOG.md` (this becomes the
    GitHub Release notes verbatim) and mirror it in `CHANGELOG.zh.md`, in the
    release commit itself (see below).
-3. Commit and push to `main` (e.g. `chore(release): v X.Y.Z`).
-4. Tag and push:
+3. Commit (e.g. `chore(release): v X.Y.Z`), tag, and push `main` and the tag
+   together, so the tag exists when the checks of that push run:
 
    ```bash
-   git tag vX.Y.Z && git push origin vX.Y.Z
+   git tag vX.Y.Z && git push --atomic origin main vX.Y.Z
    ```
 
 Pushing the `vX.Y.Z` tag runs `.github/workflows/publish.yml`. It runs the
@@ -183,11 +183,19 @@ from the run's page. If the registry refuses the tagged `server.json`, fix it on
 `mcp-publisher login github`, `mcp-publisher publish server.json`.
 
 To re-publish an existing tag (e.g. after a transient failure), run the
-**Release** workflow manually from the Actions tab with the tag as input.
+**Release** workflow manually from the Actions tab with the tag as input. The
+pushed tag counts as released (the website shows its section), so when Release
+fails after the tag, fix the cause and re-publish the same tag.
 
 The CHANGELOG and the website's changelog pages change only with a release.
-`main` carries no unreleased CHANGELOG section (it waits on the release branch),
-and the release commit adds it. The rest of the site (guides, setup scripts)
+`main` may correct an already released section at any time, but it never
+carries a section for an unreleased version: those notes wait in the gitignored
+`.local/changelog-unreleased.md` and `.local/changelog-unreleased.zh.md` (or on
+the release branch), and the release commit moves them into the CHANGELOG.
+Website Check enforces this with `scripts/check_changelog.py` (a section above
+the newest `vX.Y.Z` tag fails), which is why the release commit is pushed with
+its tag; the Release workflow in turn refuses a tag whose commit has no section
+for its version. The rest of the site (guides, setup scripts)
 still deploys on every push to `main`, but the docs build publishes only the
 sections up to the newest `vX.Y.Z` tag (`website/scripts/changelog.mjs`), and
 it fails rather than guess when it cannot read the tags. When the Release

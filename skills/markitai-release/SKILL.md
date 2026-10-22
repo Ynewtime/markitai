@@ -24,17 +24,20 @@ Releases are manual and **tag-driven**: pushing a `vX.Y.Z` tag runs `.github/wor
    - `CHANGELOG.md`: English; this section becomes the GitHub Release notes **verbatim**.
    - `CHANGELOG.zh.md`: the Chinese mirror of the same section.
    - Keep entries short: describe user-visible additions, behavior changes and fixes; keep implementation logs in review notes.
-   - The sections go into the release commit: `main` carries no unreleased section, because the CHANGELOG and the website's changelog pages change only with a release.
+   - The sections go into the release commit: `main` carries no unreleased section, because the CHANGELOG and the website's changelog pages change only with a release. Unreleased notes wait in the gitignored `.local/changelog-unreleased.md` / `.local/changelog-unreleased.zh.md` (same format); move them in here. Corrections to released sections may land on main at any time.
+   - `python3 scripts/check_changelog.py` fails on a section above the newest `vX.Y.Z` tag (Website Check runs it on every push and pull request); `--release vX.Y.Z` checks the section is there (the Release workflow refuses the tag otherwise).
    - The website copies both files from the repo root at docs build time, keeping only the sections up to the newest `vX.Y.Z` tag (`website/scripts/changelog.mjs`); `deploy-website.yml` rebuilds it once the Release workflow succeeds. Rebuild locally to validate Vue/Markdown rendering (a local build hides the new section until its tag exists; check the rendering in `website/changelog.md` or with a local tag in a scratch clone).
    - Recheck CLI `--help`, both website languages and `skills/` whenever a flag, default, output layout or extra changes.
 
-5. **Commit and push to main**: `chore(release): X.Y.Z`.
+5. **Commit** `chore(release): X.Y.Z` on main.
 
-6. **Tag and push the tag.** This is the publish trigger:
+6. **Tag, then push main and the tag in one atomic push.** The tag is the publish trigger, and the CHANGELOG guard on the main push passes only if the tag arrives with it:
 
    ```bash
-   git tag vX.Y.Z && git push origin vX.Y.Z
+   git tag vX.Y.Z && git push --atomic origin main vX.Y.Z
    ```
+
+   If the Release workflow fails after the tag is pushed, fix the cause and re-publish the same tag (run Release with `tag=vX.Y.Z`); the tag already counts as released for the website.
 
 7. **Verify. The release is done only when all of these hold:**
    - The Release workflow run is green end to end.
