@@ -55,6 +55,7 @@
 - **`--json` 会在条目的 `warnings` 里列出它的提示。** 转换时打印在 stderr 上的提示（看起来是扫描件或乱码的 PDF 页面、隐藏文字、超时的 LLM 请求）原本不会出现在 `--json` 和报告里：扫描的 PDF 返回的是 `warnings: []`。现在单个文件或 URL，以及文件夹批处理和 URL 列表批处理的每个条目，都会把它们写进条目的 `warnings`，与 markitai-rust 和 `markitai serve` 一致；stderr 上每条仍只显示一次。
 - **`markitai serve` 中用户令牌的转换不再使用远程抓取回退。** 本地策略拿不到页面时，只要 `fetch.remote_consent` 允许（内置默认值就允许），用户令牌的 URL 会继续交给 defuddle.md、Jina Reader 或 Cloudflare，等于以服务器的名义把用户的 URL 发给第三方。现在用户令牌的任务（以及对它的任何重试）不论 `fetch.remote_consent` 怎么设都不会尝试它们，条目会带上警告 `[Fetch] …: the remote fallback (defuddle.md, Jina Reader, Cloudflare) was skipped: a user token's conversion never sends its URL to remote services`。管理员的任务和命令行仍按 `fetch.remote_consent` 处理。
 - **PDF 字形检查兼容 RapidOCR 3.10。** 新安装 `ocr` 扩展会得到 RapidOCR 3.10，它在第一次使用时才创建识别器：`--ocr` 下读取各字体截图的检查在这里出错，并悄悄信任了画出的字母与所说不符的文字层（移位字母表、旧式 CJK 字体）。现在由检查自己加载识别器；稀疏分块识别用的低检测阈值也会恢复到 RapidOCR 3.10 创建检测器所依据的配置里。RapidOCR 3.9 照旧可用。
+- **比表头长的 CSV 行保留所有单元格。** 表格宽度原本跟随表头，所以较长行多出的单元格（`a,b` 下的 `2,3,4`）会被悄悄丢掉。现在表格宽度取最长的一行，与 TSV 读取器、MarkItDown 0.1.9 和 markitai-rust 一致。
 
 ## [1.2.1] - 2026-10-18
 

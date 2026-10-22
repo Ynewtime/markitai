@@ -1,8 +1,10 @@
 """Known CSV/notebook inputs need parsers, not binary format detection.
 
-Rendering follows MarkItDown 0.1.7's CSV/notebook rules, including ragged-row
-handling and its final whitespace normalization, except that a UTF-8 BOM is
-not part of the first header. See NOTICE (Microsoft, MIT).
+Rendering follows MarkItDown's CSV/notebook rules, including ragged-row
+handling (0.1.9: the table is as wide as its longest row, so a row longer
+than the header keeps its cells, as markitai-rust and the TSV reader do) and
+its final whitespace normalization, except that a UTF-8 BOM is not part of
+the first header. See NOTICE (Microsoft, MIT).
 """
 
 from __future__ import annotations
@@ -36,16 +38,18 @@ def convert_csv(path: Path) -> ConvertResult:
         text = decode_body(data, html=False)[0]
     reader = csv.reader(io.StringIO(text))
     try:
-        header = next(reader, None)
+        rows = list(reader)
         lines = []
-        if header is not None:
-            width = len(header)
+        if rows:
+            # A row longer than the header widened the table instead of
+            # losing its last cells
+            width = max(len(row) for row in rows)
+            header, *body = (row + [""] * (width - len(row)) for row in rows)
             lines = [
                 "| " + " | ".join(text_cell(cell) for cell in header) + " |",
                 "| " + " | ".join(["---"] * width) + " |",
             ]
-            for row in reader:
-                cells = (row + [""] * max(0, width - len(row)))[:width]
+            for cells in body:
                 lines.append("| " + " | ".join(text_cell(c) for c in cells) + " |")
     except csv.Error as exc:
         conversion_failed(f"Malformed CSV: {exc}")

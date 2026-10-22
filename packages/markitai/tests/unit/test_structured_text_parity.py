@@ -102,3 +102,16 @@ def test_malformed_notebook_is_reported_as_failure(tmp_path):
     assert converter is not None
     with pytest.raises((ConversionError, ValueError)):
         converter.convert(path)
+
+
+def test_csv_row_longer_than_the_header_keeps_its_cells(tmp_path):
+    """A row longer than the header lost its last cells ("4" below); the
+    table is now as wide as its longest row, as MarkItDown 0.1.9, the TSV
+    reader and markitai-rust write it."""
+    path = tmp_path / "ragged.csv"
+    path.write_text("a,b\n1\n2,3,4\n", encoding="utf-8")
+    converter = get_converter(path)
+    assert converter is not None
+    assert converter.convert(path).markdown == (
+        "| a | b |  |\n| --- | --- | --- |\n| 1 |  |  |\n| 2 | 3 | 4 |"
+    )
