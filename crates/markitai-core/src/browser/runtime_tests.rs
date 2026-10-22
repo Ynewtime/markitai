@@ -888,6 +888,118 @@ fn a_restricted_browser_fetch_refuses_a_host_on_this_machine() {
     );
 }
 
+/// A loopback site for the render wait: `/static` is complete at load,
+/// `/late` adds its text from a request answered after 700 ms, `/stream`
+/// keeps an event stream open, and `/slow` changes its DOM every 100 ms.
+fn settle_site() -> (String, Arc<AtomicBool>, thread::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let stop = Arc::new(AtomicBool::new(false));
+    let stopped = stop.clone();
+    let worker = thread::spawn(move || {
+        while !stopped.load(Ordering::Relaxed) {
+            let Ok((mut stream, _)) = listener.accept() else {
+                thread::sleep(Duration::from_millis(5));
+                continue;
+            };
+            let stopped = stopped.clone();
+            thread::spawn(move || {
+                let Some(request) = request(&mut stream) else {
+                    return;
+                };
+                let page = |body: &str| {
+                    format!(
+                        "<!doctype html><html><head><title>Settle</title></head><body>{body}</body></html>"
+                    )
+                };
+                let (mime, body) = match request.path.as_str() {
+                    "/static" => (
+                        "text/html",
+                        page(
+                            "<article><h1>Complete</h1><p>Every word is here at load.</p></article>",
+                        ),
+                    ),
+                    "/late" => (
+                        "text/html",
+                        page(
+                            "<article><h1>Late</h1><p id=t>Loading</p></article><script>setTimeout(()=>fetch('/data').then(r=>r.text()).then(x=>{document.getElementById('t').textContent=x}),200)</script>",
+                        ),
+                    ),
+                    "/data" => {
+                        thread::sleep(Duration::from_millis(700));
+                        ("text/plain", "Arrived after the load.".into())
+                    }
+                    "/stream" => (
+                        "text/html",
+                        page(
+                            "<article><h1>Stream</h1><p>An open event stream does not hold the page.</p></article><script>new EventSource('/events')</script>",
+                        ),
+                    ),
+                    "/events" => {
+                        let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\n\r\ndata: hello\n\n");
+                        while !stopped.load(Ordering::Relaxed) {
+                            thread::sleep(Duration::from_millis(20));
+                        }
+                        return;
+                    }
+                    "/slow" => (
+                        "text/html",
+                        page(
+                            "<article><h1>Busy</h1><p id=n>0</p></article><script>let n=0;setInterval(()=>{document.getElementById('n').textContent=++n},100)</script>",
+                        ),
+                    ),
+                    _ => ("text/plain", String::new()),
+                };
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: {mime}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+            });
+        }
+    });
+    (base, stop, worker)
+}
+
+#[test]
+#[ignore = "requires installed Chromium; private process and loopback only"]
+fn the_render_wait_ends_once_the_page_has_settled() {
+    if isolated("the_render_wait_ends_once_the_page_has_settled") {
+        return;
+    }
+    assert!(available());
+    let (base, stop, worker) = settle_site();
+    let cfg = json!({"fetch":{"playwright":{"timeout":15000,"extra_wait_ms":3000}}});
+    let runtime = BrowserRuntime::new(1).unwrap();
+    let timed = |path: &str| {
+        let started = Instant::now();
+        let html = fetch_with_runtime(&format!("{base}{path}"), &cfg, false, Some(&runtime))
+            .unwrap()
+            .page()
+            .html;
+        (html, started.elapsed())
+    };
+    // Start the process once, so the timings below are the page's own.
+    timed("/static");
+    let (html, elapsed) = timed("/static");
+    assert!(html.contains("Every word is here at load."));
+    assert!(elapsed < Duration::from_millis(2500), "{elapsed:?}");
+    // Text a script fetches after the load is waited for.
+    let (html, _) = timed("/late");
+    assert!(html.contains("Arrived after the load."), "{html}");
+    // An open event stream does not hold the wait.
+    let (html, elapsed) = timed("/stream");
+    assert!(html.contains("does not hold the page"));
+    assert!(elapsed < Duration::from_millis(2500), "{elapsed:?}");
+    // A page that never stops changing keeps extra_wait_ms as its bound.
+    let (_, elapsed) = timed("/slow");
+    assert!(elapsed >= Duration::from_millis(3000), "{elapsed:?}");
+    runtime.close();
+    stop.store(true, Ordering::Relaxed);
+    worker.join().unwrap();
+}
+
 #[cfg(test)]
 mod bounded_fixture_io {
     include!(concat!(

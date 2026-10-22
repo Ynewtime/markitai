@@ -560,6 +560,42 @@ pub(crate) fn fetch_with_runtime(
 /// message.
 /// A page with almost no text that runs a script: a challenge interstitial
 /// rather than an error page with content of its own.
+/// How long a page must stay quiet to count as settled: no request that can
+/// change its DOM in flight and no DOM change (Playwright's `networkidle`
+/// window).
+const SETTLE_QUIET: Duration = Duration::from_millis(500);
+/// Milliseconds since the page's DOM last changed. The first call in a
+/// document starts watching it and answers 0.
+const DOM_QUIET: &str = "(() => { try { const key = Symbol.for('markitai.domQuiet'); let state = window[key]; if (!state) { state = window[key] = { last: performance.now() }; new MutationObserver(() => { state.last = performance.now(); }).observe(document, { subtree: true, childList: true, characterData: true }); } return performance.now() - state.last; } catch (error) { return 0; } })()";
+
+/// Wait for the page's scripts to finish rendering, at most `limit`
+/// (`extra_wait_ms`): the wait ends once no document, script, XHR or fetch
+/// request has been in flight and the DOM has not changed for
+/// [`SETTLE_QUIET`]. Pictures, fonts, media and streams are not waited for,
+/// so an open event stream cannot hold the page. A page complete at load
+/// settles about half a second in; one still loading data keeps the bound.
+/// Answers whether the page settled.
+fn wait_until_settled(browser: &mut cdp::Browser, limit: Duration) -> Result<bool> {
+    let deadline = Instant::now() + limit;
+    loop {
+        // No answer to go by: the network decides.
+        let dom_quiet = browser
+            .evaluate(DOM_QUIET)?
+            .as_f64()
+            .map_or(SETTLE_QUIET, |ms| {
+                Duration::from_secs_f64(ms.max(0.0) / 1000.0)
+            });
+        if dom_quiet >= SETTLE_QUIET && browser.dom_requests_quiet_for() >= SETTLE_QUIET {
+            return Ok(true);
+        }
+        let now = Instant::now();
+        if now >= deadline {
+            return Ok(false);
+        }
+        browser.pause((deadline - now).min(Duration::from_millis(50)))?;
+    }
+}
+
 fn interstitial(browser: &mut cdp::Browser) -> Result<bool> {
     Ok(browser
         .evaluate("(() => { const t = (document.body && document.body.innerText || '').trim(); return t.length < 300 && document.scripts.length > 0; })()")?
@@ -680,10 +716,14 @@ fn fetch_page(
         }
     }
     if selector_found && options.extra_wait > 0 {
-        browser.pause(Duration::from_millis(options.extra_wait))?;
+        wait_until_settled(browser, Duration::from_millis(options.extra_wait))?;
     }
+    // A page that fits the window has nothing below the fold to load. The
+    // pause after scrolling back lets pictures scrolled into view paint, which
+    // only a screenshot needs.
     if !options.skip_scroll {
-        browser.evaluate("(async () => { let height = document.body?.scrollHeight || 0; for (let i=0;i<8;i++) { window.scrollTo(0,height); await new Promise(r=>setTimeout(r,600)); const next=document.body?.scrollHeight || 0; if(next===height) break; height=next; } window.scrollTo(0,0); await new Promise(r=>setTimeout(r,800)); return true; })()")?;
+        let paint = if shots == Shots::None { 0 } else { 800 };
+        browser.evaluate(&format!("(async () => {{ let height = document.body?.scrollHeight || 0; if (height <= window.innerHeight) return true; for (let i=0;i<8;i++) {{ window.scrollTo(0,height); await new Promise(r=>setTimeout(r,600)); const next=document.body?.scrollHeight || 0; if(next===height) break; height=next; }} window.scrollTo(0,0); await new Promise(r=>setTimeout(r,{paint})); return true; }})()"))?;
     }
     let final_url = browser
         .evaluate("location.href")?

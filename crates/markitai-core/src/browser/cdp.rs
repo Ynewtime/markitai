@@ -249,6 +249,11 @@ pub(super) struct Browser {
     host_public: std::collections::HashMap<String, bool>,
     in_flight: HashSet<String>,
     pub last_network_change: Instant,
+    // Requests whose answer can still change the DOM (documents, scripts,
+    // XHR and fetch; not pictures, fonts, media or streams), and since when
+    // none has been in flight.
+    dom_requests: HashSet<String>,
+    dom_quiet_since: Instant,
     pub main_frame: Option<String>,
     pub status: Option<u64>,
     pub navigation_failed: bool,
@@ -312,6 +317,8 @@ impl Browser {
             host_public: std::collections::HashMap::new(),
             in_flight: HashSet::new(),
             last_network_change: Instant::now(),
+            dom_requests: HashSet::new(),
+            dom_quiet_since: Instant::now(),
             main_frame: None,
             status: None,
             navigation_failed: false,
@@ -336,6 +343,8 @@ impl Browser {
         self.host_public.clear();
         self.in_flight.clear();
         self.last_network_change = Instant::now();
+        self.dom_requests.clear();
+        self.dom_quiet_since = Instant::now();
         self.main_frame = None;
         self.status = None;
         self.navigation_failed = false;
@@ -654,11 +663,20 @@ impl Browser {
                 if let Some(id) = params["requestId"].as_str() {
                     self.in_flight.insert(id.to_owned());
                     self.last_network_change = Instant::now();
+                    if matches!(
+                        params["type"].as_str(),
+                        Some("Document" | "Script" | "XHR" | "Fetch")
+                    ) {
+                        self.dom_requests.insert(id.to_owned());
+                    }
                 }
             }
             "Network.loadingFinished" | "Network.loadingFailed" => {
                 if let Some(id) = params["requestId"].as_str() {
                     self.in_flight.remove(id);
+                    if self.dom_requests.remove(id) && self.dom_requests.is_empty() {
+                        self.dom_quiet_since = Instant::now();
+                    }
                 }
                 self.last_network_change = Instant::now();
             }
@@ -847,6 +865,16 @@ impl Browser {
             .map(|process| (process.child.id(), process._profile.path().to_owned()))
     }
 
+    /// How long no request that can still change the DOM has been in flight
+    /// (zero while one is).
+    pub fn dom_requests_quiet_for(&self) -> Duration {
+        if self.dom_requests.is_empty() {
+            self.dom_quiet_since.elapsed()
+        } else {
+            Duration::ZERO
+        }
+    }
+
     pub fn idle(&self) -> bool {
         self.in_flight.is_empty()
             && self.last_network_change.elapsed() >= Duration::from_millis(500)
@@ -959,6 +987,8 @@ mod tests {
                 blocked: vec![regex::Regex::new(r"^https://example\.test/ads/").unwrap()],
                 in_flight: HashSet::new(),
                 last_network_change: Instant::now(),
+                dom_requests: HashSet::new(),
+                dom_quiet_since: Instant::now(),
                 main_frame: Some("main".into()),
                 status: None,
                 navigation_failed: false,

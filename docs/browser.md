@@ -128,7 +128,14 @@ visual-only.
 
 The browser applies cookies, additional HTTP headers, custom user agent,
 `load`/`domcontentloaded`/`networkidle`, a visible CSS selector wait, extra wait,
-and bounded automatic scrolling. A caller's `extra_http_headers` are sent only
+and bounded automatic scrolling. The extra wait (`extra_wait_ms`, 3 s by
+default) is an upper bound for scripts to finish rendering: it ends once no
+document, script, XHR or fetch request has been in flight and the DOM has not
+changed for 0.5 s (pictures, fonts, media and event streams are not waited
+for), so a page complete at load is read about half a second after it loaded,
+while one still loading data keeps the whole bound. A page that fits the
+window is not scrolled, and the 0.8 s pause after scrolling back, which lets
+pictures scrolled into view paint, is taken only for screenshots. A caller's `extra_http_headers` are sent only
 to the initial navigation origin (its scheme, host and effective port), like
 `http_credentials`, so a secret among them never reaches a subresource host or
 a redirect target; a same-origin subresource still receives them. The automatic
