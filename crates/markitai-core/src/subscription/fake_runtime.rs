@@ -932,6 +932,26 @@ fn codex(home: &Path, scenario: &Value) -> i32 {
             emit(&json!({"type":"turn.failed","error":{"message":"sk-fake-never-expose"}}));
             return 1;
         }
+        "rate-limited" => {
+            emit(
+                &json!({"type":"turn.failed","error":{"message":"exceeded retry limit, last status: 429 Too Many Requests sk-fake-never-expose"}}),
+            );
+            return 1;
+        }
+        // Rate limited once, then answers.
+        "flaky" if !home.join("flaky.done").exists() => {
+            write_text(&home.join("flaky.done"), "1");
+            emit(
+                &json!({"type":"turn.failed","error":{"message":"unexpected status 503 Service Unavailable"}}),
+            );
+            return 1;
+        }
+        "usage-limit" => {
+            emit(
+                &json!({"type":"error","message":"You've hit your usage limit. Try again in 2 hours. sk-fake-never-expose"}),
+            );
+            return 1;
+        }
         _ => {}
     }
     emit(

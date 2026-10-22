@@ -199,6 +199,8 @@ fn missing_terminal_errors_and_tool_events_never_publish_partial_text() {
     for (name, kind) in [
         ("truncated", FailureKind::Truncated),
         ("failed", FailureKind::Transport),
+        ("rate-limited", FailureKind::RateLimit),
+        ("usage-limit", FailureKind::ResourceLimit),
         ("tool", FailureKind::Permission),
         ("bad-count", FailureKind::Protocol),
     ] {

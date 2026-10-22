@@ -28,7 +28,10 @@ Set `llm.model_list[].litellm_params.model` to `chatgpt/gpt-5.5`. Do not supply
 api_key, api_base, max_tokens or reasoning_effort; the subscription runtime cannot enforce those
 HTTP settings. Its ordered requests share the normal concurrency, document
 request admission, cancellation, content validation and configured fallback
-rules. Native transport failures do not automatically retry the same deployment.
+rules. A failed turn (a rate limit, an HTTP 5xx, a dropped stream) or a failed
+runtime process is sent again with backoff within `router_settings.num_retries`,
+or to another deployment, instead of failing the document; the plan's usage
+limit (which lasts hours) stops the run with its own error.
 An explicitly configured fallback is still permitted and preserves earlier
 observations. Pools that contain this route bypass persistent response caches
 and cross-call merging, including when another HTTP model is first in the pool.

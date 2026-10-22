@@ -111,12 +111,16 @@ fn failure(error: subscription::chatgpt::Failure) -> Failure {
         K::Permission | K::ResourceLimit | K::Cancelled => FailureKind::Blocked,
         _ => FailureKind::Transport,
     };
+    // A rate limit or a failed turn (an HTTP 5xx, a dropped stream) may pass:
+    // the request is sent again within the retry policy, or to a sibling,
+    // instead of failing the document.
+    let transient = matches!(error.kind, K::RateLimit | K::Transport);
     Failure {
         kind,
         error: error.error,
-        retryable: false,
+        retryable: transient,
         fatal: matches!(error.kind, K::Permission | K::ResourceLimit | K::Cancelled),
-        document_fatal: true,
+        document_fatal: !transient,
         retry_after: None,
         deployment: None,
     }
@@ -207,6 +211,41 @@ pub(super) fn request(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_failed_codex_turn_is_sent_again_instead_of_failing_the_document() {
+        let root = tempfile::tempdir().unwrap();
+        crate::subscription::fake_runtime::install(root.path(), &json!({"name":"flaky"}));
+        let env = HashMap::from([
+            (
+                "CODEX_CLI_PATH".to_owned(),
+                crate::subscription::fake_runtime::program()
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
+            (
+                "CODEX_HOME".to_owned(),
+                root.path().to_string_lossy().into_owned(),
+            ),
+            ("PATH".to_owned(), std::env::var("PATH").unwrap()),
+        ]);
+        let cfg = crate::config::normalize(&json!({"llm":{"model_list":[{"model_name":"default",
+            "litellm_params":{"model":format!("chatgpt/{}", crate::subscription::chatgpt::MODEL)}}],
+            "router_settings":{"timeout":20}},"cache":{"enabled":false},
+            "prompts":{"dir":"/nonexistent/markitai-test-prompts"}}))
+        .unwrap();
+        let prompts = Prompts {
+            system: "Clean.".into(),
+            user: "Body".into(),
+            image: None,
+            labels: Vec::new(),
+            cache_scope: String::new(),
+        };
+        let mut waited = 0;
+        let (text, _) = super::super::run(&prompts, &cfg, &env, &mut |_| waited += 1).unwrap();
+        assert!(!text.is_empty());
+        assert_eq!(waited, 1);
+    }
     fn entry() -> Deployment {
         Deployment {
             id: "chatgpt/gpt-5.5".into(),

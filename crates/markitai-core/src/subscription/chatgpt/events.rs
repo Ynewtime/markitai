@@ -12,6 +12,31 @@ pub(super) struct Events {
     text_bytes: usize,
     pub(super) usage: UsageEvidence,
 }
+/// What a failed turn's (lowercased) words say, as a fixed error: the
+/// plan's usage limit, which lasts hours; a rate limit or another failed
+/// turn, which may pass.
+fn turn_failure(said: &str) -> Failure {
+    if said.contains("usage limit") || said.contains("usage_limit") {
+        Failure::new(
+            FailureKind::ResourceLimit,
+            "The ChatGPT plan's usage limit is reached; Codex can be used again once it resets",
+        )
+    } else if said.contains("429")
+        || said.contains("too many requests")
+        || said.contains("rate limit")
+    {
+        Failure::new(
+            FailureKind::RateLimit,
+            "Codex was rate limited (HTTP 429) and did not complete the document request",
+        )
+    } else {
+        Failure::new(
+            FailureKind::Transport,
+            "Codex did not complete the document request",
+        )
+    }
+}
+
 fn string(value: &Value, max: usize) -> Result<&str, Failure> {
     value
         .as_str()
@@ -115,10 +140,13 @@ impl Events {
             Some("turn.failed" | "error") => {
                 // Raw diagnostics may include credentials or model text. The
                 // public error is fixed; retain any previously observed totals.
-                return Err(Failure::new(
-                    FailureKind::Transport,
-                    "Codex did not complete the document request",
-                ));
+                let said = value
+                    .pointer("/error/message")
+                    .or_else(|| value.get("message"))
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_ascii_lowercase();
+                return Err(turn_failure(&said));
             }
             _ => return Err(protocol()),
         }
