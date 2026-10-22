@@ -75,7 +75,8 @@ class TerminalUsageTests(unittest.TestCase):
                         if name != "TERMZERO":
                             barrier.wait()
                         input_tokens, output_tokens = {"TERMALPHA": (11, 3), "TERMBETA": (29, 7), "TERMZERO": (0, 0)}[name]
-                        payload = {"error": {"message": "PRIVATE RESPONSE SECRET"}, "model": name,
+                        # The refusal echoes the key; its message is shown without it.
+                        payload = {"error": {"message": "Incorrect API key provided: synthetic-key"}, "model": name,
                                    "usage": {"prompt_tokens": input_tokens, "completion_tokens": output_tokens}}
                         raw = json.dumps(payload).encode()
                         self.send_response(401)
@@ -119,7 +120,7 @@ class TerminalUsageTests(unittest.TestCase):
                     for name, error, expected in (("TERMALPHA", alpha, (11, 3)), ("TERMBETA", beta, (29, 7)), ("TERMZERO", zero, (0, 0))):
                         self.assertEqual(error.code, "conversion_error")
                         self.assertIn("HTTP 401", str(error))
-                        self.assertNotIn("PRIVATE RESPONSE SECRET", str(error))
+                        self.assertNotIn("synthetic-key", str(error))
                         self.assertIsInstance(error.usage, markitai.ConversionUsage)
                         self.assertEqual((error.usage.requests, error.usage.input_tokens, error.usage.output_tokens), (1, *expected))
                         self.assertEqual(set(error.usage.by_model), {name})
