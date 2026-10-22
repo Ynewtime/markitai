@@ -2755,6 +2755,42 @@ mod cache_tests {
         }
     }
 
+    /// Bot checks of DataDome, PerimeterX, Incapsula, AWS WAF, Fastly (as
+    /// PyPI shows it) and a Chinese check page, as their markup reads.
+    const BOT_CHECKS: [&str; 7] = [
+        "<html><head><title>example.test</title></head><body><p>Please enable JS and disable any ad blocker</p><iframe src=\"https://geo.captcha-delivery.com/captcha/?initialCid=x\"></iframe></body></html>",
+        "<html><head><title>Access to this page has been denied</title></head><body><h1>Before we continue...</h1><p>Press &amp; Hold to confirm you are a human (and not a bot).</p><div id=\"px-captcha\"></div></body></html>",
+        "<html><head><META NAME=\"robots\" CONTENT=\"noindex,nofollow\"></head><body><iframe id=\"main-iframe\" src=\"/_Incapsula_Resource?CWUDNSAI=9&xinfo=1\">Request unsuccessful. Incapsula incident ID: 123-456</iframe></body></html>",
+        "<html><head><title></title><script src=\"https://abc.token.awswaf.example/abc/challenge.js\"></script></head><body><div id=\"challenge-container\"></div><noscript><h1>JavaScript is disabled</h1></noscript></body></html>",
+        "<html><head><title>Client Challenge</title></head><body><noscript>JavaScript is disabled in your browser.</noscript><div id=\"loading-error\" role=\"alert\">A required part of this site couldn't load. This may be due to a browser extension, network issues, or browser settings.</div><script>loadScript('/_fs-ch-1T1wmsGaOgGaSxcX/errors.js')</script></body></html>",
+        "<html><head><title>Just a moment...</title></head><body><div><h1>example.test</h1><p>Verifying you are human. This may take a few seconds.</p></div><script src=\"/cdn-cgi/challenge-platform/h/b/orchestrate/chl_page/v1\"></script></body></html>",
+        "<html><head><title>访问验证</title></head><body><p>请输入验证码以继续访问</p><form><input name=c></form></body></html>",
+    ];
+
+    #[test]
+    fn whole_page_bot_checks_are_challenges_and_forms_that_mention_codes_are_pages() {
+        for page in BOT_CHECKS {
+            let (_directory, cfg) = settings();
+            let server = Server::new(vec![Reply::html(page)]);
+            let error = fetch_with_context(&server.url("/page"), &cfg, None, true)
+                .err()
+                .unwrap_or_else(|| panic!("a bot check is no page: {page}"));
+            assert_eq!(error.to_string(), CHALLENGE_PAGE, "{page}");
+        }
+        // A login form and a help article that mention 验证码, a contact form
+        // with a reCAPTCHA widget and a security code's name are pages.
+        for page in [
+            "<html><head><title>登录</title></head><body><h1>帮助</h1><p>账号登录 手机号 请输入验证码 获取验证码 忘记密码？</p></body></html>",
+            "<html><head><title>帮助</title></head><body><h1>帮助</h1><p>如何关闭短信验证码？进入设置，在账号与安全里关闭登录时的短信验证码即可。</p></body></html>",
+            "<html><head><title>帮助</title></head><body><h1>安全验证码</h1><p>安全验证码是银行卡背面的三位数字，付款时填写。</p></body></html>",
+            "<html><head><title>Contact</title></head><body><h1>Contact</h1><p>Write to us with the form below and we answer within two days.</p><form><textarea></textarea><div class=\"g-recaptcha\"></div></form><script src=\"https://www.google.com/recaptcha/api.js\"></script></body></html>",
+        ] {
+            let (_directory, cfg) = settings();
+            let server = Server::new(vec![Reply::html(page)]);
+            assert!(!run(&server, &cfg).document().markdown.is_empty(), "{page}");
+        }
+    }
+
     #[test]
     fn explicit_text_types_preserve_literal_html_challenge_examples() {
         for content_type in ["text/plain", "text/markdown"] {

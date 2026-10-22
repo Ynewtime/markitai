@@ -450,6 +450,38 @@ const CHALLENGE_TEXT: [&str; 8] = [
     "请在下图依次点击",
     "请完成下列验证后继续",
 ];
+/// Phrases of a check page that asks for something before letting the
+/// reader on, found anywhere in the text of a page of few words: a login
+/// form or an article that mentions 验证码 or CAPTCHAs is no check, only a
+/// request for the code before going on is (`安全验证码` is a code's name,
+/// not `安全验证`).
+static CHALLENGE_PHRASES: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(concat!(
+        r"智能验证检测中|由极验提供技术支持|请在下图依次点击|请按顺序点击|拖动滑块|滑动验证",
+        r"|请完成(?:安全)?验证|安全验证(?:[^码]|$)|人机验证",
+        r"|输入(?:下?图中?|图片中?)?的?验证码(?:后|以|才能)?(?:继续|访问)",
+        r"|此验证码用于|验证码用于确认",
+        r"|verify(?:ing)? (?:that )?you are (?:a )?human|are you a robot|checking your browser",
+        r"|complete the security check|unusual traffic from your computer",
+        r"|press (?:&|and) hold to confirm",
+    ))
+    .unwrap()
+});
+/// Markup only a whole-page bot check carries (Cloudflare's challenge,
+/// DataDome, PerimeterX, Incapsula, AWS WAF and Fastly's client challenge,
+/// which PyPI shows), in an attribute or a script: unlike a reCAPTCHA or
+/// Turnstile widget on a contact form, it is never the page itself.
+const INTERSTITIALS: [&str; 9] = [
+    "cf-browser-verification",
+    "cf-chl-",
+    "cf_chl_",
+    "/cdn-cgi/challenge-platform/",
+    "captcha-delivery.com",
+    "px-captcha",
+    "_incapsula_resource",
+    "awswaf",
+    "/_fs-ch-",
+];
 /// Titles of challenge pages.
 const CHALLENGE_TITLES: [&str; 4] = [
     "just a moment",
@@ -492,6 +524,8 @@ pub(super) struct Shown<'a> {
     text: String,
     /// The markup carries a challenge widget (Cloudflare, reCAPTCHA, hCaptcha).
     widget: bool,
+    /// The markup carries a whole-page bot check ([`INTERSTITIALS`]).
+    interstitial: bool,
     /// The markup has an `<article>` with text of its own.
     article: bool,
     /// The reading's text when all of it is one JSON object: the Markdown
@@ -517,6 +551,7 @@ impl<'a> Shown<'a> {
         let mut code = String::new();
         let mut title = String::new();
         let mut widget = false;
+        let mut interstitial = false;
         let mut article = false;
         for node in tree.tree.nodes() {
             if let Some(element) = scraper::ElementRef::wrap(node) {
@@ -527,9 +562,15 @@ impl<'a> Shown<'a> {
                 if name == "title" {
                     title = element.text().collect();
                 }
+                // Fastly loads its challenge from an inline script.
+                if name == "script" {
+                    let code = element.text().collect::<String>().to_ascii_lowercase();
+                    interstitial |= INTERSTITIALS.iter().any(|marker| code.contains(marker));
+                }
                 for attr in ["id", "class", "src", "action"] {
                     if let Some(value) = element.value().attr(attr) {
                         let value = value.to_ascii_lowercase();
+                        interstitial |= INTERSTITIALS.iter().any(|marker| value.contains(marker));
                         widget |= [
                             "cf-browser-verification",
                             "cf-chl-",
@@ -586,6 +627,7 @@ impl<'a> Shown<'a> {
             json: json.map(str::to_owned),
             text: shown,
             widget,
+            interstitial,
             article,
         }
     }
@@ -612,6 +654,7 @@ impl<'a> Shown<'a> {
             title: collapsed(title.unwrap_or_default()),
             text: collapsed(&text),
             widget: false,
+            interstitial: false,
             article: false,
             json: whole_json(markdown).map(str::to_owned),
         }
@@ -702,7 +745,8 @@ impl<'a> Shown<'a> {
         let title = self.title.to_lowercase();
         // Characters, not bytes: a CJK check page is three bytes a character.
         let short = text.chars().nth(NOTICE_CHARS).is_none();
-        let instruction = CHALLENGE_TEXT.iter().any(|phrase| text.starts_with(phrase));
+        let instruction = CHALLENGE_TEXT.iter().any(|phrase| text.starts_with(phrase))
+            || (self.words() <= FEW_WORDS && CHALLENGE_PHRASES.is_match(&text));
         let challenge_title = CHALLENGE_TITLES
             .iter()
             .any(|phrase| title.starts_with(phrase));
@@ -710,7 +754,7 @@ impl<'a> Shown<'a> {
         // title over next to no text stands in for it there.
         let titled = challenge_title && self.markup.is_none() && self.words() <= FEW_WORDS;
         if short
-            && ((!self.article && instruction)
+            && ((!self.article && (instruction || self.interstitial))
                 || (self.widget && (challenge_title || text.is_empty()))
                 || titled)
         {

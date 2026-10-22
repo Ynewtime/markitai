@@ -134,10 +134,16 @@ same check, the site's message is the failure (a browser failure of another kind
 is added in parentheses). A page the browser draws is also refused when it is a
 bot challenge on any site: at most 2,000 characters of text (characters, so a
 CJK check page counts as many as it shows) that start with a challenge's
-instruction (`Verify you are human`, Geetest's `请在下图依次点击`),
-or a challenge widget (Cloudflare and Turnstile, reCAPTCHA, hCaptcha, Geetest,
-DataDome, PerimeterX) with a challenge title or no text; it reads `The site
-served a verification page instead of the content: a bot challenge …`.
+instruction (`Verify you are human`, Geetest's `请在下图依次点击`), or of at
+most 60 words that ask for the check anywhere (`Press & Hold to confirm`,
+`Are you a robot`, `请输入验证码以继续访问`, `拖动滑块`; a login form or an
+article that only mentions `验证码` is a page); the markup of a whole-page bot
+check (Cloudflare's challenge platform, DataDome, PerimeterX, Incapsula, AWS WAF
+and Fastly's client challenge, which PyPI shows); or a challenge widget
+(Turnstile, reCAPTCHA, hCaptcha, Geetest) with a challenge title or no text. It
+reads `The site served a verification page instead of the content: a bot
+challenge …`. The static fetch applies the same test, so `auto` goes on to the
+browser and `-s static` fails naming the challenge.
 
 What the browser was shown in place of the page is never kept: no page copy and
 no screenshot, also when screenshots were asked for (`--screenshot`, the
