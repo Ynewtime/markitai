@@ -92,7 +92,7 @@ install it.
 ### Build from source
 
 You need Rust 1.92 or later and a native C/C++ toolchain/linker; development
-and native CI use Rust 1.99.0. On macOS install Xcode Command Line Tools;
+and native CI use Rust 1.99.1. On macOS install Xcode Command Line Tools;
 on Windows use Visual Studio Build Tools with the C++ workload, Windows SDK
 and the tools for your MSVC x64 or ARM64 target. Linux needs its C/C++ build
 tools. Build from this repository checkout with locked dependency versions:

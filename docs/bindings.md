@@ -15,7 +15,7 @@ applications; see [quick start](quickstart.md#platform-support).
 
 This development version is distributed through platform artifacts or a local
 source build, not a universal PyPI/npm/Go install. Build bindings
-from a checkout with Rust 1.92 or later (development uses 1.99.0); each build
+from a checkout with Rust 1.92 or later (development uses 1.99.1); each build
 compiles the Rust core once in the `release` profile and takes several minutes.
 
 | Language | Minimum | Build | Result |

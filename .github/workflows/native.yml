@@ -21,7 +21,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: never
-  RUSTUP_TOOLCHAIN: 1.99.0
+  RUSTUP_TOOLCHAIN: 1.99.1
   # Test evidence lives in job logs; avoid retaining multi-GB debug metadata
   # alongside the release and extension-module builds on hosted runners.
   CARGO_INCREMENTAL: '0'
@@ -54,7 +54,7 @@ jobs:
           package-manager-cache: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
-          go-version: '1.27.1'
+          go-version: '1.27.3'
           cache: false
       - name: Install Rust components
         run: rustup toolchain install ${{ env.RUSTUP_TOOLCHAIN }} --profile minimal --component rustfmt --component clippy

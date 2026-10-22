@@ -20,7 +20,7 @@ the [official runner-images repository](https://github.com/actions/runner-images
 describes the images and installed software. A moving runner label does not pin
 the installed SDK or codec version.
 
-The workflow pins Rust 1.99.0, Python 3.13, Node.js 24 and Go 1.27.1. Its
+The workflow pins Rust 1.99.1, Python 3.13, Node.js 24 and Go 1.27.3. Its
 optional Rust 1.92 lane runs `cargo check --locked` for core, CLI and FFI on
 Ubuntu; it does not execute the complete test or binding suites on that compiler.
 
