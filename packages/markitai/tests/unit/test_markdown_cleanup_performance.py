@@ -113,14 +113,23 @@ def test_already_bounded_blank_lines_skip_the_collapse_scan():
 
 
 def reference_broken_links(content):
-    """Former regex implementation, used as a differential oracle."""
-    pattern = r"\[([^\]]*?)\n+([^\]]*?)\]\(([^)]+)\)"
+    """The regex the repair follows (Rust's ``BROKEN_LINK``), used as a
+    differential oracle: the link text holds no bracket, so a match opens at
+    the link's own ``[``; image syntax and escaped brackets are kept."""
+    pattern = r"(!?)\[([^\[\]]*?)\n+([^\[\]]*?)\]\(([^)]+)\)"
+
+    def escaped(text):
+        return (len(text) - len(text.rstrip("\\"))) % 2 == 1
+
+    def repair(m):
+        if m.group(1) or escaped(m.string[: m.start()]) or escaped(m.group(3)):
+            return m.group(0)
+        return f"[{m.group(2).strip()}]({m.group(4)})"
+
     previous = ""
     while previous != content:
         previous = content
-        content = re.sub(
-            pattern, lambda m: f"[{m.group(1).strip()}]({m.group(3)})", content
-        )
+        content = re.sub(pattern, repair, content)
     return content
 
 
@@ -137,6 +146,12 @@ def reference_broken_links(content):
         "![alt\nmore](img.png)",
         "[one line](u)",
         "[a\nb](u)\n[c\nd](w)",
+        "See [3 in the margin.\n\nMore.\n\nA [link](u) here.",
+        "See [3 in\nthe margin. A [split\nlink](u) here.",
+        "![a\nb](u [c\nd](w)",
+        "\\[a\\\nb\\](u)",
+        "[a\\\nb\\](u)",
+        "\\\\[a\nb](u)",
     ],
 )
 def test_split_link_texts_join_as_the_regex_did(content):
@@ -146,8 +161,31 @@ def test_split_link_texts_join_as_the_regex_did(content):
 def test_split_link_texts_match_the_regex_on_random_text():
     rng = random.Random(7)
     for _ in range(20000):
-        content = "".join(rng.choices("[]()\n a!x", k=rng.randrange(0, 30)))
+        content = "".join(rng.choices("[]()\n a!x\\", k=rng.randrange(0, 30)))
         assert fix_broken_markdown_links(content) == reference_broken_links(content)
+
+
+def test_a_stray_bracket_before_a_later_link_keeps_the_text_between():
+    """A stray ``[`` (a footnote mark, an OCR misread) opened the repair, so
+    everything up to the next link became its text and only its first line
+    was kept: one 520 KB document kept 141 of its 16,003 lines."""
+    paragraph = "Paragraph {} of the body keeps every one of its words."
+    body = "\n\n".join(paragraph.format(n) for n in range(8000))
+    content = (
+        f"Intro.\n\nSee note [3 in the margin.\n\n{body}\n\n"
+        "A normal [link](https://example.org/a) here.\n"
+    )
+
+    started = time.perf_counter()
+    assert fix_broken_markdown_links(content) == content
+    assert time.perf_counter() - started < 1.0
+
+
+def test_a_split_link_after_a_stray_bracket_is_repaired_from_its_own():
+    content = "See note [3 in the margin.\n\nA [split\nlink](u) here."
+    assert fix_broken_markdown_links(content) == (
+        "See note [3 in the margin.\n\nA [split](u) here."
+    )
 
 
 def test_an_unclosed_bracket_in_a_long_document_is_linear():

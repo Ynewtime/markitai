@@ -659,14 +659,16 @@ def fix_broken_markdown_links(content: str) -> str:
 def _join_split_link_texts(content: str) -> str:
     r"""One pass of :func:`fix_broken_markdown_links`, in linear time.
 
-    What ``re.sub(r"\[([^\]]*?)\n+([^\]]*?)\]\(([^)]+)\)", "[\1](\3)")``
-    did (group 1 stripped), without its backtracking: from each ``[`` the
-    pattern tried every line break as the split and ran to the end of the
-    text from each, so a long document with an unclosed ``[`` (an OCR'd
-    book) took most of a minute. A link text runs from a ``[`` to the first
-    ``]`` after it, so of the ``[`` before one ``]`` only the first can
-    start a match, and it matches when a line break comes before that ``]``
-    and ``(url)`` right after it.
+    What ``re.sub(r"\[([^\[\]]*?)\n+([^\[\]]*?)\]\(([^)]+)\)", "[\1](\3)")``
+    does (group 1 stripped), without its backtracking (a long document with
+    an unclosed ``[``, an OCR'd book, took most of a minute). A link text
+    runs from the link's own ``[``, the last one before the first ``]``, to
+    that ``]``: a stray ``[`` earlier in the text (``see note [3 in the
+    margin``) does not open it, else everything up to the next link became
+    its text and only the first line of it was kept. It is repaired when a
+    line break comes before the ``]`` and ``(url)`` right after it. Image
+    syntax is left as it is, and so is a bracket written as text (``\[``,
+    ``\]``): there the second line is a hard break's, not a split text's.
     """
     parts: list[str] = []
     copied = pos = 0
@@ -674,19 +676,34 @@ def _join_split_link_texts(content: str) -> str:
         close = content.find("]", start + 1)
         if close < 0:
             break
+        start = content.rfind("[", start, close)
         newline = content.find("\n", start + 1, close)
         end = content.find(")", close + 2) if newline >= 0 else -1
-        if content.startswith("(", close + 1) and end > close + 2:
+        if not (content.startswith("(", close + 1) and end > close + 2):
+            pos = close + 1
+        elif (
+            (start > 0 and content[start - 1] == "!")
+            or _ends_escaped(content, start)
+            or _ends_escaped(content, close)
+        ):
+            pos = end + 1
+        else:
             first_line = content[start + 1 : newline].strip()
             parts += [
                 content[copied:start],
                 f"[{first_line}]({content[close + 2 : end]})",
             ]
             copied = pos = end + 1
-        else:
-            pos = close + 1
     parts.append(content[copied:])
     return "".join(parts)
+
+
+def _ends_escaped(content: str, at: int) -> bool:
+    """Whether an odd number of backslashes comes right before *at*."""
+    count = 0
+    while at - count > 0 and content[at - count - 1] == "\\":
+        count += 1
+    return count % 2 == 1
 
 
 def dedupe_paragraphs(content: str, min_length: int = 100) -> str:
