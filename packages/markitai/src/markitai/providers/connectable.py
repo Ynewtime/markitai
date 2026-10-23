@@ -66,7 +66,7 @@ class Connectable:
 
 
 CONNECTABLE: tuple[Connectable, ...] = (
-    # The providers markitai offered before 1.2.1; discovery.py lists their
+    # The providers markitai offered before 1.3.0; discovery.py lists their
     # models in their own formats
     Connectable(
         "openai", "https://api.openai.com/v1", _KEYS["openai"], discovery="builtin"
@@ -339,7 +339,7 @@ CONNECTABLE: tuple[Connectable, ...] = (
 
 _BY_PROVIDER = {row.provider: row for row in CONNECTABLE}
 
-# Offered before 1.2.1, without asking LiteLLM: their cards stay as they were
+# Offered before 1.3.0, without asking LiteLLM: their cards stay as they were
 BUILT_IN = frozenset(row.provider for row in CONNECTABLE if row.discovery == "builtin")
 
 

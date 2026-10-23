@@ -4,7 +4,7 @@ A model missing from LiteLLM's cost table is priced as unknown: its requests
 land in ``unpriced_requests``, the batch summary says "cost unknown", and
 ``max_cost_per_document_usd`` cannot count them. LiteLLM 1.104.2 (the newest
 stable release on 2026-10-11) has no entry for ``claude-haiku-5-5`` (the
-Anthropic default since 1.2.1), ``claude-sonnet-5-5`` or ``gpt-6.1-sol``,
+Anthropic default since 1.3.0), ``claude-sonnet-5-5`` or ``gpt-6.1-sol``,
 nor for OpenRouter's ``anthropic/claude-haiku-5.5``.
 
 The three first-party entries are in ``litellm_rows.json``: their rows from

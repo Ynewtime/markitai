@@ -1,4 +1,4 @@
-"""Workbench API contract v1.13: what Python 1.2.1 adds for the 1bc3d25 bundle.
+"""Workbench API contract v1.13: what Python 1.3.0 adds for the 1bc3d25 bundle.
 
 - Several conversions deleted at once (§6.8, ``features.batch_delete``):
   ``POST /api/history/delete``, each entry exactly as its single route.

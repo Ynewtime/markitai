@@ -161,7 +161,7 @@ class TestOwnershipRule:
         }
 
     def test_references_written_on_windows_are_read(self) -> None:
-        """Jobs written on Windows before 1.2.1 used backslashes."""
+        """Jobs written on Windows before 1.3.0 used backslashes."""
         markdown = (
             "<!-- ![Screenshot 1](.markitai\\screenshots\\example.com_x.full.jpg) -->\n"
             "<!-- ![Screenshot 2](.markitai\\screenshots/example.com_x.full--1.jpg) -->\n"

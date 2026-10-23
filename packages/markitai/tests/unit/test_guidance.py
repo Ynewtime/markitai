@@ -223,11 +223,11 @@ class TestExtraInstallKeepsTheInstall:
     def test_keeps_a_pinned_version(self, tmp_path, monkeypatch) -> None:
 
         prefix = self._receipt(
-            tmp_path, '{ name = "markitai", extras = ["ocr"], specifier = "==1.2.1" }'
+            tmp_path, '{ name = "markitai", extras = ["ocr"], specifier = "==1.3.0" }'
         )
         monkeypatch.setattr(sys, "prefix", str(prefix))
         assert extra_install_command("serve") == (
-            'uv tool install "markitai[ocr,serve]==1.2.1" --force'
+            'uv tool install "markitai[ocr,serve]==1.3.0" --force'
         )
 
     def test_without_a_receipt(self, tmp_path, monkeypatch) -> None:
@@ -257,7 +257,7 @@ class TestExtraInstallKeepsTheInstall:
         from markitai.utils import errors
 
         prefix = self._receipt(
-            tmp_path, '{ name = "markitai", extras = ["ocr"], specifier = "==1.2.1" }'
+            tmp_path, '{ name = "markitai", extras = ["ocr"], specifier = "==1.3.0" }'
         )
         monkeypatch.setattr(sys, "prefix", str(prefix))
         monkeypatch.setattr(sys, "platform", "win32")
@@ -265,7 +265,7 @@ class TestExtraInstallKeepsTheInstall:
         monkeypatch.setattr(errors, "_windows_machine_arch", lambda: "ARM64")
         minor = f"{sys.version_info.major}.{sys.version_info.minor}"
         assert extra_install_command("serve") == (
-            f'uv tool install "markitai[ocr,serve]==1.2.1" '
+            f'uv tool install "markitai[ocr,serve]==1.3.0" '
             f"--python cpython-{minor}-windows-x86_64 --force"
         )
         monkeypatch.setattr(sys, "prefix", str(tmp_path / "no-receipt"))

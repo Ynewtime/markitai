@@ -1,4 +1,4 @@
-"""Workbench API contract v1.11: what Python 1.2.1 adds for the e62d82f bundle.
+"""Workbench API contract v1.11: what Python 1.3.0 adds for the e62d82f bundle.
 
 - One item's ZIP (section 6.7, ``features.item_archive``): its result's files
   and its kept original.

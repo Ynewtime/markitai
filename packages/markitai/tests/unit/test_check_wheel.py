@@ -54,11 +54,11 @@ def _wheel(
         else json.loads((_WORKBENCH / "manifest.json").read_text(encoding="utf-8"))
     )
     members = {
-        "markitai-1.2.1.dist-info/entry_points.txt": (
+        "markitai-1.3.0.dist-info/entry_points.txt": (
             "[console_scripts]\nmarkitai-mcp = markitai.mcp_launcher:main\n"
         ),
-        "markitai-1.2.1.dist-info/licenses/LICENSE": "MIT",
-        "markitai-1.2.1.dist-info/licenses/NOTICE": "NOTICE",
+        "markitai-1.3.0.dist-info/licenses/LICENSE": "MIT",
+        "markitai-1.3.0.dist-info/licenses/NOTICE": "NOTICE",
         "markitai/mcp/__init__.py": "",
         **dict.fromkeys(check_wheel.REQUIRED_FILES, ""),
         **{

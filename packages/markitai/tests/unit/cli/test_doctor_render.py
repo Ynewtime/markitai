@@ -1,4 +1,4 @@
-"""How `markitai doctor` reads: wrapping, hints, summary, keys (1.2.1 review)."""
+"""How `markitai doctor` reads: wrapping, hints, summary, keys (1.3.0 review)."""
 
 from __future__ import annotations
 

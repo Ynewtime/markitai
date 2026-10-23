@@ -595,7 +595,7 @@ def _two_line_heading(
 
 class TestWrappedHeadings:
     """A heading the layout model split at its line break is one heading
-    again (the owner's 1.2.1 check: ``## **Cras fringilla ... commodo**``
+    again (the owner's 1.3.0 check: ``## **Cras fringilla ... commodo**``
     then ``## **a.**``)."""
 
     PAGE = "## **Quarterly results for the northern**\n\n## **Region Office**\n\nBody."

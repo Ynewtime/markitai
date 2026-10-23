@@ -667,7 +667,7 @@ def test_setup_ps1_wraps_on_a_console_with_a_hanging_indent(tmp_path: Path) -> N
 
 
 def test_piped_output_never_wraps(tmp_path: Path) -> None:
-    """The 1.2.1 rule: off a terminal every message stays on one line."""
+    """The 1.3.0 rule: off a terminal every message stays on one line."""
     result = _run_sh(tmp_path, f'clack_info "{_LONG_EN} {_LONG_EN}"', COLUMNS="40")
     assert result.stdout.strip("\n").count("\n") == 0
 
@@ -838,7 +838,7 @@ def test_setup_sh_source_env_selects_pypi(tmp_path: Path, value: str) -> None:
 
 def test_setup_sh_pinned_version_installs_that_release(tmp_path: Path) -> None:
     result = _run_sh(
-        tmp_path, _sh_source_body(in_checkout=True), MARKITAI_VERSION="1.2.1"
+        tmp_path, _sh_source_body(in_checkout=True), MARKITAI_VERSION="1.3.0"
     )
     assert result.stdout.rstrip().endswith("source=pypi path=")
     assert "MARKITAI_VERSION is set" in result.stdout
@@ -913,7 +913,7 @@ def test_setup_ps1_source_env_and_pin_select_pypi(tmp_path: Path) -> None:
     body = _ps_source_body(in_checkout=True)
     by_env = _run_ps(tmp_path, body, MARKITAI_SETUP_SOURCE="PyPI")
     assert by_env.stdout.rstrip().endswith("source=pypi path=")
-    pinned = _run_ps(tmp_path, body, MARKITAI_VERSION="1.2.1")
+    pinned = _run_ps(tmp_path, body, MARKITAI_VERSION="1.3.0")
     assert pinned.stdout.rstrip().endswith("source=pypi path=")
     assert "MARKITAI_VERSION is set" in pinned.stdout
 

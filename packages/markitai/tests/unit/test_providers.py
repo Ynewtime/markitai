@@ -132,7 +132,7 @@ class TestApiKeyProviderDefaults:
     @pytest.mark.parametrize(
         "model",
         [
-            # 1.2.1's previous defaults: still served, so no warning
+            # 1.3.0's previous defaults: still served, so no warning
             "openai/gpt-5.6-luna",
             "anthropic/claude-haiku-4-5",
             "copilot/claude-haiku-4.5",

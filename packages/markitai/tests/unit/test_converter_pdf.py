@@ -528,7 +528,7 @@ class TestConvertBasic:
     def test_picture_with_little_text_keeps_its_reference(self) -> None:
         """A chart with a few labels stays a picture, and its labels stay in
         it: the words pymupdf4llm read in the picture are not repeated below
-        it as text (the owner's 1.2.1 check: "12 10 8 Column 1 ... Row 4"
+        it as text (the owner's 1.3.0 check: "12 10 8 Column 1 ... Row 4"
         under a bar chart)."""
         picture = (
             "![](/tmp/stage/doc.pdf-0001-01.jpg)\n\n"

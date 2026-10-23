@@ -1,6 +1,6 @@
 """Rejected LLM answers are billed: cost, usage and the cost cap count them.
 
-A 1.2.1 check: ``default-table.pdf --llm`` with Gemini Flash-Lite and
+A 1.3.0 check: ``default-table.pdf --llm`` with Gemini Flash-Lite and
 OpenRouter's Claude Haiku alias failed (the answer dropped a placeholder),
 kept the unenhanced output, and reported ``cost_usd: 0.0`` for a request
 that was billed: the failing stage cleared its usage without handing it on.

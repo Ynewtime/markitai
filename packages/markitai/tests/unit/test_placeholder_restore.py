@@ -1,6 +1,6 @@
 """Structural placeholders an answer dropped: put back, or one named retry.
 
-A 1.2.1 check: ``default-table.pdf --llm`` failed with Gemini
+A 1.3.0 check: ``default-table.pdf --llm`` failed with Gemini
 Flash-Lite and OpenRouter's Claude Haiku alias: "LLM answer dropped 1/1
 structural placeholders", the ``__MARKITAI_PAGENUM_0__`` that opens the
 one-page PDF, before its title. The whole cleanup was thrown away.

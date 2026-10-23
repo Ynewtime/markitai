@@ -138,7 +138,7 @@ DRAWING = (
 #: one that does not parse, which stays a code block with a note
 MERMAID = (
     "```mermaid\nflowchart LR\n"
-    "  draft[Draft notes] --> review[Review] --> ship[Ship 1.2.1]\n```"
+    "  draft[Draft notes] --> review[Review] --> ship[Ship 1.3.0]\n```"
 )
 BROKEN_MERMAID = "```mermaid\nflowchart LR\n  draft --> [unclosed\n```"
 
@@ -635,7 +635,7 @@ def make_inputs(directory: Path, pages_port: int) -> dict[str, Path]:
     notes = directory / "meeting-notes.md"
     # The drawing must render in the preview, its script never
     notes.write_text(
-        "# Meeting notes\n\n- Ship 1.2.1\n- Review the workbench\n\n```python\nprint('hello')\n```\n\n"
+        "# Meeting notes\n\n- Ship 1.3.0\n- Review the workbench\n\n```python\nprint('hello')\n```\n\n"
         f"{DRAWING}\n\n{MERMAID}\n\n{BROKEN_MERMAID}\n",
         encoding="utf-8",
     )
@@ -2398,7 +2398,7 @@ def browse(
                 svg = body.locator("figure.md-diagram > svg").first
                 svg.wait_for(timeout=20000)
                 labels = svg.text_content() or ""
-                for label in ("Draft notes", "Review", "Ship 1.2.1"):
+                for label in ("Draft notes", "Review", "Ship 1.3.0"):
                     if label not in labels:
                         raise AssertionError(f"the diagram lacks {label!r}: {labels!r}")
                 for tag in ("script", "foreignObject", "style", "image"):

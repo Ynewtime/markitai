@@ -1,6 +1,6 @@
 """Document structure of OCR'd pages (markitai.ocr_structure, ocr_layout).
 
-The owner's 1.2.1 check: a scan of sample.pdf came out of OCR with its
+The owner's 1.3.0 check: a scan of sample.pdf came out of OCR with its
 headings as paragraphs, its table as lines of text, its bullets gone, its
 chart's labels read as a line of text and its emphasis lost.
 
