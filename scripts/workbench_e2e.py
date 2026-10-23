@@ -134,6 +134,14 @@ DRAWING = (
     '<script>alert("drawing script ran")</script></svg>'
 )
 
+#: A Mermaid block the preview draws as a diagram (bundle 7b2355b, Pele), and
+#: one that does not parse, which stays a code block with a note
+MERMAID = (
+    "```mermaid\nflowchart LR\n"
+    "  draft[Draft notes] --> review[Review] --> ship[Ship 1.2.1]\n```"
+)
+BROKEN_MERMAID = "```mermaid\nflowchart LR\n  draft --> [unclosed\n```"
+
 
 def saved_base(llm_port: int) -> str:
     return (
@@ -628,7 +636,7 @@ def make_inputs(directory: Path, pages_port: int) -> dict[str, Path]:
     # The drawing must render in the preview, its script never
     notes.write_text(
         "# Meeting notes\n\n- Ship 1.2.1\n- Review the workbench\n\n```python\nprint('hello')\n```\n\n"
-        f"{DRAWING}\n",
+        f"{DRAWING}\n\n{MERMAID}\n\n{BROKEN_MERMAID}\n",
         encoding="utf-8",
     )
     broken = directory / "damaged.pdf"
@@ -2346,6 +2354,76 @@ def browse(
             return "inline SVG drawn in the Rendered view, its paint kept, its script removed"
 
         run.step(page, "preview-drawing", drawing)
+
+        # 11b. A Mermaid block is drawn as a diagram by the renderer the app
+        # loads only for it (/ui/mermaid.js); one that does not parse stays
+        # code with a note, and the Markdown itself keeps both blocks
+        def mermaid() -> str:
+            chunks: list[tuple[int, str]] = []
+
+            def chunk(response: Any) -> None:
+                if response.url.endswith("/ui/mermaid.js"):
+                    chunks.append(
+                        (response.status, response.header_value("content-type") or "")
+                    )
+
+            page.on("response", chunk)
+            try:
+                with page.expect_response(
+                    lambda response: (
+                        re.search(r"/items/i\d+/result", response.url) is not None
+                    ),
+                    timeout=30000,
+                ) as result:
+                    _open(page, lambda: page.goto(f"{base}/jobs"))
+                    _item(page, "meeting-notes.md").click()
+                markdown = result.value.text()
+                _heading(page, "meeting-notes.md").wait_for()
+                _show_tab(page, "Preview")
+                body = page.locator(
+                    "#peek-panel [role=tabpanel]:not([hidden]) .doc-body"
+                ).first
+                svg = body.locator("figure.md-diagram > svg").first
+                svg.wait_for(timeout=20000)
+                labels = svg.text_content() or ""
+                for label in ("Draft notes", "Review", "Ship 1.2.1"):
+                    if label not in labels:
+                        raise AssertionError(f"the diagram lacks {label!r}: {labels!r}")
+                for tag in ("script", "foreignObject", "style", "image"):
+                    if svg.locator(tag).count():
+                        raise AssertionError(f"the diagram kept a <{tag}>")
+                if body.locator("figure.md-diagram").count() != 1:
+                    raise AssertionError("expected exactly one drawn diagram")
+                note = body.locator("p.diagram-note").first
+                note.wait_for(timeout=10000)
+                note_text = note.inner_text()
+                if not note_text.startswith("Diagram not drawn"):
+                    raise AssertionError(f"unexpected note {note_text!r}")
+                kept = body.locator("pre.has-diagram-note").first
+                if "draft --> [unclosed" not in (kept.text_content() or ""):
+                    raise AssertionError("the broken block is not shown as its code")
+                if markdown.count("```mermaid") != 2 or "flowchart LR" not in markdown:
+                    raise AssertionError("the converted Markdown lost a mermaid block")
+                if not any(
+                    status == 304 or (status == 200 and "javascript" in kind)
+                    for status, kind in chunks
+                ):
+                    raise AssertionError(f"/ui/mermaid.js answers {chunks}")
+            finally:
+                page.remove_listener("response", chunk)
+            # The open window, the diagram in view (the step's own shot comes
+            # after the window closed)
+            svg.evaluate("node => node.scrollIntoView({block: 'center'})")
+            page.wait_for_timeout(300)
+            page.screenshot(path=str(out / f"preview-mermaid-open-{width}.png"))
+            _close_window(page)
+            return (
+                f"Mermaid block drawn as an SVG diagram in Rendered (/ui/mermaid.js "
+                f"{chunks[0][0]}); the broken one kept as code with {note_text!r}; "
+                "the Markdown keeps both blocks"
+            )
+
+        run.step(page, "preview-mermaid", mermaid)
 
         # 12. Settings: test the configured model
         def settings() -> str:
