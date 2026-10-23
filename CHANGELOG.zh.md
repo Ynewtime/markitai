@@ -1,1 +1,502 @@
 # 更新日志
+
+本项目的所有重要变更都会记录在此文件中。
+
+格式基于 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)，
+版本号遵循[语义化版本](https://semver.org/spec/v2.0.0.html)规范。
+1.x 版本是 Python 实现，其说明见
+[1.2.0 更新日志](https://github.com/Ynewtime/markitai/blob/v1.2.0/CHANGELOG.zh.md)。
+
+## [2.0.0] - 2026-10-XX
+
+Markitai 2.0.0 是 Rust 重写版的首个正式发布，取代 Python 版 markitai 1.2.0。命令（`markitai`、`mkai`、`markitai-mcp`）、选项和配置保持不变，现在由一个原生程序运行，无需安装 Python、Node.js 或 Go 运行时。大多数文档转换更快、占用内存更少、结果更好。
+
+#### 安装或升级
+
+- **macOS、Linux：** `curl -fsSL https://markitai.dev/setup.sh | sh`
+- **Windows（PowerShell）：** `powershell -ExecutionPolicy ByPass -c "irm https://markitai.dev/setup.ps1 | iex"`
+- 安装脚本先用发布附带的 `SHA256SUMS` 校验本机对应的发布压缩包，再为当前用户安装。新版本就位后，会卸载由 `uv tool` 安装的 markitai 1.x。再次运行同一命令即可更新；加 `--uninstall`（Windows 为 `-Uninstall`）即可卸载。
+- **使用 Python：** `uv tool upgrade markitai` 或 `pip install -U markitai`（Python 3.10 及以上）。wheel 包含同一个程序和全部三个命令。
+- **平台：** macOS 11+（Apple 芯片、Intel）、glibc 2.28+ 的 Linux（x86-64、ARM64）、Windows（x64、ARM64）。每个压缩包都列在 `SHA256SUMS` 中，并带有构建证明（`gh attestation verify <文件> --repo Ynewtime/markitai`）。
+- `~/.markitai`（配置、`.env`、缓存、历史）保留，读取方式不变；1.2 的配置文件可以直接加载。
+- 如需回到 1.2，见[回退步骤](https://github.com/Ynewtime/markitai/blob/v2.0.0/docs/quickstart.md#rolling-back-to-1x)。
+
+#### 新内容
+
+- **一个核心，处处通用：** CLI、`markitai serve` 工作台、MCP 服务器，以及进程内调用的 Python、Node.js 和 Go 绑定。
+- **工作台全新设计：** 支持中文、英文和日文。「对照」把原件和 Markdown 并排显示，「差异」比较基础版和 LLM 版输出，并能绘制数学公式和 Mermaid 图。历史记录可以重新转换，用户令牌可以保存自己的模型。
+- **PDF：** 文字层先经检查再采用。乱码文字层改用 OCR，隐藏文字默认不输出（`security.pdf_sanitize`）。每页都注明文字来源。中日韩文字、从右到左的文字、表格和图表的处理都有改进。
+- **本地 OCR：** 各系统默认使用便携的 PaddleOCR 引擎（macOS Vision 需手动选择），`markitai doctor --fix` 安装模型。
+- **格式：** 新增 RST、Org、TeX、Outlook MSG 和 Numbers 读取，HEIC 和 AVIF 在所有系统上都能解码。电子表格、旧版 Office、EPUB 和 HTML 的转换更好。
+- **输出：** `-f json` 写出带版本号的文档 JSON，`--text-only` 把图片或 PDF 只写成其中识别出的文字。
+- **模型：** 95 种服务商路由，包括无需 SDK 的 Bedrock 和 Vertex AI。`--llm-batch` 也支持 Anthropic Message Batches。图片分析结果会缓存，常用模型的价格已逐一对照服务商的价格页核对。1.2 留下未完成的批处理，升级后仍可收取。
+
+#### 可能影响脚本的变化
+
+- 页码和幻灯片编号注释默认不再输出，`--page-markers` 可保留。
+- `markitai serve` 对同一台电脑上的请求也要求令牌（`Authorization: Bearer <令牌>`）。
+- 远程抓取服务需明确同意。如需保留 1.2 的回退行为，设置 `fetch.remote_consent: always`。
+- 用法错误以 2 退出，`✓ Wrote …` 输出到 stderr。
+- 仅用于批处理的选项（`--resume`、`-g`、`--max-depth`、`--llm-batch`）用在单个文件上会终止运行。
+- 提取的图片按内容命名（`.markitai/assets/<hash>.jpg`）。开启 `image.compress`（默认开启）时，PNG 和 HEIC 图片写为 `.jpg`。
+- 文件夹批处理跳过符号链接，并列出其名称（`output.allow_symlinks: true` 时跟随）。
+- ChatGPT 订阅改用官方 Codex CLI：运行一次 `markitai auth chatgpt login`。
+- 完整列表见[兼容性说明](https://github.com/Ynewtime/markitai/blob/v2.0.0/docs/compatibility.md#coming-from-python-markitai-12)。
+
+#### 移除
+
+- `markitai doctor --timings` 和 `--suggest-extras`、`MARKITAI_PDF_WORKERS`、`MARKITAI_STATIC_HTTP`，以及终端内联图片（`image.stdout_fetch_external`）。
+- `batch.heavy_task_limit` 仍被接受，但只给出警告、不起作用；请用 `-j`。
+- 用 Microsoft Office 绘制页面（`office.macos_fallback` 仍被接受并给出警告）：Office 页面只由 LibreOffice 绘制。
+- 通过 LiteLLM 设备码登录 ChatGPT。
+- Python 的 extras（`markitai[all]`、`[ocr]` 等）保留名称，但不再添加任何内容。
+
+#### 已知问题
+
+- **macOS 15 上的 Vision（需手动选择）：** 在默认语言下，Vision 可能把日文标为 `zh-Hans` 并按中文识别。识别日文图片时请设置 `ocr.lang: ja`。默认的便携引擎不受影响。
+- **`image.format: webp` 且质量低于 100：** 目前没有有损 WebP 编码器。不含透明像素的图片写为 JPEG（`.jpg`，给出一条警告）；含透明像素的图片以及质量为 100 时写为无损 WebP，文件更大。
+- **PyPI 只提供 wheel**，覆盖上述六个平台。在其他平台上，pip 会安装或保留 markitai 1.x。本次发布附带的源码包可用 Rust 1.92 及以上版本构建。
+- **构建未签名，也未经公证。** macOS Gatekeeper 会拦截用浏览器下载的压缩包（[处理方法](https://github.com/Ynewtime/markitai/blob/v2.0.0/docs/quickstart.md#unsigned-builds-on-macos)）；安装脚本不受影响。
+
+#### 关于这份说明
+
+更新日志中的详细说明把 2.0.0 与 Python 版 markitai 1.2.0 以及 2.0 的开发版本相比较；「修复」中的许多条目只涉及这些开发版本。条目中的「Python 版 markitai 1.3.0」指 1.2.0 之后的 Python 开发线。该版本从未发布，由 2.0.0 取代。
+
+### 新增
+- 工作台的转换选项补齐了命令行已有的功能（接口契约 v1.20，服务器声明相应功能时才显示）：「输出」的配置档后新增 `{ } JSON` 开关（任务选项 `format: "json"`，`features.document_json`），把每个结果的文档 JSON 以 `<名称>.json` 存在 Markdown 旁边，出现在文件列表、.zip 和命令行（`-f json`）中；开启 OCR 且未开启 LLM 时，OCR 后面的选择器（「本机 · 自动语言」）选择本机 OCR 的语言（`ocr_lang`，取自能力信息的 `ocr_languages`：自动、简体中文、繁體中文、日本語、한국어、Русский、العربية、ไทย、हिन्दी、Ελληνικά，以及配置的 `ocr.lang`），取代原来关于本机识别引擎的说明；「高级」新增「页面」一行：页码标记（`page_markers`，`--page-markers`）和每页都 OCR（`ocr_all_pages`，即 `ocr.per_page_routing: false`）。这四项也可设为默认（`output.format`、`ocr.lang`、`ocr.per_page_routing`、`output.page_markers`），OCR 设置在命令行中显示为 `--config-json '{"ocr":{…}}'`。
+- 工作台转换窗口中的「下载」改为拆分按钮：按钮本身保存 Markdown，旁边的箭头列出 Markdown .md、JSON .json、全部文件 .zip 和「选择文件…」（手机上在「⋯」中）；条目菜单里的 JSON 项保留。
+- 工作台以界面语言显示 Python 版 markitai 新发送的两条提示：安装后首次转换时转换所需的库只加载一次，以及首次使用 OCR 时 OCR 的库和模型只加载一次。
+- PDF 使用 `--ocr` 时，通过纯文本检查的文本层还会与其字形实际绘制的内容比对，与 Python markitai 1.3.0 一致：从页面截取每种字体的几段文字（每种字体每个文档两段，每页最多四张截图），只用 OCR 识别模型读取；字体不一致的页面改由 OCR 读取，页面来源注明 `text layer failed the script check: the layer's text is not what its glyphs draw (font …)` 或 `the layer reads Latin, the page shows CJK (font …)`。移位字母表（`the committee` 写成 `cqi luvvoccii`）和中日韩字形背后的拉丁码现在输出页面实际显示的文字。未嵌入的中日韩字体在检查及该页 OCR 时按字符集绘制，而不经待检查的映射。在 `--ocr` 下每个文档约增加 0.1–0.3 秒（主要是一次性加载识别模型），不用 `--ocr` 时无开销。
+- `llm.model_list` 为空且未设置 `MODEL` 时，本机已登录订阅的运行时会先于 API 密钥加入自动模型池，与 Python 版 markitai 一致：Claude Code（`claude-agent/haiku`）、Copilot（`copilot/auto`，由 Copilot 选择模型）和通过 Codex 的 ChatGPT（Codex 列出的最轻量的当前模型，目前为 `gpt-6-luna`）。每个运行时在一个进程中只询问一次登录状态；文档被分散到多个检测到的供应商时会提示一次。`markitai init` 提供同样的模型（Claude Code 已用订阅提供 Claude Haiku 时不再加入 Anthropic 密钥的模型），并说明如何登录已安装但未登录的运行时。
+- `markitai doctor` 会列出已设置但没有生效模型用到的供应商密钥（`未使用：OPENAI_API_KEY（已设置，但 llm.model_list 中没有模型用到它）`；`--json` 中为 `unused_api_keys`），与 Python 版 markitai 一致。
+- 图片分析结果（`--alt`/`--desc`）与文档结果一样缓存在 `cache.db` 中（与 Python 版 markitai 相同），重新运行时已见过的图片不再发送请求、不再计费：缓存键为图片字节、文档上下文、图片提示词和模型池中的视觉模型（不含文件名，同一图片出现在别处也会复用）。
+- API 密钥也从 `GOOGLE_API_KEY`（先于 `GEMINI_API_KEY`，与 Google SDK 一致）、`ANTHROPIC_AUTH_TOKEN`（网关令牌，以 `Authorization: Bearer` 发送）和 `OR_API_KEY` 读取，与 LiteLLM 和 Python 版 markitai 相同；设置任一个也会让对应供应商加入自动模型池。
+- Python wheel 会安装 `markitai`、`mkai` 和 `markitai-mcp` 命令，并支持 `python -m markitai`（与 Python 版 markitai 包一致），因此 `pip install markitai` 再次提供命令行：每个命令运行与 `markitai` 可执行文件相同的程序（该程序现在由 wheel 的原生扩展携带，命令行 crate 成为可执行文件和扩展共用的库），并以其退出状态结束。Python 版 markitai 的 extras（`ocr`、`serve`、`mcp`、`claude-agent`、`copilot`、`browser`、`extra-fetch`、`svg`、`heif`、`legacy`、`all`）保留为不添加任何内容的名称，因此 `pip install "markitai[serve]"` 仍然可以解析。
+- Python API：配置有误时抛出 `markitai.ConfigFileError`（也可从 `markitai.api` 导入），即 Python 版 markitai 中的同名错误；它是 `ValueError` 的子类，因此 `except ValueError` 仍然有效。`await markitai.fetch.close_shared_clients()`（无操作）和 `markitai.utils.shutdown.finalize_process(code)`（刷新两个输出流并以 `code` 结束进程）可以像以前一样导入。
+- `--text-only`（`output.text_only`；工作台「其它」中的「仅文字」，任务选项 `text_only`，见 `features.text_only`）把图片或 PDF 只写成其中识别到的文字：没有 frontmatter、标题、图片链接、图片描述和代码围栏。本地 OCR 给出识别文字；视觉模型给出逐字转写（图片分析的 extracted_text，即使未开启 alt 和描述也会请求）；PDF 保留文字的标题和表格，去掉图片和页面截图注释。不会为此发布图片；图片中没有可读文字时得到空文档和一条警告。
+- 以 EMF 或 WMF 图片保存的 Word 或 PowerPoint 图表，在已安装 LibreOffice 时会由它在独立进程中（有时间和大小限制）画成 PNG 并裁到图形范围，因此可以像普通图片一样被压缩和分析；没有 LibreOffice 时文件照旧保留，也没有提示。
+- 工作台的条目菜单新增“JSON”项（服务器声明 `document_json` 时显示，接口契约 v1.19），保存 `markitai -f json` 输出的文档。
+- `-f json`（`--format json`，`output.format`）把每个转换后的文档写成字段稳定、带版本的 JSON：`schema_version` 1.0、`tool`（版本、提交）、`source`（路径或 URL、类型、大小、SHA-256）、`title`、`properties`（frontmatter）、`markdown.base`/`markdown.llm`、纯文本 `text`、`pages`（页码、文本、Markdown、图片、截图）、`images`（路径、alt、描述、图中识别的文字、所在页）、`tables`（表头与各行）、`notices`（稳定的 `code`、`level`、消息原文及其涉及的页、图片或工作表）、`usage` 和 `timings`。每个键总是存在（不适用时为 `null`），1.x 版本只会新增键；见 `docs/json-output.md` 与 `docs/schema/document-v1.schema.json`，测试固定了字段集合。不带 `-o` 时输出到 stdout；带 `-o` 时以同名写在每个 Markdown 文件旁（`-o x.json` 指定文件名），批量另写列出全部条目的 `markitai.index.json`。`markitai serve` 在 `GET /api/jobs/{job_id}/items/{item_id}/document` 提供每个已完成条目的文档 JSON（`features.document_json`）。
+- 订阅类提供商的官方运行时无法列出模型时会说明原因：`POST /api/settings/llm/model-discovery`（及用户路由）返回 `reason` 为 `runtime_missing`、`runtime_unsupported`、`not_signed_in` 或 `runtime_failed`（另有 `timeout`），并附 `runtime`（`name`、`required`、`installed`）和 `next_step`（`install`：固定版本的 `npm install -g …` 命令；`sign_in`：`markitai auth <provider> login`），Claude、Copilot、ChatGPT 一致，不再一律是 `provider_error`。工作台显示原因、带复制按钮的命令和设置指南，并在运行时缺失、版本不支持或未登录时关闭「按 ID 添加模型」（运行时出错但原因不明时只给出提醒）。工作台契约 v1.18。
+- 工作台转换列表中提交头部的展开箭头更大，其整个前导区域（宽屏 32 × 38 px，手机 40 × 44 px）都可点击展开或折叠。
+- 工作台支持数学公式：「渲染」视图、标题和目录中的 `$…$` 行内公式与 `$$…$$` 独立公式（含 aligned 等环境）。KaTeX 0.19.0 打包为单独的 `math.js`，连同样式表和 woff2 字体都由二进制提供，仅当文档含公式时才加载；无法绘制的公式保留为源码，`$5 and $6` 这类价格仍是文本。
+- 工作台的转换列表支持重新转换：选择栏里「删除」旁的「重新转换」（以及单个转换的 ⋯ 菜单）把所选已保留的原文件带回「转换」页（上传文件从服务器读回，网页按地址重新加入），默认展开选项，并作为新的一批转换，不覆盖第一次的结果；不再保留的原文件会被列出，没有可用模型时会立即说明。
+- 转换列表中的警告标记在悬停、聚焦或轻点时显示其提示内容。
+- 工作台「对照」为 PDF 提供阅读器工具栏：缩放（适合宽度、适合页面、50–200 %，指针在该栏上时 Ctrl/⌘ + − 0）、上一页/下一页和页码框，以及大纲面板（PDF 自带的书签，没有时为 Markdown 的标题，再没有时为页面缩略图）；任意缩放下块链接都保持有效，长 PDF 的页面文字在后台读取，使链接覆盖到最后一页（不再回绕到前面写着相同文字的页面）。`markitai serve` 新增 `GET …/original/outline`（`features.pdf_outline`），以 `{items: [{title, page, level}], truncated}` 返回 PDF 的书签。
+- `markitai serve` 为工作台的转换选项提供默认设置：`GET /api/convert-defaults` 返回服务器的默认设置（来自其配置：`llm.enabled`、`ocr.enabled`、`image.alt_enabled`、`image.desc_enabled`、`screenshot.enabled`、`screenshot.screenshot_only`、`llm.pure`、`cache.no_cache`、`image.compress`、`output.profile`、`fetch.strategy`），对用户令牌则是其自己的默认设置覆盖在服务器的之上；`PUT /api/convert-defaults` `{expected_revision, defaults}` 把管理员的默认设置写入 `config.json`（只写文件已有的键或与内置默认值不同的值），把用户的写入其自己的文件（`null` 表示重新跟随服务器）；Cloudflare 不能设为默认（422 `invalid_convert_defaults`），revision 过期返回 409（`features.convert_defaults`）。工作台契约 v1.17。
+- 工作台的转换选项从这些默认设置开始，说明当前选项是否就是默认设置，并提供「恢复默认」和「设为默认」（用户令牌还有「改用服务器的默认设置」）。
+- 工作台可直接编辑模型的路由权重（点击权重标签、输入，按 Enter 或离开输入框即保存，Esc 取消），管理员的模型和用户自己的模型都可以；用户看到的共享模型增加「测试」和用户自己的权重（「改用管理员的 2」重新跟随管理员）；用户令牌新增「编辑配置」，只编辑自己的模型；侧栏版本行显示为 `2.0.0-dev 36583fe 10-14 22:48`（版本、提交和按查看者时区显示的构建时间，含未提交改动的构建在提交后标 `-dirty`），不再带产品名。
+- `markitai serve` 允许用户令牌为管理员共享的模型设权重、测试它们，并以文本方式编辑自己的模型：`PATCH /api/me/models/shared/{id}` `{expected_revision, weight}` 设置该用户自己对共享模型的权重（0 表示只对该用户停用；`null` 或与管理员相同的值重新跟随管理员；`SharedModel.default_weight` 是管理员的权重），`POST /api/me/models/test` `{shared_id}` 在服务器上用管理员的设置测试共享模型，只回答是否通过及原因（每个用户同时一次、每分钟六次，超出返回 429 `provider_busy`），`GET`/`PUT /api/me/config`（`features.user_config`）把用户的模型、连接和共享模型权重作为一个 JSON 文档读取和保存：密钥以掩码显示、保持不动即保留，使用设置的修订号协议和用户规则，绝不涉及服务器的 `config.json`。能力信息新增 `build`（`version`、`commit`、`built_at`、`dirty`），工作台静态页面的策略允许 `media-src https:`。工作台契约 v1.16。
+- `markitai serve` 支持用户令牌自己的模型，管理员也可以把模型共享给用户。用户令牌通过 `/api/me/models*` 管理自己的模型（路由、请求体与修订号协议与 `/api/settings/llm*` 相同；其他调用者返回 403 `user_token_required`）：模型只为该令牌保存在 `MARKITAI_HOME/serve/user-models/<id>.json`（仅所有者可读写，原子替换，绝不写入 `config.json`），密钥只以遮蔽形式显示；模型需要用户自己的密钥，或一个不在服务器本机上的地址（422 `key_or_address_required`、`server_address`）；会使用服务器自身账号或云登录的服务商一律拒绝（422 `server_credentials`）；每个令牌最多 50 个模型（409 `model_limit`）。标记为 `"model_info": {"share": "shared"}` 的管理员模型（通过 `PATCH /api/settings/llm/deployments/{id}` 的 `share` 设置，每个已保存的模型都会显示）也用于用户的转换，且仅限于此；用户只能看到其模型 ID、服务商和权重，它失败时也不会透露其服务地址。用户的转换把自己的模型和共享模型作为一个池按权重路由，绝不使用服务器的环境变量密钥或检测到的模型；两者都没有时，请求模型处理会返回 422 `llm_unavailable`。吊销令牌会删除其模型；`GET /api/access-tokens` 返回每个令牌的 `model_count`；能力信息新增 `features.user_models`，并对用户报告其模型池。工作台契约 v1.15。
+- 工作台设置为用户令牌提供自己的「模型」页面（添加、测试、编辑、删除和权重，与管理员相同），下方只读列出管理员共享的模型；管理员已保存的模型增加「私有 | 共享」切换；访问令牌列表显示每个用户令牌保存了几个模型，撤销时说明这些模型会一并删除；没有可用模型时，转换页会说明到哪里添加模型。
+- `markitai serve` 记录网页在抓取时的样子：原件描述的 `capture` 分别说明保留的网页和它的截图显示的是正文（图片或播放器配一句说明也算）、空白页（或只要求启用 JavaScript），还是代替正文的验证、验证码或登录页（`{state, text_length, title, reason}`）；`GET …/original/blocks` 给出浏览器截图时网页各段落所在的方框（描述中的 `blocks`）。服务任务中由浏览器载入的网页，即使没有要求截图，也会保存对照用截图（JPEG 分块，存于任务旁，最多 20 块，不属于结果，也不会发送给模型）。工作台契约 v1.14。
+- 工作台的「对照」也能把 Markdown 与网页截图关联：悬停某个段落会在截图上标出它（反之亦然），位置来自服务器记录的方框。
+- `markitai serve` 新增访问级别与「编辑配置」。服务器令牌即管理员令牌；管理员可在工作台创建带标签的用户令牌（`GET`/`POST /api/access-tokens`、`DELETE /api/access-tokens/{id}`；最多 50 个，每个只显示一次，服务端只在 `MARKITAI_HOME/serve/access.json` 中保存其 SHA-256，因此重启和重新生成令牌后仍然有效）。用户令牌可使用设置与令牌路由之外的全部接口（这两类返回 403 `settings_forbidden`），且只能看到自己创建的任务（其他任务一律 404 `job_not_found`，历史、归档、下载凭证和删除也是如此）；吊销后，其请求、下载凭证和事件流立即失效。`GET`/`PUT /api/settings/config` 按配置文件原有文本显示（所有密钥已遮蔽），并按原样保存编辑后的文本（工作台按文件原有的换行符回传，因此 Windows 上的 CRLF 文件仍为 CRLF，「查看更改」只显示真正的修改，未改动的行逐字节不变；原位置保留的遮蔽值会还原为已存的密钥；修订号过期返回 409，无效配置返回 422 `invalid_config`），模型与服务商立即生效，其余设置通过 `restart_required` 提示需重启。能力信息新增 `access`（`role`、`label`）、`features.user_tokens` 和 `features.config_edit`。
+- `POST /api/history/delete` 可在一次请求中删除多个已保存的任务和条目（`{jobs, items}`，共 1 至 1,000 项），每项都与对应的单项路由处理方式完全相同，并按顺序返回每项的结果（`features.batch_delete`）。
+- 工作台的转换任务列表可一次删除多个转换任务：每行和每个提交分组标题左侧有复选框，键盘支持 Space、Shift、Ctrl+A、Escape 和 Delete，底部选择栏显示数量并提供全选、清除和删除（删除前确认，并说明文件一并删除）；手机上通过「选择」模式操作。后端没有批量路由时逐项删除（最多 4 个并发），并指出未能删除的项。设置新增「编辑配置」（管理员）：以文本方式编辑配置文件，密钥以掩码显示，输入时校验 JSON，保存前显示差异，并按打开时的修订版本保存。
+- `markitai serve` 的 `GET …/original/pages/{n}/text` 还会列出页面中图片的绘制位置（`images`，与文本行同一坐标系的框），工作台「对照」据此可在页面上框出 PDF 的图片。
+- `markitai serve`：`GET /api/jobs/{job_id}/items/{item_id}/archive` 把一个条目的结果文件和保留的原件打包为 ZIP；`GET …/original/view` 为沙箱框架提供保留的网页（插入一个 `<base>`，策略不允许脚本、表单和任何远程加载，只允许本服务自己的页面嵌入；通过下载凭证打开）；`POST /api/access-token/regenerate` 替换访问令牌，旧令牌、其下载凭证和打开的事件流随即失效。能力信息新增 `features.item_archive` 和 `features.token_regenerate`；静态页面允许 `frame-src 'self'`；URL 条目的截图也会和保留的网页一起提供。
+
+- HEIF/HEIC 图片在 Windows 与 Linux 上使用内置纯 Rust 解码器（heifer）解码，可用于转换、视觉模型与本地 OCR，与 macOS 一致；此前会报不支持。
+- AVIF 图片在 Windows 与 Linux 上使用 rav1d（dav1d AV1 解码器的 Rust 移植版，随仓库内置，不含汇编）解码，可用于转换、文档内嵌图片、视觉模型与本地 OCR，与 macOS 一致；此前会报不支持。支持网格、透明通道、10/12 位以及裁剪、旋转、镜像属性；叠加图（overlay）明确报不支持，解码器出错只会让该图片失败。单个文件总共最多解码 9600 万像素和 2,050 个 AV1 图像项，因此一个把同一张 3000 万像素图块引用 1,024 次的 3 KB 网格文件约一秒即失败，而不会解码数分钟。该解码器使发布版 CLI 增大约 1.2 MB。
+- `markitai serve` 可在 Markdown 旁显示条目的原件：`GET /api/jobs/{job_id}/items/{item_id}/original` 描述保留了什么（上传的 PDF、图片、HTML 或文本文件，URL 条目按 HTML 转换时的页面，否则为页面截图）及其页面尺寸；`…/original/file` 下载原件（HTML 和 SVG 以纯文本发送并受沙箱限制）；`…/original/pages/{n}` 渲染 PDF 页面或缩放图片（TIFF 和 HEIC/HEIF 转为 PNG）；`…/original/pages/{n}/text` 给出 PDF 页面的文本行及其位置框。同一时间最多渲染两页（429 `render_busy`）。
+- 服务任务支持可选的 `label`，在快照和历史中返回；`GET /api/history?include=items` 随摘要返回每个任务的条目；`…/result?max_bytes=` 返回长结果按行截断的开头部分，并附 `truncated` 和 `markdown_bytes`；条目报告 `models` 和 `source_size`；能力接口报告 `implementation`、`docs_url`、`source_url` 和 `features`。
+- 工作台会把上传的 `.urls` 文件当作 URL 列表读取：每一条变成一个 URL 任务（跳过注释行与空行，带输出名的条目保留该名字），不再报「不支持的文件类型」。批量提交（文件夹、多选文件、拖入文件夹、`.urls` 列表）现在会先暂存并显示一行名称，等点击「转换」再开始，便于先设选项；单个文件仍然选中即转换。这类提交在转换列表中显示为一个标题行，以文件夹或列表命名，其条目列在下方。
+- `--help` 末尾打印该二进制的构建身份：版本、来源提交（工作区有改动时标为 `(local changes)`，非检出目录为 `unknown`）、目标与构建类型，以及构建时间（按本机时区显示并带 UTC 偏移）。`SOURCE_DATE_EPOCH` 可固定该时间，便于可复现构建；`-h` 与单行 `--version` 保持不变。
+- 原生 Rust 转换核心、独立 CLI，以及进程内调用的 Python、Node.js 和 Go 绑定；CLI 包无需安装这些语言运行时。
+- Windows x64/ARM64 ZIP 与 macOS/Linux CLI 压缩包，附命令别名、依赖许可证及离线 Markdown 指南，包括 `llms.txt`、`llms-full.txt`。可选静态 Go 包支持 macOS arm64 和 Linux x86-64；Windows Go/cgo 分发仍未验证。
+- 内嵌 `markitai serve` 工作台，支持中文、英文和日文、明暗主题、响应式布局、文件/文件夹/URL 提交、上传进度和取消、结果预览、增强前后对比、历史、重试及下载。
+- 工作台的渲染视图会绘制网页转换后以标记形式保留的内嵌 SVG 图表和示意图，不再显示为空白块。每张图都会经过清理并只引用自身：`style` 中的绘图属性改写为属性，`id` 加上所属图的前缀，`href`、`xlink:href` 和 `url()` 只能指向同一张图中的元素，并移除图片、`foreignObject`、样式表、脚本、动画以及引用其他文档的 `use`，因此图中的内容不会加载、运行或访问任何东西；未着色的标注使用正文颜色，在深色模式下同样清晰可读。
+- 工作台「预览」为有四个及以上标题的文档显示目录：宽窗口中列在文档左侧，列出前三级标题，并随滚动标出正在阅读的章节；手机或窄窗口中通过右下角的圆形按钮以底部面板打开。「基础版 | LLM」旁的按钮可隐藏或显示目录，并在此浏览器中记住选择。
+- REST 转换任务、事件流和 OpenAPI 文档；通过 `markitai mcp` 或 `markitai-mcp` 提供原生 stdio MCP 转换工具及有界批量任务。
+- 原生 RST、Org、TeX 和 Outlook MSG 读取，笔记本输出、Numbers 表格及目录包、按 MIME 处理的邮件附件，以及 Office 元数据提取。
+- 使用 macOS Vision 或便携 PaddleOCR 在本地识别图片/PDF，支持指定语言及默认英中日韩路由。便携模型单独安装并校验完整性；`doctor` 检查模型，`doctor --fix` 修复模型。
+- Windows/Linux 通过进程内 hayro 渲染器提供 PDF 截图和扫描页 OCR；macOS 默认使用 CoreGraphics。可选 LibreOffice 导出提供 Office 截图和 OCR，另支持多页 TIFF、SVG 视觉预览及 macOS HEIF/AVIF 解码。
+- PDF 隐藏文本策略 `security.pdf_sanitize` 提供 `off`、`warn`、`remove` 模式，默认从提取正文中去掉读者看不见的文字并在提示中引用；保留原始资源，并报告检查不完整的情况。
+- 可选的隔离 Chromium 抓取、截图、按来源限定的 Basic/Digest 认证及认证 PDF 下载；支持通过 `doctor --fix` 显式安装浏览器、复用隔离会话和发现系统手动代理。
+- Cloudflare URL/文件转换及 Jina/Defuddle 抓取回退，遵循远程处理授权和仅本地策略。工作台按操作请求授权，隐私提示说明图片和 URL 何时发往远程服务。
+- 加权模型路由、回退组、重试、并发和请求预算、自定义提示词、结构化文档元数据及图片描述。持久化抓取/LLM 缓存和相同请求合并减少重复处理。
+- 新增多种 OpenAI 兼容提供商、模型发现及连接探测；可通过受支持的官方运行时使用 Copilot、Claude 和 ChatGPT 订阅转换，并查询认证状态、委托官方登录。
+- Python markitai 经 LiteLLM 可用的其余 OpenAI 兼容前缀现在也能路由（新增 69 个，从 `ai21/`、`volcengine/` 到 `cohere/`、`huggingface/`、`bedrock_mantle/`、`cloudflare/`、`databricks/`、`llamafile/` 与 `docker_model_runner/`），模型命名与密钥变量沿用 LiteLLM。各基础 URL 已于 2026-10-11 对照提供商文档核对；提供商文档给出比 LiteLLM 更新的主机或密钥名时，使用文档中的写法或优先读取它。`huggingface/<provider>/<org>/<model>` 让路由器使用指定的推理提供商，`bedrock_mantle/<region>/<model>` 与 AWS 区域变量决定 Bedrock 区域，Workers AI 读取 `CLOUDFLARE_ACCOUNT_ID`。已停止服务的前缀（GitHub Models、Meta 的 Llama API、Lambda 与 Hyperbolic 推理等）会给出原因并拒绝，而不是笼统报错。
+- `bedrock/<model>` 与 `vertex_ai/<model>` 无需各自的 SDK 即可使用，与 Python markitai 经 LiteLLM 的用法一致。Bedrock 通过 Converse API 调用所有对话模型（基础模型、推理配置文件、ARN），使用 Bedrock API 密钥，或以 Signature Version 4 签名的 AWS 密钥；凭据按 AWS SDK 的顺序查找：部署的 `api_key`、`AWS_BEARER_TOKEN_BEDROCK`、AWS 密钥变量与 `~/.aws` 配置（静态密钥、`credential_process`，SSO 与角色配置经 AWS CLI 获取）。Vertex AI 通过其 OpenAI 兼容端点提供 Gemini 与 Model Garden 模型，通过 `rawPredict` 提供 Claude；访问令牌由服务账号、用户凭据或 gcloud 应用默认凭据签发，或取自 gcloud CLI。两者均已离线验证（AWS 签名测试集、curl 自带的签名实现、本地令牌端点）；其费用尚未收入价格目录。
+- OpenAI 文本 Batch 提交、收集和重启续接，附私有请求记录、状态核对及输出归属检查；区分已观测用量、未知定价和失败尝试成本。
+- `--llm-batch` 对 `anthropic/<model>` 部署也会提交到 Anthropic Message Batches，与 Python markitai 相同：提交、等待、`--llm-batch-collect`、`--resume` 与 `llm.on_failure` 的处理都一样，请求沿用实时请求的结构化模式，成本按批处理价计算。请求在唯一一次创建调用中随附发送，发送前与已保存的摘要核对；每个 custom ID 都带有本次提交的 nonce，因此创建结果不确定时，通过打开同等规模、已结束批次的结果来核对，绝不重新创建。errored、canceled、expired 的请求是没有用量的条目失败，Anthropic 不对它们计费。
+- 升级后可以收回 Python markitai 1.2.x 提交后未收回的批处理：`--llm-batch-collect ID -o DIR`（目录里只有一个时也可用 `--llm-batch --resume -o DIR`）只读取 Python 的 `.markitai/batch-<ID>/` 状态、不做改动，将其转为同一 OpenAI 或 Anthropic 模型的原生任务，并用 Python 已付费的回答发布 `.llm.md`。Python 的图片与页码/幻灯片占位符按其自身规则重新计算（并与其保存的请求核对），每个都必须原样返回一次；该次运行的 `--alt` 标题与 `--desc` 描述按 Python 的方式应用。向这样的目录做普通 `--llm-batch` 运行时，会提示待收回的批处理及其收回命令。
+- 收回供应商批处理时会逐条打印文档的警告（回答失败后保留基础 Markdown、图片分析失败），与 Python 一致；运行报告仍不记录警告。
+- CLI 报告、可选历史、目录/URL 列表批量续跑、受控中断、输出锁及恢复凭据；共享资源和标准输出引用的图片保存在隔离的 Markitai 状态目录中。
+- 中英文 CLI 帮助和引导式转换、配置初始化/编辑/验证、能力诊断及私有轮转日志。Windows 支持原生控制台处理、订阅命令包装器、恢复和进程树清理。
+- `markitai serve` 可在页面中显示条目自己提取出的图片：`GET /api/jobs/{job_id}/items/{item_id}/assets/{relpath}` 只发送该条目结果所列的 PNG、JPEG、GIF、WebP 或 AVIF，以内联方式并在沙箱中发送，带 `ETag`（`If-None-Match` 匹配时返回 304）；其他文件、别的条目的图片或越出任务目录的路径一律 404 `file_not_found`。能力接口以 `features.item_assets` 声明。工作台的预览图片改由此路由读取，检查器的「结果开头」现在也显示图片（此前每张图都显示为「[图片：无法预览]」）；文件夹对不上的图片引用（电子书自带的 `../Images/x.png`、模型改写的 `assets/x.png`）按文件名对应到该条目唯一同名的图片。
+- 能识别存在却读错的 PDF 文字层。以前能识别辅音乱码、未定义的字形编码和加密文字；现在还能识别把字母映射到私用区、替换字符、控制字符或原始 `(cid:NN)` 编码的字体，被当成 Windows-1252 读出的 UTF-8（`cafÃ©`），以及按相反顺序存放的从右到左的希伯来文或阿拉伯文。这些页面按扫描页处理：不使用它们的文字，列入扫描页提示和 `unread_pages`，由 `--ocr`（或视觉模型）改从页面图像读取。页面所用的文字是配置的 `ocr.lang` 读不了的，就保留文字层，并在警告里说明哪个 `ocr.lang` 能读（`PDF page 1 (1 of 1): the text layer reads wrong (right-to-left text in reverse order); consider re-running with --ocr and ocr.lang set to ar.`）。中文、日文、英文、代码、表格和公式页面不受影响，Markdown 不变。这种检查文字层的思路来自 [Indra OCR](https://github.com/datalab-to/indra)，代码由 markitai 自己实现。
+- PDF 每页都说明文字来自哪里。`page_sources` 把各页列成 `{"page", "source", "reason"}`：`source` 是 `text`（文字层）、`ocr` 或 `mixed`（文字层加上对其中图片的 OCR，或在 `--ocr --llm` 下视觉模型对照文字层读页面图片），`reason` 是一句简短说明，比如 `text layer trusted`、`no text layer`、`text layer failed the script check: …` 或 `OCR forced by --ocr (ocr.per_page_routing is off)`。它出现在 `--json` 条目、各语言绑定的结果、记录的历史和 `markitai serve` 的条目里（workbench 会忽略这个新增字段）。
+- 工作台会绘制 Mermaid 图表：标为 `mermaid` 的代码围栏在「渲染」、「对照」和详情摘录中显示为图表（支持 Mermaid 12.1 的全部图表类型，由 Pele 1.x 绘制（随上游版本更新），位于单独的 `/ui/mermaid.js`，只在预览含有图表时才下载），使用主题配色，并随主题切换。「源码」、下载文件和 Markdown 本身保留代码。图表的 SVG 按 SVG 元素和属性的白名单重建，内容安全策略不变；其中的链接在新标签页打开且不带来源信息，图表不加载任何图片。无法解析、图表类型未知或过大（超过 50,000 个字符或 2,000 条流程图连线）的代码块保持为代码块，并在下方注明原因。
+
+- 安装脚本无需 Python 即可安装发布版：`https://markitai.dev/setup.sh`（macOS、Linux）和 `https://markitai.dev/setup.ps1`（Windows PowerShell 5.1 和 PowerShell 7，x64 和 ARM64）下载最新发布版或 `MARKITAI_VERSION` 指定的版本，用发布附带的 `SHA256SUMS` 校验压缩包，并为当前用户安装 `markitai`、`mkai` 和 `markitai-mcp`（`~/.local/bin`；`%LOCALAPPDATA%\Programs\markitai`，并加入用户 Path）。新文件先暂存，之后才卸载由 `uv tool` 安装的 Python 版 markitai 1.x；Windows 上更新失败会恢复原来的版本。安装清单记录装了哪些文件，更新或 `--uninstall`（`-Uninstall`）只删除这些文件和安装脚本添加的 Path 条目；自定义的 `MARKITAI_INSTALL_DIR` 会在之后的运行中沿用；`~/.markitai` 保留。在终端中运行时会提议执行 `markitai doctor --fix`。失败时只显示安装脚本自己的提示并以退出码 1 结束，不再附带 PowerShell 的错误记录；粘贴到已打开的窗口中运行时不会关闭该窗口。
+- 每个 GitHub Release 为每个平台提供一个 CLI 压缩包（`markitai-v<版本>-<目标>.tar.gz`，Windows 为 `.zip`），覆盖 macOS 11+（Apple 芯片、Intel）、glibc 2.28+ 的 Linux（x86-64、ARM64）和 Windows（x64、ARM64），另有六个 wheel 和源码包、覆盖全部附件的 `SHA256SUMS` 以及构建来源证明（`gh attestation verify <文件> --repo Ynewtime/markitai`）。压缩包和 wheel 携带同一套许可证文件，包括工作台所用网页库和字体的许可证。
+- PyPI 提供六个平台的 abi3 wheel（CPython 3.10 及以上，含 3.14），不提供源码包：在其他平台上 pip 会安装或保留 markitai 1.x，而不是编译 2.0；发布附带的源码包可用 Rust 1.92 及以上版本构建。
+
+### 变更
+- 工作台「图片」中的「描述 JSON」改名为「图片描述」（英文 Image Descriptions，日文 画像の説明）：它是对图片的描述，不是文档 JSON。
+- 静态抓取以 `markitai/<版本> (+https://github.com/Ynewtime/markitai)` 标识自己，带上网站 User-Agent 政策（如 Wikimedia）要求的联系地址，与 Python 版 markitai 一致；对返回 401 或 403 的页面，会先以桌面版 Chrome 的请求头再请求一次，然后 `auto` 才启动本机浏览器。
+- 本机浏览器的渲染等待在页面稳定后即结束，与 Python 版 markitai 一致：`fetch.playwright.extra_wait_ms`（3 秒）现在是上限，当文档、脚本、XHR 或 fetch 请求都已结束且 DOM 0.5 秒内没有变化时即停止等待（不等待图片、字体、媒体和事件流）；一屏放得下的页面不再滚动，滚动后的绘制停顿只在截图时保留。加载即完整的页面约快 4 秒读完。
+- 抓取的 URL 响应现在可以与本地输入文件一样大，即 500 MiB（原为 100 MiB），与 Python 版 markitai 一致；本机浏览器下载的文档仍限 100 MiB。
+- XLSX、XLSM、XLSB 和 XLS 工作簿中的隐藏行和隐藏列现在与可见行列一样写出（连同单元格批注和图片），与 Python markitai 1.3.0 及已有的隐藏工作表处理一致，不再按工作表逐个警告后省略；该项只给出一条带数量的警告（`The workbook includes 1 hidden row and 2 hidden columns holding content; they are converted like the visible ones.`）。
+- 用 `-s defuddle`、`-s jina` 或 `-s cloudflare`（或服务任务的 `strategy`）选择的策略被拒绝或失败时，转换不再终止：改为在本地读取页面（先静态抓取，再用浏览器），并给出警告说明是哪个服务以及原因，不会再询问其他远程服务；本地抓取也失败时，两个失败都会列出。
+- 远程抓取仍需明确同意（默认的 `fetch.remote_consent` 让 `auto` 只在本地抓取，与 Python 版 markitai 不同）：凡是远程读取服务本可补救的 `auto` 失败，现在都会在结尾说明如何允许，即 `set fetch.remote_consent: always (markitai config set fetch.remote_consent always)`，不再只限于验证页面。docs/compatibility.md 中有迁移说明。
+- 用户令牌拥有的 `serve` 任务无论 `fetch.remote_consent` 如何设置都不会使用远程服务，与 Python 版 markitai 1.3.0 一致：`strategy` 为 `defuddle`、`jina` 或 `cloudflare`，或 `backend: cloudflare`，返回 403 `remote_processing_forbidden`，按任务的所有者判断（管理员重试用户的任务也一样）；服务器默认的远程策略对其按 `auto` 运行（`GET /api/convert-defaults` 对用户显示 `auto`，用户 PUT 指定远程策略返回 422 `invalid_convert_defaults`）；`auto` 不再尝试远程回退，本地策略无法读取页面时会说明。工作台对用户令牌只提供 Auto、Static 和 Playwright，不提供后端选项。
+- 历史记录 `meta.json` 的每个条目都会写出 `pricing`（未观察到请求时为 `null`）和 `models`（回答增强结果请求的模型；只有基础结果时为 `[]`），与 Python 版 markitai 一致。
+- MCP 工具的描述与 Python 版 markitai 一样完整：说明每个参数的作用（跟随配置的开关、`llm` 的前提与可能产生的费用、OCR 与截图的实现、输出配置、`concurrency`）、结果各字段的含义（预览与 `markdown_file`、`cost_usd` 与 `pricing`、值得处理的警告、`done`/`failed`/`finished`）以及调用失败的情形。
+- MCP `job_status` 的 `done` 现在只统计成功的条目，与 `markitai serve` 和 Python 版 markitai 一致，并新增 `finished`（成功加失败，用于显示进度）；此前 `done` 也计入失败的条目。
+- 文件夹批处理仍不跟随文件夹中的符号链接（`output.allow_symlinks` 默认关闭），但不再静默跳过：指向文档、`.urls` 列表或文件夹的链接会在结尾摘要中计数并列名（`已跳过 2 项（符号链接，未跟随）：…`，并给出跟随链接的设置），并在 `--json` 中作为 `skip_reason: "symlink"` 的跳过条目列出。Python 版 markitai 会跟随这些链接。
+- `--json` 在三个细节上与 Python 版 markitai 一致：单个文件不存在或其格式没有可用的读取器时整次运行被拒绝（顶层 `error`，`items: []`），不再报告一个 `error: null` 的失败条目；单个文件的 `source` 是文件名（与报告一致），而不是输入时的路径；失败条目的 `duration_s` 是它所用的时间（此前为 null）。
+- `chatgpt/<model>` 可使用已安装的 Codex 提供的任何模型（`gpt-6-luna`、`gpt-6-sol`、`gpt-6.1-sol` 等），不再只有 `gpt-5.5`：适配器向 Codex 询问模型列表（`codex debug models`），Codex 不提供的模型会在发出任何请求前被拒绝，每个模型使用各自受限的目录条目（关闭补丁工具、代码模式、实验性工具、子代理和搜索）。需要自动选择模型时，默认使用 Codex 列出的最轻量的当前模型（最新的 `luna`，否则是 Codex 描述为小型或低成本的模型，否则是 Codex 自己的默认模型），因为清理和图片文字不需要前沿模型；要使用其他模型，请写成 `chatgpt/<model>`。无法列出模型的 Codex 会收到所指定的模型，并给出一次警告；本版本不再内置 `gpt-5.5` 目录（也不再附带 `licenses/codex/`）。Python 版 markitai 的用户请注意：本版本通过 Codex 登录（`markitai auth chatgpt login`），不使用 LiteLLM 的设备码登录，Python 版的登录不会沿用。
+- 比已验证版本（1.0.90-2、2.1.284、0.159.0）更新的 Copilot CLI、Claude Code 和 Codex 现在会被使用而不是拒绝，并在第一个文档的警告中提示一次，`doctor` 也会显示已安装的版本；它们发来的每条消息仍会被校验。只有更旧的版本或协议不是 3 的 Copilot 运行时会被拒绝。
+- 批处理的结尾行会说明每一项的结果，与 Python 版 markitai 的说法一致：`完成：8 个文件中已转换 2 个，跳过 5 个，失败 1 个（0:12）`，不再是 `完成：2/8 个文件`。
+- 模型的回答丢失了保持页面、图片、链接和代码不变的标记时，错误信息（以及随后的重发）会说明发生了什么并列出这些标记，与 Python 版 markitai 一致：`the answer dropped 1 of the 3 markers … (the start of page 2 …)`。
+- OpenAI GPT-5 及以后的模型（包括默认的 `gpt-6-luna`）通过带 JSON schema 的 `response_format` 返回结构化结果，与 Python 版 markitai 一致，不再只在提示词中描述 JSON；模式被拒时仍退回 JSON 文本。Gemini Flash-Lite 和 DeepSeek 仍使用 JSON 文本（未用 schema 验证过）。
+- Copilot 请求的时间上限随请求大小增长，与 Python 版 markitai 相同（60 秒，每 500 个字符加 1 秒，含图片时再乘 1.5，最多 600 秒），不再固定为 120 秒；配置了更长的 `router_settings.timeout` 时仍以其为准。
+- 在自己运行的服务器上的模型（`ollama/`、`ollama_chat/`、`lm_studio/`、`hosted_vllm/`、`llamafile/`、`docker_model_runner/`、`lemonade/`、`xinference/`、`oobabooga/`）按 $0 计价，不再是未知：每份文档不再提示“费用不完整”，`llm.max_cost_per_document_usd` 也不再拒绝它们。网关（`litellm_proxy/`、`openai_like/`、带 `api_base` 的 `openai/`）和其他未定价模型在设置金额上限时仍会被拒绝。
+- 在安全的情况下，请求会让推理模型不进行思考，与 Python 版 markitai 一致：接受 `reasoning_effort: "none"` 的 OpenAI 模型（`gpt-6-luna`、GPT-5.1 至 5.6）会带上它，Claude Haiku 5.5 带上 `thinking: {"type": "disabled"}`（DeepSeek 原已如此）。未配置 `max_tokens` 时，已审核的 Anthropic 模型按其输出上限在上下文剩余空间内申请（与 Gemini、DeepSeek 相同，最多 128,000），不再是 8,192；配置的上限高于已审核模型的上限时降到该上限；发往 OpenAI 本身的请求以及 GPT-5 及以后和 o 系列的模型（现包括 `gpt-6-*`）使用 `max_completion_tokens`。
+- HTTPS 请求（URL 抓取、模型调用、模型发现与检测、图片下载、OCR 模型与浏览器下载）在 markitai 内置的 Mozilla 根证书之外，同时信任操作系统的证书库；设置了 `SSL_CERT_FILE` 或 `SSL_CERT_DIR` 时，改用它们指定的证书代替系统证书库。在会重签 HTTPS 的代理之后，只要代理的证书颁发机构已安装在上述位置或由这些变量指定，请求不再以 `invalid peer certificate: UnknownIssuer` 失败；变量指向的内容无法读取时会在标准错误输出中提示，内置根证书仍然有效。
+- 路由权重为 0 到 100 的整数（0 表示停用）：`markitai serve` 在所有写入权重的路由上对其他值返回 422 `invalid_weight`（包括「编辑配置」，并指出是哪一项；文件中原有的权重可以保留）；工作台在空的权重输入框中显示 `0–100`，在框下说明错误，按 Enter 时保持输入框打开，方向键也不超出范围。
+- macOS 上的本地 OCR 默认与 Windows、Linux 一样使用内置的 PP-OCR 引擎；用 `MARKITAI_OCR_BACKEND=vision` 选择 Vision，内置模型无法下载（且未指定引擎）时也由 Vision 读取。Vision 对一个程序的首次使用会编译模型约 20 秒（工作台里首次扫描用了 25 秒），它对 `cjk-scanned.pdf` 的默认识别把行连在一起、压平表格、丢了一个字并漏掉韩文行，内置引擎则完整读出；在语料扫描件上内置引擎找到全部预期行（Python 的 RapidOCR 在中日韩页上为 9/10），每页约 0.6 秒。macOS 构建通过默认的 `portable-media` 特性包含内置引擎；PDF 页面仍用 CoreGraphics 渲染。`MARKITAI_OCR_TRACE` 现在也给每次 Vision 识别计时，`MARKITAI_OCR_VISION_POLICY=detect` 用一次包含所有语言的请求识别（用于测量）。`scripts/bench_ocr_backends.py` 比较各引擎的冷、热耗时。
+- 工作台把文档的 front matter 显示为正文上方的一行浅色信息（标签图标、行内标签、行尾的「简介」），不再单独显示标题（正文自己的标题就是标题）；「简介」展开为两列属性表（简介、标签以小标签显示、来源、处理时间以及其他所有键），表头可再次收起；本标签页会话内记住展开状态，预览、对照和详情摘录中一致。
+- 工作台的费用一行在转换尚无金额时说明接下来会怎样（「开始后计算」「计算中…」「等待模型回答…」「不使用模型」；结束后为「无：没有模型给出回答」「无：没有模型运行」或「无：在模型运行前已停止」），不再对仍在使用模型转换的任务显示「未使用模型」。
+- 刚提交的转换完成后在「预览」打开（转换中和失败时为「详情」）；点击详情中的结果摘录进入「预览」。侧栏圆点在转换进行中为灰色脉动，全部完成后为静止的绿色（随后淡出）。「编辑配置」在随主题变化的编辑器中为 JSON 着色。
+- 工作台阅读栏中的每个表格都与阅读栏同宽、左边缘对齐；过宽的表格在自身框内横向滚动，不再伸入页边。
+- PDF 中没有可读文字的页面按原因各合并为一条警告，用页码范围列出并给出占全文的页数（`PDF pages 3–5, 9 (4 of 120): native text was not recovered (scanned); OCR is required to read them. Run again with --ocr.`）；九成及以上页面没有文字的 PDF 只给一条警告，说明它是扫描件（`PDF is scanned: 488 of 491 pages have no readable text (pages 1–480, 483–490); run again with --ocr to read them.`），报告、`--json` 和服务中不再逐页一条。
+- 本地 OCR 没有识别出文字的渲染页合并为一条警告，用页码范围列出并给出占全文的页数（`PDF pages 2, 245–246 (3 of 490): OCR found no text; they are blank in the output.`；Office 文档为 `Office pages 2, 5 (2 of 9): OCR found no text; the OCR supplement leaves them out.`），不再逐页给出 `PDF page 2: local OCR completed with no recognized text.`。
+- 安全检查拒绝了模型回答时，警告用平实的话说明：`LLM enhancement failed: the model's answer left out or changed too much of the document, so it was not used; the converted Markdown is kept as it was.`（其他检查同理）。
+- 工作台的「对照」优先显示保留的网页，其次是截图；只有两者都可用时才显示「截图 | 网页」切换；抓取时是验证页或空白的网页或截图不再提供，二者都不可用时，原件一侧说明原因并提供「打开网页」。原件一侧无法显示的段落不再加框。
+- 工作台的「对比」在宽窗口中左右并排（Base 与 LLM 版本各有行号，同一处改动的行相对，改动的词语高亮）；窄窗口仍为单列。在「对比」中 Base | LLM 切换保留，并同时处于选中状态。
+- 工作台的通知改为底部的提示卡片（宽屏在右下角，手机在标签栏上方居中），不会推动页面，带关闭按钮和可折叠的详细信息；错误提示保留到手动关闭。模型测试、保存配置和操作失败都改用提示卡片，不再在页面或窗口顶部插入一行。
+- 工作台转换窗口的标签顺序为「预览 · 对照 · 详情」，默认打开「预览」。front matter 卡片在预览、对照和详情中默认折叠为一行（标题 · N 个标签）。阅读栏随窗口变宽（820 px 至 1120 px），表格两侧最多可再宽 200 px。CLI 命令行将待转换的文件写成 `./文件名`、选择的文件夹写成 `./文件夹/`，并提示在其所在文件夹运行。访问令牌页去掉「使用其他令牌」（先退出，再登录），新建的用户令牌在点击「完成」（现位于右侧）后才加入列表，各部分间距加大。
+- `markitai serve` 的策略：静态页面允许 `img-src 'self' blob: https:`（可加载 HTTPS 远程图片；`http:` 与 `data:` 仍被拒绝）；保留网页的框架（`…/original/view`）改为 `sandbox allow-same-origin allow-popups allow-popups-to-escape-sandbox`，以便工作台读取所显示的网页。它仍然不能运行脚本：没有 `allow-scripts`，也没有 `script-src`，`default-src 'none'` 会拒绝所有脚本、内联事件处理器和 `javascript:` 地址。所有 `/api/settings/` 路由仅限管理员。
+- 工作台以解码后的文字显示百分号编码的名称（`20260314-%E5%B1%B1…` 显示为 `20260314-山…`），覆盖列表行、窗口标题、详情和文件，分隔符、控制字符和不可见标记保持编码；网页上的图片（`https://`）在预览、对照和详情中显示，仅在加载失败时显示占位符；网页对照按文字将页面区块与 Markdown 对应并同时描边，原件标题栏去掉下载按钮，框架说明移入 (i) 提示；设置中「外观」排在最前；转换任务的汇总行与筛选行之间留出更多间距，分组标题的展开箭头与状态图标左对齐。
+- 工作台的转换窗口不再停靠在列表旁（侧边面板太局促）：只以居中窗口打开（手机上铺满屏幕），展开按钮或 F 键可把它放大到整个视口再还原，按浏览器记住（选过停靠布局的浏览器改为打开窗口）。窗口的「下载」改为打开预览的「文件」：列出原件（上传的文件，或服务器抓取到的网页）和每个结果文件，各自可下载，并可「全部下载（.zip）」该条目。「⋯」中的「导出 PDF…」打开一张小卡片，只问一件事：是否加上 Markitai 自己的页眉页脚（下方附说明），再「打印…」；单独的页眉页脚菜单项已移除，「⋯」只在「对照」的原件标题栏不提供「打开网页」时才提供它。
+- 工作台的「对照」按网页原本的样子显示：转换时拍了截图就先显示截图；「网页」视图在沙箱框架中显示服务器抓取到的网页，加载站点自己的图片、样式表和字体（`…/original/view` 允许经 HTTPS 加载：`img-src https: data:; style-src https: 'unsafe-inline'; font-src https: data:; media-src https:`），但不运行其脚本、不提交表单，不再只显示去掉样式的网页文字。悬停段落、列表项、代码块或 PDF 中的图片时，两侧也会一起框出（不再只限标题和表格），框线也不再在边缘被截断。
+- 在工作台用「上传」或「文件夹」选择的文件、或拖入的文件，会先列在网址输入框上方的待转换列表中，每个文件都有移除按钮（另有「全部移除」），按下「转换」后才与输入的网址一起提交；单个文件不再立即开始转换。
+- 工作台「预览」：目录只显示标题的纯文字（不含行内 `<sup>` 标签和私用区字形方块，最多两行）；文档开头的 `#` 标题与前言卡片标题相同时，卡片不再重复标题（没有其他内容时不显示卡片）。服务商设置页分节清楚，模型列表是带边框的内嵌面板，搜索框和「全选」位于其顶部，面包屑统一字号；「访问令牌」页使用设置页统一的居中栏宽。
+- 工作台的「添加模型」中同一服务商只出现一次：服务器上的密钥与它在自身端点的连接合为一行「已保存」，注明认证方式（`使用 DEEPSEEK_API_KEY`、`已保存密钥`、`无密钥`）和模型数；「常用」和「全部」把已保存的服务商标为「已添加」，选择它会打开那一行。服务商的密钥输入框下方说明密钥的其他来源（`也可以在运行 markitai serve 的环境中设置 MOONSHOT_API_KEY …`），不再在上方单独显示一个变量名。
+- 工作台的「访问令牌」页：「忘记」改为「退出此标签页」；新增「重新生成令牌」（先确认），替换服务器的令牌，其他所有标签页和设备立即退出登录并需重新登录；新令牌只显示一次，并附登录链接及其二维码，便于在其他设备上登录。
+
+- 便携 OCR 引擎（Windows、Linux）的本地 OCR 单个文件约快 18%，批量扫描件约快 13%：tract 的算子（`tract-core`）改为在体积预算内按速度优化（`opt-level = "s"`），不再按最小体积优化。Linux arm64 发布版 CLI 增大 4.7 MB（38.7 MB 增至 43.4 MB）；完全按速度优化会再多 2.3 MB，速度提升不到一个百分点。识别出的文字不变。
+- 本地 OCR 的线程合用同一个预算：文字检测和所有在处理中的扫描页的行识别共用一个线程池，线程数等于处理器数（`MARKITAI_OCR_THREADS` 可设为其他数量），不再是一个检测线程池外加每页最多七个识别线程；一页剩下最后几行时由全部线程一起识别，不再只由该页分到的一个线程识别。识别出的文字不变。
+- `MARKITAI_OCR_TRACE=1` 把本地 OCR（便携引擎）的耗时输出到 stderr：每个扫描页的渲染、检测、方向判断、识别和排版用时，每个模型优化后的算子及 tract 选用的矩阵内核，以及耗时最长的算子，用于查明某种 CPU 上 OCR 的时间花在哪里。
+- 本地 OCR 新增实验性的第二个引擎 qppocr（纯 Rust，AVX2/FMA 与 NEON 内核在运行时选择），用 `MARKITAI_OCR_ENGINE=qppocr` 选用；默认仍是 tract（`tract` 与 `auto` 都选 tract）。在完整流程中，qppocr 在 x86_64 笔记本上并不比 tract 快（4 核 Linux 笔记本持平；12 核 Windows 笔记本上 8 页扫描件快 4–8 %、40 页慢 5 %），在 arm64 上约慢 45 %，所以不作默认。它读取默认语言以及中文、日文和拉丁字母语言；对把握不足的行的韩文复读和其他单一文字的语言仍由 tract 负责，qppocr 无法启动或在某张图片上失败时由 tract 接手，每个进程在标准错误输出一条提示。它自带的文字行方向分类器（`ppocr-lcnet-textline-ori`，1.0 MB）只在选用 qppocr 时安装。识别文本与 tract 相比，约 31,000 个字符中仅有 0 至 5 个不同，段落间另有少量空行差异。`MARKITAI_OCR_TRACE` 会给出所用引擎，qppocr 还给出各阶段用时。发布版 CLI 增大 0.3 MB（arm64）至 0.4 MB（x86-64）。
+- `markitai doctor` 的本地 OCR 检查会写出将使用的引擎（`tract`，选用 qppocr 时为 `qppocr, tract fallback`）。
+- CLI 打印的每一行都遵循同一套终端样式，与 Python markitai 1.3.0 一致，两者看起来相同。由标记说明每行的含义（`✓` 成功、`!` 警告、`✗` 错误、`→` 下一步或正在进行的操作、`•` 事实、`○` 有意跳过、`?` 等待输入、`◆` 标题），颜色只是重复这一含义：绿色只表示成功，黄色只表示警告，红色只表示错误，青色用于标题标记、提示与可复制的命令，灰色用于细节，节标题加粗不着色；不用品红、蓝色和亮色，浅色与深色主题读起来一样。`doctor` 现在显示标题、版本与配置文件、「可选能力」「LLM」「认证状态」三节、每条命令单独一行的修复方法，以及结论行（只缺可选项时为绿色的 `✓ 已就绪。以下可选功能不可用：…`，与 Python markitai 一致；配置要求的检查未就绪时为 `✗ 未就绪：请先修复 …`）。stderr 诊断以 `  ! …`、`  ✗ …` 代替 `Warning:`、`Error:`（文件日志保留这些标签，便于检索）；批处理摘要先给结论、最后给输出目录；`init`、`-I`、`config edit`、`cache`、`auth`、参数错误与 `--help` 使用相同的标记和颜色；`serve` 把要打开的地址单独成行，复制时保持完整。终端上长行在正文下方缩进折行；管道输出每条消息一行。`NO_COLOR` 关闭颜色（标记保留），`FORCE_COLOR` 在管道中开启颜色，`TERM=dumb` 既无颜色也不折行；无法显示这些标记的输出（Unix 上字符集不是 UTF-8 的 locale；不能处理转义序列的 Windows 控制台，即 Windows 10 1511 之前的版本或勾选了“使用旧版控制台”）改用 `+ ! x > - o ? *`；Windows 的管道与文件输出仍是 UTF-8，但只有控制台输出代码页为 UTF-8（65001）时才使用 Unicode 标记，因为 Windows PowerShell 按这个代码页解码程序输出（代码页 437 下 `✓` 显示为 `Γ£ô`）：其他代码页使用 ASCII 标记，没有控制台的进程保持 Unicode 标记。转圈字符与状态行的省略号与标记采用同一判断。由 locale 选中的中文在输出无法显示中文时（Unix 上的 `zh_CN.GBK`、代码页既非 CJK 也非 UTF-8 的旧版控制台）回退为英文。
+- `markitai serve` 的历史记录保留七天，与参考服务一致：任务在完成七天后删除（启动时和每小时清理一次），并从那一刻起不再出现在历史、任务接口和归档中；运行中的任务和待处理的重试永不过期。此前历史会一直保留到手动删除。能力接口报告 `limits.history_retention_days: 7`。
+- 未配置 `llm.model_list` 时的默认模型换成各家当前的小模型：`anthropic/claude-haiku-5-5`、`openai/gpt-6-luna`、`deepseek/deepseek-flash`（DeepSeek 模型列表给出的 ID）和 `openrouter/google/gemini-3.5-flash-lite`；Gemini 仍用 `gemini-flash-lite-latest`。`claude-haiku-5-5` 从强制命名工具起步：在 Haiku 4.5 的工具回答出错的那份演示文稿上实测，它的工具回答按顺序保留了全部 9 个受保护的文档标记，因此该文档只需一个请求，而 Haiku 4.5 还需要第二个 JSON schema 请求；工具回答若丢失标记，仍会带警告退回 JSON schema。
+- 内置价格快照改用 LiteLLM 1.106.0.dev2 的数据（`pricing_snapshot` 为 `litellm-1.106.0.dev2-selected-2026-10-11`），并于 2026-10-11 对照各家官方价格重新核对；此前已有价格的八行不变。它是开发预发布版，仍是 PyPI 上最新的、带有 `claude-haiku-5-5` 和 `claude-sonnet-5-5` 行的版本。
+- 默认 OpenAI 模型 `openai/gpt-6-luna` 现在有价格：每百万 token 输入 $0.10、缓存读取 $0.01、缓存写入 $0.125、输出 $0.50；提示超过 272K token 时，整次请求改按 $0.20 / $0.02 / $0.25 / $0.75 计价。缓存写入（`prompt_tokens_details.cache_write_tokens`）按自身单价计费，不再当作普通输入。OpenAI 的“272K”即 272,000 token（K 为 1,000，与 GPT-5 页面的 “Maximum input tokens: 272,000” 一致），因此从 272,001 token 起按长上下文价格计费，与 Python markitai 相同。把提示再按文本与图像拆分计数的响应，也不再被当作未知计费类别拒绝。
+- 报告了提示缓存写入的 GPT-4.1、GPT-4.1 mini 与 nano 响应现在有价格，不再显示为未知：OpenAI 对这些模型的缓存写入不额外收费，写入的 token 按普通输入计价，与 Python markitai 相同。Claude 4.5 系列仍只在其 200,000 token 上下文窗口内计价：Claude API 已不再提供 Sonnet 4.5 的 1M token 测试版及其 200K 以上价格。
+- 默认 Anthropic 模型 `anthropic/claude-haiku-5-5` 现在有价格，不再显示为未知：每百万 token 输入 $0.10、缓存读取 $0.01、5 分钟 / 1 小时缓存写入 $0.125 / $0.20、输出 $0.50；提示（含缓存读取与写入）超过 100,000 token 时，整次请求改按 $0.50 / $0.05 / $0.625 / $1 / $2.50 计价。Messages 响应带有 `output_tokens_details`、服务器工具请求数为零或缓存计数为 null 时照常计价，不再被拒绝；只要有服务器工具请求，费用仍为未知。
+- 用户可能配置的模型现在都有价格，每一行都对照了服务商自己的价格页（逐行记在 `licenses/pricing/provenance.json`），因此 Python markitai 1.3.0 能计价的这些模型，这里也都能计价：API 仍提供的所有 Claude 模型（Fable 5.1 与 5，Opus 5.5、5、4.8、4.7、4.6 与 4.5，Sonnet 5.5、5 与 4.6），以及 OpenAI 的 `gpt-6-astra`、`gpt-6.1-sol`、`gpt-6-sol` 和 GPT-5.6 Sol、Terra、Luna（含 `gpt-5.6` 别名），两家都带批处理价格；Gemini 3.5 与 3.1 Flash-Lite、3.8 与 3.6 Flash，以及 `gemini-flash-lite-latest`、`gemini-flash-latest` 别名，其思考 token 不在 OpenAI 兼容接口的 `completion_tokens` 中，按输出计费，Flash 的推广价到 2026 年底不再采用；以及 DeepSeek Flash（含 `deepseek-v4-flash`）和 V4 Pro，按请求在北京时间的运行时段取高峰价或空闲价。2026 年以后工作日的高峰时段在核对 2027 年中国法定节假日之前保持未计价，跨越两个时段的请求也是如此（`request time falls outside a reviewed price period`）。OpenRouter 请求按 OpenRouter 报告的实际扣费（`usage.cost`）计价，适用于任何模型；自带密钥（BYOK）的请求保持未计价。
+- SVG 的本地 OCR 改为按其自身宽度的两倍渲染（最多 2048 像素，与参考实现一致），不再使用 2048 像素的视觉预览图：语料中 426 字节的 SVG 耗时由 1.8 秒、445 MB 降至 0.29 秒、162 MB，识别文本不变。
+- 便携引擎的本地 OCR 在全部基准输入上都快于参考实现：文字检测（含逐通道卷积）使用多线程，文本行的裁切、方向分类与识别并行进行，在检测首张图片时并行准备方向分类器与识别模型，PDF 扫描页多页同时识别。12 页扫描件由 12.2 秒降至 5.8 秒（Python 1.2 为 8.3 秒），3 页扫描件由 4.4 秒降至 2.3 秒（Python 为 4.8 秒），15 份扫描件以 `-j 4` 批量转换由 16.4 秒降至 8.8 秒（Python 为 15.0 秒），识别文本不变，内存占用更低（12 页扫描件峰值 1.4 GB，Python 为 2.6 GB）。发布版 CLI 增大约 95 KB。
+- 便携引擎的本地 OCR 处理长篇扫描 PDF 更快：最多四页同时识别（处理器数的四分之一，至少两页；Vision 和实验性的 qppocr 引擎仍为两页），某页识别完成后立即让出位置，不再等待最早的一页。一本虚构的 490 页扫描书（简体中文夹杂英文，170 dpi 灰度）在共享的 17 核 Linux arm64 机器上由 200 秒降至 155 秒（Python 1.3.0 为 500 秒；经 `markitai serve` 为 158 秒，Python 为 488 秒），识别文本不变（字符正确率 99.98%，Python 为 99.47%）。Linux 上 CLI 将 glibc 的 malloc arena 限制为四个（设置了 `MALLOC_ARENA_MAX` 时以其为准），OCR 各线程释放的缓冲区不再一直占用内存：这本书的内存峰值由 1.5 GB 降至 1.0 GB（Python 为 1.5 GB），服务中同样如此。
+- 含图片的文档（PPTX、DOCX、ODT、EPUB 等）转换更快：内嵌图片的解码、缩放与压缩改为最多四个线程同时进行，不再逐张处理；缩放本身（Lanczos3，字节与此前相同）也在多个线程上进行，并省去 `image` 库版本所建的 70 MB 中间图；文档的资源文件最多四个线程同时写入，使各自的顺序刷盘互相重叠。本机（aarch64 Linux，17 核，小样本）实测：含一张 550 万像素图片的 PPTX 由 105 毫秒降至 62 毫秒，含 30 张图片的 30 页 PPTX 由 92 毫秒降至 44 毫秒，含 40 张小图的 DOCX 由 57 毫秒降至 33 毫秒；输出逐字节相同。
+- 大型 XLSX 工作表的内存占用大幅降低：在 XML 解析器关闭每一行时即读取该行，而不是先构建整张表的树，解析后的 XML 也不再保留多余容量。2 万行的工作簿（9 MB 表格 XML）峰值内存由 384 MB 降至 84 MB，输出不变。
+- 最终 Markdown 默认不再包含 PDF 页码和幻灯片编号注释；可通过 `output.page_markers` 或 `--page-markers` 保留。内部页面对齐、RAG 页码溯源和代码示例不受影响。
+- 换行（`<br>`、Word/ODT/RTF/EPUB 中的手动换行）改为 Markdown 行尾两个空格的硬换行，不再输出行尾反斜杠；常规输出会保留它们，HTML 列表项内同样适用。
+- 批量转换的状态行改为显示已用时间，不再显示会随文件大小和模型请求大幅波动的预计剩余时间。
+- 图像发往本机以外模型前的一次性提示会列出路由组中所有可能接收图像的远程模型，而不只是第一次选中的那个。
+- 工作台重新设计，并成为 markitai 两个后端共用的山间（Python markitai 1.3.0 通过书面 API 约定提供同一构建，由 `scripts/package.mjs` 打包）。侧边栏包含「转换」「全部转换」和设置页面（模型、外观与语言、访问令牌），可收起为带提示的图标栏，按浏览器记住；手机上改为底部标签栏。「全部转换」列出所有已保存和正在运行的文件（状态、保留扩展名的名称、用时），按提交分组，可按全部、失败或有提示筛选；选中后在检查器中显示操作、信息（来源、输出、模型、费用、保留至）、按类别归并的提示以及结果开头。预览停靠在列表旁（↑/↓ 切换条目，Esc 关闭，F 全宽），高度固定，带前置信息卡片、转换提示、代码高亮，表格只先显示 500 行并固定表头，可「显示全部行」；20,000 行的工作簿约 0.1 秒打开且不阻塞页面。「对照」把原件（PDF 页面、图片、网页转换时所用的 HTML、文本或页面截图）放在 Markdown 旁，悬停标题或表格时两侧同时框出。手机上检查器为底部抽屉，预览和对照为全屏视图。「选项」内含 CLI 命令行，「上传」可选文件或文件夹，界面只下载读者所用语言的文字。
+- 工作台转换列表中，一次提交包含的条目在其标题下缩进显示，因此只有一个条目的提交位于最外侧，不再像是上方分组的成员。
+- 工作台的按钮、标签页、筛选片和分段控件改用界面字体（等宽字体只用于数字、时长、大小、路径和代码）；按钮组改为真正的分段控件：「全部 / 失败 / 提示」筛选、输入框旁的「选项」「上传」及上传菜单、各选项分段共用一个外框，只有外侧圆角，分段之间只有一条细线，不再是各自带圆角、边框重叠的独立按钮。
+- 工作台的空状态与受阻状态（没有转换、没有模型、筛选无结果、链接中的转换已不存在、因缺少令牌、无法连接服务器或出错而无法加载转换、地址不存在）统一为带边框的面板：一个图标、一个标题、一句说明，最多一个主要操作和一个次要操作；指向已删除或已过期转换的链接改为在检查器位置显示该面板，不再显示页面提示；无法加载转换时，「转换」页在「最近」的位置显示该面板。
+- 工作台的「添加模型」改为服务商选择器，列出本版本可路由的全部服务商（95 个：常用服务商、Bedrock、Vertex AI、Copilot / Claude / ChatGPT 订阅、推理服务、网关和本地服务器），不再只有 24 张卡片：一个搜索框按名称、模型前缀和别名查找；已保存的连接为整行，显示模型数和「编辑」「删除」；OpenAI、Anthropic、Gemini、DeepSeek、OpenRouter、Azure OpenAI、Ollama 和 Mistral AI 为卡片；其余服务商按名称排成紧凑列表，上方是「全部 · 云平台 · 推理服务 · 网关 · 本地 · 订阅 · 模型厂商」筛选。服务商显示官方单色标志（59 个，取自 MIT 许可的 lobehub icons，只随模型设置加载，使用文字颜色），没有标志的显示首字母。订阅无需 key 和地址，通过已安装的官方运行时列出模型，添加模型后仍可再次选择；Bedrock 和 Vertex AI 手动填写模型 ID。设置 API 的服务商卡片新增 `group`、`icon` 和 `aliases`；不提供这些字段的服务器（Python markitai 1.3.0）仍按名称得到常用服务商。
+- 工作台模型设置：已保存服务商的 key 和地址在其自身页面顶部分别管理（更换或移除 key；修改地址或恢复默认，改地址时填写新地址使用的 key），不再在服务商列表底部用带「移除已存 key」复选框的表单；唯一的 key 输入框说明这是「覆盖已保存的 API key」，其提示文字比实际取值小一级，「保存」和「取消」与输入框同一行。模型行的「编辑」进入该服务商的页面（连接与模型目录），「测试」「编辑」「删除」改为图标按钮；模型选择不设 50 个上限，该路由组在此连接上已配置的模型会打勾、锁定并排在前面，批量项改为「全选」，底部按钮改为「保存」（仅在已选时显示数量），因为同一页面既新增也编辑。弹窗操作按钮固定在底部，服务商页面的两个小节标题层级一致，模型列表短于滚动区域时「手动添加模型 ID」前只保留一条分隔线。
+- 订阅成本提示现在只在订阅运行时实际服务了该文档时出现，不再因为路由池包含订阅运行时而对每个文档提示；纯订阅用量不再重复触发未计价警告。
+- 清除仓库文档和来源记录中的个人机器路径，并加入检查，防止提交私有路径及常见凭据格式。
+
+- 最低 Rust 版本提高至 1.92；更新兼容依赖，保留现有 Node API 级别。
+- 减少 PDF/HTML 重复解析，复用字体和版式处理，共享编译辅助代码并缩小二进制及静态库体积。macOS 延迟加载可选系统框架，Python 按需加载可选模块。
+- 减少冗余输出同步，同时保留持久化发布及恢复顺序。输出文件遵循进程 umask，私有状态仍保持私有；允许可信目录别名，继续保护文档和元数据链接。
+- 改进窄终端帮助、批量摘要、预演和可操作的错误提示。退出码参考保留在文档中，不再附加于帮助末尾。配置验证指出显式设置但运行时无效的选项，机器可读结果保留稳定字段。
+- 缓存 CI 依赖、避免重复构建 Windows CLI，并显示打包阶段进度及超时诊断。精简用户和 Agent 指南，将开发历史保留在 Git 中，移除重复状态文档。
+- 说明绑定 API/版本差异、平台能力及 OCR 转录限制。OCR 输出可读不代表代码或配置标点完全准确；Rosetta 下的 Vision OCR 需改用原生 arm64 构建。
+- 端到端使用后的工作台打磨。手机上每个页面左右边距一致（设置页此前没有边距），转换的操作不再超出屏幕（「Enhance with L…」）；较长的输出文件名保持一行，省略中间部分（`2025年度…披露全文.pdf.llm.md`），悬停或长按可看全名。访问令牌页改为单列：状态行旁是「忘记」，输入框与「保存」连成一组，下方一行简短提示（「粘贴新令牌即可替换。仅保存在此标签页。」）。服务商页面把 API 地址作为可选字段放在密钥旁，默认地址作占位文字，并把「模型 ID 与路由」（按 ID 添加模型、路由组、权重）作为带标题的小节，不再藏在三个折叠三角里。结果加载期间，渲染、源码、文件与对照在同一框架内以灰色线条显示文档轮廓（较大的结果会显示大小），不再只有「加载中…」。字段标签与提示改用界面字体，不再用等宽字体。
+- 工作台在「全部转换」列表之上用一个窗口打开转换：「详情」「预览」「对照」为标签页，带上一项/下一项及位置、「下载」（或修复操作：重试、添加模型、启用 OCR）和收纳其余操作的「⋯」，取代停靠在列表旁的检查器和单独的预览；手机上窗口铺满屏幕，取代底部抽屉和全屏预览。列表中方向键只移动，单击、Enter 或空格才打开；「汇总」打开全部条目的概览。「全部转换」页的输入行改为「新建转换」（拖入文件仍会转换；文件夹或多个文件在「转换」页等待）。控件统一为更小的尺寸（按钮 28 px、文字 13 px，手机 36 px，每个区域只有一个实心按钮，其余进「⋯」），所有选择都用同一种分段样式；「上传 ▾」改为「上传」和「文件夹」；手机上可复制和导出 PDF；手机上的短文字操作点击区域达到 44 px；设置页的主要操作（加载模型、保存）固定在底栏；宽窗口下每个页面都是居中的一栏。
+- 文件夹自带的 `.env` 和 `markitai.json` 不再能让转换反过来对付你。当前目录的 `.env` 仍可提供密钥和选项，但不再接受选择程序、路径、地址、代理、主目录或凭据文件的名称（`*_CLI_PATH`、`*_PATH`、`*_EXECUTABLE`、`*_API_BASE`、`*_BASE_URL`、`HTTP(S)_PROXY`、`AWS_*_FILE`、`GOOGLE_APPLICATION_CREDENTIALS`、`LD_*`、`HOME` 等），被忽略的名称会提示一次。在当前文件夹找到的 `./markitai.json`（未用 `-c` 或 `MARKITAI_CONFIG` 指定）不会把环境中的密钥发往它自带的地址：`api_base` 不是服务商文档地址的模型或连接只使用条目里写明的密钥，其中的 `env:` 密钥引用改为占位密钥 `markitai-no-key`（并提示）。`markitai doctor` 和 `--verbose` 会注明配置文件是在当前文件夹找到的。这类值请放在环境变量或 `~/.markitai/.env` 中，或用 `-c` 指定文件。
+- 依赖大版本升级：reqwest 0.13（HTTPS 仍使用基于 ring 的 rustls，与之前一样同时信任内置的 Mozilla 根证书和系统证书库或 `SSL_CERT_FILE`/`SSL_CERT_DIR`）；Windows 和 Linux 上绘制 PDF 页面图像的 hayro 升级到 0.8（页面中的嵌入图片缩放得稍平滑一些，绘制速度不低于之前）；内置的 PDF 读取库升级到 lopdf 0.46 和 pdf-inspector 1.25.2，并保留 Markitai 的修改（指数中符号字体的减号不再让整段失去上标）；HTML 解析栈升级到 scraper 0.29、html5ever 0.40 和 cssparser 0.38，输出不变；Python 绑定改用 PyO3 0.30 构建；YAML（front matter、`config list --format yaml`、输出配置）改由已弃用的 serde_yaml 的维护继任者 yaml_serde 0.10 读写，文本不变；工作台改用 Preact 11 和 TypeScript 7 构建，外观和行为不变。
+- Anthropic 请求改用 API 版本 2026-10-21（`anthropic-version` 请求头）：`anthropic/` 模型的转换、连接测试、模型发现和 Message Batches（包括 `api_base` 指向的网关、代理和 Microsoft Foundry），以及 Vertex AI 上的 Claude（请求体的 `anthropic_version`，原为 `vertex-2023-10-16`）。Bedrock 走 Converse，不带 Anthropic 版本，因此 4.7 之前的 Claude 模型照常可用。`litellm_params` 里的 `temperature`、`top_p`、`top_k` 不是配置项，从未发送（Python markitai 也不发送）；由于该 API 版本对所有模型拒绝这三项，`anthropic/` 或 Vertex AI 上的 Claude 模型设置了它们时，现在警告一次：`Warning: temperature, top_k not sent to anthropic/claude-sonnet-4-6: Anthropic API 2026-10-21 rejects temperature, top_p and top_k`。已保存的 Message Batch 输入若含这三项之一、assistant 消息中的 document 或 user 消息中带引用的文本，会在创建批次前被拒绝。
+
+### 移除
+- `markitai doctor --timings` 和 `doctor --suggest-extras`（没有可安装的 extras；`doctor` 会指出缺少什么）、`MARKITAI_PDF_WORKERS`（PDF 在进程内读取）、`MARKITAI_STATIC_HTTP`（只有一个静态 HTTP 客户端）和终端内联图片（`image.stdout_fetch_external` 不起作用；输出到 stdout 时图片保存为文件）。`batch.heavy_task_limit` 仍被接受，但会警告它不起作用；请用 `-j`/`batch.concurrency`。
+- 用 Microsoft Office 绘制页面（Windows 上通过 COM 调用 PowerPoint，macOS 上通过 AppleScript）：Office 的幻灯片和页面图片只由已安装的 LibreOffice 绘制；`office.macos_fallback` 仍被接受，但会警告它不起作用。
+- 通过 LiteLLM 设备码登录 ChatGPT（`~/.config/litellm/chatgpt/`）：`chatgpt/<model>` 改用官方 Codex CLI（`markitai auth chatgpt login`）。
+- Python 包的依赖：其 extras（`ocr`、`serve`、`mcp`、`claude-agent` 等）保留名称，但不再添加任何内容。
+
+### 修复
+- `-f json` 搭配 `--profile rag` 时重新列出文档的页面（`pages`，以及图片和表格的 `page`）：此前为空，因为 RAG 配置档写的是自己的 `<!-- page: N -->` 标记，JSON 没有读取它。
+- `markitai serve`：对未启用 LLM 转换的条目（`llm: false`、预设 `minimal`）发送不带选项的 `{"operation":"enhance"}` 重试时会开启 LLM，与 Python 版 markitai 一致，不再返回 409 `llm_unavailable`；若增强请求自己的选项写明 `"llm": false`，拒绝信息会说明是这些选项关闭了 LLM。
+- `markitai serve`：设置请求因 `env:` 值、或把已保存的密钥用于其他地址或供应商而被拒绝时，422 信息会给出两条出路（直接填写密钥本身，或在配置文件中设置这对组合／修改 `api_base`），与 Python 版 markitai 一致。
+- `markitai serve`：`PUT /api/convert-defaults` 的请求体超过 64 KiB 时返回 413 `request_too_large`（原为 422）；保留的 `.ipynb` 原件以 `application/x-ipynb+json` 发送（原为 `application/octet-stream`），与 Python 版 markitai 一致。
+- 启用 LLM（`--llm` 或 LLM 预设）但没有可用模型时，`--dry-run` 会提示"已启用 LLM，但没有配置模型"，与 Python 版 markitai 一致，并仍列出目标；实际运行会在此停止。
+- 带模型的 `--screenshot-only` 会先读取 `prompts.dir/screenshot_extract_system.md` 和 `screenshot_extract_user.md`（Python 版 markitai 的名称），再读取 `document_vision_*` 模板；此前这些文件被忽略。
+- OKF 配置写出的 `generated.at` 带引号（`at: '2026-10-22T10:49:28Z'`），与 Python 版 markitai 一致，YAML 1.1 读取器会把它当作文本而非时间戳。
+- 抓取到的页面若是 DataDome、PerimeterX、Incapsula、AWS WAF 或 Fastly（PyPI 的“Client Challenge”）的人机验证页，不再被当作页面本身：只有整页验证才带的标记会让短页面被判为验证页，于是 `auto` 转用本机浏览器，`-s static` 会指明遇到了验证，与 Python 版 markitai 一致；不超过 60 词、在正文任意位置要求完成验证的页面（`Press & Hold to confirm`、`请输入验证码以继续访问`）同样如此，而只是提到 `验证码` 的登录表单或文章仍是页面。
+- X 页面中的链接不再停留在 `https://t.co/…` 短链接：Markdown 中留下的每个短链接都会换成它指向的地址，方法是向 `t.co` 发一次 `HEAD` 请求，读取重定向但不跟随（每页最多 20 个链接，同时 4 个，每个 5 秒、合计 10 秒，结果在本进程内保留），与 Python 版 markitai 一致；无法解析的链接保持原样。
+- `markitai serve` 为对照视图保留的本机浏览器页面，现在带上脚本通过 CSSOM 插入的样式规则（CSS-in-JS，例如 X）以及构造的样式表，不再显示为无样式页面，与 Python 版 markitai 一致。
+- `NO_PROXY` 或 `fetch.policy.local_only_patterns` 中的域名（`corp.example`）现在也覆盖其子域名（`api.corp.example`），与 curl、Go 和 Python 版 markitai 的理解一致，因此内网子域名既不走代理，也不会交给远程服务；`.corp.example` 仍只表示子域名。
+- `markitai doctor` 给 Chromium 一分钟启动时间，超时后再给半分钟重试一次，与 Python 版 markitai 一致（Windows 上首次启动可能因杀毒软件扫描而这么慢）；两次都没启动成功的浏览器会报告为“已安装但启动缓慢”，这是一个提示再次运行 `markitai doctor` 的警告，不会让任何浏览器流程失败，`--fix` 也不会为它安装任何东西。Chromium 拒绝以 root 身份运行时，doctor 现在会再次指明这一原因。
+- 因指向私有或本地地址而被拒绝的 URL（用户令牌的 URL，或公共页面重定向到本机网络）现在在静态抓取和本机浏览器中都报 `Fetch target refused: a private or local address (this fetch may reach public addresses only)`，与 Python 版 markitai 的说法一致，不再使用模型的措辞 `this model's address is not on the public internet` 或浏览器光秃秃的 `net::ERR_BLOCKED_BY_CLIENT`。
+- 转换到输出文件夹的本地 HTML 页面会保留其图片，与 Python 版 markitai 一致：页面从自身文件夹显示的图片（解析后位于该文件夹内的相对路径或本地 `file:` 地址；不是符号链接，除非设置 `output.allow_symlinks`；单张不超过 32 MiB 且全文档不超过 100 MiB；按字节判断为 PNG、JPEG、GIF、WebP、BMP 或 TIFF）会保存为资源文件，而不再保留一旦 Markdown 写到别处就失效的引用。被拒绝的文件保留原引用并给出警告，且只读取其开头几个字节；链接保持相对路径（不写入转换机器的 `file://` 路径）。
+- PPTX：放在幻灯片表格（或图表数据表）之后的文本框或图片成为独立的块，与 Python 版 markitai 一致；之前它紧接在下一行，Markdown 会把它当作表格的又一行。
+- 网页和 HTML 文件会去掉语言切换器，与 Python 版 markitai 一致：链接带 `hreflang` 且只用几个词写出语言名称的列表，连同其自身的控件（"33 种语言"标签、"编辑链接"）一起移除；提到几种译本的正文、外语文章的阅读列表，以及内容本身就是语言列表的页面会保留。分享栏（以分享命名、只含少量链接或按钮文字的块）、简短的推广框（以 `promo`、`newsletter`、`subscribe`、`advert`、`sponsor` 等命名，不到 30 个词）和 MediaWiki 的 `Retrieved from "…"` 页脚也会去掉。
+- HTML 页面或邮件段落中的控制字符不再原样写入 Markdown：垂直制表符、换页符、文件/组/记录/单元分隔符、NEL、U+2028 和 U+2029 变为词间的一个空格（表格单元格中仍为 `<br>`），其他控制字符会去掉；代码块保持不变。
+- EPUB：只在包文件中指定（EPUB 3 `cover-image`、EPUB 2 `<meta name="cover">`）且没有页面显示的封面会放在最前面，与 Python 版 markitai 一致；链接到注释的正文保留文字并在其后加上注释标记（`the note on sources[^3]`），不再链接到失效的 `#EPUB/c2.xhtml#fn1` 锚点；硬换行的中文或日文行合并时不再插入空格，全角（U+3000）缩进或分隔符会保留。
+- Office 细节，与 Python 版 markitai 一致：作为标题的 ODT 列表项会成为带编号的标题（`## 2. Methods`，而不是 `1. ## Methods`）；没有 `\levelnumbers` 的 RTF 列表（pandoc）会显示编号，而不是 ` . First`；pandoc 生成的 RTF 列表（`1.<Tab>正文`、`•<Tab>正文` 段落）会成为列表，而不是两列表格；pandoc 生成的 DOCX 中的作者、日期和副标题行是段落，不再像标题一样成为一级标题。
+- PDF：Word 的 Symbol、Wingdings 字形按其字体读取，与 Python markitai 1.3.0 一致：图标项目符号不再显示为拉丁字母（“Cv 会员可在…”），Symbol 减号为“−”，Wingdings 菱形后的目录条目各成一个列表项。章节标题前的大图标不再使标题降一级；紧贴正文上方、自成字体且略大的短标题（“特别说明”）识别为标题；标题下方逐列绘制的表格顶线不再使标题带下划线（`# <u>…</u>`）。
+- PDF：页面不留段距时，末行较短并以“。”结束的中文段落不再与下一段连成一段；折行的中文行接续时不再插入空格（“只是用来”而非“只是 用来”）。只有一两行段落的短页上，句末远未到栏边即结束该段（Chromium 打印的操作指南三段曾合成一段）。单独出现的“2、”“3．”编号步骤保留编号作为段落，与 Python markitai 1.3.0 一致，不再写成“- 2、”项目符号；连续的编号条目仍是列表项。
+- 带页或幻灯片标记的输出（PDF、Office 和演示文稿页面）的页眉页脚改按 Python markitai 1.3.0 的规则识别：每页首尾各两行、不超过 100 个字符、在 60% 的页面（至少四页；忽略数字）的同一边缘重复的行，只从这些边缘删除，两行被删时其内侧第三行也一并检查（日期、文字和编号组成的幻灯片页脚）。旧规则只看最后四行、出现在一半页面即算页脚并在全文任意位置删除：正文与页脚同为“Acme Corp”的幻灯片会丢失这段正文，页眉也从未被去除。带编号的正文行（OCR 行、编号段落、仅数字不同的长句）和图片不会被当作页眉页脚。
+- 字体既未声明编码也没有 ToUnicode 映射的 PDF（丢失映射、用 1–31 号码绘制字母的希腊文 TrueType 子集）不再只输出其中的逗号和句号（`.       , .`）而毫无提示：这些码现在按不可读处理，页面被判为不可读，转换会提示用 `--ocr` 重新运行（Python markitai 1.3.0 会警告页面看似乱码），`--ocr` 则从页面图像识别（希腊文用 `ocr.lang` `el`）。值为 `null` 的字体条目视为不存在。
+- 使用 `--screenshot` 或 `--ocr` 时，海报尺寸的 PDF 页面改为以能放进 3200 万像素上限的较低分辨率绘制（PDF 允许的最大页面 200 × 200 英寸约为 28 dpi），不再以“page exceeds the 32 million pixel limit”使整个文件失败，与 Python markitai 1.3.0 一致；由 PDF 导出绘制的 Office 文档同样如此。其他页面仍为 150 dpi。
+- `--resume` 会在恢复状态及其文件名中记录改变各项输出的设置（`--profile`、`--keep-base`、`--pure`、`--screenshot-only`、`-s`，以及 `-f json`、`--text-only`、`output.page_markers` 和 `output.wikilinks`，仅在不是默认值时记录）：换一种设置续跑会重新转换各项，而不是跳过在旧设置下完成的所有条目；默认设置的运行保留原有状态。`--pure` 和 `--keep-base` 有无 `--llm` 都会记录（Python 版 markitai 1.2.0 都不记录，`--resume --pure` 会留下带 frontmatter 的文件）。
+- `--record-history` 只复制所记录文档自己的图片和截图（以输出命名或被输出引用的文件），与 Python 版 markitai 一致；共享的 `-o` 目录不再把此前所有文档的资源（及其 `images.json` 记录）放进每个历史任务。
+- 失败条目已付费的模型用量会计入批处理报告的合计、该条目的报告项和结尾一行的费用，与 Python 版 markitai 一致（此前被遗漏，有失败项的批次会少报费用）；报告条目也会列出每个条目的 `warnings`（位于 `error` 之后），与 `--json` 和 Python 版 markitai 的报告一致。
+- 续跑的批处理（`--resume`）会报告整个批次，与 Python 版 markitai 一致：每个已完成条目的费用、用量、时间、资源数量和警告都保存在恢复状态中，因此 `--json` 会先列出此前运行已完成的条目（`earlier_run: true`）并新增 `totals.this_run_cost_usd`，报告会列出它们各自的时间和用量（不再是 null 时间）并新增 `llm_usage.this_run`，结尾一行显示 `共 $0.094，本次 $0.067`。旧版本写入的状态中这些条目的费用为未知（null，计入 `llm_usage.usage_unknown_items`，提示“之前运行的费用未知”），而不是 0。没有剩余工作的续跑会列出全部条目，而不是 `items: []`。恢复状态的上限因此提高到 128 MiB。
+- 中文的 `markitai doctor` 不再把模型数量和订阅运行时的登录错误留成英文，与 Python 版 markitai 一致；因缺少密钥被忽略、但仍有其他模型可用时，显示为警告（`!`），不再算作阻塞项。
+- `markitai init` 更新已有配置时，只为列表中尚未使用的供应商添加检测到的模型，与 Python 版 markitai 一致：已有 `deepseek/deepseek-chat` 时不再加入 `deepseek/deepseek-flash`。
+- ChatGPT（Codex）请求因限流、HTTP 5xx 或连接中断失败时，会退避后重发（或改用其他模型），不再让整个文档失败，与 Python 版 markitai 的重试一致；套餐用量上限会以单独的错误停止运行。
+- 限流时供应商给出的 `Retry-After`（`1.204s`、`750ms`、`6m0s`、小数秒、HTTP 日期），或 429/503 响应正文中给出的等待时间（Gemini 的 `retryDelay`、“try again in 3.5s”）现在会被遵守，不再忽略，与 Python 版 markitai 一致。请求预算用尽时，错误信息会保留耗尽预算的那次请求的错误（`… budget exhausted after a failed request: …`）。
+- 图片分析要发送的图片超过 3.5 MiB 时（例如 `image.compress: false`），会先缩小再发送（最长边不超过 2,048 像素，降低 JPEG 质量，再逐步缩到 512 像素，仍过大时给出警告），不再被供应商拒绝，与 Python 版 markitai 一致。
+- 未设置 API key 的模型不再以无密钥请求发送（并重发）：发送任何请求前即移出模型池，并给出一条警告，说明要设置的变量（`export NAME=…` 或 `~/.markitai/.env`）；没有模型剩下时，在转换前停止并以退出码 1 报错，列出这些变量（各语言绑定为 `NoModelConfiguredError`）。自带 `api_base` 的模型仍会尝试。`markitai doctor` 采用同一规则并列出变量（`未设置：…；1 个模型被忽略，仍有 2 个在用`）。密钥被拒（HTTP 401，或 Gemini 的 `API_KEY_INVALID`）时，先说明密钥来自哪个变量、如何换成有效密钥，再给出供应商的原话。
+- `serve` 的编辑配置：同一对象中重复写出的键会被拒绝（与 Python markitai 一致）。此前对含两个 `api_key` 值的文件执行 `GET /api/settings/config` 会以明文显示第一个值（JSON 保留后一个，因此只有它被遮蔽）；现在不返回文本，并给出问题 `line L, column C: the key "api_key" appears twice in one object`；对 `/api/settings/config` 和 `/api/me/config` 的 `PUT` 以同样的消息返回 422 `invalid_config`。密钥的每一处出现都会被遮蔽。
+- PDF：在默认的 `security.pdf_sanitize: warn` 下，隐藏文字不再进入 Markdown（以及其后的 LLM）：透明文字、不大于 1 磅的文字，以及白色或近白背景上的白字都会去掉（与 Python markitai 一致），并由一条提示引用这些文字（`PDF hidden text: 3 span(s) on page(s) 1 left out of the Markdown (possible prompt injection; excerpt: "…")`）。对于白字，会从渲染图中采样每段白字下方页面实际显示的内容，因此深色色块上的白字保留，白色方框上的白字去掉；`remove` 不再因为页面上画了任何图形就保留该页所有白字，并且还会去掉无法判断背景的白字（`warn` 保留并提示）。可搜索扫描件的 OCR 层不受影响。
+- PDF：所用字体既未指定编码也没有 ToUnicode 映射（例如丢失了 ToUnicode 映射的中日韩字体子集）的文字不再被悄无声息地丢掉。此前标题和段落消失不见，只留下几个被读成拉丁标点的字符（`¡¢£`），页面也不要求 OCR；现在这类文字计为无法读取，页面需要 OCR，OCR（`--ocr`）可以读出；没有其他可读内容的页面会报告出来，而不是写出乱码。
+- EPUB 的脚注和尾注写成全书统一编号的 Markdown 脚注（`text.[^1]` 和 `[^1]: …`）：此前写成原始的 `<a id=…>` 锚点和指向 `#EPUB/text/ch001.xhtml#fn1` 的链接，还带着回链。链接到注释的正文保留原文。
+- HTML：语言名和「复制」按钮位于下方栏中的代码块（nodejs.org）写成该语言的围栏代码块，后面不再多出一段 `JavaScript`。
+- HTML：跨越多个段落的粗体或斜体（包住多个 `<p>` 的 `<b>`，或在段落结束处仍未闭合的强调）在每个段落上分别标记，因为 Markdown 的强调不能跨越空行：此前输出中会留下字面的 `**Bold *start` 和 `next para***`。
+- 文档和网页中链接或图片地址里的反斜杠得以保留（此前 `a\_b` 会被读作 `a_b`）；社交帖子的视频链接地址中含圆括号时不再提前结束；PDF 链接注释中的圆括号改写为 `%28`/`%29`（与文档转换器的写法一致），不再用反斜杠转义。
+- 演示文稿（ODP）：幻灯片中的表格只写一次，不再附带 LibreOffice 在旁边保存的 `TablePreview1.svm` 图片；演讲者备注开头不再多出 `<number>`（备注页的幻灯片编号字段）；内容只有一个子列表的项目符号嵌套在前一项之下，不再写成 `* * x`。
+- 本地 OCR 每次下载模型时都会说明下载的是哪些模型及其大小：此前第一次之后的下载（例如韩文模型）不再提示。
+- 以 root 运行时，`markitai doctor` 和 URL 抓取会说明 Chromium 在开启沙箱时不能以 root 启动、应以普通用户运行，而不是只说启动检查失败、不说原因。
+- 代码行中的名称被标记为悬停按钮的网页（Twoslash，如 nodejs.org）中的代码示例保留这些名称：此前 `const { createServer } = require('node:http');` 会写成 `const {  } = ('node:http');`。代码行以外的按钮（如「复制」）仍会略去。
+- 文档中跟在未闭合反引号之后的图片（例如 Word 段落中单独的一个 `` ` ``）重新链接到实际保存的文件。此前文档的其余部分被当作代码，这些链接停留在从未写出的临时文件名 `.markitai/assets/asset-N`，标准输出、`-o` 输出（包括使用 `--profile` 时）和 `markitai serve` 的结果都受影响，图片分析也会漏掉这些图片。
+- 从图片读取的扫描页很少再把页面中重复出现的句子多写一遍：视觉请求中的每张页面图片前都会附上 `Page N:` 标签，与 Python markitai 的做法一致（Gemini Flash 处理六个段落、每段将同一句重复六次的页面时，修复前三次分别写出 38、42、42 句（应为 36）；加标签后 5 次回答中 4 次为 36、1 次为 40，Python 2 次均为 36；完整的 12 页转换的词精确率与 Python 相同，为 0.992，修复前为 0.948）。不再复用早期版本缓存的视觉回答。
+- Python markitai 上的工作台：价格和订阅指南链接打开 Python 文档站上的对应页面（`https://markitai.dev/guide/…`），不再落到首页；以 `index.md` 结尾的文档地址仍打开它旁边的页面。
+- 隐藏和深度隐藏的工作表（XLSX、XLSM、XLSB、XLS 及其模板）按工作簿顺序转换，与 Python markitai 一致，标题标注 `(hidden sheet)`，不再略过并警告；隐藏的 ODS 工作表使用同样的标题。
+- 工作台：提示的「查看这些项」之后，「N 项」筛选显示为列表顶部一条贯通的细条，带筛选图标和 ×（手机上「选择」不再被挤到单独一行），删除后计数随之减少。返回键逐级返回：从汇总或提交窗口里点提示中的文件名打开的项，以及「查看这些项」筛出的列表，按返回会回到原来的窗口，而不是空白列表（「查看这些项」之后按返回也不再离开页面）；Esc 和 ✕ 仍一次关闭所有层级。列表行的 ⚠ 提示标记与文件名垂直居中（计数与文件名同一基线，不再高出约 3 px）。目录条目保持单行，超出部分以省略号截断（公式照常渲染），悬停可看完整标题。批量提交的头部行不再缩进：复选框与单项的复选框同列，展开箭头与单项的 ✓ 状态图标同列并在行内垂直居中，标签与文件名左对齐。侧边栏底部和手机设置列表在「文档」和 GitHub 之下以居中的灰色小字显示 `Build: YYYYMMDD hh:mm`（构建的本地日期和时间，各语言都使用英文标签 `Build:`），不作为列表中的一行。预览中的属性行点击任意位置即可展开属性表（不再只能点右侧的「简介 ⌄」），点击展开后的表头任意位置即可收起；收起时标签前显示「属性 · N」。
+- 带 `--screenshot` 转换工作簿时，不再因某个工作表的文字远远超出右边缘、或 LibreOffice 渲染页面失败而整体失败：该工作表保留原有版面（或文档保留其文字），并用一条提示说明缺了什么。
+- 以 `|` 分隔各行的文本型 PDF（原生读取器）现在输出真正的 Markdown 表格，表格前后的行各自成段，不再合并成一段；超出页面右边缘的一行也不再让整页退回无法做到这一点的普通读取器。
+- `markitai serve` 的第一个 OCR 任务不再等待本地 OCR 引擎加载：已安装便携模型时，服务启动即加载它们，并为 A4 和 Letter 页面准备好检测模型（不使用缓存，Linux arm64 上启动 3 秒后提交的第一份单页扫描件：0.84 秒 → 0.57 秒，第二份前后都是 0.55 秒；约 150 MB 常驻内存；没有已安装的模型时不加载也不下载）。批量转换中，空出的 OCR 检测名额先给任一文档中页码最靠前的页面，因此与长扫描件同批的单页扫描件只需等待正在进行的检测，而不必排在长扫描件后面各页之后（`cjk-scanned.pdf` 与 8 页扫描件同批，不使用缓存，五次中位数：1.72 秒 → 1.21 秒）。
+- 开启页截图时，扫描版 PDF 页面不再把同一页写两次（`![Image on page 1](…assets…)` 和 `<!-- ![Page 1](…screenshots…) -->`）：保留页截图，省去扫描图片及其资源文件；未开启页截图时，扫描图片仍是该页的图片。页截图注释现在位于所在页的开头，紧跟 `<!-- Page number: N -->` 标记之后，文字页和扫描页一致，`.md` 中如此，`.llm.md` 也随之一致（以前扫描页在文字之前，文字页却在页末）。
+- 扫描版 PDF 页面的图片不再带出“PDF 内嵌图片排在所在页文字之后”的提示（工作台中为“开启‘页截图’可保留每页的外观”）：无论该页由 OCR 读取、没有恢复出文字，还是文字来自扫描件的 OCR 文本层，这张图片就是页面本身，这条提示在这里既不成立也无可操作。页面文字之间的图片仍会带出这条提示。
+- 本地 OCR 把扫描页写成 Markdown，而不再是一行行裸文字（查看器会把它们连成一段）：没有写到文字右边缘的一行结束所在段落；明显高于页面正文的短行是标题（连同折行的第二行）；按列排布或由识别为 `|` 的竖线分隔的各行单元格成为 Markdown 表格（折行的单元格并入原单元格，数字单元格去掉多余空格：`1. 20` 读作 `1.20`）；字母间隔排印或全角的拉丁文字被合拢（`M a r k i t a i` 读作 `Markitai`）。语料中的 `cjk-scanned.pdf` 现在与它所打印自的文本 PDF 读法一致，命令行和工作台都一样。
+- 终端只在 `-v` 时显示仅说明输出如何产生的提示（模型答案在第二次请求时被采用、图片放在其页面文字之后）；报告、`--json` 和文档 JSON 仍以 `info` 级别保留它们。
+- 模型答案丢掉了单页 PDF 开头的页码标记或结尾的截图注释时（Gemini Flash 工具调用模式处理 `cjk-text.pdf`、`rtl-text.pdf`），如同 Python markitai，在唯一合适的位置补回该标记，不再拒绝答案并为第二次请求付费；被重发的结构化请求在结果确定后才报告：采用了后续答案时是 `info` 提示，且不再有嵌套括号。
+- 未配置 `max_tokens` 的 Gemini 和 DeepSeek 请求，如同 Python markitai，按价格目录中该模型的输出上限（在上下文剩余空间内）请求（Gemini Flash 为 65,536），不再沿用曾截断 `large-sample-x15.pdf` 十页视觉批次的服务商默认值；文字密集的页面使用更小的视觉批次，截断提示会给出输出 token 数和 `litellm_params.max_tokens`。
+- Office 页面截图提示不再提及内置的 PDF 页面渲染器，并给出本系统的 LibreOffice 安装命令（winget、brew 或发行版包管理器）；未安装 LibreOffice 时 Office 文件 `--screenshot-only` 的报错也是如此，此前它在所有系统上都给出 macOS 的命令。
+- 图片存储声明了过时数量的 Word `.doc` 不再警告：图片按完整记录恢复，确实无法读取的图片仍有自己的警告。
+- EMF 和 WMF 图片（Word 图表）保留为文件，不再发出图片分析请求，也不再有 “Cannot decode” 警告。
+- 工作台的提示气泡左对齐；提交头部的复选框和展开箭头与其下各项的复选框、状态标记对齐，并在行内垂直居中；侧边栏的版本号显示在「文档」右侧、提交号显示在 GitHub 右侧，不再单独占一行；属性卡片与以分隔线开头的正文不再画出两条线；提示中的文件名成为可点击的按钮（先显示三个，其余为「另 N 项」）并始终列出，「查看这些项」会把转换列表限定为该提示涉及的那些项。
+- 用真实的 Gemini Flash 转换 `scanned-sample-p1-3.pdf`（一次请求，没有提示）时，每页文字都在各自的 `<!-- Page number: N -->` 标记之下，而第一次实测时每页文字都排在标记前一页。
+- 工作台：内嵌图片、Word 图片记录和隐藏工作表这几条提示现在也有中文和日文，内嵌图片的提示改为“开启页截图”而不是命令行参数，且已被告知为扫描件的文档不再重复这条；手机上页头的“新建转换”和“⋯”按钮统一为紧凑的 32 px，编辑配置的 JSON 错误提示单独占一行，不再挤成三行的窄栏。
+- `markitai doctor` 的中文输出现在把每条检查信息和修复建议都译成中文（JSON 中的值仍为英文），macOS 上的浏览器一行改为“已找到已安装的浏览器应用（只检查了版本）”。
+- `markitai doctor` 的结尾总结不再把仅需首次 OCR 时下载模型的 Local OCR 列为不可用，而是写成“首次使用时自动准备：Local OCR”，与真正不可用的可选功能分开，该项也用信息标记而不是警告标记。
+- 由模型转写过的扫描页，其整页扫描图不再显示在文字下方，而是像页面截图一样保留为注释；模型未返回文字时，扫描图仍然可见。
+- Gemini Flash（`gemini-flash-latest`、`gemini-3.6-flash`、`gemini-3.8-flash`）现在像 Python markitai 的 LiteLLM 一样，用强制函数调用返回文档回答；扫描页的转写若因“复述”被供应商拦截，会在下一种回答模式下再请求一次；扫描页的指令改为“按页面图片补全缺失内容、保留原文措辞”，通用规则不再在提示词里出现两遍；这些页面的扫描图也不再作为图片单独分析（转写会把它们隐藏），每份扫描件省下一到三次图片请求。
+- macOS 上 Vision 的默认语言策略：任何单一语言都读不出的页面（混合中文、日文、韩文与拉丁文的扫描页，或某一识别器放弃的文字），现在会再用中、日、韩、英同时指定并由 Vision 自动检测语言读一次，而不再保留英文乱码；`MARKITAI_OCR_TRACE=1` 会输出每次 Vision 识别的结果或失败原因。Vision 无法在 macOS 虚拟机中运行，相关测试（`vision_reads_a_degraded_scan_of_chinese_with_a_table_by_default`、`vision_reads_the_corpus_scanned_cjk_page`）只在实体 Mac 上运行。
+- 工作台的版本行保持一行（手机顶栏不再重复，设置页末尾保留完整版本行）；重复提示的次数与文件列表同行；手机端「转换」页头部按钮更紧凑、摘要上方留白更足；「编辑配置」的 JSON 校验结果与「放弃」「查看更改」同一行；Cloudflare 的设置说明改为该行信息图标的提示；属性表改为统一键宽、键值之间有竖线的两列表格；打开的转换窗口里，浏览器返回键或触控板返回手势像 Esc 一样关闭窗口，而不是离开页面。
+- LLM 请求、模型连通性检查、模型发现和浏览器下载现在与抓取使用同一套代理决定（先取环境变量中的 HTTP(S) 代理，否则取 macOS、Windows 或桌面的手动系统代理，每 30 秒内最多重新读取一次，所以正在运行的 `markitai serve` 会跟随系统代理的开关；`NO_PROXY` 和回环地址仍直连），与 Python 的 aiohttp 一致。SOCKS 环境代理对它们会明确报错并指出变量名，不再悄悄绕过。连不上代理时会指出代理（主机、端口及设置来源，不含凭据），不再归咎于服务商；TLS 握手被对端切断时提示很可能是代理或网络问题，代理要求认证或没有打开隧道时也会如实说明。
+- 网络请求失败时，操作系统层面的原因以类型和错误码表述（`connection refused (os error 111)`），不再使用系统自带的文字（Windows 上是用户语言），各机器上的提示一致。
+- `markitai doctor` 不再启动位于 macOS `.app` 包内的浏览器（只让它报告 `--version`），doctor 运行后 macOS 不再提示“终端被阻止修改你 Mac 上的 App”；标题下不再多一行空行，三条检查信息改为平实的陈述（“macOS Vision API is available”、PaddleOCR 模型文件“are installed and match their SHA-256”、“Old .doc and .ppt files are read by built-in readers; nothing to install”）。需要浏览器的转换仍照常启动它。
+- Anthropic 响应带 `usage.speed: "standard"` 时按普通请求计价（此前被判为没有价格，提示“No reviewed price for claude-haiku-5-5”）；`fast` 响应仍不计价。“Cost is incomplete”提示现在会说明请求为何没有价格（未知模型、不是供应商自有地址的端点、响应模型不同、不支持的计费类别）以及可以怎么改。
+- LLM 输出不再把页码注释或页面截图注释与相邻文字连成一行（`<!-- Page number: 1 -->` 与 `# 标题` 同一行会使标题无法渲染；`…trade-offs.<!-- ![Page 1](…) -->`）：模型把这类保留的注释或图片粘在邻近文字上时，还原时会让它成为前后空行的独立块。不经 LLM 的路径本来就把它们写在独立的行上。
+- 带 LLM 和页面截图、但没有 `--ocr` 转换的扫描版 PDF，现在由模型根据页面图片转写成文字，而不再只剩图片：请求会点明没有任何读取器取得文字的页面并要求模型读取（其图片仍在文字后保留一次），回答含文字后不再显示“PDF 是扫描件：请加 --ocr 重新运行”的提示。“内嵌图片排在所在页文字之后”的提示在已写出页面截图时不再显示，否则会提示添加 `--screenshot`。
+- 中文终端运行整体是中文：运行级错误（找不到输入、未知预设、缺少输出目录、不支持的选项组合、不支持的格式、未配置模型）和转换器常见的失败原因（文件损坏、PDF 页需要 OCR）在终端上用中文表述，之前它们夹在中文摘要行之间仍是英文。括号内解析器、操作系统或供应商的细节、`--json`、报告和文件日志保持原文。Windows 上未设置语言变量时由系统显示语言决定（`MARKITAI_LANG` 优先）。
+- 在服务商页面勾选一个模型并取消勾选另一个后保存，会报「这项已保存的设置已不存在」（404 `settings_entry_missing`）：页面先删除，使其余模型的 ID 改变，再用连接的旧 ID 添加。`POST …/deployments/batch` 现在也接受 `remove`，按页面读取时的 revision 同时应用添加与删除，要么全部成功要么全部不做（视图中带 `batch_remove: true`）；页面只发一个请求（旧后端：先添加，再按新 ID 删除）。就地保存权重后页面会重新加载连接。
+- 已保存模型的 ID 与服务商列表中的写法不同时（列表有 `claude-agent/claude-sonnet-5-5`，而保存的是 `claude-agent/sonnet`），工作台中该服务商的列表里看不到它：现在每个已保存的模型都显示为已勾选并标为「已配置」，或在列表对应的行上（「已保存为 …」，按文档中的别名），或单独成行（「已保存，但不在服务商当前的列表中」）。
+- 当视频的封面图是条目自己下载的图片时（X 帖子的视频），工作台显示的视频没有封面：播放器现在通过条目的资源路由使用它。OCR 在部分页面没有识别到文字的警告合并为一条提示，并以页码范围显示（两个后端的措辞都识别）。
+- 工作台「预览」中，单元格内换行导致断开的表格（原始换行，或让表格提前结束、把其余部分连成一个段落的 Unicode 行分隔符）会被还原为一个表格；以带封面链接形式写出的视频（`[![Video](poster)](https://…/clip.mp4)`）可直接播放（仅 https，播放前不加载，不发送来源，无法播放时恢复为链接）。警告中的页码列表写成范围（`pages 1–491`），扫描版 PDF 直接提示「这个 PDF 是扫描件：请开启 OCR 后重新转换」，被搁置的模型回答（Python 的页面漂移检查）用平实的话说明原因。
+- 表格单元格内的换行一律写成 `<br>`：所有表格输出（电子表格中 Alt+Enter 产生的换行、Word、OpenDocument、RTF、EPUB、HTML、PowerPoint、Numbers、CSV 与 TSV、reStructuredText、Org 和 LaTeX）都用一个 `<br>` 连接单元格的各行，并把垂直制表符、U+0085 以及 Unicode 行分隔符和段落分隔符视为换行；以前行内的原始分隔符会让 Markdown 渲染器提前结束表格，把其余部分连成一个段落。连续多个换行只写一个 `<br>`，单元格首尾不写，原文中作为文字出现的 `<br>` 仍是文字。
+- 工作台的「对照」在 Safari 和慢速网络下也能关联网页段落：此前只在框架的 load 事件后才建立关联，而不运行脚本的网页会一次加载全部图片（延迟加载需要脚本），该事件来得很晚甚至不来；Safari 也不会在这种网页中运行工作台添加的处理函数。现在网页一解析完就读取，并通过网页自身的悬停状态跟踪指针。Markdown 中以下载副本引用的图片，会与网页中位于前后已关联段落之间的图片对应。从浏览器保存的网页保留其 doctype，框架不再以怪异模式排版（该模式下悬停只能识别链接）；无法加载的图片通过其占位文字保持关联。
+- 在工作台「对照」中悬停段落不再使文字上下跳动：加框时保留了绘制分块的布局约束。目录在点击后标记被点击的条目（其下方图片加载会把标记移到下一个标题），滚动时标记阅读区顶部的标题。
+- EPUB 的元数据写入 front matter，不再作为正文开头的粗体 `**Title:** … **Authors:** …` 块：`authors`（全部作者，列表）、`language`、`publisher`、`date` 与 `description`，均为纯文本（Calibre 简介中转义的 HTML 按文本读取，Calibre 表示“无日期”的 `0101-01-01` 不写，午夜时间戳写作日期），键与取值与 Python markitai 1.3.0 一致；不再写入标识符。增强输出保留这些字段，`description` 为模型摘要。front matter 的键按参考实现的顺序排列（`title`、`source`、`author`、`authors`、`language`、`publisher`、`date`、`site`、`published`、`canonical_url`、`description`、`tags`……）。
+- 文档标题是能指称文档的纯文本，与 Python markitai 1.3.0 一致。PDF 仅在 Info 标题能指称文档时采用它（`20240315000127` 之类的数字或编号不再采用），否则取前三页中最醒目的可见文字（两行标题合并，`¹` 等上标脚注标记与白底白字不计入），再其次才是第一个标题。所有标题都去掉 HTML 标签（`<sup>`、`<mark>`）、实体、脚注标记与私用区字形；数字、页码或默认名称不作标题，依次让位于下一个标题和文件名。
+- 内容流用 NUL 字节分隔操作符的 PDF 页面（PDF 中的空白字符，iText 修改过的页面这样写）可以正常读取，不再输出为空并要求 OCR、丢失整页文字：例如一份由 iText 打印的中文表单的第 1 页，字段、表格与声明全部丢失。
+- PDF 中的中日韩文字不再被排成行内代码或代码块。字宽与 FixedPitch 标志相矛盾的字体（iText 描述的 Microsoft YaHei），以及宽度表只列出半角字母、汉字交给 `/DW` 的中日韩字体，不再被视为等宽字体；字体程序本身声明为等宽的字体仍按代码处理。
+- PDF 中的中日韩行只有确实像标题时才成为标题：句子（以 `。` 结尾、句中含 `。` 或在 `，` 之后继续）、字号接近正文的 `标签：值` 字段，以及超过十五个词（每三个中日韩字符计一个词）的行都作为段落。以 `1．`、`1）`、`1、` 或 `（1）` 编号的条目是列表项；未写到栏宽末端就结束的中日韩行结束其段落；相隔很远的一行字段自成一段；写到栏宽末端、句子未完的中日韩行与下一行相连，不论行距多大（此前 20 磅行距的条款每行成一段）。
+- 表头位于两条按列分段绘制的横线之间、下方各行没有横线的 PDF 表格（例如明细表的项目与金额）被读为表格，单元格内折行的文字合并到所在行，不再每行折行拆成一行或读成普通文字。
+- 使用 Word 导出的中日韩子集字体的 PDF 页面不再被判为乱码而要求 OCR：此前读取器更倾向于自己对该字体的重映射（把正文读成空、把每个引导点读成“措”），而不用正确的 ToUnicode CMap，因为中日韩标点被计为扣分、读不出文字却不扣分（例如一份公开保险条款的第 1 页，即阅读指引与目录）。这类字体的半角拉丁字形也不再被当作代码字体。
+- PDF 页面顶部或底部以大字号排出的数字（例如封面上 48 磅的年份 `2025`）予以保留，不再当作页码删除；页码字号都很小。
+- 当 ToUnicode CMap 将 `.notdef` 字形映射为 `<ffff>`（iText 的写法）时，PDF 文本中不再出现 U+FFFF；粗体文字中的裸网址不再把结尾的 `**` 或紧随其后的中日韩文字并入链接。
+- URL 条目的 `source` 与 `canonical_url` 以 IRI 形式书写（`https://example.com/posts/应用/`，而非 `%E5%BA%94%E7%94%A8`）：非 ASCII 字符的转义被解码，ASCII 转义、主机名以及 IRI 不允许直接出现的字符保持编码，因此仍是同一地址。
+- 模型发现会说明列表无法加载的原因，分类与连接测试相同（无密钥，在发出请求前判定；密钥被拒绝；限流；无法连接；未及时响应；服务商错误），并附服务商的原文，不再返回 503「Provider operation could not complete」；工作台显示分类、处理建议和原文。手写在配置中、没有密钥的模型在工作台的编辑页中显示为使用其服务商的密钥变量，与转换时一致。
+
+- Windows 上在转换的外部运行时（订阅运行时、Chromium、LibreOffice）运行期间按 Ctrl-C 或 Ctrl-Break，总是按文档以 130 退出。此前转换可能在中断仍在删除运行时工作目录时，先看到被终止的运行时失败，以状态 1 和失败消息退出；现在转换把退出交给中断处理，Unix 上的 SIGINT、SIGTERM 与 SIGHUP 同样如此。
+- 在 ChatGPT、Claude 或 Copilot 订阅请求运行期间中断或终止 CLI（Ctrl-C、SIGTERM、SIGHUP、关闭 Windows 控制台）时，该请求的私有工作目录（为运行时写入的系统提示、设置与文档图片）不再遗留在临时目录中：这些文件会随运行时的进程树一起删除。仍含有被终止的运行时自行写入的文件的工作目录，或因 `kill -9`、崩溃而遗留的工作目录，会在下一次启动运行时的运行中删除，条件是其所属进程（现已写入 `markitai-<runtime>-<pid>-…` 名称）已经结束且目录已存在两小时。中断测试此前每次运行会在本机临时目录留下六个这样的目录，现在改用各自的临时目录。
+- 若图片或页面的整图识别未保留任何文字，本地 OCR 会像参考实现一样，以较低阈值在相互重叠的分块上再试一次，因此大而几乎空白的图片上只有几像素高的说明文字也能识别：语料中的 `sample.jpg` 此前识别不到任何文字。没有清晰边缘的分块会被跳过，空白页不产生重试，重试所需内存也不超过整图识别。
+- HTML：X 在 2026 年于帖子页中提供的长文（`twitterArticleRichTextView`）输出其标题、封面和完整正文（含标题、列表和代码块），不再只有标题和一张图片。
+- HTML：其他账号对 X 帖子的回复，以及作者在第一条他人回复之后的回复，按参考实现的写法以 `## Comments` 跟在帖子后面，每条为以 `**名称 @账号** · [日期](链接)` 开头的引用块，界面为其他语言时也是如此；此前会被丢弃。
+- HTML：GitHub issue 输出其首帖，然后在 `## Comments` 下输出评论（`**作者** · [日期](链接)`），不再带有 issue 查看器的头像、仅供读屏的标题、“opened on … · edited by …”行和徽章；其中指向文件若干行的永久链接摘录输出为代码块。
+- HTML：独占一块且显示文字的内联 SVG 图表或示意图按参考实现保留为图（置于 HTML 块中、经净化的 SVG 标记，并解析出丢失样式表所赋予的颜色），不再只剩零散的坐标轴标签。
+- HTML：arXiv 的 LaTeXML 脚注和致谢注释输出为 Markdown 脚注，脚注标记只输出标记本身，不再重复两次标记并带上字面的“footnotemark: 2”。
+- HTML：段落中的 `link` 或 `meta` 元素（MediaWiki 会在每个行内模板前写一个）不再把段落拆开；此前维基百科的句子会被拆断，mediawiki.org 上包住行内代码的链接也无法显示。只含空白的段落不再输出为一行空格。
+- HTML：此前被保留的页面附属内容现在会被去掉：arXiv 摘要页的服务栏和 arXivLabs 标签页、直播页标题上方的多城市时钟、结尾处标题加站外推荐链接的列表、“Was this page helpful?”投票及由 BEM `hidden` 修饰类隐藏的文字、RSS 图标，以及含站点名称和搜索框的站点横幅。
+- HTML：标记在 `<code>` 之后立即换行时，代码块不再以空行开头；代码块上方的 `markdown`（或 `diff`、`dockerfile` 等）标签被识别为其语言，不再成为多余的一行。
+- 在服务设置中保存 OpenAI 兼容端点（provider 为 `custom`、模型带 `openai/` 前缀）会以“provider must match the model provider”失败；现在它保存为 `custom` 连接，其模型路由到该端点地址。保存一个端点后，OpenAI 和 OpenAI 兼容端点卡片仍可继续添加。
+- HTML：懒加载图片的地址位于站点自定义的 `data-` 属性（如 `data-image-loader`）、`src` 仅为内联占位图时，图片会被保留，不再随占位图一起丢弃。
+- 资源中绑定了大图但从未绘制它的 PDF 页面按正常文本页读取，不再给出“看起来像扫描页而按纯文本读取”的警告（如参考 `sample.pdf` 第 5 页）。
+- PDF 两端对齐文本中，生成器在空格字形前用 `TJ` 偏移加宽词间距时，词与词之间不再出现两个空格（如参考 `sample.pdf` 中的粗体段落）。
+- 批处理条目的 `duration_s`（及报告中的时间）只计该条目自身的转换与发布耗时，不再包含等待所在发布组提交的时间；此前 `-j 1` 时各条目时间之和可达实际耗时的数倍。
+- 旧版 PPT 幻灯片中的 EMF 与 WMF 图片（如参考 `sample.ppt` 的图表预览）按旧版 DOC 图片的方式完整解码并保留，不再作为不支持的格式省略。
+- 取自首个标题的 frontmatter 标题为纯文本：不再保留 Markdown 转义（如 Numbers 表格的 `ZZZ\_Sheet\_1`）、链接地址及包围它的强调标记。
+- HTML：YouTube 观看页有了专用读取器（标题、频道、简介、播放量与日期、已加载的评论；读取渲染后的页面或服务器返回的播放器数据），导航链接以及点赞、不喜欢、分享、保存按钮不再混入 Markdown。未注明地址的已保存 Bilibili 动态页通过其 `.bili-opus-view` 标记识别，由专用读取器去掉作者头像和页面框架。
+- HTML：包住纯图片块和名称的链接（如 Mastodon 头像旁的显示名称）把链接放在名称上、头像置于其前，不再输出链接文字中含空行的链接（Markdown 会将其显示为字面方括号）。
+- PDF 图片按其在页面文字中的绘制位置放置：页首、其上方段落之后或页尾，不再总是放在该页文字之后（此前可能把延续到下一页的句子从中断开）。只有无法定位的图片仍放在文字之后，并保留原有警告。
+- HTML：懒加载页面中 `<noscript>` 内的图片回退会作为图片保留，不再被丢弃；`<img>` 仅为内联占位图的 `<picture>` 改用其第一个 `<source>` 图片集中的地址。
+- 绘制在 PDF 可见页面区域（CropBox）之外的文字不再进入正文，并给出警告说明省略的条目数，因为阅读器从不显示它们；此前只裁掉相邻页面的段落，单独一行这样的文字仍会被提取。
+- serve 任务快照的任务级 `options` 只列出受支持的选项键，与各条目的 `options` 一致，不再原样返回任务保存的全部内容：已保存的 `remote_processing` 授权及 `origin` 等 CLI 历史元数据不再返回。
+- 工作台检测到的模型与转换使用同一张表和同一环境：`.env` 文件中的 API key 同样计入（与未设 `MODEL` 的转换一致），列表按模型池优先级（Anthropic、OpenAI、Gemini、DeepSeek、OpenRouter）排列，不再以 OpenAI 开头，`MODEL` 也从 `.env` 读取。未配置 `llm.model_list` 的工作台转换也使用同一模型池，因此设置了多个 key 时与 CLI 转换一样先试 Anthropic。只含空白的 key 不再让对应服务商进入转换的自动模型池。
+- `MARKITAI_NO_REMOTE_FETCH` 的读取方式与 `MARKITAI_NO_VLM_OCR` 及参考实现一致：除空值、`0`、`false`、`no`（去除首尾空白，不分大小写）外的任何值都会关闭远程抽取，` 1` 或 `Y` 不再让 Defuddle、Jina 和 Cloudflare 保持可用。`MARKITAI_PURE` 与 `MARKITAI_RECORD_HISTORY` 一样接受 `on` 且不分大小写。
+- `-p/--preset` 遇到配置 `presets` 中重新定义的内建名称（`minimal`、`standard`、`rich`）时使用配置中的定义，与工作台、其能力接口及参考实现一致，不再仍按内建定义处理。
+- Office 包（演示文稿、工作簿页面渲染与版式修复、Office 元数据）与 Numbers ZIP 文件改由同一个有界 ZIP 读取器读取，OOXML 关系目标改由同一个解析器解析，不再使用已经偏离的六份实现。重复条目名的 ZIP 现在会被拒绝：ZIP 库会静默只保留其中一个条目，原有的重复检查从未生效。数据与声明大小不符的部件会被拒绝，Office 元数据也加上 16,384 个条目的上限；文档读取器仍能转换此类包的 Word 文档或 OpenDocument 文本会收到批注无法恢复的警告。各处按 ECMA-376 相对引用解析目标：工作簿版式修复现在接受 `./` 路径段和含 `:` 的部件名，并拒绝此前被当作部件读取的 `//` 网络路径；演示文稿读取器对空路径段报错而不是跳过，`TargetMode` 既非缺省也非 `Internal` 的目标一律不从包内读取；`%` 转义必须恰好是两位十六进制数字，且不能编码 `/`；XLSX/XLSB 工作表名称可沿百分号编码或带 `./` 的工作簿目标读取。
+- Copilot 订阅运行时向 stderr 写入超过 1 MiB 时，现在以资源超限错误结束该请求，与 Claude 和 Codex 运行时一致，不再无限制地读取其 stderr 直到请求超时。
+- Outlook MSG 转换按与 EML 相同的规则把 HTML `cid:` 图片匹配到附件：经百分号编码或大小写不同的 Content-ID 现在能找到唯一对应的附件，懒加载的 `data-src` 属性和链接不再被改写为附件路径，缺失或有歧义的 ID 保留为 `cid:` 图片并给出警告，不再丢弃该图片。MSG 邮件头中的控制字符改为空格，MSG 附件链接文字也会转义尖括号，并把控制字符改为空格。以反斜杠结尾的 EML 或 MSG 附件名不再破坏其下载链接。
+- 转换、`config set`/`config edit`/`init` 与工作台设置以同一方式读写配置文件。符号链接形式的配置文件或配置目录（例如由 dotfiles 管理的 `config.json` 或 `~/.markitai`）现在也能在工作台保存，与 `config set` 一致：保留链接，替换其指向的文件；Windows 报告文件被短暂占用时，与其他状态写入一样有限次重试。所有读取方对 FIFO、目录等非普通文件及超过 8 MiB 的文件报错，转换不再因名为 `markitai.json` 的 FIFO 无限等待，`config set` 也不再把这类文件替换成普通文件。为新配置文件创建的目录为私有权限。
+- 从源码构建 Node.js 绑定（在 `bindings/node` 中运行 `npm run build`）与其他文档所列构建一样向 Cargo 传入 `--locked`，与清单不一致的 `Cargo.lock` 会使构建停止，而不是被悄悄更新。
+- 若 SVG 文本使用的通用 serif、sans-serif 或 monospace 字体族在主机上没有 fontdb 默认名称的字体，现在改用第一个覆盖基本拉丁字母的字体，而不是最先加载的任意字体，因此图标字体（FontAwesome、Weather Icons、Material Icons）不再成为文本排版的主字体。只装有图标字体的主机仍会报告文本所需字体不可用。
+- 消息中指向账单页面的 LLM 限流响应（HTTP 429；OpenAI 低等级账户会建议添加付款方式以提高限额）现在按限流重试，不再被当作配额或账单拒绝而终止整个文档及其同批请求。带有 `insufficient_quota` 代码的 429 以及任何 HTTP 402 仍会立即停止。
+- LLM 请求在提供商返回空回答或回答被拒绝后，不再原样重新发送。没有任何文本的 JSON 文本回答（Gemini 对一份 3 页扫描件就返回过这样的回答）现在发送一次即失败，不再重复发送同一请求直到 `llm.max_requests_per_document` 耗尽；空的纯文本回答只会转到组内尚未尝试过的其他部署，且不退避；结构化或视觉回答被拒绝后，下一次请求会在系统提示词中说明拒绝原因，因此是一个不同的请求；同一拒绝原因再次出现时，尝试随即结束，不会第三次发送同一请求（图片分析随即改为分别请求说明文字和描述：共 4 次请求而非 5 次）。错误信息会说明空回答的结束方式，例如 `LLM returned no text (finish reason: stop)`。
+- 被服务商内容过滤器拦截的回答现在如实报告，不再被当作无效的结构化响应：Gemini 兼容 OpenAI 的接口把过滤原因写成 `content_filter: RECITATION` 等形式，此前只能匹配完全等于 `content_filter` 的值。实测基准中的 3 页扫描件是一份被广泛转载的示例 PDF，Gemini 将其转写视为复述已发表文本而拦截；错误现在显示为 `LLM provider withheld the answer (finish reason: content_filter: RECITATION): it resembles existing published text, which the provider does not reproduce`，且该请求不会重新发送。
+- 每个被重新发送的 LLM 请求现在都会在其文档上产生一条警告，并照常计入 `llm.max_requests_per_document`：传输重试、空回答后转到另一部署、结构化回答未通过校验（警告会说明原因及下一次请求所用的模式，例如 `LLM tool-call answer was rejected (…); the request was sent again in JSON-schema mode`）、视觉批次被拒绝，以及图片分析回退为单独的说明与描述请求。此前用 Claude Haiku 4.5 增强演示文稿时，会在另一种结构化模式下悄悄多花一次完整的文档请求。
+- 失败的 LLM 请求现在会在 CLI 消息、报告与 `--json` 错误以及日志中说明原因，不再只显示 `LLM request failed` 或 `LLM returned HTTP 400`。没有收到响应的请求会说明是连接被拒绝、主机名无法解析、TLS 握手失败（附 TLS 库给出的原因）、连接提前关闭，还是在超时时间内没有响应（附时限）。HTTP 拒绝会附上服务商的错误类型和经过清理的错误消息：部署的密钥及其他形似凭据的词被替换，URL 去掉查询部分，超过 40 个字符的引文被删去，若消息重复了提示词或文档中的任意片段则整条不显示。不是 JSON 的响应只给出状态码、内容类型、大小和 HTML 页面标题，从不显示其正文。这些失败都以部署及其主机结尾，例如 `LLM request failed: connection refused (deployment openai/gpt-6-luna at 127.0.0.1:4000)`。`serve` 的模型连接测试也同样说明未收到响应的原因（`Model connection request failed: connection refused`），并给出拒绝的错误类型或代码（`Model connection returned HTTP 401 (invalid_request_error/invalid_api_key)`），仍不显示服务商的消息。Python 1.2 对连接被拒绝、无法解析、TLS 失败和连接被重置一律只报告 `Connection error.`。
+- 使用 Claude Haiku 4.5 处理结构化文档和图片分析时，改为直接使用 Anthropic 原生 JSON schema，不再先强制工具调用。两次实测演示文稿时，Haiku 的工具调用回答都丢掉了全部受保护的文档标记而被拒绝，每份文档因此多付一次 JSON schema 模式下的完整请求（该请求随后成功）。
+- 文档的图片说明与描述（`--alt`/`--desc`）现在在增强正文的同时请求，各张不同的图片也同时请求，并受 `llm.concurrency` 限制，不再等增强返回后逐张请求：实测基准中，含一张图片的演示文稿需要依次发出三个请求（38.7 秒）。这些请求仍共用文档唯一的 `llm.max_requests_per_document` 预算，并为增强保留其第一个请求，因此上限为 1 时该请求仍用于文档正文。图片提示词现在读取基础文档的开头，而不是增强后的文档。
+- 部署的 `litellm_params.reasoning_effort`（`none`、`minimal`、`low`、`medium`、`high`、`xhigh`、`max`）控制推理模型的思考强度。DeepSeek 默认开启思考；实测基准中 `deepseek-flash` 在清理一个 HTML 页面前就把 8,192 个输出 token 全部用于推理，该文档因截断而失败。现在 `deepseek/` 部署在未设置强度时发送 `thinking: disabled`，设置后开启思考并发送对应的 `reasoning_effort`。其他兼容 OpenAI 的部署以 `reasoning_effort` 发送该值；Anthropic 只接受 `none`，订阅运行时不接受此设置。因推理耗尽输出预算而截断的响应现在会明确说明：`LLM output was truncated by its token limit: reasoning used all 8192 output tokens; lower litellm_params.reasoning_effort or raise max_tokens`。
+- 未配置 `llm.model_list` 时，`DEEPSEEK_API_KEY` 现在把 `deepseek/deepseek-flash` 加入自动模型池，即 DeepSeek 模型列表和 API 参考中的名称；此前使用的 `deepseek/deepseek-v4-flash` 仍被 DeepSeek 当作同一模型的别名接受。
+- 目录批处理在只改动批处理并发数（`-j` 或 `batch.concurrency`）时，`--resume` 会保留已有进度，与参考实现一致；此前会丢弃保存的进度并重新转换所有条目（包括付费的模型请求），并在默认输出策略下生成改名的重复文件。若载入的状态在其他选项上与本次运行不同（例如较旧的状态），`--resume` 现在以退出码 1 停止，列出每个不同选项的保存值和当前值（`-q` 下同样如此），并保留已保存的进度，不再在其上重新开始批处理。
+- 保存的输出不再保留错误信息里早已隐藏的机密：URL 转换随输出保存的 `source` 与 `source_url` 元数据现在按抓取策略的同一套机密参数名脱敏，Azure SAS 的 `sig=`、OAuth 的 `code=`、`session=` 等写为 `REDACTED`，表单式片段中的令牌（`#access_token=…`）亦然。不含机密的 URL 按原样保留查询串，不再被重新编码。
+- 由站点读取器处理的页面（微信公众号、知乎、哔哩哔哩、豆瓣、简书、博客园等，包括仅凭页面标记识别的已保存公众号页面）在正文或代码块嵌套数万层元素时，不再因栈溢出导致进程崩溃：与其他页面一样，超过 256 层的内容以纯文本保留并给出警告。
+- 普通输出不再因零散的 `[` 丢失文字：修复「链接文字被换行拆开」时，匹配从链接自己的方括号开始，因此 `a[i`、`[sic` 之类的正文后面再出现链接时，中间的各行各段都会保留，不再被截成第一行。
+- 头部声称 DIFAT 链无限长的畸形旧版 Office 文件（`.doc`、`.xls`、`.ppt`）不再让复合文件修复空转数分钟乃至数小时；遍历次数以文件大小为上限，不足一个扇区的第 4 版文件直接保持原样，调试构建也不再因此崩溃。
+- HTML 中代码块的行嵌套超过 256 层，或 MathML 公式嵌套超过 64 层时，不再导致整个文档转换失败：该代码块或公式保留为不带格式的纯文本，并给出嵌套警告（警告现在也写明公式的层数上限）。
+- Hacker News 与 X 读取器像其他 HTML 一样校验链接：`javascript:` 等不安全协议的帖子、评论、「More」或引用帖链接不再写入 Markdown。没有页面地址时读取的 HTML（本地文件、邮件正文）保留在第一个 `/`、`?` 或 `#` 之后含冒号的相对链接（如 `/wiki/Help:Contents`、`?t=10:30`），不再丢弃。
+- `POST /api/download-tickets` 最多读取 8 KiB 请求体，更大的请求体返回 413 `request_too_large`，不再沿用 5 GiB 的上传上限、缓冲客户端发来的任意数据。
+- PDF 内容检查对每页的同一问题（图案填充、内嵌图像、无法解析的 XObject）只报告一次，而不是每个操作符报告一次；重复这类操作符的页面不再产生数百万条相同警告，也不再生成罗列全部警告的错误消息。与操作符过滤一样，检查遇到操作符超过一百万个的内容流时不再继续，并警告该页未完整检查；内嵌图像之外孤立的 `ID` 操作符不再被报告为内嵌图像。
+- PDF 扫描件中 OCR 文本层所覆盖的 JPEG 若在自身文件头中声明超过 32 Mi 像素，校验该文本层时不再解码它：先读尺寸再解码，且解码受内存上限约束，小文件不再能让每页校验分配数百 MiB 内存。该文本层照常读取但不做校验，并附警告说明图像超出像素上限。
+- HTML 文本中含大量未闭合的 TeX 起始符（`\(` 或 `\[`）时，转换按线性时间完成，不再卡住：每个起始符不再重新扫描其后的全部文本寻找闭合符。
+- Gemini 模型发现改为通过 `x-goog-api-key` 请求头发送 API 密钥，不再放在 `?key=` 查询参数中，避免被沿途的请求日志和代理记录。
+- 工作台的连接编辑接口（`GET /api/settings/llm/providers/{id}/credentials`）不再返回已保存的 API 密钥，也不再返回已保存地址中的凭据。它像参考实现一样，在 `api_key_masked` 和 `api_key` 中返回掩码后的密钥（`sk…7890`：12 个字符及以上的密钥保留前 2 个和后 4 个字符，较短的密钥只保留后 2 个字符），并返回隐去用户信息及机密查询或片段参数的地址（`https://…@host/v1?token=…`）。更新时不带 `api_key` 会保留已保存的密钥，原样发回所显示的地址会保留已保存的地址，其他任何带掩码的值都会以 422 拒绝，不会用掩码替换机密。
+- 打开工作台中不存在的地址会显示其「页面不存在」页（状态码 404），不再显示服务的 JSON 错误；指向已删除或已过期转换的链接会说明这一点，不再悄悄显示全部转换；无法加载转换时（缺少令牌、无法连接服务器、服务器出错）会说明原因并提供「输入令牌」「立即重试」或「重试」，不再在「还没有转换。」下方一直显示「加载中…」。
+- 工作台提示出现时会被屏幕阅读器播报（其实时区域始终位于页面中），并保留列表结构；指针或键盘焦点停留时，确认提示不再自动消失；提交失败时显示「无法开始转换」，不再多出一个「关闭」按钮；无法连接服务时的提示提供「立即重试」；在手机上，提示的操作按钮位于文字下方；筛选无结果时提供「清除筛选」；空列表不再显示「全部下载」。
+- 工作台中针对单个转换的操作失败（重试、删除、下载、LLM 增强、复制，以及一次提交的「重试失败项」「停止」「ZIP」「删除」）会在该转换的检查器、手机底部面板或预览顶部显示一行，样式与该转换自身的失败原因相同（红色 ✕、一句话、「完整详情」），直到再次执行该操作或选择其他转换。此前它是页面提示，列表滚动后看不到，手机上还会被打开的底部面板挡住，导致重试失败看起来毫无反应。
+- 工作台提示改为底部的极简横条（手机上占满宽度，位于底部标签栏或已打开底部面板的操作栏正上方；宽屏上为右下角 380 px 宽的一叠）：一句话、一个 ✕、! 或 ✓ 标记、最多一个文字操作，直角，表面色加细线分隔，最多三条（最新的在最下方），4 秒后消失（错误 6 秒），按住、悬停或获得焦点时不消失，向下轻扫可关闭；取代了带彩色竖条和关闭按钮的圆角提示框。持续状态不再显示为整页横幅：「未配置模型」改为在每个未使用模型转换的检查器中说明（附「去配置」），历史无法保存改为在相应转换的检查器中说明，缺少令牌、无法连接服务器或加载出错则在列表的面板中说明。
+- 转换文档中被清理器移除地址（`javascript:`）的链接显示为文字，不再变成指向文档自身的下载链接。
+- 工作台渲染视图中没有文字的表头单元格改为表头行中的普通单元格（保留表头的分隔线和固定位置），屏幕阅读器不再遇到没有名称的列标题。
+- 现在能找到 Playwright 为 arm64 Linux 或 Intel macOS 安装的 Chromium（`chrome-linux-arm64`、`chrome-headless-shell-linux-arm64`、`chrome-mac-x64`），与参考实现一致，因此在这些平台上无需设置 `MARKITAI_BROWSER_EXECUTABLE`，浏览器抓取、截图和工作台的浏览器能力即可使用。
+- `fetch.policy.local_only_patterns` 及继承的 `NO_PROXY` 条目改由代理例外的解析器读取，不再使用已经偏离的第二份实现：`bücher.de` 这类 Unicode 名称现在能匹配其 punycode 主机，标记为仅本地的 URL 不会再被发给 Defuddle、Jina 或 Cloudflare；代理例外也随之支持仅本地规则原本就接受的 IPv4 子网掩码写法（`192.168.1.0/255.255.255.0`）。
+- 远程抓取服务与文档图片下载共用同一套私有地址判断，并新增覆盖基准测试网段 `198.18.0.0/15`、`192.0.0.0/24`、IPv6 站点本地与文档网段，以及内嵌私有 IPv4 地址的 IPv6 地址（IPv4 兼容地址、NAT64 `64:ff9b::/96`、6to4 `2002::/16`）；图片下载也补上了此前遗漏的文档网段。IPv6 字面量主机（如 `http://[::1]/`）上的图片会被正确分类，不再因被当作无法解析的主机名而失败，私有 IPv6 地址上的页面因此可以本地化自身图片。Defuddle、Jina 与 Cloudflare 收到的是经解析并检查过的 URL，而不是用户原样输入的文本。
+- 空的 `MARKITAI_HOME`（例如 `MARKITAI_HOME= markitai …`）、`HOME` 或 `USERPROFILE` 现在视为未设置，不再把当前目录当作私有主目录：此前配置、`.env`、缓存、历史以及浏览器与 OCR 安装会散落到当前目录，任何路径都被视为位于受管主目录之内。相对的 `MARKITAI_HOME` 只解析一次，以首次使用时的工作目录为基准（CLI 即启动时的目录），因此提示信息给出绝对路径，「是否位于受管主目录之内」的检查也比较绝对路径。
+- 持久化 URL 抓取缓存可能保存 URL 查询令牌和带凭据抓取的页面，现在在 Unix 上仅所有者可访问：为它新建的目录权限为 `0700`，`fetch_cache.db` 为 `0600`，不再随 umask（通常所有本地用户均可读）。旧版本留下的可被他人读取的缓存库及其 SQLite 附属文件，会在下次以写方式打开时收紧权限；缓存库若是链接则拒绝使用。
+- 持久化 URL 抓取缓存的文件被短暂占用时，不再报告缓存不可用并丢掉正在保存或读取的页面：例如负载较高的机器上多个转换同时首次创建缓存（`-j` 批处理、`serve` 同时运行多个任务），以及 Windows 上文件被锁定、以不共享方式打开、正在删除或被杀毒软件占用。这类读取、写入、删除或清空会整体重试，最长 5 秒；存储损坏、位置上是链接或磁盘已满时仍会立即给出警告。
+- 负载较高的机器上多个抓取同时学习或查询域名时，已学习的浏览器域名（`learned_spa_domains.db`）不再因“Learned browser-domain store is unavailable”而丢失，域名提示也不再被跳过：存储等待锁的时间从 3 秒延长到 30 秒，在首次记录的写锁内创建表（不再因另一个首次使用者持有锁而失败），把其他进程刚创建、尚无表的存储视为空，并像抓取缓存一样对短暂失败最长重试 5 秒。
+- 本地浏览器抓取时，若页面在 Markitai 等待期间发生跳转，不再导致抓取失败——尤其是中间页（Cloudflare 的 "Just a moment"、403/429/503 脚本校验）自身触发的重新加载，而等待这次加载正是抓取的目的。等待改为在 Markitai 中进行并持续读取浏览器事件，不再使用会被跳转销毁的页面内定时器。
+- `markitai serve` 中，耗时的单项重试、单项删除或结果读取不再在处理文件期间卡住该任务的快照、事件流和历史记录：文件操作只在任务自身的访问锁下进行，共享的任务状态仅被短暂占用。读取历史记录和创建任务时，也不再在逐个锁定任务或将新任务刷写到磁盘期间占用任务注册表。
+- `MARKITAI_HOME/serve/jobs` 下单个损坏的任务文件夹不再导致 `markitai serve` 无法启动，也不再让历史记录、单项重试和单项删除失败：该文件夹会被跳过，在标准错误输出一次警告，并原样保留。对已知任务重试或删除单项时，也不再重新扫描全部已保存任务。
+- `markitai serve` 的历史记录按实际时间从新到旧排列，不再比较时间戳文本：CLI 历史记录本地时间及偏移（`+08:00`），服务端任务记录 UTC（`Z`），在非 UTC 时区两者会交错乱序。历史 ZIP 同样按创建先后排列任务，`(2)` 等文件夹后缀随创建顺序编号。
+- 大批量任务不再出现全部转换完成后、最终压缩恢复状态时失败（退出码 1、无报告）的情况。状态基文件改为紧凑 JSON，上限与日志文件相同，为 64 MiB，条目带 LLM 用量时也能达到 100,000 条的上限；若完成后的状态仍放不下，批处理会在任何转换开始前停止，并提示 `Recovery state projected base bytes limit exceeded`。
+- 成功响应在读取中途被切断的 LLM 请求不再重新发送：提供商已完成并计费。发出后超时的请求（HTTP API 部署没有响应，或成功响应中途停止传输）会在 `num_retries` 范围内重新发送一次，不会更多，与 Python markitai 重发超时请求一致；由于提供商可能已为第一次请求计费而未报告用量，该部署的用量行将其计入 `incomplete_request_observations` 和新增的 `timed_out_requests`，费用标为不完整（`Cost is incomplete: 1 request to … timed out.`），设置了正数 `llm.max_cost_per_document_usd` 时不再放行后续请求，文档附带警告 `LLM request to … timed out (…) and was sent again once; the provider may have billed the first request, so the cost is incomplete`。响应指明模型不存在、不可用或受地区限制时不再退避重试；与认证被拒相同，请求立即转到同组的其他部署，本次运行跳过该部署并提示 `LLM deployment … is unavailable and is skipped for this run`。连接失败、临时 HTTP 错误和限流仍会重试。
+- LibreOffice 导出在 Linux 与 macOS 上不再遗留进程：启动器退出后，其进程组中残留的进程会在读取输出、删除私有工作目录之前被结束，与 Windows 的行为一致。
+- XLSB 工作簿的转换结果与 XLSX、XLS 一致：单个工作表以其名称作标题，各工作表的表格紧跟标题；Markdown 中省略的隐藏工作表会给出同样的警告，不再静默消失。
+- 无法统计批注的 ODT（例如 `content.xml` 超过 16 MiB 元数据上限）现在会像 Word 文档一样给出「批注无法恢复」的警告，不再被当作没有批注。
+- 文档中嵌入的 SVG 图片（HTML 页面、电子书、Word 文件中）不再触发「嵌入图片无法在原生限制内解码」的警告；该矢量资源与以前一样原样保留。
+- 转换过程中的原生 panic 在 Python 与 Node.js 中现在表现为代码为 `internal_error` 的 `ConversionError`，与 Go 及绑定指南的说明一致，不再是 Python 的 `RuntimeError` 或没有代码的 Node.js `Error`。Python 配置模型（`MarkitaiConfig` 及其各节）规范化取值时发生的原生 panic 也同样表现为代码为 `internal_error` 的 `ConversionError`，不再是 `RuntimeError`。
+- 工作簿页面截取不再因可选的修复步骤而失败：无法测量右侧溢出的 ODS、XLS 或 XLSB 工作簿保留 LibreOffice 的版面并给出警告；字体颜色策略无法解析其样式的 XLSX/XLSM 工作簿保留 LibreOffice 自身的字体颜色，不再中止导出。
+- `--screenshot` 与 `--ocr` 现在会把 Office 模板（`.dotx`、`.potx`、`.xltx`、`.ott` 及其他模板扩展名）按其生成的文档类型截取页面，不再静默地只转换文字。
+- 便携 OCR 不再丢失密集或噪点较多扫描件下方的文字：先剔除斑点与淡痕，再应用 1,000 个文本区域的上限；若图片或页面的文本区域仍超过该上限，会给出指明该图片或页面的警告，不再静默丢失下方文字。
+- 便携 OCR 对无法加载的可选韩文模型（例如离线时）每个进程只尝试一次，不再对每张含存疑行的图片都重试；加载某个模型时，也不再阻塞正在使用已加载模型的其他 OCR 线程。长时间运行的 `serve` 或 MCP 进程需重启后才会使用之后安装的韩文模型。
+- 共用的「成本不完整」告警现在会把覆盖的任务相加，而不是重复某一个任务的数字：卡片按界面语言写明哪些模型没有价目表、各涉及多少次请求，任务名放在「完整详情」中。批次按提交的来源命名——文件夹就是文件夹（即使里面含 `.urls` 列表）；没有名称的批次显示为该批次的任务 ID，而不是其中某个文件的名字。任务列表每行都保留操作槽位，状态标记、加载指示与下载图标因此对齐在同一列。
+- 成本不完整的告警会写明模型与原因（`Cost is incomplete: 2 requests to deepseek-chat have no reviewed price…`；若服务商未返回用量计数，则写 `reported no usage counts`），不再说「some observed requests」；最多列出三个模型，其余按数量归并。多个任务共用的同一条告警现在只弹出一张卡片，标题显示覆盖的任务数，任务名放在「完整详情」中，不再每个任务各弹一次。
+- 预设行只在请求仍等于该预设时才标记它：在「极简」预设下开启 LLM 增强后，三个预设都不再高亮，改由「自定义」标记当前状态，不再出现「极简」被选中却覆盖其参数的情况。
+- 模型选择中已配置的模型可以取消勾选：该行与徽标显示「将移除」，底部说明待执行的变更，保存时一并移除该路由项（新增与移除在一次保存中完成）。服务商页面保持连接表只有两行：打开的 key 或地址编辑区改为内嵌面板，「手动添加模型 ID」与「高级」两个折叠项共用列表下方的一行。
+- 在不以点击聚焦按钮的浏览器（Safari、Firefox）中，外观菜单在按下选项时保持打开，切换语言或主题不再因为菜单提前收起而失效。
+- 选项区的 CLI 命令行只在请求仍与该预设一致时才写出预设名：在「极简」预设下开启 LLM 增强后显示为 `markitai <files-or-urls> -o output/ --llm`，不再写成自相矛盾的 `--preset minimal --llm`。外观菜单现在位于通知栏之上，通知弹出时其语言按钮不再被挡住无法点击。
+- LLM 增强不再重复输出受保护的内容：视觉增强的回答若重新转录了受保护的块（如页面截图中可见的代码），会被拒绝并重试；提示词也已说明标记本身即代表该内容。
+- 本地浏览器读取的页面文本含未配对的 UTF-16 代理项（如脚本截断的 emoji，常见于哔哩哔哩）时可正常读取，不再报 `Invalid Chromium protocol response`。哔哩哔哩对不执行脚本的客户端返回的验证码页会被识别为验证页面，`auto` 会改用本地浏览器渲染，失败时提示具体站点。
+- 豆瓣读书、电影、音乐评论按评论正文读取，标题下以一行显示评论者、作品、评分和时间，不含头像、作品卡片、投票、评论区和菜单；短评论不再连同整个页面一起转换。
+- 命名的文章区域优先于旁边的站点菜单、链接列表和评论区；去除页面横幅 `header`、Bulma `is-hidden` 与 Bootstrap `d-none` 隐藏的元素、维基百科给编辑者的提示框、分为多段的目录及其标题，以及正文后以页面附件命名的块（如 `article-footer`、`#comments`）。为不同屏幕尺寸重复写出的导语或首图只保留一份。
+
+- 将边界明确的 PDF 柱状图保留为正文原位置的图片，避免坐标轴和图例被拼成段落；渲染或位置无法确认时保留原文。
+- 保留旧版 DOC 直接格式和字符样式继承的下划线（链接文本保持普通链接），不误改其他位置的同名文本。
+- 按正文锚点恢复旧版 DOC 支持的浮动图片，包括单独存储的图片数据，不引入无关图片。
+- 本地和远程 serve API 均校验令牌，检查变更请求的 Origin，并将已存 LLM 凭据绑定到配置端点。拒绝客户端环境变量引用；工作台通过认证加载资源，并使用一次性下载票据。
+- 限制 Office/EPUB 元数据内存使用，避免绑定序列化失败引发 panic，在发布前拒绝非 UTF-8 实际输出目录，并将 Python 配置 panic 转为普通异常。
+- 将中断的 serve 任务恢复为可见失败项，保留已完成输出，防止并发历史写入并清理过期私有上传暂存。重试保留先前成功结果及其选项，单独报告新失败和成本。
+- 模型连接测试和模型发现与转换一致，从 `.env` 和 `~/.markitai/.env` 读取密钥；密钥只写在 dotenv 文件中时不再报 HTTP 401。工作台连接视图会将这类密钥显示为来自相应环境变量，而不是「未设置」。
+- 工作台：未完整计价的模型费用显示为「未知」（部分计价时为「至少 $x」），不再显示 `$0`；提示位于页面之中，不再浮在按钮上方；重复的警告按类别计数，不再逐行列出；手机列表中的名称保持可读；转换列表是行内不含控件的 ARIA 树（axe 无严重问题）；与参考实现一样包含 Inter 的拉丁扩展、西里尔、希腊和越南语子集。修正停止项状态、已存重试选项、过期实时更新、模型不可用提示、键盘焦点和项目链接；打印移除认证链接目标。
+- 改进 PDF 分栏及从右向左阅读顺序、全篇标题层级、列表、代码、链接、批注、表单、有标签/有边框/无边框表格及跨页续表。保留页边有效数据，正文只能部分读取时发出警告。
+- 正确读取受支持的可搜索扫描 OCR 层、未嵌入 CJK 字体、间接表单资源及仅设所有者密码的 PDF。需要打开密码的 PDF 仍明确报错，表单密码值不写入输出。
+- 保留 Office/OpenDocument/RTF 正文、标题、列表、制表位表格、等宽代码、符号、字段及支持的嵌入内容。保留演示文稿页边界、空白页、表格和支持的图表数据，排除隐藏/删除内容而不丢失普通正文。
+- 修正电子表格表头、合并单元格、无缓存值公式、链接、批注、数字/日期/时长格式及支持的图片位置。改善 XLSX/XLSM 截图文字溢出和默认字体颜色，不修改原文档；容忍 LibreOffice 运行中的临时输出文件消失。
+- 改进 HTML 正文及站点提取、表格、脚注、提示块、数学公式、代码、懒加载图片和保存网页的链接，保留流式及声明式 Shadow DOM 内容。去除导航和无关侧栏，同时保留短正文。
+- 提取 X 帖子内嵌长文的真实标题及正文结构，排除时间线中的重复布局、作者操作区和评论。
+- 保留 Markdown 字面文本、围栏代码、硬换行、脚注边界和安全引用的 YAML 元数据。保留 EPUB 代码语言、笔记本输出、邮件正文/附件关联及原始二进制下载。
+- 修正非 UTF-8 HTML、文本、CSV 和邮件解码；识别 CSV/TSV 分隔符，同时保留引号字段、小数逗号及超出表头的列。
+- 改善本地 OCR 对小字号中日韩文字、旋转、分栏、表格数字和代码缩进的识别；对不支持语言及识别失败明确提示，避免用乱码替代。
+- 将登录、验证和 JSON 拒绝页面判定为抓取失败，保留服务警告及缓存控制。升级后刷新旧提取缓存，改善网络/编码错误和认证 PDF 处理，不绕过站点拒绝。
+- 部署拒绝认证后仍可回退到可用模型，区分计费/区域错误、遵循声明的输入窗口并保留失败尝试的已观测用量。修正适用的 Anthropic 定价，截除重复回答尾部且不缓存这类回答。
+- 修正恢复选项匹配、输出冲突、资源重定位及并发缓存/资源发布。跳过时保留原字节，复用资源前校验内容，MCP 客户端断开后停止启动排队任务。
+- 修正 Windows 路径别名、锁、原子重命名、LibreOffice 发现及外部进程清理。CLI ZIP 使用静态 CRT 并检查运行时 DLL 导入；Linux 静态 Go 使用方采用不可执行栈。
+- 安静处理关闭的标准输出管道，成对开关以最后一次为准，准确报告中断及跳过任务；非交互清理缓存无法读取确认时返回失败。
+- 某个文件没有任何模型给出可用回答时（请求全部被拒绝、失败、被内容过滤，或回答为空/无效），转换只写基础 `.md`，不写 `.llm.md`，并在失败原因（`LLM enhancement failed: …`，单独图片为 `Image analysis failed: …`）之后加警告 `No model succeeded for this document; only the base Markdown was kept.`，工作台将其显示为一条提示。缓存的增强结果，或只要有一个回答成功（如文档已清理而图片说明失败），仍写出 `.llm.md`。`markitai serve` 的条目只在保留结果为增强版时列出 `models`；失败但已计费的请求仍计入费用和诊断，旧记录中为仅基础结果列出的模型在读取时去掉。
+- 图片说明只是拒绝请求（`I'm sorry, I can't …`、`I cannot …`、`抱歉…`）时视为分析失败而非替代文本：该图片保留原替代文本并给出警告，单独图片只保留基础 Markdown，serve 的 `enhance` 保留先前结果。
+- 在 Windows 上，`markitai serve` 记录条目的输出与提取图片时使用 `/` 分隔，因此结果会列出它们，「文件」页与预览能找到它们，删除条目时也会一并删除；此前名称中的 `\` 无法解析。
+- 在 `serve` 设置页面保存的、没有密钥却指定了地址的连接，现在与 Python markitai 1.3.0 一样保存占位密钥 `markitai-no-key`，两个后端都不会把该地址理解为「使用服务器的密钥变量」（Rust 此前也从未把环境中的密钥发往该地址：网页保存的条目本就关闭了环境凭据）；占位密钥显示为没有密钥，转换和测试按原样发送它，模型发现不发送密钥。这样的无密钥 OpenAI 兼容端点（或任何不校验密钥的地址）现在可以转换，不再以 `llm_unavailable` 被拒绝。已有密钥的连接不能再在一次请求中改成指向另一主机的无密钥连接（422 `invalid_settings_request`，工作台会说明原因）；不允许使用服务器凭据的 Vertex AI 连接会被拒绝，不再借用服务器的 `gcloud` 登录。
+- `serve` 设置 API 在保存或测试时拒绝带地址的 `vertex_ai/` 或 `vertex_ai_beta/` 模型（422 `invalid_settings_request`，详情与 Python markitai 1.3.0 相同：`api_base: Vertex AI models send the server's own Google credentials to any address, …`；`watsonx/` 和 `gigachat/` 同样拒绝，并写明各自的令牌变量），不再先保存、到转换时才失败：无论条目带什么密钥，Vertex AI 都用服务器的 Google 登录签名，所以只能发往它自己的端点。Bedrock 保留地址，并向该地址发送占位密钥，从不使用服务器的 AWS 凭据（已用带金丝雀 AWS 变量的抓包服务器验证草稿测试、已保存测试和转换）。工作台不再为这些服务商提供地址输入（添加模型和已保存的连接改为说明它们在自己的端点上使用服务器的哪种登录；Bedrock 保留可选地址），并以中文和日文显示这一拒绝。
+- 在手机上，点击转换后打开的窗口不再遮住停止：有项目等待时，「停止剩余」作为按钮留在窗口标题栏（提交、项目所属的提交，或从汇总打开时的全部列表），而不是在窗口盖住列表的停止按钮时收进「⋯」。
+- 在手机上，「停止剩余」出现时，「转换任务」标题栏仍然保持标题和状态可读：标题、「新建转换」和「⋯」在第一行（放不下时两个按钮移到标题下方），状态句在下一行，「停止剩余」单独一行，不再把标题挤成「Co」、把状态挤成每行一个词。
+- 转换窗口的长名称改为在中间省略，与文件名一致：网址保留主机和路径末尾（「http://127.0.0.1:41819/sl…/s5.html」），文件保留结尾和扩展名；完整名称在提示中，长按即可完整显示。手机上名称在返回、上一个、下一个和操作按钮下方单独一行，不再被截成「http://1…」。
+- 转换窗口标题栏的上下箭头、位置计数、名称和按钮位于同一条水平中线上（计数原先使用系统等宽字体，偏高约 2 px）；「预览」的渲染、源码、文件和对比内容的阅读栏在窗口中水平居中，不再贴在左侧。
+- 工作台的「预览」打开长文档时不再卡死（2.4 MB、约 400 KB Markdown 的 EPUB 曾让手机在每个标签页都失去响应）。「渲染」分段读取 Markdown，立即画出第一屏，其余每帧画几块，只排版和绘制视口附近的内容，图片接近视口时才加载；切到「详情」或「对比」再回来时保留已画好的文档。「源码」在首次打开时才生成，屏幕外的块不排版；「对比」改用 Myers 算法并折叠未改动的段落，零散修改的大文档可以对比，不再被判为过大。在 4 倍降速的手机配置下测量 460 KB、含 160 张图片的中文文档：首屏内容 0.08 s（原 0.19 s），没有超过 50 ms 的任务（原 134 ms）；打开时主线程工作 0.21 s（原 0.92 s）；在「对比」「详情」之间切换再回来 0.04–0.10 s（原 0.76–0.88 s）。导出 PDF 会等整篇文档和全部图片就绪。
+- 转换窗口标题栏的长名称最多显示约 34 个字符（中间省略，悬停显示全名），按钮不再被挤开；「下载」「⋯」、全屏和关闭按钮间距一致；「详情」与「预览」使用同一条居中的 820 px 阅读栏。侧边栏把外观页面称为「外观」，一行即可放下（页面标题仍为「外观与语言」）。
+- 手机上，「设置」把「文档」和 GitHub 与各分区放在同一个列表中，去掉多余的间距和分隔线，版本号居中；「转换」的输入框更轻：工具只显示图标，「转换」为方形箭头按钮；「最近」中的长文件名不再紧贴时间。
+- 模型测试失败时说明原因（已翻译），显示在该模型下方和「模型」页顶部：未设置 API 密钥（并写出服务器上未设置的密钥变量）、密钥被拒绝、找不到模型、请求受限或额度不足、无法连接服务商、响应超时或服务商返回错误，并给出处理建议，服务商原文折叠在下方，不再是一段红色的 LiteLLM 原文。`POST /api/settings/llm/test` 在失败时返回 `reason`（`no_key` 时另有 `key_variable`）；Rust 会在发出任何请求之前发现未设置的密钥变量。对不返回 `reason` 的服务器，页面从文字中识别同样的类别。
+- 「预览」自己的视图（渲染、源码、对比、文件、目录按钮和「基础版 | LLM」）移到转换窗口的标签行末尾，与「详情」「预览」「对比」同在一行，不再另占一行；手机上放不下时合并为一个显示当前视图和版本的按钮，在菜单中切换视图和版本。
+- 中间省略的长名称不再在「…」后留下空隙，也不再从文件夹名中间截断：名称按实际可用宽度截取，路径和网址先整段省略文件夹（如「slow/annual-reports/…/s5.html」，保留主机名和最后一段，查询参数最先省略），文件名省略中间字符（保留扩展名）；列表、「最近」、窗口标题和「详情」都如此。
+- 已保存的 Vertex AI 连接不再显示「API key · 添加」，也不再报告「无法加载模型」：Vertex AI 在这里不使用密钥，也不提供模型列表，页面改为说明按 ID 添加模型。由于 Python markitai 1.3.0 把所有已保存连接都标为可列出模型，工作台按名称识别没有模型列表的服务商（Bedrock、Vertex AI、Perplexity、Z.ai、Fireworks AI）；已保存的 Bedrock 连接保留可选的密钥和地址，已保存的订阅不提供密钥或地址。
+- 工作台「对照」遇到服务器正忙于绘制的 PDF 页面（429 `render_busy`）时会稍后重试几次（间隔逐渐加长），不再显示「无法绘制此页」；页面文字层也按服务器的绘制能力每次读取两页，因此服务器尚未读过该 PDF 时，标题和表格的对照框不再缺失。
+- 电子表格中唯一的值位于跨两列及以上合并单元格的行，无论位于何处都写作段落，与 Python markitai 1.3.0 一致：工作表中间的分节标签（如“Afternoon”）结束其上方的表格，下一行成为新表格的表头，而不是两者都留作同一表格的数据行。在表格每一行中都为空的列不再写出；XLSX、XLS 与 ODS 采用同一规则，只有一个工作表的 ODS 也像其他工作簿一样以工作表名作标题。
+- 增强输出中的表格只保留一行分隔行：模型在第一行之后重复写出 `| --- | --- |` 时，共用的 Markdown 清理会去掉重复行（围栏代码除外）；此前它会显示为一行短横线。与 Python markitai 1.3.0 一致。
+- 名为 ZIP 类文档（`.epub`、`.docx`、`.xlsx`、`.pptx`、OpenDocument）但内容并非如此的文件，会说明它实际包含什么，而不是“文件似乎已损坏或被截断”：gzip 压缩数据（附 gzip 头记录的文件名，例如 PostScript `.ps`）、其他压缩数据与归档、PostScript、RTF、旧版 Office 文件、图片，或 HTML/XML/JSON 文本。Python markitai 1.3.0 对 EPUB 与 OpenDocument 也这样处理。
+- X 帖子中的视频写作链接到视频文件的封面图 `[![Video](poster)](video.mp4)`（动图为 `GIF`），与 Python markitai 1.3.0 一致，而不再只有封面、无法打开视频：取帖子页面数据中列出的、位于 `video.twimg.com` 的最大 MP4。由浏览器绘制的帖子（截图、`-s playwright`）通过一次有界请求从 X 服务端渲染的帖子页面读取这些文件；不向 FxTwitter 或其他第三方发送任何内容。
+- PDF 的页脚与页眉一样作为页面装饰去除，与 Python markitai 1.3.0 一致：同一短行（忽略数字）出现在两页或更多页的底部，字号小于正文，或与正文同字号但与上方文字隔开且高度一致时，连同页面阅读器遗留的页码形式（`3 / 9`、`第 3 页`、`第3页，共9页`）一并去除；页眉只需出现在两页（此前需三页且过半）。由 Chromium 打印的简短操作指南不再在每页重复标题页脚，中文保险条款与 IRS 出版物也不再保留 `第 N 页 共 M 页` 和 `Publication 501 (2025)` 等行。绘制在两个编号步骤之间的图片放在第一个步骤之后，而不是整个列表之后。
+- 浏览器渲染结果是验证页的页面（哔哩哔哩 opus 动态，以及任何网站的机器人验证：Geetest、Turnstile、DataDome、PerimeterX 等）在允许远程回退时不再整项失败、没有文字：与 Python markitai 1.3.0 一样，`auto` 继续交给 defuddle.md 和 Jina Reader（已配置时还有 Cloudflare），开启截图时也是如此且不再次加载页面；验证页既不保留副本也不保留截图，并给出警告“<网站> showed a verification page instead of the page, so no copy or screenshot of the page was kept; its text was read by Jina Reader. Open the page itself to compare.”。未获同意时，失败信息会说明如何允许远程读取。`serve` 现在与 CLI 一样遵循配置中写出的 `fetch.remote_consent: always`；默认值仍让 `auto` 保持本地。会显示验证页的截图不再保留。
+- PDF 文本层用部首代替汉字时，输出使用汉字本身，与 Python markitai 1.3.0 一致：Chrome 的“另存为 PDF”会把 使用、右下角 写成外观相同、却无法搜索、排序或匹配的 `使⽤`、`右下⻆`（U+2F64、U+2EC6）。所有 PDF 路径的 Markdown 和标题（因此也包括 LLM 读到的内容）都把康熙部首（U+2F00–U+2FD5）以及代表单个汉字的 CJK 部首补充形式折算为对应汉字，映射与工作台 Compare 相同（先 NFKC，再加 NFKC 不处理的 28 个补充形式）；`⺁` 这类部件形状保持不变。
+- 验证页或 JavaScript 提示页的 2,000 字符上限按字符计算，与 Python markitai 1.3.0 和工作台接口约定一致，而不再按 UTF-8 字节计算：约 700 到 2,000 字符的中文验证页现在会被识别（其抓取记录也判为 `challenge`），而不是被当作网页内容读取。
+- serve 中未加载网页的重试（命中抓取缓存，或由远程读取服务给出文本且没有浏览器加载）保留 URL 条目已保存的网页、抓取记录、区块位置和对照截图，与 Python markitai 1.3.0 一致，而不再删除它们：抓取缓存默认开启，此前命中缓存的重试会让 Compare 失去一份完好的网页。保存了任何内容的重试仍会替换全部文件（工作台接口约定 v1.14 §7 补充说明）。
+- rustls 升级到 0.23.46，修复 RUSTSEC-2026-0346 至 RUSTSEC-2026-0349（调试输出中的 TLS 密钥、ECH 被拒后的早期数据、认证前解压证书、密钥交换降级）；rustls-webpki 升级到 0.103.16、webpki-roots 升级到 1.0.10，修复 RUSTSEC-2026-0382 和 RUSTSEC-2026-0381（曾接受不受信任的中间证书，包括 emSign 的）；兼容依赖随之更新。
+- zip 升级到 9.0.5，修复 zip 8.6 和 2.6 中的 RUSTSEC-2026-0367 至 RUSTSEC-2026-0369（解压到磁盘的功能，Markitai 从不调用）；Numbers 读取器使用的 iwork 0.2.1 改为内置副本，以使用同一个 zip。
+- `serve`：用户令牌的连接不再能顶替管理员的连接。用户可以用管理员共享模型所链接的 id 保存一个连接，该模型随后使用用户的地址，于是写在管理员模型里的 key 会发往用户的主机。现在用户和管理员的连接互相分开。
+- `serve`：为用户令牌自己的模型发出的每个请求（它的转换、模型发现和测试）只能到达公网地址。原先针对服务器本机的检查只看写出的主机名，所以解析到回环、服务器所在网络或云元数据的域名都能通过；现在建立连接时才解析域名，非公网地址一律拒绝，不经代理，也不跟随重定向。管理员共享的模型不变。
+- `serve`：Cloudflare 处理计费到服务器的账号，需要管理员令牌；用户令牌请求它的任务或重试返回 `403 remote_processing_forbidden`。
+- LLM 回答缓存（`cache.db`，保存文档文本和模型回答）创建为只有所有者可读，与抓取缓存一致；旧版本留下的他人可读缓存会在下次写入时收紧，替换为链接的缓存会被拒绝。
+- LibreOffice 导出（Office 截图和 EMF/WMF 图片）不再加载文档链接的内容：链接到本机文件或 http(s) 地址的图片不再被画进导出结果。
+- 本地图片引用只有在它是文档文件夹内的图片（图片扩展名或图片字节）时才复制到输出的资源中，所以和私人文件存放在一起的文档不再能复制其中之一；经百分号解码后成为根目录、盘符或网络共享的引用，在访问文件系统前即被拒绝。
+- 邮件嵌套数千层的 EML 文件会以 `nested message depth exceeds 64` 拒绝，不再因栈溢出终止进程（CLI、`serve`、MCP 和绑定）：完整解析前先计算嵌套层数（包括 base64 或 quoted-printable 部分里的邮件），解析出的邮件也不再递归释放。
+- 嵌套数千层元素的 HTML 不再耗费与深度平方成正比的时间（20,000 层 `<div>` 的 220 KB 页面在调试构建中约需 13 秒，再大几百 KB 就要几分钟）：解析页面时，超过 512 个打开元素的开始标签连同其结束标签被丢弃（与 Chromium 在其深度上限处挂接元素的做法一致），其中的文字保留。深度在此以内的页面解析结果与以前完全相同。
+- 分隔文本、JSON 和 XML 的输出不再相对其大小无限增长。一行很宽、其余多行很短的 CSV 让短行保持原样（Markdown 会补齐），不再把每行都补到最宽，以免输出成为两者之积；缩进后会超过 64 MiB 且超过输入八倍的 JSON 以不缩进的形式显示并给出警告；缩进超过同一限制的 XML 大纲会被拒绝。
+- 邮件正文里写了许多 markitai 自身占位前缀时，不再为每个前缀扫描一遍正文：未解析 `cid:` 图片所用的空闲前缀一次扫描即可找到。
+- 小 PDF 不再能通过大量膨胀的流耗尽内存：PDF 读取器为一个文档解压的所有内容（加载时的对象流，之后的内容流、字体流和图像流）共用一份预算，为文件大小的 64 倍且至少 1 GiB（`MARKITAI_PDF_DECOMPRESS_MIB` 以 MiB 为单位设置），每个解码器在预算余量处停止；超出预算的流按无法解码处理。仅限制单个流无法约束整个文档，还会拒绝存放文档元数据的大对象流，这类文件现在仍可转换。
+- `fetch.playwright.extra_http_headers`只发送到初始导航来源（与 `http_credentials` 一致），不再发送到浏览器发出的每个请求。其中的机密（如 API 令牌）不再送达跨来源子资源主机、favicon 主机或重定向目标；同源子资源仍会收到它们，针对 X 的自动英文 `Accept-Language` 仍对所有请求生效。
+- 请求主机在公网上的 URL 抓取现在只停留在公网：每个重定向、`<meta>` 刷新、浏览器导航和链接图片，只要解析到非公网地址（回环、内网段、云元数据这类链路本地地址、唯一本地地址）都会被拒绝，因此公网页面不能再把转换引向本机或其网络。明确指向本地的 URL（直接请求的回环或局域网主机）不受限制。图片下载原本就这样做，现在页面抓取、其重定向和浏览器也如此。这样的抓取仍经过 `HTTPS_PROXY` 或系统代理：每一跳的域名先在本机解析，只要有一个地址不是公网地址就拒绝，之后才把请求交给代理（此改动的早期构建会绕过代理直接抓取所有公网 URL）。
+- `serve`：用户令牌拥有的 URL 任务（及其重试）从第一个主机起只能到达公网地址，且不经代理——采用同样的 DNS/重定向/浏览器感知策略，因此用户令牌的 URL 无法读取服务器的回环 API、其局域网或云元数据服务。管理员自己的任务保持原有可达范围，但同样遵循上面的公网主机规则。
+- 发布的二进制文件和 Python wheel 不再带有构建机器的路径。打包构建传入 `--remap-path-prefix`（追加到现有 rustflags 之后，因此配置的链接器参数得以保留），于是发布二进制中的 panic 和调试路径变为 `registry/src/...` 和 `vendor/...`，而不是 `/home/<用户>/.cargo/...` 和检出路径（CLI 二进制中 1,564 处 home 路径字符串归零）。wheel 的 CycloneDX SBOM 由 maturin 以绝对 `path+file://` 定位符生成且无法关闭，现已改写为相对路径依赖定位符，Windows 上同样如此（Cargo 在那里写成 `path+file:///C:/...` 形式的 URL）。Go 静态包发布的 `licenses.json` 和 `manifest.json` 使用仓库相对和注册表相对的来源路径，而非绝对路径。
+- 打包加固。工作区中的 crate 不会再被误发布到 crates.io（`publish = false`）；构建标记的 `git` 调用只接受本工作区自身的检出（因此解压到另一个仓库内的源码树不会取用那个仓库的提交），并以 `core.fsmonitor=false` 运行，绝不启动那个仓库的文件监控守护进程；wheel 构建工具（`maturin`）在 CI 和 wheel 的 `pyproject.toml` 中都固定到确切版本（1.15.0），打包驱动脚本拒绝其他版本。
+- 本地 OCR 会保留扫描页的结构：按字号识别标题（扫描版 PDF 的标题层级跨所有页面统一判断，同一级小节在每页都是 `##`）、识别器漏掉项目符号的列表项（从像素中找出）、粗体和斜体词（逐词按笔画粗细和倾斜度测得），以及用线条（包括浅灰色线）绘制的表格，每行识别结果放入其所在单元格。
+- 本地 OCR 读取的扫描版 PDF 页面中的图表或照片会从页面中裁出，作为图片放在原位置，其坐标轴数字和图例不再重复为正文；页面读出文字后不再附加整页扫描图。
+- `serve` 的对照视图在扫描版 PDF 页面上也能将 Markdown 段落关联到其在页面上的位置：`…/original/pages/{n}/text` 对 OCR 页面返回识别出的文本行和裁出的图片（`source: "ocr"`，原生页面为 `source: "text"`）。
+- 文档 JSON（`-f json`）中整份文档的 “PDF is scanned: …” 提示的代码由 `other` 改为 `pdf.page_without_text`，涉及多个 PDF 页的提示（`PDF pages 3–5, 9 (4 of 120): …`）也由 `other` 改为对应的页面代码（`pdf.page_without_text`、`pdf.page`）；`items` 列出提示中提到的每一页，而不只是第一段范围。
+- 在没有 `cache.db` 或 `fetch_cache.db` 的主目录下，`markitai cache stats --json` 把它们报告为空存储（`count` 0、`size_bytes` 0、`size_mb` 0.0，以及 `max_size_mb` 和 `db_path`；加 `-v` 时还有 `by_model` {} 与 `entries` []），而不是 `null`，因此 `jq .cache.count` 得到 `0`；查看统计仍不会创建这两个文件。
+- `--profile okf` 的 front matter 重新以 `type` 开头，并按 Python markitai 的顺序写出：`type`、`title`、`description`、`resource`、`tags`、`generated`（先 `by` 后 `at`），然后是其他字段；此前写成 `title`、…、`generated`、`resource`、`type`，对只检查首行的读取方有影响。
+- `image.format: webp` 与 Python markitai 1.2 一样遵循 `image.quality`，不再把每张图片都写成无损 WebP（比 Python markitai 1.2 的输出大数倍；一张示例照片 1.2 写出 54 KB，此前为 398 KB）。本构建没有有损 WebP 编码器，因此质量低于 100 时，不含透明像素的图片和 PDF/Office 页面截图按该质量写为 JPEG，文件、链接和模型请求中都以 `.jpg` 命名（该照片为 108 KB），每个文档给出一条警告（`image.webp_as_jpeg`）；含透明像素的图片以及质量为 100 时，仍写无损 WebP。
+- 发生重定向的 URL 不再把自身地址交给下一个站点：markitai 自己的 HTTP 请求不发送 `Referer`，原始查询中的令牌、密钥或签名不会传给另一主机上的重定向目标（此前 reqwest 会发送完整的上一个 URL；Python markitai 不发送）。
+- URL 路径中的密钥（如 `/reset/<token>` 中的令牌、`token=…` 段或较长的随机样式段）现在在 `--json`、front matter、`serve` 条目名称、历史、报告和 MCP 中显示为 `REDACTED`，与日志中已显示的 `[REDACTED]` 一致；日志、输出元数据和抓取策略使用同一判断，`/verify/`、`/invite/` 等路由之后的短代码（`/verify/123456`）也算在内。在 `serve` 中，此类 URL 的地址只由运行中的服务器保留，重启后重试会被拒绝，与带 userinfo 的 URL 相同。日志不再隐藏百分号编码的词语等普通路径段。
+- 名为 `pass`、`pw` 或 `passphrase` 的查询和片段参数视为密钥：其值在输出和消息中被遮盖，此类 URL 也不会发送给远程抓取服务。
+- 从 URL 抓取的 CSV 或 TSV 重新成为 Markdown 表格，与 Python markitai 1.2 一致：`text/csv`、`application/csv`、`text/tab-separated-values`、reStructuredText、Org、LaTeX 和 notebook 类型，以及路径以这些扩展名结尾的 `text/plain` 响应（原始文件托管站点的做法），改由对应格式的本地读取器读取，不再保留为原始文本。
+- reportlab（`<super>`、`<sub>`）和 LibreOffice（脚注锚点）在 PDF 中偏离基线排版的上标、下标和脚注标记重新留在所属的词上，与 Python markitai 1.2 一致（`70 m²`、`hourly¹`、`CO₂`），不再被丢弃或移到下一行开头（`70 m`、`2 Water covers…`、一行 `3 4`）；页面底部脚注的上标编号也不再被当作页码删除。
+- 双栏 PDF 中，左栏某行以句号结束、而下一个词本来放不进该行时，不再在此处把段落拆开：该行按自己所在的栏衡量，而不是按横跨两栏居中的标题。
+- PDF 文本中两侧带空格的连字符按原样保留（`Monday - Friday`、`Harbour Gazette - Spring Issue`），与 Python 版 markitai 1.2 一致，不再把两侧的词连起来（`Monday-Friday`）；连字符单独绘制时（行内或表格单元格中）同样如此。词内连字符和行尾断词照旧。每页顶部重复这样一行的页眉现在像其他页眉一样被去除。
