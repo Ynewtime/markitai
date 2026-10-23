@@ -746,47 +746,55 @@ def main() -> int:
     from playwright.sync_api import sync_playwright
 
     prepare_inputs(args.inputs)
-    with sync_playwright() as playwright:
+    # The frames go to a staging folder and into --out only at the end: a
+    # file written into the checkout earlier would make the next server's
+    # sidebar show "<commit>-dirty"
+    with (
+        sync_playwright() as playwright,
+        tempfile.TemporaryDirectory(
+            prefix="markitai-shots-", dir=args.inputs
+        ) as staging,
+    ):
         browser = playwright.chromium.launch()
         try:
             for lang in ("en", "zh"):
-                with tempfile.TemporaryDirectory(
-                    prefix="markitai-shots-", dir=args.inputs
-                ) as tmp:
-                    home = Path(tmp)
-                    lead = home / REPORTS[args.document][lang]["file"]
-                    build_report(args.document, lang, lead, browser)
-                    server, base = start_server(home / "home", home / "serve.log")
-                    try:
-                        build = _get(base, "/api/capabilities").get("build", {})
-                        print(
-                            f"markitai serve {build.get('version')} "
-                            f"({build.get('commit')}) at {base}"
+                home = Path(staging) / lang
+                home.mkdir()
+                lead = home / REPORTS[args.document][lang]["file"]
+                build_report(args.document, lang, lead, browser)
+                server, base = start_server(home / "home", home / "serve.log")
+                try:
+                    build = _get(base, "/api/capabilities").get("build", {})
+                    print(
+                        f"markitai serve {build.get('version')} "
+                        f"({build.get('commit')}) at {base}"
+                    )
+                    if build.get("dirty") and not args.allow_dirty:
+                        # The sidebar would show "<commit>-dirty"
+                        raise SystemExit(
+                            "the checkout has uncommitted changes to tracked files: "
+                            "commit or stash them first, or pass --allow-dirty"
                         )
-                        if build.get("dirty") and not args.allow_dirty:
-                            # The sidebar would show "<commit>-dirty"
-                            raise SystemExit(
-                                "the checkout has uncommitted changes to tracked files "
-                                "(a previous run's screenshots too): commit or stash "
-                                "them first, or pass --allow-dirty"
-                            )
-                        wait_prepared(home / "home")
-                        files = [lead] + [args.inputs / name for name in OTHERS]
-                        convert(base, files, LABEL[lang])
-                        for path in shoot(
-                            base,
-                            browser,
-                            args.out,
-                            lang,
-                            lead.name,
-                            args.composition,
-                            args.highlight,
-                        ):
-                            print(f"{path} ({path.stat().st_size:,} bytes)")
-                    finally:
-                        stop_server(server)
+                    wait_prepared(home / "home")
+                    files = [lead] + [args.inputs / name for name in OTHERS]
+                    convert(base, files, LABEL[lang])
+                    shoot(
+                        base,
+                        browser,
+                        Path(staging) / "out",
+                        lang,
+                        lead.name,
+                        args.composition,
+                        args.highlight,
+                    )
+                finally:
+                    stop_server(server)
         finally:
             browser.close()
+        args.out.mkdir(parents=True, exist_ok=True)
+        for frame in sorted((Path(staging) / "out").iterdir()):
+            shutil.copyfile(frame, args.out / frame.name)
+            print(f"{args.out / frame.name} ({frame.stat().st_size:,} bytes)")
     return 0
 
 
