@@ -10,6 +10,8 @@ on:
     branches: [main]
     paths:
       - 'website/**'
+      # Served as /setup.sh and /setup.ps1 (website/scripts/setup-scripts.mjs).
+      - 'scripts/install/**'
       - '.github/workflows/deploy-website.yml'
   workflow_dispatch:
 

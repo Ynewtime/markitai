@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "docs:dev": "bun scripts/changelog.mjs && vitepress dev",
-    "docs:build": "bun scripts/changelog.mjs && vitepress build",
+    "docs:dev": "bun scripts/changelog.mjs && bun scripts/setup-scripts.mjs && vitepress dev",
+    "docs:build": "bun scripts/changelog.mjs && bun scripts/setup-scripts.mjs && vitepress build",
     "docs:preview": "vitepress preview"
   },
   "devDependencies": {

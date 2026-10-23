@@ -3,3 +3,6 @@
 /zh/changelog.md
 /.vitepress/cache/
 /.vitepress/dist/
+# Copied from ../scripts/install/ by scripts/setup-scripts.mjs on every build.
+/public/setup.sh
+/public/setup.ps1
