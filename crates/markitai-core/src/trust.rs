@@ -20,8 +20,14 @@ pub(crate) fn client_builder() -> reqwest::blocking::ClientBuilder {
 /// A client builder whose TLS is `config`. reqwest is built without a
 /// crypto provider of its own (it would bring aws-lc-rs); every client is
 /// given this ring-based configuration instead.
+///
+/// No client sends a `Referer`: reqwest would name the previous URL (its
+/// path and query, which can carry a token or signature) to every redirect
+/// target, another host included. Python markitai sends none either.
 fn with_roots(config: rustls::ClientConfig) -> reqwest::blocking::ClientBuilder {
-    reqwest::blocking::Client::builder().tls_backend_preconfigured(config)
+    reqwest::blocking::Client::builder()
+        .tls_backend_preconfigured(config)
+        .referer(false)
 }
 
 /// TLS 1.2 and 1.3 on ring, trusting the built-in Mozilla roots and `extra`.

@@ -2668,6 +2668,41 @@ mod cache_tests {
         assert_eq!(server.requests().len(), 4);
     }
 
+    /// A redirect never hands the page's address, and the secrets its query
+    /// carries, to the next site as a `Referer` (Python markitai sends none).
+    #[test]
+    fn a_redirect_to_another_origin_sends_no_referer() {
+        let (_directory, mut cfg) = settings();
+        cfg["cache"]["enabled"] = json!(false);
+        let target = Server::new(vec![Reply::html(
+            "<title>Landing</title><article><h1>Landing</h1><p>The page a redirect led to.</p></article>",
+        )]);
+        // Another port is another origin, as another host is.
+        let origin = Server::new(vec![
+            Reply::text("")
+                .status(302)
+                .header("Location", &target.url("/landing")),
+        ]);
+        let outcome = fetch_with_context(
+            &origin.url("/go?token=tok-synthetic-1&api_key=key-synthetic-2"),
+            &cfg,
+            None,
+            true,
+        )
+        .unwrap();
+        assert!(
+            outcome
+                .document()
+                .markdown
+                .contains("The page a redirect led to.")
+        );
+        let requests = target.requests();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(header(&requests[0], "Referer"), None, "{}", requests[0]);
+        assert!(!requests[0].contains("synthetic"), "{}", requests[0]);
+        assert_eq!(header(&origin.requests()[0], "Referer"), None);
+    }
+
     #[test]
     fn html_meta_charset_applies_without_a_header_charset() {
         let (_directory, mut cfg) = settings();

@@ -8,7 +8,10 @@ and bound response bodies to 500 MiB, the limit of a local input file (a
 larger declared length fails before reading). HTML links resolve against the final
 response URL. Both initial and conditional responses use the same charset and
 format decoder. Explicit plain-text and Markdown MIME types keep literal HTML
-examples as text rather than triggering HTML challenge detection.
+examples as text rather than triggering HTML challenge detection. markitai's
+own HTTP requests (pages, pictures, remote services) send no `Referer`, so a
+redirect never tells the next site the address it came from, or a token or
+signature in its query.
 
 For an unknown anonymous authority, `auto` starts with the static path when screenshots are not requested, with
 local browser fallback for recognized JavaScript/challenge or empty-HTML quality
