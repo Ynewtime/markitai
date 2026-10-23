@@ -402,6 +402,13 @@ pub struct ConversionOutput {
     /// For a PDF, where each page's text came from; empty otherwise.
     #[serde(default)]
     pub page_sources: Vec<PageSource>,
+    /// For a PDF that local OCR read, where its recognized lines and the
+    /// pictures cut out of it are on each OCR'd page: `{"version": 1,
+    /// "pages": [{"page", "width", "height", "lines": [{"text", "bbox"}],
+    /// "images": [{"bbox"}]}]}`, boxes `[x0, y0, x1, y1]` in PDF points from
+    /// the page's top-left corner. Not serialized: the workbench keeps it.
+    #[serde(skip)]
+    pub(crate) ocr_layout: Option<Value>,
     /// Original YAML bytes retained for writing pure input without reformatting.
     #[serde(skip)]
     pub(crate) pure_prefix: Option<String>,
@@ -435,6 +442,12 @@ impl ConversionOutput {
     /// Serialized results and published files always use the selected output form.
     pub fn enhancement_source(&self) -> &str {
         self.enhancement_source.as_deref().unwrap_or(&self.markdown)
+    }
+
+    /// Where an OCR'd PDF's recognized lines and cut out pictures are, page
+    /// by page (see the field); `None` when local OCR read no page.
+    pub fn ocr_layout(&self) -> Option<&Value> {
+        self.ocr_layout.as_ref()
     }
 
     /// Whether this conversion reused an existing document enhancement.

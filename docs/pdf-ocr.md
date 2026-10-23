@@ -32,6 +32,16 @@ and the recognized text replaces the layer's. A page whose layer was refused
 (off the print, past the inspection's reach, or with other hidden text) is a
 scan and is recognized as before.
 
+A scanned page that OCR read is written as its text: the page's own scan is no
+longer appended as a picture once text was read from it (a page OCR found blank
+keeps it), and the pictures on the page (charts, photographs) are cut out of
+the rendered page and placed where they stand, without their labels as text
+([local OCR](ocr.md#bounds-and-reading-order)). Heading levels are judged across all the
+scanned pages, so a section heading is `##` on every page when the first page
+has the title. Where each recognized line and picture is on the page is kept
+for the workbench's Compare view ([serve](serve.md#originals-for-compare)); it
+is not part of the Markdown or front matter.
+
 Extracted pictures of at least 40,000 pixels on retained native pages are also
 recognized; their text follows the corresponding image reference. Shared images
 are recognized once. Unreadable pictures or a missing backend keep the native

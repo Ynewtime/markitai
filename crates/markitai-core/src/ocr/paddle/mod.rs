@@ -654,6 +654,7 @@ fn read_cut(recognizer: &Recognizer, cut: &Cut) -> Result<Line> {
         confidence: reading.confidence,
         bounds: cut.bounds,
         direction,
+        marks: Default::default(),
     })
 }
 
@@ -1600,6 +1601,7 @@ mod tests {
             confidence,
             bounds,
             direction: [1.0, 0.0],
+            marks: Default::default(),
         }
     }
 

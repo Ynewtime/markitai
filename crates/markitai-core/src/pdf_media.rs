@@ -765,15 +765,59 @@ impl Drop for Ended {
     }
 }
 
-/// A rendered page: its screenshot's diagnostics and its recognition, if any.
+/// A rendered page: its screenshot's diagnostics and its recognition, if any,
+/// and the resolution it was rendered at.
 struct Pending<'scope> {
     index: usize,
     warnings: Vec<String>,
     recognition: Option<std::thread::ScopedJoinHandle<'scope, Result<ocr::OcrResult>>>,
+    dpi: f64,
 }
 
-/// Write a rendered page's diagnostics and recognized text, in page order.
-fn apply_page(pages: &mut PdfPages, counts: &mut OcrCounts, done: Pending<'_>) -> Result<()> {
+/// A page local OCR read: its blocks, the assets its pictures were written
+/// to, and where its lines and pictures are ([`OCR_LAYOUT`]).
+struct ReadPage {
+    index: usize,
+    blocks: Vec<ocr::Block>,
+    figures: Vec<Option<String>>,
+    layout: Value,
+}
+
+/// What the pages local OCR read add up to while they come in: the pages,
+/// and the bytes of the pictures cut out of them so far.
+#[derive(Default)]
+struct ReadPages {
+    pages: Vec<ReadPage>,
+    figure_bytes: usize,
+}
+
+/// The pictures cut out of OCR'd pages take this many bytes at most; the
+/// others are left out with a warning.
+const MAX_FIGURE_BYTES: usize = 64 * 1024 * 1024;
+
+/// The document metadata entry with where the recognized lines and the cut
+/// out pictures of each OCR'd page are, in PDF points from the page's
+/// top-left corner (`{"version": 1, "pages": [{"page", "width", "height",
+/// "lines": [{"text", "bbox"}], "images": [{"bbox"}]}]}`); a result field
+/// ([`crate::ConversionOutput::ocr_layout`]), never front matter.
+pub(crate) const OCR_LAYOUT: &str = "ocr_layout";
+
+/// A picture cut out of an OCR'd page, as its Markdown shows it.
+fn figure_reference(page: usize, name: &str) -> String {
+    format!("![Image on page {page}](.markitai/assets/{name})")
+}
+
+/// Write a rendered page's diagnostics and recognized text, in page order:
+/// the pictures OCR cut out of it become assets, and its headings are
+/// levelled by the page alone until the document's are known
+/// ([`level_headings`]).
+fn apply_page(
+    pages: &mut PdfPages,
+    counts: &mut OcrCounts,
+    done: Pending<'_>,
+    cfg: &Value,
+    read: &mut ReadPages,
+) -> Result<()> {
     pages.document.warnings.extend(done.warnings);
     let Some(recognition) = done.recognition else {
         return Ok(());
@@ -795,7 +839,66 @@ fn apply_page(pages: &mut PdfPages, counts: &mut OcrCounts, done: Pending<'_>) -
             .warnings
             .push(ocr::capped_warning(&format!("PDF page {}", page.number)));
     }
-    page.markdown = result.text;
+    let number = page.number;
+    let mut figures = Vec::with_capacity(result.figures.len());
+    for (index, figure) in result.figures.iter().enumerate() {
+        let encoded = encode_screenshot(&figure.image, cfg, MAX_SHOT_BYTES, None)?;
+        if read.figure_bytes + encoded.bytes.len() > MAX_FIGURE_BYTES {
+            pages.document.warnings.push(format!(
+                "PDF page {number}: a picture OCR found was left out, as the pictures cut out of scanned pages exceed 64 MiB."
+            ));
+            figures.push(None);
+            continue;
+        }
+        read.figure_bytes += encoded.bytes.len();
+        let name = format!(
+            "pdf-ocr-page{number}-figure{}.{}",
+            index + 1,
+            encoded.format.extension()
+        );
+        pages.document.assets.push(Asset {
+            name: name.clone(),
+            bytes: encoded.bytes,
+        });
+        figures.push(Some(name));
+    }
+    // Points from the page's top-left corner, as the page reader's lines.
+    let scale = 72.0 / done.dpi;
+    let bbox = |b: [f32; 4]| b.map(|v| ((f64::from(v) * scale) * 100.0).round() / 100.0);
+    let images: Vec<Value> = result
+        .blocks
+        .iter()
+        .filter_map(|block| match block {
+            ocr::Block::Figure(index) if figures[*index].is_some() => {
+                Some(json!({"bbox": bbox(result.figures[*index].bounds)}))
+            }
+            _ => None,
+        })
+        .collect();
+    let (width, height) = result.size;
+    let layout = json!({
+        "page": number,
+        "width": (f64::from(width) * scale * 100.0).round() / 100.0,
+        "height": (f64::from(height) * scale * 100.0).round() / 100.0,
+        "lines": result
+            .lines
+            .iter()
+            .map(|line| json!({"text": line.text, "bbox": bbox(line.bounds)}))
+            .collect::<Vec<_>>(),
+        "images": images,
+    });
+    let tiers = ocr::tiers(&result.blocks);
+    page.markdown = ocr::render(&result.blocks, &tiers, &|index| {
+        figures[index]
+            .as_deref()
+            .map(|name| figure_reference(number, name))
+    });
+    read.pages.push(ReadPage {
+        index: done.index,
+        blocks: result.blocks,
+        figures,
+        layout,
+    });
     page.needs_ocr = false;
     page.ocr_reason = None;
     page.ocr_completed = true;
@@ -810,6 +913,40 @@ fn apply_page(pages: &mut PdfPages, counts: &mut OcrCounts, done: Pending<'_>) -
     Ok(())
 }
 
+/// The OCR'd pages' headings levelled across the document (a heading as
+/// large as the title's on another page is of the first level, not the
+/// largest of its own page's), and where their lines and pictures are, for
+/// the result ([`OCR_LAYOUT`]).
+fn level_headings(pages: &mut PdfPages, read: Vec<ReadPage>) {
+    if read.is_empty() {
+        return;
+    }
+    let mut sizes: Vec<f32> = read
+        .iter()
+        .flat_map(|page| &page.blocks)
+        .filter_map(|block| match block {
+            ocr::Block::Heading { size, .. } => Some(*size),
+            _ => None,
+        })
+        .collect();
+    let tiers = ocr::tiers_of(&mut sizes);
+    let mut layouts = Vec::with_capacity(read.len());
+    for page in read {
+        let target = &mut pages.pages[page.index];
+        let number = target.number;
+        target.markdown = ocr::render(&page.blocks, &tiers, &|index| {
+            page.figures[index]
+                .as_deref()
+                .map(|name| figure_reference(number, name))
+        });
+        layouts.push(page.layout);
+    }
+    pages
+        .document
+        .metadata
+        .insert(OCR_LAYOUT.into(), json!({"version": 1, "pages": layouts}));
+}
+
 pub(crate) fn prepare(
     bytes: &[u8],
     prefix: &str,
@@ -821,12 +958,12 @@ pub(crate) fn prepare(
         prefix,
         cfg,
         vlm_optout,
-        &ocr::recognize_rgb,
+        &ocr::recognize_page,
         &ocr::read_lines,
     )
 }
 
-/// What recognizes a rendered page; [`ocr::recognize_rgb`] outside tests.
+/// What recognizes a rendered page; [`ocr::recognize_page`] outside tests.
 type Recognize<'a> = dyn Fn(RgbImage, &Value) -> Result<ocr::OcrResult> + Sync + 'a;
 /// What reads the glyph check's line crops; [`ocr::read_lines`] outside tests.
 type ReadLines<'a> = dyn Fn(Vec<RgbImage>, &Value) -> Result<Vec<String>> + Sync + 'a;
@@ -912,6 +1049,7 @@ fn prepare_with(
     // starts as soon as any recognition ends, not only the oldest. Each page's
     // diagnostics are written in page order once its recognition is in.
     let mut webp_noted = false;
+    let mut read = ReadPages::default();
     let at_once = ocr_pages_at_once();
     std::thread::scope(|scope| -> Result<()> {
         let mut pending: std::collections::VecDeque<Pending<'_>> =
@@ -975,7 +1113,7 @@ fn prepare_with(
                 }
                 while pending.len() >= OCR_PAGES_QUEUED {
                     let next = pending.pop_front().expect("a page is pending");
-                    apply_page(&mut pages, &mut counts, next)?;
+                    apply_page(&mut pages, &mut counts, next, cfg, &mut read)?;
                 }
             }
             let recognition = plan.recognize[index].then(|| {
@@ -992,6 +1130,7 @@ fn prepare_with(
                 index,
                 warnings,
                 recognition,
+                dpi,
             });
             while pending.front().is_some_and(|p| {
                 p.recognition
@@ -999,14 +1138,15 @@ fn prepare_with(
                     .is_none_or(std::thread::ScopedJoinHandle::is_finished)
             }) {
                 let next = pending.pop_front().expect("a page is pending");
-                apply_page(&mut pages, &mut counts, next)?;
+                apply_page(&mut pages, &mut counts, next, cfg, &mut read)?;
             }
         }
         while let Some(next) = pending.pop_front() {
-            apply_page(&mut pages, &mut counts, next)?;
+            apply_page(&mut pages, &mut counts, next, cfg, &mut read)?;
         }
         Ok(())
     })?;
+    level_headings(&mut pages, read.pages);
     let total = pages.pages.len();
     pages
         .document
@@ -1591,19 +1731,13 @@ mod tests {
             // Earlier pages take longer, so later ones finish first.
             std::thread::sleep(std::time::Duration::from_millis(80 * (5 - page)));
             running.fetch_sub(1, Ordering::SeqCst);
-            Ok(ocr::OcrResult {
-                text: if page == 2 {
-                    String::new()
-                } else {
-                    format!("Recognized page {page}.")
-                },
-                confidence: 1.0,
-                boxes: Vec::new(),
-                scale: 1.0,
-                language: "test".into(),
-                unread: page == 3,
-                capped: false,
-            })
+            let mut result = ocr::OcrResult::of_text(if page == 2 {
+                String::new()
+            } else {
+                format!("Recognized page {page}.")
+            });
+            result.unread = page == 3;
+            Ok(result)
         };
         let cfg =
             json!({"ocr":{"enabled":true},"llm":{"enabled":false},"screenshot":{"enabled":false}});
@@ -1640,6 +1774,75 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    /// A scan's headings are levelled across its pages, the pictures OCR cut
+    /// out are written as assets where they stand, the scans themselves give
+    /// way to the text read from them, and where the lines and pictures are
+    /// is kept in points for the result.
+    #[test]
+    fn ocr_pages_level_headings_across_the_document_and_keep_their_pictures() {
+        let recognize = |pixels: RgbImage, _: &Value| -> Result<ocr::OcrResult> {
+            let (width, height) = pixels.dimensions();
+            let page = (u64::from(pixels.get_pixel(width / 2, height / 2).0[0]) + 20) / 40;
+            let mut result = ocr::OcrResult::default();
+            result.size = (width, height);
+            result.confidence = 1.0;
+            let heading = |size: f32, text: &str| ocr::Block::Heading {
+                size,
+                text: text.into(),
+            };
+            if page == 1 {
+                result.blocks = vec![
+                    heading(2.2, "Title"),
+                    ocr::Block::Text("Read text.".into()),
+                    ocr::Block::Figure(0),
+                ];
+                result.figures = vec![ocr::Figure {
+                    bounds: [15.0, 30.0, 75.0, 90.0],
+                    image: RgbImage::from_pixel(60, 60, image::Rgb([200, 40, 0])),
+                }];
+                result.lines = vec![ocr::Recognized {
+                    text: "Title".into(),
+                    bounds: [15.0, 0.0, 75.0, 15.0],
+                }];
+            } else {
+                // The largest heading of its own page, but no title.
+                result.blocks = vec![heading(1.4, "Section"), ocr::Block::Text("More.".into())];
+            }
+            result.text = "unused".into();
+            Ok(result)
+        };
+        let cfg =
+            json!({"ocr":{"enabled":true},"llm":{"enabled":false},"screenshot":{"enabled":false}});
+        let prepared =
+            prepare_with(&scans(2), "scan.pdf", &cfg, false, &recognize, &no_lines).unwrap();
+        let (document, _) = prepared.finish().unwrap();
+        let markdown = &document.markdown;
+        assert!(markdown.contains("# Title\n\nRead text.\n\n![Image on page 1](.markitai/assets/pdf-ocr-page1-figure1.jpg)"), "{markdown}");
+        assert!(markdown.contains("## Section\n\nMore."), "{markdown}");
+        assert!(!markdown.contains("pdf-image-"), "{markdown}");
+        assert_eq!(
+            document
+                .assets
+                .iter()
+                .map(|asset| asset.name.as_str())
+                .collect::<Vec<_>>(),
+            ["pdf-ocr-page1-figure1.jpg"]
+        );
+        let layout = &document.metadata[OCR_LAYOUT];
+        assert_eq!(layout["version"], 1);
+        let first = &layout["pages"][0];
+        assert_eq!(
+            (first["page"].clone(), first["width"].clone()),
+            (json!(1), json!(72.0))
+        );
+        assert_eq!(first["images"], json!([{"bbox": [7.2, 14.4, 36.0, 43.2]}]));
+        assert_eq!(
+            first["lines"],
+            json!([{"text": "Title", "bbox": [7.2, 0.0, 36.0, 7.2]}])
+        );
+        assert_eq!(layout["pages"][1]["page"], 2);
     }
 
     /// One page of Helvetica lines whose ToUnicode map reads each lower-case
@@ -1699,15 +1902,9 @@ mod tests {
     #[test]
     fn a_layer_that_is_not_what_its_glyphs_draw_is_read_by_ocr() {
         let recognize = |_: RgbImage, _: &Value| -> Result<ocr::OcrResult> {
-            Ok(ocr::OcrResult {
-                text: "Recognized: the committee met.".into(),
-                confidence: 1.0,
-                boxes: Vec::new(),
-                scale: 1.0,
-                language: "test".into(),
-                unread: false,
-                capped: false,
-            })
+            Ok(ocr::OcrResult::of_text(
+                "Recognized: the committee met.".into(),
+            ))
         };
         let read_lines = |images: Vec<RgbImage>, _: &Value| -> Result<Vec<String>> {
             Ok(images
@@ -1756,15 +1953,7 @@ mod tests {
         let seen = std::sync::Mutex::new(None);
         let recognize = |pixels: RgbImage, _: &Value| -> Result<ocr::OcrResult> {
             *seen.lock().unwrap() = Some(pixels.dimensions());
-            Ok(ocr::OcrResult {
-                text: "Recognized poster.".into(),
-                confidence: 1.0,
-                boxes: Vec::new(),
-                scale: 1.0,
-                language: "test".into(),
-                unread: false,
-                capped: false,
-            })
+            Ok(ocr::OcrResult::of_text("Recognized poster.".into()))
         };
         let cfg =
             json!({"ocr":{"enabled":true},"llm":{"enabled":false},"screenshot":{"enabled":true}});
@@ -1800,15 +1989,7 @@ mod tests {
                 started_while_first_ran.store(started.load(Ordering::SeqCst), Ordering::SeqCst);
             }
             running.fetch_sub(1, Ordering::SeqCst);
-            Ok(ocr::OcrResult {
-                text: format!("Recognized page {page}."),
-                confidence: 1.0,
-                boxes: Vec::new(),
-                scale: 1.0,
-                language: "test".into(),
-                unread: false,
-                capped: false,
-            })
+            Ok(ocr::OcrResult::of_text(format!("Recognized page {page}.")))
         };
         let cfg =
             json!({"ocr":{"enabled":true},"llm":{"enabled":false},"screenshot":{"enabled":false}});

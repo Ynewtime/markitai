@@ -138,6 +138,7 @@ fn observed(
             confidence: candidate.confidence(),
             bounds,
             direction,
+            marks: Default::default(),
         });
         recognized.push((candidate, rectangle));
     }

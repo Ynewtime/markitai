@@ -171,6 +171,7 @@ mod tests {
             confidence,
             bounds: [0.0, 0.0, 100.0, 10.0],
             direction: [1.0, 0.0],
+            marks: Default::default(),
         }
     }
 

@@ -326,6 +326,7 @@ impl Qpp {
                 } else {
                     direction
                 },
+                marks: Default::default(),
             });
             found.corners.push(line.pts);
             found.centers.push(

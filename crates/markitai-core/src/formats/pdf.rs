@@ -965,8 +965,12 @@ impl PdfPages {
             // its text is the OCR layer over its scan. Its pictures are the
             // page itself, not pictures placed among its text.
             let scan = page.ocr_completed || page.ocr_layer.is_some() || !readable;
-            // With its screenshot written, the scan would show the page twice.
-            let drop_scan = scan && page.screenshot_name.is_some();
+            // With its screenshot written, the scan would show the page
+            // twice; once OCR read its text (and cut out its pictures), the
+            // text stands for the scan.
+            let drop_scan = scan
+                && (page.screenshot_name.is_some()
+                    || (page.ocr_completed && !page.markdown.trim().is_empty()));
             let mut warning = Vec::new();
             // A page whose text all continued the previous page's table
             // keeps only its marker.

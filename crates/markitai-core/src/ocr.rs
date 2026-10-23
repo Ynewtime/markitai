@@ -19,12 +19,13 @@ mod cjk;
 mod layout;
 #[cfg(any(not(target_os = "macos"), feature = "portable-media"))]
 pub(crate) mod paddle;
+mod page;
 mod pixels;
 pub(crate) mod trace;
 #[cfg(target_os = "macos")]
 mod vision;
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub(crate) struct OcrResult {
     pub text: String,
     /// Mean confidence of nonempty recognized lines.
@@ -47,6 +48,37 @@ pub(crate) struct OcrResult {
     /// The portable engine found more text regions than it reads and kept
     /// the first ones from the top. [`capped_warning`] says so.
     pub capped: bool,
+    /// `text` as blocks, with its headings' sizes and its pictures' places.
+    pub blocks: Vec<Block>,
+    /// The pictures cut out of a PDF page ([`recognize_page`]).
+    pub figures: Vec<Figure>,
+    /// The recognized lines in the order `text` reads them, with where they
+    /// are; none for an image read turned.
+    pub lines: Vec<Recognized>,
+    /// The image's width and height in pixels.
+    pub size: (u32, u32),
+    /// The lines as the recognizer read them, for assembling them again
+    /// with the image's pixels.
+    raw: Vec<Line>,
+}
+
+impl OcrResult {
+    /// A reading of `text` alone, as one block (none when empty).
+    #[cfg(test)]
+    pub(crate) fn of_text(text: String) -> Self {
+        Self {
+            blocks: if text.is_empty() {
+                Vec::new()
+            } else {
+                vec![Block::Text(text.clone())]
+            },
+            text,
+            confidence: 1.0,
+            scale: 1.0,
+            language: "test".into(),
+            ..Self::default()
+        }
+    }
 }
 
 /// Text regions the portable engine reads per image, at most; specks and
@@ -148,12 +180,29 @@ pub(crate) fn recognize(bytes: &[u8], cfg: &Value) -> Result<OcrResult> {
         ));
     }
     let spelling = configured(cfg)?;
-    read(&pixels::prepare(bytes)?, &spelling)
+    let image = pixels::upright(bytes)?;
+    with_pixels(
+        read(&pixels::prepare_rgb(image.clone())?, &spelling),
+        &image,
+        false,
+    )
 }
 
 /// Recognize upright RGB pixels already composited over white by a renderer.
 #[cfg(all(target_os = "macos", not(feature = "portable-media")))]
 pub(crate) fn recognize_rgb(image: image::RgbImage, cfg: &Value) -> Result<OcrResult> {
+    recognize_pixels(image, cfg, false)
+}
+
+/// [`recognize_rgb`] for a rendered PDF page: its pictures are also cut out
+/// ([`OcrResult::figures`]) and their labels left out of its text.
+#[cfg(all(target_os = "macos", not(feature = "portable-media")))]
+pub(crate) fn recognize_page(image: image::RgbImage, cfg: &Value) -> Result<OcrResult> {
+    recognize_pixels(image, cfg, true)
+}
+
+#[cfg(all(target_os = "macos", not(feature = "portable-media")))]
+fn recognize_pixels(image: image::RgbImage, cfg: &Value, figures: bool) -> Result<OcrResult> {
     if !available() {
         return Err(Error::Unsupported(
             "Local OCR requires macOS 11 or later; no local OCR backend is available on this platform"
@@ -161,7 +210,11 @@ pub(crate) fn recognize_rgb(image: image::RgbImage, cfg: &Value) -> Result<OcrRe
         ));
     }
     let spelling = configured(cfg)?;
-    read(&pixels::prepare_rgb(image)?, &spelling)
+    with_pixels(
+        read(&pixels::prepare_rgb(image.clone())?, &spelling),
+        &image,
+        figures,
+    )
 }
 
 /// Read single upright text lines, one text per image in order: the crops
@@ -370,20 +423,26 @@ pub(crate) fn backend() -> &'static str {
 pub(crate) fn recognize(bytes: &[u8], cfg: &Value) -> Result<OcrResult> {
     let backend = selected()?;
     let spelling = configured(cfg)?;
-    match backend {
+    let image = pixels::upright(bytes)?;
+    let read = match backend {
         #[cfg(target_os = "macos")]
-        Backend::Vision => read(&pixels::prepare(bytes)?, &spelling),
+        Backend::Vision => read(&pixels::prepare_rgb(image.clone())?, &spelling),
         Backend::Paddle => {
-            let read_models = paddle::read(&pixels::upright(bytes)?, &spelling);
+            let read_models = paddle::read(&image, &spelling);
             #[cfg(target_os = "macos")]
             if let Err(error) = &read_models
                 && vision_instead(error)
             {
-                return read(&pixels::prepare(bytes)?, &spelling);
+                return with_pixels(
+                    read(&pixels::prepare_rgb(image.clone())?, &spelling),
+                    &image,
+                    false,
+                );
             }
             read_models
         }
-    }
+    };
+    with_pixels(read, &image, false)
 }
 
 /// Whether Vision should read in place of the portable engine, which is the
@@ -411,11 +470,23 @@ fn vision_instead(error: &Error) -> bool {
 /// Recognize upright RGB pixels already composited over white by a renderer.
 #[cfg(any(not(target_os = "macos"), feature = "portable-media"))]
 pub(crate) fn recognize_rgb(image: image::RgbImage, cfg: &Value) -> Result<OcrResult> {
+    recognize_pixels(image, cfg, false)
+}
+
+/// [`recognize_rgb`] for a rendered PDF page: its pictures are also cut out
+/// ([`OcrResult::figures`]) and their labels left out of its text.
+#[cfg(any(not(target_os = "macos"), feature = "portable-media"))]
+pub(crate) fn recognize_page(image: image::RgbImage, cfg: &Value) -> Result<OcrResult> {
+    recognize_pixels(image, cfg, true)
+}
+
+#[cfg(any(not(target_os = "macos"), feature = "portable-media"))]
+fn recognize_pixels(image: image::RgbImage, cfg: &Value, figures: bool) -> Result<OcrResult> {
     let backend = selected()?;
     let spelling = configured(cfg)?;
-    match backend {
+    let read = match backend {
         #[cfg(target_os = "macos")]
-        Backend::Vision => read(&pixels::prepare_rgb(image)?, &spelling),
+        Backend::Vision => read(&pixels::prepare_rgb(image.clone())?, &spelling),
         Backend::Paddle => {
             pixels::check_rgb(&image)?;
             let read_models = paddle::read(&image, &spelling);
@@ -423,11 +494,45 @@ pub(crate) fn recognize_rgb(image: image::RgbImage, cfg: &Value) -> Result<OcrRe
             if let Err(error) = &read_models
                 && vision_instead(error)
             {
-                return read(&pixels::prepare_rgb(image)?, &spelling);
+                return with_pixels(
+                    read(&pixels::prepare_rgb(image.clone())?, &spelling),
+                    &image,
+                    figures,
+                );
             }
             read_models
         }
+    };
+    with_pixels(read, &image, figures)
+}
+
+/// A reading assembled again with the pixels it was read from: bold and
+/// italic words, the bullets the recognizer dropped, ruled tables and, with
+/// `figures`, the pictures cut out. The reading's own verdicts stay.
+fn with_pixels(
+    read: Result<OcrResult>,
+    image: &image::RgbImage,
+    figures: bool,
+) -> Result<OcrResult> {
+    let read = read?;
+    if read.raw.is_empty() {
+        return Ok(read);
     }
+    let (width, height) = image.dimensions();
+    let mut lap = trace::Lap::start();
+    let mut again = assemble_with(
+        read.raw.clone(),
+        width,
+        height,
+        Some(Pixels { image, figures }),
+    )?;
+    trace::line(format_args!("pixels={:.0}ms", lap.ms()));
+    again.confidence = read.confidence;
+    again.scale = read.scale;
+    again.language = read.language;
+    again.unread = read.unread;
+    again.capped = read.capped;
+    Ok(again)
 }
 
 /// Read single upright text lines, one text per image in order: the crops
@@ -676,7 +781,7 @@ fn trace_pass(
 const MAX_LINES: usize = 10_000;
 const MAX_TEXT: usize = 8 * 1024 * 1024;
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct Line {
     text: String,
     confidence: f32,
@@ -684,6 +789,8 @@ struct Line {
     /// The direction the text runs, from the line's top-left to its top-right
     /// corner, in top-left pixel coordinates: `[1, 0]` for upright text.
     direction: [f32; 2],
+    /// What the page's pixels tell of it ([`page`]); nothing without them.
+    marks: page::Marks,
 }
 
 fn failure(message: &str) -> Error {
@@ -804,7 +911,25 @@ fn pixel_bounds(rectangle: [f64; 4], width: u32, height: u32) -> Result<[f32; 4]
     ])
 }
 
-fn assemble(mut lines: Vec<Line>, width: u32, height: u32) -> Result<OcrResult> {
+/// What assembling an image's lines may also read: its pixels (for bold and
+/// italic words, dropped bullets, ruled tables), and whether pictures are
+/// cut out of it (a PDF page's charts and photographs).
+#[derive(Clone, Copy)]
+pub(super) struct Pixels<'a> {
+    pub image: &'a image::RgbImage,
+    pub figures: bool,
+}
+
+fn assemble(lines: Vec<Line>, width: u32, height: u32) -> Result<OcrResult> {
+    assemble_with(lines, width, height, None)
+}
+
+fn assemble_with(
+    mut lines: Vec<Line>,
+    width: u32,
+    height: u32,
+    pixels: Option<Pixels<'_>>,
+) -> Result<OcrResult> {
     if lines.len() > MAX_LINES {
         return Err(failure("recognized line count exceeds the safety limit"));
     }
@@ -825,51 +950,760 @@ fn assemble(mut lines: Vec<Line>, width: u32, height: u32) -> Result<OcrResult> 
             return Err(failure("recognizer returned invalid text observations"));
         }
         // Text is ordinary document content: Markdown markup is synthesized
-        // only for headings, tables and fenced code (see `rows`).
+        // only for headings, lists, emphasis, tables, code and pictures (see
+        // `rows`).
         line.text = line.text.trim().to_owned();
         if let Some(mended) = layout::digits(&line.text) {
             line.text = mended;
         }
+        line.marks = page::Marks::default();
         bytes = bytes
             .checked_add(line.text.len() + 2)
             .filter(|total| *total <= MAX_TEXT)
             .ok_or_else(|| failure("recognized text exceeds the safety limit"))?;
     }
+    let raw = lines.clone();
     // A page whose text runs sideways or upside down is read upright.
     let turn = layout::orientation(&lines);
     layout::upright(&mut lines, turn, width, height);
-    let mut text = String::with_capacity(bytes);
-    let mut boxes = Vec::with_capacity(lines.len());
-    let mut confidence = 0.0;
     let sizes = sizes(&lines);
-    for block in columns(lines, 0) {
-        if !text.is_empty() {
-            text.push_str("\n\n");
+    // The pixels speak only for an upright page of the lines' size.
+    let page = pixels
+        .filter(|pixels| {
+            turn == layout::Turn::Upright && pixels.image.dimensions() == (width, height)
+        })
+        .and_then(|pixels| Some((page::Page::new(pixels.image)?, pixels.figures)));
+    let mut style = Style::default();
+    let mut regions = Vec::new();
+    let mut figures = Vec::new();
+    if let (Some((page, cut)), Some(sizes)) = (&page, sizes) {
+        for line in &mut lines {
+            line.marks = page.marks(line);
         }
-        rows(block, sizes, &mut text, &mut boxes, &mut confidence);
+        aligned_bullets(&mut lines, sizes.body);
+        style = Style::of(&lines, sizes.body);
+        regions = self::regions(page, &mut lines, sizes.body, *cut, &mut figures);
     }
-    let confidence = if boxes.is_empty() {
+    let mut out = Out {
+        lines: Vec::with_capacity(lines.len()),
+        ..Out::default()
+    };
+    for (block, regions) in place(columns(lines, 0), regions) {
+        rows(block, regions, sizes, &style, &mut out);
+    }
+    let confidence = if out.boxes.is_empty() {
         0.0
     } else {
-        confidence / boxes.len() as f32
+        out.confidence / out.boxes.len() as f32
     };
+    let text = render(&out.blocks, &tiers(&out.blocks), &|_| None);
     let result = OcrResult {
         text,
         confidence,
-        boxes,
+        boxes: out.boxes,
         scale: 1.0,
         language: String::new(),
         unread: false,
         capped: false,
+        blocks: out.blocks,
+        figures,
+        lines: if turn == layout::Turn::Upright {
+            out.lines
+        } else {
+            Vec::new()
+        },
+        size: (width, height),
+        raw,
     };
     // Keep diagnostics private to the native API, while validating the engine's
     // blank-image distinction before exposing text to the conversion pipeline.
-    if (result.text.is_empty() != result.boxes.is_empty()) || !result.confidence.is_finite() {
+    if (result.blocks.is_empty() != result.boxes.is_empty()) || !result.confidence.is_finite() {
         return Err(failure(
             "recognizer returned inconsistent text observations",
         ));
     }
     Ok(result)
+}
+
+/// One block of an image's Markdown: blocks stand apart by a blank line.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum Block {
+    /// Markdown as written: a paragraph, list, table or code.
+    Text(String),
+    /// A heading: its text's height in body text heights, and its text.
+    Heading { size: f32, text: String },
+    /// The picture of that index in [`OcrResult::figures`].
+    Figure(usize),
+}
+
+/// A picture cut out of a page: where it is, and its pixels.
+#[derive(Debug)]
+pub(crate) struct Figure {
+    pub bounds: [f32; 4],
+    pub image: image::RgbImage,
+}
+
+/// A recognized line as read, where it is on the image.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Recognized {
+    pub text: String,
+    pub bounds: [f32; 4],
+}
+
+/// Heading sizes this share of a larger one apart start a level of their own.
+const TIER: f32 = 0.88;
+
+/// The heading levels of `blocks`' sizes: the largest headings are of the
+/// first level, those less than [`TIER`] of them of the second, and so on.
+/// The bottom size of each level, largest first.
+pub(crate) fn tiers(blocks: &[Block]) -> Vec<f32> {
+    let mut sizes: Vec<f32> = blocks
+        .iter()
+        .filter_map(|block| match block {
+            Block::Heading { size, .. } => Some(*size),
+            _ => None,
+        })
+        .collect();
+    tiers_of(&mut sizes)
+}
+
+/// [`tiers`] of heading sizes from several images (the pages of a PDF).
+pub(crate) fn tiers_of(sizes: &mut [f32]) -> Vec<f32> {
+    sizes.sort_by(|a, b| b.total_cmp(a));
+    let mut tiers: Vec<(f32, f32)> = Vec::new();
+    for &size in sizes.iter() {
+        match tiers.last_mut() {
+            Some((top, bottom)) if size >= TIER * *top => *bottom = size,
+            _ => tiers.push((size, size)),
+        }
+    }
+    tiers.into_iter().map(|(_, bottom)| bottom).collect()
+}
+
+/// The level of a heading of `size` among `tiers`, from 1 to 6.
+fn level(tiers: &[f32], size: f32) -> usize {
+    (tiers
+        .iter()
+        .position(|bottom| size >= *bottom - 1e-3)
+        .unwrap_or(tiers.len().saturating_sub(1))
+        + 1)
+    .clamp(1, 6)
+}
+
+/// `blocks` as Markdown, headings levelled by `tiers`, each picture as
+/// `figure` writes it (left out when it writes nothing).
+pub(crate) fn render(
+    blocks: &[Block],
+    tiers: &[f32],
+    figure: &dyn Fn(usize) -> Option<String>,
+) -> String {
+    let mut parts: Vec<String> = Vec::with_capacity(blocks.len());
+    for block in blocks {
+        match block {
+            Block::Text(text) => parts.push(text.clone()),
+            Block::Heading { size, text } => {
+                parts.push(format!("{} {text}", "#".repeat(level(tiers, *size))));
+            }
+            Block::Figure(index) => parts.extend(figure(*index)),
+        }
+    }
+    parts.join("\n\n")
+}
+
+/// What the rows of an image's blocks add up to.
+#[derive(Default)]
+struct Out {
+    blocks: Vec<Block>,
+    boxes: Vec<[f32; 4]>,
+    confidence: f32,
+    lines: Vec<Recognized>,
+}
+
+impl Out {
+    fn line(&mut self, line: &Line) {
+        self.boxes.push(line.bounds);
+        self.confidence += line.confidence;
+        self.lines.push(Recognized {
+            text: line.text.clone(),
+            bounds: line.bounds,
+        });
+    }
+
+    /// A region's lines, then the region: a picture's labels are not lines
+    /// its Markdown reads.
+    fn region(&mut self, region: Region) {
+        for line in &region.lines {
+            if matches!(region.block, Block::Figure(_)) {
+                self.boxes.push(line.bounds);
+                self.confidence += line.confidence;
+            } else {
+                self.line(line);
+            }
+        }
+        self.blocks.push(region.block);
+    }
+}
+
+/// A part of the page written whole where it stands: a ruled table, or a
+/// picture with its labels.
+struct Region {
+    bounds: [f32; 4],
+    block: Block,
+    lines: Vec<Line>,
+}
+
+/// Bullets the pixels found, kept only beside another one at the same
+/// indentation: a list has two items at least, and a speck of dirt left
+/// of a line is no bullet.
+fn aligned_bullets(lines: &mut [Line], body: f32) {
+    let found: Vec<f32> = lines.iter().filter_map(|line| line.marks.bullet).collect();
+    for line in lines {
+        if let Some(x) = line.marks.bullet
+            && found
+                .iter()
+                .filter(|other| (**other - x).abs() <= 0.5 * body)
+                .count()
+                < 2
+        {
+            line.marks.bullet = None;
+        }
+    }
+}
+
+/// The stroke of the page's body text, which a bold word's exceeds.
+#[derive(Default)]
+struct Style {
+    body: Option<f32>,
+}
+
+/// A word stands for bold or italic alone only with this many letters or
+/// digits: a short word's stroke and slant are a few pixels' worth.
+const MIN_STYLED_LETTERS: usize = 4;
+
+impl Style {
+    /// The median stroke of lines of the body's height, from three of them.
+    fn of(lines: &[Line], body: f32) -> Self {
+        let mut strokes: Vec<f32> = lines
+            .iter()
+            .filter(|line| {
+                let height = line.bounds[3] - line.bounds[1];
+                (0.8 * body..=1.25 * body).contains(&height)
+            })
+            .filter_map(|line| line.marks.stroke)
+            .collect();
+        if strokes.len() < 3 {
+            return Self::default();
+        }
+        strokes.sort_by(f32::total_cmp);
+        Self {
+            body: Some(strokes[strokes.len() / 2]).filter(|stroke| *stroke > 0.0),
+        }
+    }
+
+    /// Whether each word of `line` is bold and italic, when its words were
+    /// measured; `before` is the word before the line's first (the end of
+    /// the line above).
+    fn words(&self, line: &Line, before: Option<(bool, bool)>) -> Option<Vec<(bool, bool)>> {
+        let body = self.body?;
+        let words = line.marks.words.as_ref()?;
+        let tokens: Vec<&str> = line.text.split_whitespace().collect();
+        if words.len() != tokens.len() {
+            return None;
+        }
+        let n = words.len();
+        let ratio = |i: usize| words[i].stroke / body;
+        let short = |i: usize| {
+            words[i].stroke == 0.0
+                || tokens[i].chars().filter(|c| c.is_alphanumeric()).count() < MIN_STYLED_LETTERS
+        };
+        let strong: Vec<bool> = (0..n).map(|i| ratio(i) >= page::BOLD).collect();
+        let bold: Vec<bool> = (0..n)
+            .map(|i| {
+                strong[i]
+                    || (ratio(i) >= page::BOLD_NEXT
+                        && ((i > 0 && strong[i - 1]) || (i + 1 < n && strong[i + 1])))
+            })
+            .collect();
+        let italic: Vec<bool> = words.iter().map(|word| word.italic).collect();
+        let settle = |mut flags: Vec<bool>, before: bool| {
+            let left = |flags: &[bool], i: usize| if i > 0 { flags[i - 1] } else { before };
+            // A short word (too small to measure well) between two emphasized
+            // words goes with them.
+            for i in 0..n {
+                if !flags[i] && short(i) && left(&flags, i) && i + 1 < n && flags[i + 1] {
+                    flags[i] = true;
+                }
+            }
+            // A short word does not stand emphasized alone.
+            let alone: Vec<bool> = (0..n)
+                .map(|i| flags[i] && short(i) && !left(&flags, i) && !(i + 1 < n && flags[i + 1]))
+                .collect();
+            for (flag, alone) in flags.iter_mut().zip(alone) {
+                *flag &= !alone;
+            }
+            flags
+        };
+        let (bold_before, italic_before) = before.unwrap_or_default();
+        let bold = settle(bold, bold_before);
+        let italic = settle(italic, italic_before);
+        Some(bold.into_iter().zip(italic).collect())
+    }
+
+    /// Whether all of `line` is bold: each of its measured words, or its
+    /// whole stroke when its words were not told apart.
+    fn bold(&self, line: &Line) -> bool {
+        match (self.words(line, None), self.body, line.marks.stroke) {
+            (Some(words), ..) => !words.is_empty() && words.iter().all(|(bold, _)| *bold),
+            (None, Some(body), Some(stroke)) => stroke >= page::BOLD * body,
+            _ => false,
+        }
+    }
+}
+
+/// The bullet a recognizer read at the start of a line, with the space
+/// after it: its length in bytes.
+fn bullet_glyph(text: &str) -> Option<usize> {
+    let mut characters = text.char_indices();
+    let (_, first) = characters.next()?;
+    let (at, space) = characters.next()?;
+    (matches!(
+        first,
+        '•' | '●'
+            | '▪'
+            | '■'
+            | '◦'
+            | '‣'
+            | '∙'
+            | '○'
+            | '□'
+            | '➢'
+            | '►'
+            | '▶'
+            | '-'
+            | '–'
+            | '*'
+    ) && space.is_whitespace())
+    .then_some(at + space.len_utf8())
+}
+
+/// Caption lines stay text beside the picture they name.
+fn caption(text: &str) -> bool {
+    let lower = text.trim_start().to_lowercase();
+    [
+        "fig", "figure", "table", "chart", "source", "图", "圖", "表", "출처", "図",
+    ]
+    .iter()
+    .any(|word| lower.starts_with(word))
+}
+
+/// Labels of a picture are short: at most this many characters.
+const MAX_LABEL_CHARS: usize = 24;
+/// A line of this many characters inside a marked area makes it a box of
+/// text, not a picture.
+const MIN_PROSE_CHARS: usize = 30;
+
+/// The ruled tables of the page and, when `cut`, its pictures, each taken
+/// out of `lines` with the lines it holds (a table's cells, a picture's
+/// labels); the pictures' pixels go to `figures`.
+fn regions(
+    page: &page::Page<'_>,
+    lines: &mut Vec<Line>,
+    body: f32,
+    cut: bool,
+    figures: &mut Vec<Figure>,
+) -> Vec<Region> {
+    let center = |b: [f32; 4]| [(b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0];
+    let inside = |b: [f32; 4], area: [f32; 4]| {
+        let [x, y] = center(b);
+        x >= area[0] && x <= area[2] && y >= area[1] && y <= area[3]
+    };
+    let mut regions = Vec::new();
+    for grid in page.grids(body) {
+        let held: Vec<usize> = (0..lines.len())
+            .filter(|&i| inside(lines[i].bounds, grid.bounds))
+            .collect();
+        let cells = grid_cells(page, &grid, held.iter().map(|&i| &lines[i]));
+        let filled = cells
+            .iter()
+            .flatten()
+            .filter(|cell| !cell.is_empty())
+            .count();
+        if cells.len() < 2 || filled < 2 {
+            continue;
+        }
+        let mut held = take(lines, &held);
+        crate::sort::by(&mut held, top_then_left);
+        regions.push(Region {
+            bounds: grid.bounds,
+            block: Block::Text(table_markdown(&cells)),
+            lines: held,
+        });
+    }
+    if !cut {
+        return regions;
+    }
+    let mut skip: Vec<[f32; 4]> = regions.iter().map(|region| region.bounds).collect();
+    skip.extend(lines.iter().filter_map(|line| {
+        let x = line.marks.bullet?;
+        let [l, t, _, b] = line.bounds;
+        Some([x - 1.0, t, l, b])
+    }));
+    let chars = |line: &Line| line.text.chars().filter(|c| !c.is_whitespace()).count();
+    // Each picture's area and the lines it holds (its labels).
+    let mut found: Vec<([f32; 4], Vec<usize>)> = Vec::new();
+    for mut area in page.pictures(lines, &skip, body) {
+        // A box around prose (a framed note, a page border) is no picture.
+        if lines.iter().any(|line| {
+            inside(line.bounds, area)
+                && chars(line) >= MIN_PROSE_CHARS
+                && line.bounds[2] - line.bounds[0] >= 0.5 * (area[2] - area[0])
+        }) {
+            continue;
+        }
+        // Its labels: short lines inside it or within a line height of it.
+        let mut held: Vec<usize> = Vec::new();
+        for _ in 0..3 {
+            let reach = [
+                area[0] - body,
+                area[1] - body,
+                area[2] + body,
+                area[3] + body,
+            ];
+            let mut grew = false;
+            for (i, line) in lines.iter().enumerate() {
+                let b = line.bounds;
+                let near = b[0] < reach[2] && b[2] > reach[0] && b[1] < reach[3] && b[3] > reach[1];
+                if held.contains(&i)
+                    || !(inside(b, area) || near)
+                    || chars(line) > MAX_LABEL_CHARS
+                    || caption(&line.text)
+                    || line.marks.bullet.is_some()
+                {
+                    continue;
+                }
+                held.push(i);
+                area = union(area, b);
+                grew = true;
+            }
+            if !grew {
+                break;
+            }
+        }
+        found.push((area, held));
+    }
+    // Pieces of one picture (a chart's bar groups, its labels between
+    // them) less than a line height apart are one picture.
+    let mut merged = true;
+    while merged {
+        merged = false;
+        'pairs: for i in 0..found.len() {
+            for j in i + 1..found.len() {
+                let (a, b) = (found[i].0, found[j].0);
+                if b[0] < a[2] + body
+                    && a[0] < b[2] + body
+                    && b[1] < a[3] + body
+                    && a[1] < b[3] + body
+                {
+                    let (area, held) = found.swap_remove(j);
+                    found[i].0 = union(found[i].0, area);
+                    found[i].1.extend(held);
+                    merged = true;
+                    break 'pairs;
+                }
+            }
+        }
+    }
+    // Lines a merged picture now covers are its own too.
+    let mut taken: Vec<usize> = Vec::new();
+    for (area, held) in &mut found {
+        for (i, line) in lines.iter().enumerate() {
+            if inside(line.bounds, *area) && !held.contains(&i) && chars(line) <= MAX_LABEL_CHARS {
+                held.push(i);
+            }
+        }
+        held.retain(|i| !taken.contains(i));
+        taken.extend(held.iter().copied());
+    }
+    crate::sort::by(&mut found, |a, b| a.0[1].total_cmp(&b.0[1]));
+    let mut pictures: Vec<([f32; 4], Vec<Line>)> = Vec::new();
+    let mut gone: Vec<usize> = found
+        .iter()
+        .flat_map(|(_, held)| held.iter().copied())
+        .collect();
+    gone.sort_unstable();
+    gone.dedup();
+    let mut kept = take(lines, &gone);
+    for (area, held) in &found {
+        let mut own: Vec<Line> = held
+            .iter()
+            .map(|i| kept[gone.binary_search(i).expect("a taken line")].clone())
+            .collect();
+        crate::sort::by(&mut own, top_then_left);
+        pictures.push((*area, own));
+    }
+    kept.clear();
+    for (area, own) in pictures {
+        let pad = 0.3 * body;
+        let bounds = [area[0] - pad, area[1] - pad, area[2] + pad, area[3] + pad];
+        let Some(image) = page.crop(bounds) else {
+            lines.extend(own);
+            continue;
+        };
+        let [l, t, ..] = bounds.map(|v| v.max(0.0));
+        let bounds = [l, t, l + image.width() as f32, t + image.height() as f32];
+        regions.push(Region {
+            bounds,
+            block: Block::Figure(figures.len()),
+            lines: own,
+        });
+        figures.push(Figure { bounds, image });
+    }
+    regions
+}
+
+fn union(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
+    [
+        a[0].min(b[0]),
+        a[1].min(b[1]),
+        a[2].max(b[2]),
+        a[3].max(b[3]),
+    ]
+}
+
+/// The lines of `indices` (ascending), taken out of `lines`.
+fn take(lines: &mut Vec<Line>, indices: &[usize]) -> Vec<Line> {
+    let mut taken = Vec::with_capacity(indices.len());
+    for &index in indices.iter().rev() {
+        taken.push(lines.remove(index));
+    }
+    taken.reverse();
+    taken
+}
+
+/// The cells of a ruled table: each line goes in the cell under its centre;
+/// a line across a column rule is split at the word nearest it. Rows and
+/// columns with no text are left out.
+fn grid_cells<'a>(
+    page: &page::Page<'_>,
+    grid: &page::Grid,
+    lines: impl Iterator<Item = &'a Line>,
+) -> Vec<Vec<String>> {
+    let (columns, rows) = (grid.columns.len() - 1, grid.rows.len() - 1);
+    let mut pieces: Vec<(usize, usize, f32, f32, String)> = Vec::new();
+    let band = |edges: &[f32], at: f32| {
+        edges
+            .windows(2)
+            .position(|pair| at >= pair[0] && at < pair[1])
+            .unwrap_or(edges.len().saturating_sub(2))
+    };
+    for line in lines {
+        let [l, t, r, b] = line.bounds;
+        let row = band(&grid.rows, (t + b) / 2.0);
+        let height = b - t;
+        let crossed: Vec<usize> = (0..columns)
+            .filter(|&c| r.min(grid.columns[c + 1]) - l.max(grid.columns[c]) > 0.3 * height)
+            .collect();
+        let tokens: Vec<&str> = line.text.split_whitespace().collect();
+        if crossed.len() < 2 || tokens.len() < 2 {
+            let column = band(&grid.columns, (l + r) / 2.0);
+            pieces.push((row, column, t, l, line.text.clone()));
+            continue;
+        }
+        // Where each word stands: the ink's words when they match the
+        // text's, else by its characters' share of the line.
+        let spans = page.word_spans(line.bounds);
+        let centres: Vec<f32> = if spans.len() == tokens.len() {
+            spans.iter().map(|[a, b]| (a + b) / 2.0).collect()
+        } else {
+            let total = line.text.chars().count().max(1) as f32;
+            let mut at = 0usize;
+            let mut centres = Vec::new();
+            for token in line.text.split(' ') {
+                let length = token.chars().count();
+                if !token.is_empty() {
+                    centres.push(l + (r - l) * (at as f32 + length as f32 / 2.0) / total);
+                }
+                at += length + 1;
+            }
+            centres
+        };
+        for (token, centre) in tokens.iter().zip(centres) {
+            let column = band(&grid.columns, centre);
+            match pieces.last_mut() {
+                Some(last) if last.0 == row && last.1 == column && last.2 == t => {
+                    last.4.push(' ');
+                    last.4.push_str(token);
+                }
+                _ => pieces.push((row, column, t, centre, (*token).to_owned())),
+            }
+        }
+    }
+    crate::sort::by(&mut pieces, |a, b| {
+        (a.0, a.1)
+            .cmp(&(b.0, b.1))
+            .then(a.2.total_cmp(&b.2))
+            .then(a.3.total_cmp(&b.3))
+    });
+    let mut cells = vec![vec![String::new(); columns]; rows];
+    for (row, column, _, _, text) in pieces {
+        let cell = &mut cells[row][column];
+        let joins = cell
+            .chars()
+            .last()
+            .is_some_and(|c| !(cjk::han(c) || cjk::kana(c)))
+            || text
+                .chars()
+                .next()
+                .is_some_and(|c| !(cjk::han(c) || cjk::kana(c)));
+        if !cell.is_empty() && joins {
+            cell.push(' ');
+        }
+        cell.push_str(&text);
+    }
+    cells.retain(|row| row.iter().any(|cell| !cell.is_empty()));
+    let used: Vec<bool> = (0..columns)
+        .map(|c| cells.iter().any(|row| !row[c].is_empty()))
+        .collect();
+    for row in &mut cells {
+        let mut flags = used.iter();
+        row.retain(|_| *flags.next().unwrap_or(&false));
+    }
+    cells
+}
+
+/// Each block of lines with the regions that stand among them: a region goes
+/// with the block it overlaps most across, or, beside every block, with the
+/// nearest one above it (the first block when none is).
+fn place(blocks: Vec<Vec<Line>>, regions: Vec<Region>) -> Vec<(Vec<Line>, Vec<Region>)> {
+    let spans: Vec<Option<[f32; 4]>> = blocks
+        .iter()
+        .map(|lines| {
+            lines.iter().map(|line| line.bounds).reduce(|a, b| {
+                [
+                    a[0].min(b[0]),
+                    a[1].min(b[1]),
+                    a[2].max(b[2]),
+                    a[3].max(b[3]),
+                ]
+            })
+        })
+        .collect();
+    let mut placed: Vec<(Vec<Line>, Vec<Region>)> = blocks
+        .into_iter()
+        .map(|lines| (lines, Vec::new()))
+        .collect();
+    if placed.is_empty() {
+        placed.push((Vec::new(), Vec::new()));
+    }
+    for region in regions {
+        let b = region.bounds;
+        let overlap = |span: &[f32; 4]| {
+            let across = span[2].min(b[2]) - span[0].max(b[0]);
+            let down = span[3].min(b[3] + (b[3] - b[1])) - span[1].max(b[1] - (b[3] - b[1]));
+            (across > 0.0 && down > 0.0).then_some(across)
+        };
+        let best = spans
+            .iter()
+            .enumerate()
+            .filter_map(|(i, span)| Some((i, overlap(span.as_ref()?)?)))
+            .max_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(i, _)| i)
+            .or_else(|| {
+                spans
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, span)| span.is_some_and(|span| span[1] <= b[1]))
+                    .max_by(|a, b| {
+                        a.1.map_or(0.0, |s| s[1])
+                            .total_cmp(&b.1.map_or(0.0, |s| s[1]))
+                    })
+                    .map(|(i, _)| i)
+            })
+            .unwrap_or(0);
+        placed[best].1.push(region);
+    }
+    placed
+}
+
+/// Where a run of emphasis closes at the end of one line of a paragraph and
+/// opens again at the start of the next, it goes on instead.
+fn joined_emphasis(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = String::with_capacity(text.len());
+    let mut from = 0;
+    let mut index = 0;
+    while let Some(offset) = text[index..].find('\n') {
+        let at = index + offset;
+        let closing = bytes[..at].iter().rev().take_while(|b| **b == b'*').count();
+        let mut open = at + 1;
+        while bytes.get(open) == Some(&b' ') {
+            open += 1;
+        }
+        let opening = bytes[open..].iter().take_while(|b| **b == b'*').count();
+        let before = at.checked_sub(closing + 1).map(|i| bytes[i]);
+        let after = bytes.get(open + opening).copied();
+        if (1..=3).contains(&closing)
+            && closing == opening
+            && before.is_some_and(|b| b != b' ' && b != b'*')
+            && after.is_some_and(|b| b != b' ' && b != b'*')
+        {
+            out.push_str(&text[from..at - closing]);
+            out.push_str(&text[at..open]);
+            from = open + opening;
+        }
+        index = at + 1;
+    }
+    out.push_str(&text[from..]);
+    out
+}
+
+/// A row's words with their emphasis: runs of bold, italic or both words
+/// between `**`, `*` or `***`, and the emphasis of its last word. `None`
+/// when no word of it was measured. `before` is the emphasis of the word
+/// before it (the end of the row above).
+fn styled(
+    lines: &[Line],
+    style: &Style,
+    skip_first: bool,
+    mut before: Option<(bool, bool)>,
+) -> Option<(String, Option<(bool, bool)>)> {
+    let mut words: Vec<(&str, (bool, bool))> = Vec::new();
+    let mut measured = false;
+    for line in lines {
+        match style.words(line, before) {
+            Some(flags) => {
+                measured = true;
+                before = flags.last().copied();
+                words.extend(line.text.split_whitespace().zip(flags));
+            }
+            None => {
+                before = None;
+                words.extend(line.text.split_whitespace().map(|w| (w, (false, false))));
+            }
+        }
+    }
+    if !measured {
+        return None;
+    }
+    if skip_first && !words.is_empty() {
+        words.remove(0);
+    }
+    let mut out = String::new();
+    for run in words.chunk_by(|a, b| a.1 == b.1) {
+        let marker = match run[0].1 {
+            (true, true) => "***",
+            (true, false) => "**",
+            (false, true) => "*",
+            (false, false) => "",
+        };
+        if !out.is_empty() {
+            out.push(' ');
+        }
+        out.push_str(marker);
+        out.push_str(&run.iter().map(|(w, _)| *w).collect::<Vec<_>>().join(" "));
+        out.push_str(marker);
+    }
+    Some((out, before))
 }
 
 /// Top edge, then left edge: the order `columns` and `rows` start from. One
@@ -983,12 +1817,11 @@ fn columns(mut lines: Vec<Line>, depth: usize) -> Vec<Vec<Line>> {
     blocks
 }
 
-/// Text heights on a page, for telling its headings: the median line's and
-/// the tallest line's. `None` on a page of too few lines to tell.
+/// Text heights on a page, for telling its headings: the median line's.
+/// `None` on a page of too few lines to tell.
 #[derive(Clone, Copy)]
 struct Sizes {
     body: f32,
-    tallest: f32,
 }
 
 /// A page needs this many lines before a taller one is a heading.
@@ -998,11 +1831,13 @@ const HEADING: f32 = 1.25;
 /// Rows at least this many times the median line's height, one after the
 /// other, are one paragraph (a wrapped title in a larger or bold face).
 const LARGE: f32 = 1.15;
-/// A heading at least this share of the tallest heading's height is of the
-/// first level; a shorter one of the second.
-const FIRST_LEVEL: f32 = 0.85;
-/// A heading holds at most this many characters.
+/// A heading holds at most this many characters per row...
 const MAX_HEADING_CHARS: usize = 60;
+/// ...and this many rows.
+const MAX_HEADING_ROWS: usize = 3;
+/// A bold row opening a paragraph is a heading from this many times the
+/// median line's height.
+const BOLD_HEADING: f32 = 1.1;
 
 fn sizes(lines: &[Line]) -> Option<Sizes> {
     if lines.len() < MIN_SIZED_LINES {
@@ -1014,10 +1849,7 @@ fn sizes(lines: &[Line]) -> Option<Sizes> {
         .collect();
     heights.sort_by(f32::total_cmp);
     let body = heights[heights.len() / 2];
-    (body > 0.0).then(|| Sizes {
-        body,
-        tallest: heights[heights.len() - 1],
-    })
+    (body > 0.0).then_some(Sizes { body })
 }
 
 /// Lines of a row at least this many line heights apart are pieces of their
@@ -1033,6 +1865,12 @@ struct Row {
     rect: [f32; 4],
     height: f32,
     pieces: Vec<(String, [f32; 2])>,
+    /// All its words are bold.
+    bold: bool,
+    /// It follows a bullet (read, then left out of `text`, or drawn).
+    bullet: bool,
+    /// Its text with its bold and italic words emphasized.
+    styled: Option<String>,
 }
 
 /// What a row is written as.
@@ -1040,9 +1878,13 @@ struct Row {
 enum Kind {
     Text,
     Code,
-    Heading(usize),
+    Heading,
     /// The rest of the heading above, on its line.
     HeadingMore,
+    /// A list item, after its bullet.
+    ListItem,
+    /// The rest of the list item above.
+    ListMore,
     /// A row of the table of that index.
     Table(usize),
 }
@@ -1251,25 +2093,31 @@ fn table_markdown(cells: &[Vec<String>]) -> String {
     lines.join("\n")
 }
 
-/// Appends one block's lines as Markdown: lines sharing most of a vertical
-/// band form a left-to-right row; a row starts a paragraph after a wide
-/// vertical gap, and after a row that stops short of the block's right edge
-/// (only rows that run to that edge, in a block where two or more do, wrap
-/// on to the next), unless both are in a larger face. Lines meet without a
-/// space where Chinese or Japanese text touches the next line, and
+/// Appends one block's lines as Markdown blocks: lines sharing most of a
+/// vertical band form a left-to-right row; a row starts a paragraph after a
+/// wide vertical gap, and after a row that stops short of the block's right
+/// edge (only rows that run to that edge, in a block where two or more do,
+/// wrap on to the next), unless both are in a larger face. Lines meet
+/// without a space where Chinese or Japanese text touches the next line, and
 /// letter-spaced text is closed up. A short row much taller than the page's
-/// text is a heading (with the rows of its size right below it); rows of
-/// cells in columns, or divided by the rules the recognizer read as `|`,
-/// are a table ([`tables`]). Rows of code in a fixed-pitch font
-/// ([`layout::code`]) are fenced, each indented as far as its left edge.
+/// text, or a little taller and bold, opening a paragraph, is a heading
+/// (with the rows of its size right below it); a row after a bullet (read,
+/// or found in the pixels) is a list item, the rows indented under it its
+/// continuation; rows of cells in columns, or divided by the rules the
+/// recognizer read as `|`, are a table ([`tables`]). Rows of code in a
+/// fixed-pitch font ([`layout::code`]) are fenced, each indented as far as
+/// its left edge. Words the pixels show bold or italic are emphasized.
+/// `regions` (ruled tables, pictures) are written where they stand among
+/// the rows.
 fn rows(
     mut lines: Vec<Line>,
+    mut regions: Vec<Region>,
     sizes: Option<Sizes>,
-    text: &mut String,
-    boxes: &mut Vec<[f32; 4]>,
-    confidence: &mut f32,
+    style: &Style,
+    out: &mut Out,
 ) {
     crate::sort::by(&mut lines, top_then_left);
+    crate::sort::by(&mut regions, |a, b| a.bounds[1].total_cmp(&b.bounds[1]));
     // Each row's lines.
     let mut groups = Vec::new();
     let mut index = 0;
@@ -1300,6 +2148,8 @@ fn rows(
                 .is_some_and(|code| code.rows.contains(&number))
         })
         .collect();
+    // The emphasis of the last word of the row above.
+    let mut carry = None;
     let rows: Vec<Row> = groups
         .iter()
         .zip(&coded)
@@ -1310,6 +2160,9 @@ fn rows(
                 rect: first.bounds,
                 height: 0.0,
                 pieces: Vec::new(),
+                bold: false,
+                bullet: false,
+                styled: None,
             };
             for offset in group.clone() {
                 let line = &lines[offset];
@@ -1343,8 +2196,30 @@ fn rows(
                 row.rect[3] = row.rect[3].max(line.bounds[3]);
                 row.height = row.height.max(height);
             }
-            if !coded && let Some(closed) = layout::closed_up(&row.text) {
+            if coded {
+                carry = None;
+                return row;
+            }
+            let members = &lines[group.clone()];
+            let glyph = bullet_glyph(&row.text);
+            row.bullet = glyph.is_some() || first.marks.bullet.is_some();
+            row.bold = members.iter().all(|line| style.bold(line));
+            let touching = members
+                .windows(2)
+                .any(|pair| layout::touching(&pair[0], &pair[1]));
+            if let Some(closed) = layout::closed_up(&row.text) {
                 row.text = closed;
+                carry = None;
+            } else if !touching
+                && let Some((text, last)) = styled(members, style, glyph.is_some(), carry)
+            {
+                row.styled = Some(text);
+                carry = last;
+            } else {
+                carry = None;
+            }
+            if let Some(length) = glyph {
+                row.text = row.text[length..].trim_start().to_owned();
             }
             row
         })
@@ -1364,6 +2239,10 @@ fn rows(
         below.rect[1] - above.rect[3] > 0.8 * below.height.max(above.height)
     };
     let mut kinds: Vec<Kind> = Vec::with_capacity(rows.len());
+    // The left edge of the text of the list item being read, and the rows
+    // of the heading being read.
+    let mut item_left = 0.0f32;
+    let mut heading_rows = 0usize;
     for (number, row) in rows.iter().enumerate() {
         if coded[number] {
             kinds.push(Kind::Code);
@@ -1376,20 +2255,44 @@ fn rows(
             kinds.push(Kind::Table(table));
             continue;
         }
+        let previous = number.checked_sub(1).map(|n| (&rows[n], kinds[n]));
         // A heading goes on over the rows of its size right below it.
-        if number > 0
-            && matches!(kinds[number - 1], Kind::Heading(_) | Kind::HeadingMore)
-            && !gap(&rows[number - 1], row)
-            && sizes.is_some_and(|sizes| row.height >= LARGE * sizes.body)
-            && (0.8..=1.2).contains(&(row.height / rows[number - 1].height))
+        if let Some((above, Kind::Heading | Kind::HeadingMore)) = previous
+            && heading_rows < MAX_HEADING_ROWS
+            && !gap(above, row)
+            && !row.bullet
+            && (sizes.is_some_and(|sizes| row.height >= LARGE * sizes.body)
+                || (row.bold && above.bold))
+            && (0.8..=1.2).contains(&(row.height / above.height))
         {
+            heading_rows += 1;
             kinds.push(Kind::HeadingMore);
             continue;
         }
-        let Some(sizes) = sizes.filter(|sizes| row.height >= HEADING * sizes.body) else {
+        if row.bullet {
+            item_left = row.rect[0];
+            kinds.push(Kind::ListItem);
+            continue;
+        }
+        if let Some((above, Kind::ListItem | Kind::ListMore)) = previous
+            && !gap(above, row)
+            && row.rect[0] >= item_left - 0.5 * row.height
+            && !(row.bold && !above.bold)
+        {
+            kinds.push(Kind::ListMore);
+            continue;
+        }
+        let opens = previous.is_none_or(|(above, kind)| {
+            kind != Kind::Text || gap(above, row) || !(wraps && at_edge(above))
+        });
+        let sized = sizes.is_some_and(|sizes| {
+            row.height >= HEADING * sizes.body
+                || (row.bold && opens && row.height >= BOLD_HEADING * sizes.body)
+        });
+        if !sized {
             kinds.push(Kind::Text);
             continue;
-        };
+        }
         let characters = row.text.chars().filter(|c| !c.is_whitespace()).count();
         kinds.push(
             if row.pieces.len() > 1
@@ -1397,10 +2300,9 @@ fn rows(
                 || row.text.ends_with([',', '，', ';', '；', '、'])
             {
                 Kind::Text
-            } else if row.height >= FIRST_LEVEL * sizes.tallest {
-                Kind::Heading(1)
             } else {
-                Kind::Heading(2)
+                heading_rows = 1;
+                Kind::Heading
             },
         );
     }
@@ -1414,10 +2316,23 @@ fn rows(
         "`".repeat(longest.max(2) + 1)
     });
     let large = |row: &Row| sizes.is_some_and(|sizes| row.height >= LARGE * sizes.body);
+    let mut pending: Option<Block> = None;
+    let flush = |pending: &mut Option<Block>, out: &mut Out| match pending.take() {
+        Some(Block::Text(text)) => out.blocks.push(Block::Text(joined_emphasis(&text))),
+        Some(block) => out.blocks.push(block),
+        None => {}
+    };
+    let mut regions = regions.into_iter().peekable();
+    // A region was written since the last row: the next row opens a block.
+    let mut fresh = false;
     for (number, (group, row)) in groups.into_iter().zip(&rows).enumerate() {
+        while let Some(region) = regions.next_if(|region| region.bounds[1] < row.rect[1]) {
+            flush(&mut pending, out);
+            out.region(region);
+            fresh = true;
+        }
         for line in &lines[group.clone()] {
-            boxes.push(line.bounds);
-            *confidence += line.confidence;
+            out.line(line);
         }
         let kind = kinds[number];
         // A table is written whole at its first row.
@@ -1429,12 +2344,16 @@ fn rows(
         let edge = code
             .as_ref()
             .is_some_and(|code| code.rows.start == number || code.rows.end == number);
-        if number > 0 {
+        let separator = if number == 0 || fresh {
+            "\n\n"
+        } else {
             let last = &rows[number - 1];
-            let separator = match (kinds[number - 1], kind) {
+            match (kinds[number - 1], kind) {
                 _ if edge => "\n\n",
                 (_, Kind::HeadingMore) => " ",
                 (Kind::Code, Kind::Code) if !gap(last, row) => "\n",
+                (Kind::ListItem | Kind::ListMore, Kind::ListItem) => "\n",
+                (Kind::ListItem | Kind::ListMore, Kind::ListMore) => "\n  ",
                 (Kind::Text, Kind::Text)
                     if !gap(last, row)
                         && ((wraps && at_edge(last)) || (large(last) && large(row))) =>
@@ -1442,33 +2361,62 @@ fn rows(
                     "\n"
                 }
                 _ => "\n\n",
-            };
-            text.push_str(separator);
-        }
-        match kind {
+            }
+        };
+        fresh = false;
+        let body = row.styled.as_deref().unwrap_or(&row.text);
+        let piece = match kind {
             Kind::Code => {
                 let code = code.as_ref().expect("a code row");
                 let fence = fence.as_ref().expect("a fence");
+                let mut piece = String::new();
                 if code.rows.start == number {
-                    text.push_str(fence);
-                    text.push('\n');
+                    piece.push_str(fence);
+                    piece.push('\n');
                 }
                 let indent = layout::indent(code, lines[group.start].bounds[0]);
-                text.extend(std::iter::repeat_n(' ', indent));
-                text.push_str(&row.text);
+                piece.extend(std::iter::repeat_n(' ', indent));
+                piece.push_str(&row.text);
                 if code.rows.end == number + 1 {
-                    text.push('\n');
-                    text.push_str(fence);
+                    piece.push('\n');
+                    piece.push_str(fence);
                 }
+                piece
             }
-            Kind::Table(table) => text.push_str(&table_markdown(&tables[table].cells)),
-            Kind::Heading(level) => {
-                text.push_str(&"#".repeat(level));
-                text.push(' ');
-                text.push_str(&row.text);
+            Kind::Table(table) => table_markdown(&tables[table].cells),
+            Kind::Heading | Kind::HeadingMore => row.text.clone(),
+            Kind::ListItem => format!("- {body}"),
+            Kind::ListMore | Kind::Text => body.to_owned(),
+        };
+        if separator == "\n\n" {
+            flush(&mut pending, out);
+            pending = Some(match kind {
+                Kind::Heading | Kind::HeadingMore => Block::Heading {
+                    size: sizes.map_or(1.0, |sizes| row.height / sizes.body),
+                    text: piece,
+                },
+                _ => Block::Text(piece),
+            });
+        } else {
+            match &mut pending {
+                Some(Block::Heading { size, text }) => {
+                    if let Some(sizes) = sizes {
+                        *size = size.max(row.height / sizes.body);
+                    }
+                    text.push_str(separator);
+                    text.push_str(&piece);
+                }
+                Some(Block::Text(text)) => {
+                    text.push_str(separator);
+                    text.push_str(&piece);
+                }
+                _ => pending = Some(Block::Text(piece)),
             }
-            Kind::HeadingMore | Kind::Text => text.push_str(&row.text),
         }
+    }
+    flush(&mut pending, out);
+    for region in regions {
+        out.region(region);
     }
 }
 
@@ -1970,6 +2918,7 @@ pub(crate) mod tests {
             bounds,
             confidence,
             direction: [1.0, 0.0],
+            marks: Default::default(),
         };
         let result = assemble(
             vec![
@@ -1999,6 +2948,7 @@ pub(crate) mod tests {
             bounds: [left, top, right, top + 10.],
             confidence: 1.0,
             direction: [1.0, 0.0],
+            marks: Default::default(),
         };
         let prose = |column: &str, row: usize| format!("{column} column prose line {row}");
         let mut page = vec![line(
@@ -2095,12 +3045,192 @@ pub(crate) mod tests {
         assert!(text.starts_with(&prose("Right", 0)), "{text}");
     }
 
+    /// Draw a line of `words` (text, stroke, shear) from `left` at `top`,
+    /// each word one stem per letter (at most six), and return it as read.
+    fn drawn(image: &mut image::RgbImage, left: u32, top: u32, words: &[(&str, u32, f32)]) -> Line {
+        let mut x = left;
+        for (text, stroke, shear) in words {
+            let letters = text
+                .chars()
+                .filter(|c| c.is_alphanumeric())
+                .count()
+                .clamp(1, 6) as u32;
+            x = page::tests::word(image, x, top, letters, *stroke, *shear) + 12;
+        }
+        let text: Vec<&str> = words.iter().map(|(text, ..)| *text).collect();
+        sized(
+            &text.join(" "),
+            [left as f32, top as f32, (x - 12) as f32, (top + 28) as f32],
+        )
+    }
+
+    /// A printed page as the recognizer reads it and as its pixels show it:
+    /// a title, a paragraph with bold and italic words over two lines, a
+    /// list whose bullets the recognizer dropped, a ruled table whose header
+    /// it read as one line across two cells, and a chart with its labels.
+    #[test]
+    fn a_printed_page_reads_with_emphasis_bullets_a_ruled_table_and_a_chart() {
+        let mut image = page::tests::paper(1000, 1300);
+        let plain = |text| (text, 2, 0.0);
+        let bold = |text| (text, 4, 0.0);
+        let italic = |text| (text, 2, 0.3);
+        let mut lines = vec![sized("Report", [100., 30., 400., 100.])];
+        // Lines of the paragraph run to the page's right edge (justified).
+        for (top, words) in [
+            (140, vec![plain("alpha"), bold("beta"), bold("gamma")]),
+            (
+                172,
+                vec![bold("delta"), plain("eps"), italic("zeta"), italic("theta")],
+            ),
+        ] {
+            let mut line = drawn(&mut image, 100, top, &words);
+            line.bounds[2] = 700.;
+            lines.push(line);
+        }
+        lines.push(drawn(
+            &mut image,
+            100,
+            204,
+            &[plain("closing"), plain("words"), plain("here")],
+        ));
+        for (top, text) in [(260, "first"), (300, "second")] {
+            page::tests::fill(&mut image, [150, top + 10, 158, top + 18], [0; 3]);
+            lines.push(drawn(&mut image, 180, top, &[plain(text), plain("item")]));
+        }
+        // The table: three rows of two cells.
+        for y in [400, 440, 480, 520] {
+            page::tests::fill(&mut image, [100, y, 700, y + 1], [180; 3]);
+        }
+        for x in [100, 400, 699] {
+            page::tests::fill(&mut image, [x, 400, x + 1, 521], [180; 3]);
+        }
+        let header = drawn(&mut image, 110, 406, &[plain("Name")]);
+        let right = drawn(&mut image, 410, 406, &[plain("Value")]);
+        lines.push(sized(
+            "Name Value",
+            [header.bounds[0], 406., right.bounds[2], 434.],
+        ));
+        lines.push(drawn(&mut image, 110, 446, &[plain("one")]));
+        lines.push(drawn(&mut image, 410, 446, &[plain("first")]));
+        lines.push(drawn(&mut image, 110, 486, &[plain("two")]));
+        // The chart: bars, one pale yellow, with axis numbers and a label.
+        page::tests::fill(&mut image, [300, 650, 340, 850], [0, 60, 140]);
+        page::tests::fill(&mut image, [350, 700, 390, 850], [255, 204, 0]);
+        page::tests::fill(&mut image, [400, 600, 440, 850], [255, 69, 0]);
+        lines.push(drawn(&mut image, 250, 640, &[plain("10")]));
+        lines.push(drawn(&mut image, 250, 830, &[plain("0")]));
+        lines.push(drawn(&mut image, 320, 860, &[plain("Row"), plain("1")]));
+        lines.push(drawn(
+            &mut image,
+            100,
+            950,
+            &[plain("after"), plain("the"), plain("chart")],
+        ));
+        let result = assemble_with(
+            lines,
+            1000,
+            1300,
+            Some(Pixels {
+                image: &image,
+                figures: true,
+            }),
+        )
+        .unwrap();
+        assert_eq!(
+            result.text,
+            "# Report\n\nalpha **beta gamma\ndelta** eps *zeta theta*\nclosing words here\n\n\
+             - first item\n- second item\n\n\
+             | Name | Value |\n| --- | --- |\n| one | first |\n| two |  |\n\n\
+             after the chart"
+        );
+        assert_eq!(result.figures.len(), 1);
+        assert!(result.blocks.contains(&Block::Figure(0)));
+        let [l, t, r, b] = result.figures[0].bounds;
+        assert!(
+            l <= 250. && t <= 600. && r >= 440. && b >= 888.,
+            "{:?}",
+            result.figures[0].bounds
+        );
+        // The chart's labels are the picture's, not text the Markdown reads.
+        let read: Vec<&str> = result.lines.iter().map(|line| line.text.as_str()).collect();
+        assert!(
+            !read.contains(&"Row 1") && read.contains(&"Name Value"),
+            "{read:?}"
+        );
+        // Without pictures asked for (an image input), the labels stay text.
+        let again = assemble_with(
+            result.raw.clone(),
+            1000,
+            1300,
+            Some(Pixels {
+                image: &image,
+                figures: false,
+            }),
+        )
+        .unwrap();
+        assert!(
+            again.text.contains("Row 1") && again.figures.is_empty(),
+            "{}",
+            again.text
+        );
+    }
+
+    #[test]
+    fn heading_levels_are_tiers_of_sizes_and_blocks_render_as_markdown() {
+        assert_eq!(tiers_of(&mut [1.4, 2.2, 1.2, 1.45, 1.38]), [2.2, 1.38, 1.2]);
+        let sizes = [2.2, 1.38, 1.2];
+        assert_eq!(
+            [2.3, 2.2, 1.5, 1.38, 1.25, 1.0].map(|size| level(&sizes, size)),
+            [1, 1, 2, 2, 3, 3]
+        );
+        let blocks = vec![
+            Block::Heading {
+                size: 1.4,
+                text: "Section".into(),
+            },
+            Block::Text("Body.".into()),
+            Block::Figure(0),
+            Block::Figure(1),
+        ];
+        let figure = |index: usize| (index == 0).then(|| "![Chart](a.jpg)".to_owned());
+        assert_eq!(
+            render(&blocks, &sizes, &figure),
+            "## Section\n\nBody.\n\n![Chart](a.jpg)"
+        );
+        // Alone on its page, a heading is of the first level.
+        assert_eq!(
+            render(&blocks[..1], &tiers(&blocks), &|_| None),
+            "# Section"
+        );
+    }
+
+    #[test]
+    fn emphasis_closed_at_a_line_end_and_opened_on_the_next_goes_on() {
+        assert_eq!(joined_emphasis("a **b c**\n**d** e"), "a **b c\nd** e");
+        assert_eq!(joined_emphasis("*a*\n  *b*"), "*a\n  b*");
+        assert_eq!(joined_emphasis("***a***\n***b***"), "***a\nb***");
+        // Different runs, a list's items and a bold end before italic stay.
+        for kept in ["**a**\n*b*", "- **a**\n- **b**", "**a** \n**b**", "a\nb"] {
+            assert_eq!(joined_emphasis(kept), kept);
+        }
+    }
+
+    #[test]
+    fn read_bullets_start_list_items_and_captions_stay_text() {
+        assert_eq!(bullet_glyph("• item"), Some("• ".len()));
+        assert_eq!(bullet_glyph("- item"), Some(2));
+        assert_eq!(bullet_glyph("-item"), None);
+        assert_eq!(bullet_glyph("item"), None);
+        assert!(caption("Figure 2: sales") && caption("图 1 销量") && !caption("Row 1"));
+    }
+
     fn sized(text: &str, bounds: [f32; 4]) -> Line {
         Line {
             text: text.into(),
             bounds,
             confidence: 1.0,
             direction: [1.0, 0.0],
+            marks: Default::default(),
         }
     }
 
@@ -2251,6 +3381,7 @@ pub(crate) mod tests {
             bounds: [left, top, right, top + 10.],
             confidence: 1.0,
             direction: [1.0, 0.0],
+            marks: Default::default(),
         };
         let mut page = Vec::new();
         for row in 0..4 {
@@ -2289,6 +3420,7 @@ pub(crate) mod tests {
             bounds: [left, top, right, top + 10.],
             confidence: 1.0,
             direction: [1.0, 0.0],
+            marks: Default::default(),
         };
         let mut page = vec![line(
             "A title across both columns of the page".into(),

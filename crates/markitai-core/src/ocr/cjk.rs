@@ -287,6 +287,7 @@ mod tests {
             confidence: 1.0,
             bounds: [0.0, top, 100.0, bottom],
             direction: [1.0, 0.0],
+            marks: Default::default(),
         }
     }
 

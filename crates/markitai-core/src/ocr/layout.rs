@@ -592,6 +592,7 @@ pub(super) fn cell(
         confidence,
         bounds,
         direction: [1.0, 0.0],
+        marks: Default::default(),
     })
 }
 
@@ -999,6 +1000,7 @@ mod tests {
             confidence: 1.0,
             bounds,
             direction: [1.0, 0.0],
+            marks: Default::default(),
         }
     }
 

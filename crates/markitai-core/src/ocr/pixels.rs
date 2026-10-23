@@ -35,7 +35,9 @@ impl Write for Bounded {
     }
 }
 
-#[cfg(any(target_os = "macos", test))]
+// Readers decode with `upright` and keep the pixels (`ocr::with_pixels`);
+// only tests hand encoded bytes over in one step.
+#[cfg(test)]
 pub(super) fn prepare(bytes: &[u8]) -> Result<Prepared> {
     prepare_rgb(upright(bytes)?)
 }

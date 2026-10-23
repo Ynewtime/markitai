@@ -152,11 +152,30 @@ their own page and document budgets.
 The reader groups lines and columns and retains page order, and writes them as
 Markdown: a row that stops short of the text's right edge ends its paragraph
 (rows that run to the edge wrap on), a short row much taller than the page's
-text is a heading, rows of cells in columns or divided by drawn rules (read as
-`|`) are a table, and letter-spaced Latin (`M a r k i t a i`, Latin set in
-full-width cells) is closed up. It is not a full layout reconstruction engine:
-heading levels are judged per page, and a cell read together with its
-neighbour stays in one cell. Small text, handwriting, vertical writing,
+text, or a little taller and bold where a paragraph starts, is a heading (with
+the rows of its size right below it), rows of cells in columns or divided by
+drawn rules (read as `|`) are a table, and letter-spaced Latin
+(`M a r k i t a i`, Latin set in full-width cells) is closed up. Heading levels
+follow heading sizes: the largest are `#`, the next size `##`, and so on, across
+all the pages of a scanned PDF.
+
+The image's pixels add what the recognizer does not report: words whose strokes
+are clearly heavier than the body text's are bold (`**…**`) and words that lean
+are italic (`*…*`), measured word by word and only where the ink's words match
+the recognized ones; a small solid dot left of a line, at the same place as
+another one on the page, is a list bullet (`- item`), as is a bullet the
+recognizer read; and a table drawn with ruled lines (light gray ones included)
+puts each recognized line in the cell under it, splitting a line read across
+two cells at its words, empty cells kept. In a scanned PDF page, a picture
+(a chart, a photograph: marked areas no text line covers) is cut out of the
+page and written as a picture where it stands, and its labels (axis numbers,
+legends) are not repeated as text. Pixels are not read on a page read turned
+or too dark to tell ink from paper.
+
+It is not a full layout reconstruction engine: underline, strikethrough and
+font changes other than weight and slant are not kept, a table without ruled
+lines is found only from its columns, and a cell read together with its
+neighbour in such a table stays in one cell. Small text, handwriting, vertical writing,
 complex tables and marginal notes can be incomplete or misordered. Vision
 recognition has no hard wall-clock cancellation deadline. A resource limit is
 not a peak-RSS or accuracy guarantee.
