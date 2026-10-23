@@ -60,7 +60,16 @@ test("an explicit language wins, otherwise the browser language decides", () => 
   assert.equal(detectLocale(null, "ja-JP"), "ja");
   assert.equal(detectLocale("ja", "en-US"), "ja");
   assert.equal(detectLocale("fr", "de-DE"), "en");
-  assert.equal(detectLocale(null, undefined), "en");
+  // Node answers navigator.language with the host's language (zh-CN on a
+  // Chinese system), so the test removes it to see a page that has none.
+  const host = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  Object.defineProperty(globalThis, "navigator", { value: undefined, configurable: true });
+  try {
+    assert.equal(detectLocale(null, undefined), "en");
+  } finally {
+    if (host) Object.defineProperty(globalThis, "navigator", host);
+    else delete (globalThis as { navigator?: unknown }).navigator;
+  }
 });
 
 test("every reason the Rust service sends and every core error code has localized text", () => {
