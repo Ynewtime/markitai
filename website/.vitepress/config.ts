@@ -30,6 +30,10 @@ const PAGE_DESCRIPTIONS: Record<string, string> = {
     'Run the local markitai web workspace: upload files or URLs, watch live progress, preview results, and revisit seven days of history.',
   '/zh/guide/serve':
     '运行本地 markitai 网页工作台：上传文件或 URL、查看实时进度、预览结果，并回看七天内的历史记录。',
+  '/guide/serve-reference':
+    "Web workspace reference: access tokens and user tokens, users' and shared models, LLM key and address rules, Edit config, and every API route and error code.",
+  '/zh/guide/serve-reference':
+    '网页工作台参考：访问令牌与用户令牌、用户与共享模型、LLM key 与地址规则、编辑配置，以及全部 API 路由和错误代码。',
   '/guide/configuration':
     'Every markitai setting: configuration file and environment variables, LLM providers, image, screenshot, OCR, cache and security options.',
   '/zh/guide/configuration':
@@ -248,6 +252,7 @@ export default defineConfig({
                   ],
                 },
                 { text: 'CLI 命令', link: '/zh/guide/cli' },
+                { text: '工作台参考', link: '/zh/guide/serve-reference' },
               ],
             },
             {
@@ -369,6 +374,7 @@ export default defineConfig({
               ],
             },
             { text: 'CLI Reference', link: '/guide/cli' },
+            { text: 'Workspace Reference', link: '/guide/serve-reference' },
           ],
         },
         {
