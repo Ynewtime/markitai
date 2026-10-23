@@ -1,0 +1,579 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [1.2.0] - 2026-09-28
+
+### Added
+
+- **`llm.on_failure`**: a failed LLM enhancement (invalid key, provider error, timeout, refusal) keeps the unenhanced `.md` and says why; set it to `"fail"` to fail the item instead (exit `1`, or `10` for a batch).
+- **Warnings you can act on**, in default mode and wherever results go (stderr, `--json`, the web workspace, the Python API, MCP): scanned pages without `--ocr`, hidden PDF text, OCR or screenshot failures, slides that cannot be rendered, failed LLM or image analysis.
+- **`--resume` for `.urls` lists**, and Ctrl-C saves the batch state in every mode.
+- `--json` reports an `--llm-batch` handoff (a `batch` object with the collect command, a `pending` status) and per-item warnings.
+- `cache.fetch_ttl_seconds` (default 24 hours) expires fetched pages without ETag/Last-Modified; `cache stats`/`cache clear` cover the fetch cache.
+- `markitai.enable_worker_processes()` and `MARKITAI_PDF_WORKERS` for parallel PDF extraction; `markitai.api` exports `ConversionError`, `FetchError` and `NoModelConfiguredError`.
+
+### Changed
+
+- **PDFs convert up to 4× faster, with identical output**: pages go to worker processes that each run the layout model on one thread. On an 18-core Mac a 300-page PDF and a batch of 40 PDFs are 4.1× faster, a 240-file mixed batch 3.3×.
+- **LLM batches overlap conversion with the model calls** (30 documents with `--alt`: 1.5× faster), and a document longer than one request is enhanced in chunks instead of being cut at 32,000 characters.
+- **The web workspace matches the CLI**: up to 1000 items per job (was 50), 3.2× faster on 240 files, and the API stays responsive while a job runs. Assets are cached by the browser and responses compressed.
+- **OCR reads in reading order**: columns, vertical CJK, upside-down scans and tables. `--ocr` keeps the structure of pages that have a real text layer; RapidOCR `>=3.9` is required.
+- New outputs follow the umask (usually `0644`) instead of `0600`, and an overwritten file keeps its permissions; config files and `.env` stay private.
+- `-c`/`--config-json` apply to subcommands, and `config set`/`config edit` can create a new `-c` file.
+- The Python API and the MCP server resolve models like the CLI and no longer fetch LiteLLM's cost map over the network; `markitai-mcp` loads `.env` like `markitai mcp`.
+- Extracted images and screenshots are named after the resolved output (`report.pdf.v2-0001-01.jpg`), so a re-run written as `report.pdf.v2.md` no longer overwrites the images `report.pdf.md` references.
+- Web extraction follows defuddle 0.19.4: code fences, `<sub>`/`<sup>`, labeled dates and shadow DOM content.
+
+### Fixed
+
+- **Batches and resume**: a batch no longer converts its own output or `.markitai/` assets, finds `.Docx`-style extensions, and keeps same-named files and URLs apart. A resumed item overwrites its own earlier output (no `.v2` copies), even when resumed from another directory.
+- **LLM output**: the cleanup prompt names every page, slide and image placeholder, so models such as Gemini Flash-Lite keep page boundaries instead of having their cleanup discarded. A refusal is never accepted or cached, failed image analysis keeps the original alt text, and a failed run leaves this run's `.md` and no stale `.llm.md`.
+- **`--llm-batch`**: cached image answers are kept, `--resume` no longer resubmits an uncollected batch (it prints the collect command), `--alt`/`--desc` are applied at collection, Anthropic image requests work, and credentials come from `llm.model_list`.
+- **Web fetching**: pages decode with their declared charset (GBK, Shift_JIS, CP1252) and survive a stray invalid byte, relative links resolve after redirects, a challenge page never replaces a good cached copy, and loopback and NO_PROXY hosts bypass the proxy.
+- **Screenshots**: taken before the DOM is cleaned, with every tile kept and their own time budget; a page that hangs after load times out.
+- **PDF and OCR**: images are written under paths with spaces or brackets, OCR failures fail the item instead of reaching the output, and multi-frame TIFFs read every frame.
+- **Web workspace**: Ctrl-C shuts down promptly and keeps the job in history; a failed Enhance, or a shutdown during a re-run, restores the previous result; concurrent deletes and names that differ only by a suffix no longer clash.
+- Also: `.urls` files with a BOM, quoted multi-line TSV cells, `.msg` emails with an HTML-only body, read-only outputs, an output directory that cannot be created (one error line instead of a traceback), and MCP tools now return the failure reason.
+
+## [1.1.0] - 2026-09-14
+
+- **About 6× faster overall**: URLs **5.8×**, Office/PDF **5.6×**, batch conversion **6.6×**, measured in equally weighted local benchmarks that leave out LLM, OCR and internet latency.
+- **Faster results**: less startup and repeated parsing, and no browser fallback for short articles and CJK prose that arrived complete the first time.
+- **Output quality unchanged**: text, metadata, equations and images go through the same handling as before, and complex documents still take the established fallbacks.
+- **Public URL detection fixed**: Defuddle and the other remote readers now work behind Fake-IP proxies such as Clash, and the private-address protections still apply.
+- **Better X/Twitter extraction**: when remote use is allowed, anonymous posts are fetched without launching a browser; an HTTP error falls back promptly, and rich text, links, images and publication dates survive.
+- **Domain tuning kept**: a custom domain profile overrides only the fields it sets explicitly, so the built-in browser settings stay in place.
+- **Quieter repeat runs**: the remote-fetch and VLM OCR notices show once per user; consent prompts and opt-outs work as before.
+
+## [1.0.1] - 2026-09-10
+
+### Added
+
+- `--json` conversion results with per-item status, output, usage, cost and run-level errors; requires `-o` and excludes `--dry-run` / `--llm-batch-collect`.
+- `--no-remote-fetch` to disable remote URL extraction and `--log-level` to control configured file logging.
+- MCP output profiles and bounded batch concurrency (default 10); omitted `llm` now follows server configuration.
+- Bilingual website comparison pages, search/social metadata, and documentation and UI checks in CI.
+
+### Changed
+
+- Serve sign-in URLs use `#token=`; config list/get/set redact secrets, including nested request headers, unless `--show-secrets` is explicit.
+- Web workspace adds upload progress/cancel, row downloads, clearer options and errors, improved accessibility, and settings/preview loading on demand. Removes Tailwind and unused UI code.
+- CLI progress goes to stderr; help and errors clarify output paths, supported formats, optional dependencies and removed flags.
+
+### Fixed
+
+- Prevent same-name MCP outputs from overwriting each other and stale LLM files from appearing in API results.
+- Preserve job options across retries/restarts, prevent premature completion and restored ghost rows, and isolate concurrent ZIP downloads.
+- Validate and pin public destinations through redirects and browser subrequests for anonymous remote jobs; isolate their fetch caches and browser sessions.
+- Limit Batch enhancement to the current run and report final artifacts, usage and failures correctly. Preserve RAG/Obsidian images, wikilinks and alt text through Batch processing and history.
+- Handle malformed configuration, cache replacement limits, empty URL lists and error exit codes consistently; align release checks with fragment-based sign-in URLs.
+
+## [1.0.0] - 2026-09-09
+
+### Added
+
+- **markitai is now a library as well as a CLI**: `markitai.convert("report.pdf")` and its async twin `aconvert` return a typed `ConversionOutput` holding the markdown, frontmatter, asset and screenshot paths, per-image analysis and usage totals, and they reuse the CLI's own configuration layering. Provisional: signatures and result fields may still change
+- **`markitai mcp` starts the bundled MCP server from the CLI**, the form the official MCP Registry entry (`io.github.Ynewtime/markitai`) uses: `uvx --from "markitai[mcp]" markitai mcp`
+- **MCP agents get markitai through the `mcp` extra**: `markitai.mcp` ships in the main wheel and exposes `convert_document`, `convert_url`, `batch_convert` and `job_status` over stdio. `claude mcp add markitai -- uvx --from "markitai[mcp]" markitai-mcp`
+- **`--profile rag|obsidian|okf` shapes the output for its consumer**: `rag` moves images into a visible `assets/` (hidden paths are skipped by ingestors like LlamaIndex's `SimpleDirectoryReader`) and rewrites PDF page markers; `obsidian` adds optional wikilinks; `okf` maps frontmatter to the Open Knowledge Format. Orthogonal to `--preset`; without it the output is byte-identical
+- **`--llm-batch` runs a directory's LLM stage at half price** through the provider's Batch API on a single-model OpenAI or Anthropic pool, waiting up to `--llm-batch-timeout` (1h) before handing off to `--llm-batch-collect`
+- **`--llm-batch` covers image analysis and page screenshots**: `--alt`/`--desc` and `--screenshot` ride the same job at the same discount. A document with more pages than fit one call is enhanced live instead, since each extra batch round is a separate wait
+- **The web UI can choose an output profile**, beside Preset, and deliberately not hidden with the LLM switches: a profile shapes output rather than enhancement, so a plain local conversion can carry one
+- **Three circuit breakers bounding one document's cost**: `llm.max_requests_per_document` (default 50) caps retry multiplication; `llm.max_vision_pages_per_document` is checked before anything is sent, so an oversized document costs nothing; `llm.max_cost_per_document_usd` is charged after each answer, bounding what a document goes on to spend. A trip skips the rest of that document's enhancement and keeps the unenhanced output. The two cost caps default to off
+- **Legacy `.doc`/`.ppt` conversion through `markitai[legacy]`**: the bundled-Rust anydoc backend handles Office 97-2003 in milliseconds, with no Microsoft Office or LibreOffice on any platform
+- **`--ocr --llm` is now named, measured and gated**: that combination sends page images to a vision model rather than running RapidOCR, which nothing used to say. Help, `doctor` and both CLI guides now call it VLM-OCR, metadata records which path ran, and `MARKITAI_NO_VLM_OCR=1` forbids it outright
+- **Long page screenshots are tiled instead of shrunk**: a page taller than `screenshot.tile_height` (2000px) splits into full-width tiles rather than being downscaled into one unreadable strip
+- **Mathematics comes back as LaTeX**: the prompts ask for `$...$` / `$$...$$` at every stage that sees a formula, where pymupdf hands display equations over as images and mangles inline math into markdown noise
+- **CLI conversions can opt into the web UI history** with `--record-history` (or `MARKITAI_RECORD_HISTORY`, or `history.record`), recording a completed run as a job under `~/.markitai/serve/jobs/`
+- **Conversion quality is now measured, three ways**: a snapshot guardrail freezes default output for a PDF/DOCX/PPTX/XLSX fixture set, an opt-in A/B harness compares prompt and model changes, and the webextract parity corpus scores HTML extraction against defuddle
+- **The serve API contract is machine-checked**: every JSON route declares a pydantic response model, `scripts/export_openapi.py` exports the schema with SSE payloads injected, and a test holds `webapp/src/api/types.ts` to it
+- **The defuddle port has a manifest and an upstream watch**: `PORT_MANIFEST.md` records which upstream sources each `webextract` module tracks and the commit the parity corpus pins, with a test keeping the two equal
+- **The website serves `/llms.txt`**, and the README carries a comparison table against markitdown, docling and anydoc that states what each does better
+- **`NOTICE` records the third-party obligations** MIT alone cannot cover: the AGPL-3.0 PyMuPDF stack and what it means for redistribution and network use, the defuddle port (MIT © kepano) behind `webextract/`, and the marker-derived benchmark scorer
+- **CI fails on a non-commercial or unexpected copyleft dependency**: `scripts/check_licenses.py` reads licence metadata from a no-extras install and rejects anything non-commercial or proprietary, plus any AGPL/GPL package outside an explicit allowlist
+- **Substack article extraction** reads rendered bodies and `window._preloads` JSON, custom domains and byline dates included; Notes extraction and the generic fallback stay
+- **Linux desktop proxy discovery** reads the manual HTTP proxy and bypass list from GNOME/Unity and KDE. An explicit environment proxy still wins, and PAC, SOCKS-only and authenticated desktop settings are left alone
+- **Opt-in benchmark LLM scoring**: `score_with_llm_judge` returns validated content, structure and noise scores, reuses an offline cache, caps its input and never retries on its own. A cache miss needs an explicit model and `allow_network=True`; the default benchmarks stay heuristic and offline
+- **Eight more formats convert without an extra**: `.tsv`, `.xml`, `.rst`, `.org`, `.tex`, `.odt`, `.ods` and `.rtf` now convert in the base wheel with the standard library alone. A tab-separated file is already a Markdown table, and an OpenDocument file is a zip of XML
+- **`.rtf` has a real native reader**: a tokenizer for groups, control words and `\'xx` bytes drives a group-scoped formatting state, so outline levels and stylesheet names become headings, `\trowd`/`\cell`/`\row` becomes a Markdown table, Word 97 `\pntext` glyphs and newer `\ls`/`\ilvl` lists keep their bullets and nesting, `HYPERLINK` fields become links, and `\ansicpg`/`\fcharset` decode CJK and Windows codepages. No extra, no extraction engine
+- **Every boolean CLI flag has a spelled-out negation**: `--cache`, `--compress`, `--no-pure` and `--no-screenshot-only` join their siblings, so a config default can be overridden in either direction from the command line
+
+### Changed
+
+- **The three LLM routing surfaces merged into one `MarkitaiRouter`**: local providers dispatch through their handler table and standard models go back to litellm's own group balancing, cooldowns and fallbacks instead of a hand-rolled reimplementation
+- **Structured LLM calls use the strongest mode a model actually supports**: native tool calling, then `response_format` JSON schema (which also switches on the native path the claude-agent provider had never used), with markdown-JSON demoted to a last resort
+- **One URL pipeline behind all four entry points**: `serve`, the Python API, `markitai <url>` and URL batches wrapped near-identical copies of fetch → localize → enhance → write, and now share one cascade in `workflow/url.py`
+- **Prompt caching actually engages**: five system templates had their per-request variables near the top, leaving a stable prefix too short for any provider's cache to match. The variable segments moved to the tail; instruction text is unchanged
+- **Converting a `.txt` no longer loads a PDF and Office toolchain**: converters registered eagerly, costing ~430ms per process and pulling in markitdown, Magika and onnxruntime regardless of input
+- **A provider is described in one table**: its default model and API-key variable had been hand-copied into four other places (credential detection, the setup wizard, `serve`'s startup candidates and `init`), and the copies had drifted
+- **Retirement warnings and cost estimates are derived**: the replacement model now comes from the defaults table and the retirement date from litellm's own record, replacing a stale literal and one hardcoded date stamped on every model
+- **Self-explanatory errors no longer leak exception class names**: a missing OCR backend, an oversized file or an unsupported format prints the actionable message alone
+- **The parity corpus is pinned to the same upstream as the algorithm**: fixtures resynced from a March 2026 snapshot to defuddle 0.19.3 (83 → 208), after porting the six upstream behaviours the new corpus exposed as missing
+- **webextract parses and copies less**: one lxml path for fragments and documents, five copies of the block-tag table converged, no whole-tree deep copy per retry attempt, and one `srcset` implementation
+- **A default install is 155 MB smaller**, 633 MB down to 477 MB. `opencv-python` left the core entirely and RapidOCR moved behind a new `ocr` extra. **Scanned-document and image OCR now needs `uv tool install "markitai[ocr]" --force`**
+- **Images come out better without OpenCV**: Pillow alone beat it on every sample measured, with higher PSNR and SSIM and 7.7% smaller files, because OpenCV's `INTER_LANCZOS4` downscale skips anti-alias prefiltering
+- **Every dependency moved to its current release**, `litellm` 1.91.1 → 1.97.0 and `markitdown` 0.1.6 → 0.1.7 among 56 updates, with the licence audit re-run against the upgraded tree
+- **The PDF engine floor moved to `pymupdf4llm>=1.28.2`**: 1.28.0 pulled in `pymupdf-layout` under a Polyform Noncommercial licence, which forbids commercial use outright; 1.28.2 restored AGPL-3.0 dual licensing
+- **Setup no longer asks about LibreOffice**: slide rendering is an opt-in runtime path that a local MS Office already covers on Windows and macOS, so the guided installer leaves it out; a PPTX `--screenshot`/`--ocr` conversion with no renderer available warns at conversion time and names the per-OS install command
+- **`--no-pure` beats `MARKITAI_PURE`**: an explicit flag on the command line now overrides the environment variable in both directions, where the env var previously won
+
+### Removed
+
+- **The three-platform Office automation is gone**: about 1.3k lines of Windows COM, macOS AppleScript and LibreOffice CLI driving, plus the batch pre-conversion machinery around it. `markitai[legacy]` covers the formats it existed for, and the LibreOffice hints now speak only about PPTX slide rendering
+- **The `kreuzberg` extra and the `-b kreuzberg` backend are gone**: every format it covered now converts natively, so the extra had nothing left to unlock. `--backend` is `native|cloudflare`, the `fetch.kreuzberg_convert_enabled` setting is dropped, and `--kreuzberg` is a usage error that says `.rtf` converts natively rather than naming a replacement
+- **The six deprecated fetch and backend flag aliases are gone** (`--playwright`, `--defuddle`, `--static`, `--jina`, `--cloudflare`, `--kreuzberg`) in favour of `-s` and `-b`. A removed name is now a usage error naming its replacement, and `--help` drops from 36 options to 30
+- **Two redundant defence layers inside the LLM path**: a hand-rolled JSON-mode strategy sitting below a structured ladder that already does the same repair, and a hand-maintained Copilot price table live traffic had stopped reaching
+- **The `llm.prompts.page_content_system` and `llm.prompts.page_content_user` settings**, with the code path they configured: both modes their docstring claimed had long since routed elsewhere, so setting either did nothing
+- **FFmpeg is no longer checked, advertised, or installed**: markitai has never supported audio or video, yet `doctor` presented FFmpeg as "audio/video file processing" and the installers offered to fetch it
+
+### Fixed
+
+- **The OpenAI-family defaults refreshed to the current generation**: `gpt-5.6-luna` replaces `gpt-5.4-nano` at $0.20/$1.20 against $0.20/$1.25. A stale default only fails once the model starts refusing, so a guard test now fails when any default comes within 120 days of the retirement date litellm records
+- **Azure OpenAI deployments get the `api_version` they configure**: `litellm_params` declared no such field and unknown keys are ignored, so the documented Azure example had it dropped on parse and never reached litellm
+- **A PDF converted with `--ocr` arrives as pages again**: both OCR paths joined pages with a bare blank line and screenshot-only emitted a marker spelling no reader matched, so an OCR'd document reached LLM batching, the drift guard and output profiles as one undivided run of text
+- **The document whose LLM call failed keeps the same layout as the rest**: every failure path returned before the pipeline's profile step, leaving one file in a `--profile` run with the default asset layout
+- **`--llm-batch` explains itself when it refuses `--ocr`**: page images travel inside the document's own request, and the batch converts with the LLM off first, which is the branch that reads scanned pages with local OCR rather than rendering them
+- **`--llm` did nothing without a config file**: the step that fills the model pool from `MODEL` or a detected key was gated on the config's own `llm.enabled` and ran before `--preset` and `--llm` were applied
+- **`--resume` could not resume an interruption**: the CLI batch path never wrote the base state file the loader needs, so an interrupted run left a delta sidecar nothing could replay and paid for every document again
+- **`--llm-batch-collect` honours `--config-json`**: it built its configuration without the inline overrides, so a collect run's live fallback used whatever pool the config file named
+- **Batched requests to reasoning models stopped failing outright**: OpenAI's batch deployments reject function tools while reasoning is on, so every document 400'd and fell through to a live re-run. Requests now carry `reasoning_effort="none"` where the model is reasoning-capable and the request uses tools
+- **`router_settings.fallbacks` actually works**: deployments were addressed directly by id, so litellm never saw a group to fall back from. A configuration naming no `default` group now fails at startup instead
+- **Claude models no longer cost $0 in the usage report**: litellm answers with zero prices for a name its table lacks, which read as "free" and hid the entry a fuzzy match would have found. Relatedly, `gpt-5.4-codex` was priced as plain `gpt-5.4`
+- **Truncated LLM responses are counted in the cost report**: a response cut off at the token limit was discarded before its usage was recorded, so the most expensive calls were the ones missing from the totals
+- **Improving a prompt now actually changes the output**: the persistent cache was keyed on a call's category rather than the prompt, so a document converted before a prompt change kept serving the old result
+- **A failed LLM call can no longer leave a document permanently blank**: an empty result from every retry was written to a cache with no expiry, so the document "converted" to nothing on every future run
+- **A finished conversion can no longer report failure**: onnxruntime's teardown at interpreter shutdown occasionally aborts the process, turning a conversion that had already written its output into a non-zero exit
+- **`--ocr` without the OCR extra no longer reports success**: it fell back to an image placeholder and exited 0, so the file "converted" with nothing read from it
+- **Install hints name commands that work**: extras names were eaten as rich markup, and `pip install` / `uv add` act on the current project rather than markitai's isolated environment. One helper now renders the command and reads `sys.prefix`, so a pipx install is told about pipx and a `uv tool` install about `uv tool`
+- **The wheel now carries `LICENSE` and `NOTICE`**: `license-files` named a path that does not exist inside the package directory, so every published wheel shipped without a licence
+- **Six extraction gaps against defuddle 0.19.3**: article text inside dismissible `aria-hidden` overlays, CodeMirror code blocks, mid-article image rows, Substack Notes, SVG figures and inline related-story blocks. The resync also fixed what it newly exposed: Hugo admonitions, lightbox duplication, LaTeX image services, `<noscript>` fallbacks and line-numbered code
+- **Reddit, Hacker News and YouTube pages are quality-checked again**: their gate was registered under a profile name the extractors never emit, so all three fell through to the generic-article check
+- **Embedded PDF images survive symlinked and out-of-tree output directories**: pymupdf4llm may write paths symlink-resolved or relative to the working directory, and only one spelling was being rewritten
+- **CMYK JPEGs no longer fail image compression**: images from print-sourced PDFs reached a path handling only RGBA, P and LA, and were dropped
+- **The screenshot viewport settings finally do something**: `screenshot.viewport_width` and `viewport_height` were declared, described and published in the schema, but no code read them
+- **Two settings that looked configurable never were**: `auto_proxy` and the screenshot `full_page` flag were read with a `getattr` default although no config model declares either
+- **`NO_PROXY` is honoured on every fetch path**: the unified resolver had no callers at all, and the Playwright launch, both Cloudflare paths and the batch renderer resolved a proxy without consulting the exception list, the system list on macOS and Windows included
+- **Proxy auto-detection no longer invents a proxy that isn't there**: it probed common local ports for a TCP connection, which succeeds for every port under a TUN-mode VPN
+- **`markitai --help` opened on the Batch API**: the `--llm-batch` flags belonged to no panel, and ungrouped options render first. The examples also offered a YouTube conversion that has never existed
+- **The installer asks about mirrors only when the default index is actually slow**, rather than warning every user without a proxy. Someone in Frankfurt used to meet a question about China mirrors as their first impression
+- **A "no" to OCR is now respected by the installer**: suggestions were merged back into the selection, so declining it still installed it
+- **The test suite is hermetic to the developer's own configuration**: a real `~/.markitai/config.json` or `.env` used to fail parts of the suite on the machine of anyone who actually uses markitai
+- **Mobile conversion uses one compact source card**: the URL area sits above one shared row of Options, upload and Convert instead of three stacked controls, with 44px touch targets and a mobile CLI preview that wraps on its own. Desktop keeps the inline composer
+- **The composer actions share one lightweight style**: Options, file upload and Convert are borderless, evenly padded controls with the same hover and focus treatment; Convert still reads as the primary action through heavier ink and a light accent wash instead of a filled box
+- **The options panel is grouped**: the preset leads as the primary row, with its adjusted status and hint; Enhance collects LLM, OCR and image analysis; Output holds the profile; and the URL/file fetch selectors, source switches and cache/compression toggles fold into an Advanced section that opens on its own when one of them is already off the default. Every control, hint, linkage rule and translation is unchanged
+- **Presets and conversion options stay linked** across the panel, the API request and the CLI preview, all reading the preset definitions the server provides. Selecting a preset resets its five features; image analysis pauses and comes back with LLM/plain mode; screenshot source and remote backends resolve the same way everywhere. The CLI preview defaults to a short preset-plus-deviation command built from the server's preset map and states the default-config assumption it makes; when the local configuration differs, an “Include config overrides” option keeps the explicit off flags for screenshot-only, pure, cache and compression reachable
+
+### Security
+
+- **`markitai serve` now issues an access token**: the startup banner prints sign-in URLs and requests from other machines must present it, replacing the old unauthenticated partial access with a 401
+- **`markitai serve` can no longer be steered into the network it runs on**: with `--host 0.0.0.0` any LAN machine could submit a URL and have the server fetch it, private addresses and cloud metadata endpoints included
+- **Binding beyond loopback now says what that means**: `--host 0.0.0.0` warns that anyone who can reach the server may convert files and read, download or delete the entire conversion history
+- **`fetch.remote_consent=ask` now asks before X/Twitter enrichment too**: that path went remote without prompting, honouring only a decision made earlier
+
+## [0.23.0] - 2026-07-18
+
+### Added
+
+- **Export any web-workspace preview to PDF**: the rendered Markdown prints to a clean A4 document, with real margins on all four sides, code blocks and figures that never clip mid-page, and table headers that repeat across pages. A "PDF settings" menu holds an optional custom header/footer (on by default); PDFs always print light so the result is identical in Chrome, Safari and macOS Preview
+
+### Changed
+
+- **The web workspace is now usable on phones and narrow windows**: a single ≤780px layout gives the composer, options and task list one coherent column. The header collapses to identity plus history/settings, language and theme move into the settings dialog, external links and notifications dock to the bottom, and the batch download sits under the task list
+- **Batch download moved next to the conversion options** on desktop, so it no longer competes with the Clear action in the workspace header
+
+### Fixed
+
+- **The local server now refuses cross-origin and rebinding requests**: a Host/Origin allow-list (loopback, IP-literal hosts, and any `--allowed-host` you pass) blocks a malicious web page from reaching the API, where it could otherwise read saved provider credentials or drive server-side URL fetches. Same-origin use and LAN binds keep working
+- **In-place retry and LLM enhancement are reliable**: retrying an item while its siblings are still converting no longer strands it as "queued"; a failed enhancement keeps the working base result instead of downgrading the row to an output-less error; an interrupted rerun no longer erases the whole job from history on restart; and re-runs overwrite their own prior outputs instead of accumulating versioned duplicates or serving a stale enhanced variant
+- **Scanned-document OCR stays accurate across a batch**: the sparse-page tiled fallback no longer lowers detection thresholds process-wide, so later pages are OCR'd at full confidence
+- **LLM alt text applies to images whose names contain spaces or CJK**: references written percent-encoded were not being matched, so captions were silently dropped for those assets
+- **Quoted posts from X keep their exact text**: an interior ellipsis or "show more" run inside the quote no longer fabricates a truncation marker on complete text
+- **Editing only a provider's API key no longer pins its default API base**: the editor field is empty (with the default shown as a placeholder) when the connection uses the provider default, so saving keeps tracking that default
+- **Whole-history downloads clean up after themselves**: the generated archive is removed once the download finishes and can no longer survive as an orphan, and a file deleted mid-build is skipped instead of failing the download
+- **The completion notification reads "N done" for a clean job** instead of "N done · 0 failed", and the local server's job finalization no longer blocks other jobs' live progress while sizing large output directories
+
+## [0.22.0] - 2026-07-14
+
+### Added
+
+- **`markitai serve` adds a local web workspace for conversion**: install the `serve` extra to upload files or folders, submit URLs, watch live progress, preview and download results, and revisit seven days of on-disk history from a bilingual, accessible interface
+- **LLM setup moves into the web workspace**: it finds the local and API-backed providers you have, lists their models live, lets you configure weighted deployments and test a connection without showing the stored credential, and conversion jobs run on the same settings
+- **Web jobs can be retried and compared**: a failed file or URL item can be retried on its own, a large result set filtered, a completion notification arrives in the background, the equivalent CLI command is one click to copy, and the base Markdown sits beside its LLM-enhanced variant
+
+### Fixed
+
+- **PDFs with spaces or parentheses in the filename now get embedded-image analysis**: pymupdf4llm sanitizes the source name when writing extracted images (`My Paper.pdf` → `My_Paper.pdf-0001-00.jpg`), but embedded images were collected by globbing on the raw input name, so `--alt`/`--desc`/`rich` silently skipped every embedded image while page screenshots kept working. Collection now resolves the image refs written into the Markdown, keeps the previous prefix match as a fallback, and warns when a referenced asset is missing from disk
+- **Web result downloads work with nested artifacts on Windows**: API paths use URL separators instead of filesystem backslashes, so images and other generated assets open through the same links on every supported OS
+
+## [0.21.1] - 2026-07-12
+
+### Fixed
+
+- **Fresh installs on macOS and Windows no longer try to compile litellm from source**: litellm 1.92.0 shipped Linux-only wheels, so `uv tool install markitai` on other platforms fell back to building its new Rust extension from the sdist. That failed outright without a Rust toolchain, or with a wall of pyo3 errors when the build environment picked an unsupported Python (e.g. a system-default 3.14). That release is excluded; dependency resolution lands on a version with wheels for every supported platform
+
+## [0.21.0] - 2026-07-12
+
+### Changed
+
+- **Legacy `.xls` files now convert in pure Python** (xlrd via MarkItDown, same engine as `.xlsx`): no Office application or LibreOffice is launched or required, on any platform. Cell content is identical to the previous Excel-automation output (verified live); conversion is also faster and no longer serialized behind an app lock
+- **The persistent LLM cache is now scoped to your model pool**: switching model configuration stops serving results produced by the old models, while rotating an API key keeps every hit; document cleanups also keep hitting after a file is renamed (identical content, different name). Existing cache entries miss once after upgrading; the old entries were unreachable anyway (see Fixed)
+- **Structured LLM calls now go through the full transport retry loop** (exponential backoff, quota/billing short-circuit, empty-response retry) that plain-text calls always had; they previously bypassed it entirely. With a persistently degenerate model the worst-case attempt count is accordingly higher. That is the cost of actually retrying
+- **Standalone `.urls` batches gain vision enhancement** in the `--screenshot` multi-source corner, matching what a single-URL conversion of the same page produces
+- **Internal: the fetch, LLM, and CLI subsystems were restructured** behind unchanged behavior. Machine-enforced import-layering contracts now run in CI, fetch.py shrank from ~3000 to ~1100 lines with per-strategy modules, the LLM pipeline is a single engine instead of five hand-rolled copies, and report/exit-code/output handling is single-sourced across all input paths. A 43-item regression matrix over every 0.15–0.20 fix verified nothing regressed
+
+### Removed
+
+- **Python 3.14 support**: `requires-python` narrows to `>=3.11,<3.14` across the package and installers, and the CI/publish matrices no longer test 3.14. The platform-conditional ONNX Runtime constraint that existed only to keep 3.14 resolvable is gone with it
+- Excel COM automation (Windows) and Excel AppleScript automation (macOS), together with the `.xls` entries in the batch pre-conversion and heavy-task paths, since `.xls` no longer needs them
+
+### Fixed
+
+- **The cross-session LLM cache never actually hit**: the persistent cache's reads and writes disagreed on the cache key's model column, so no run ever saw a previous run's results, and every rerun of an already-processed document paid the full LLM cost again. Reads and writes now agree (locked by a regression test), and reprocessing an unchanged document is near-instant and free
+- **macOS `.doc`/`.ppt` conversion via Microsoft Office was broken end to end**: Word's and PowerPoint's AppleScript `open` returns nothing, so the script's document binding was never established. The first reference died, the error handler's own reference to the same variable masked the real error behind an inscrutable "variable openedItem is not defined", the document was never closed, and the stranded zombie documents degraded the app further with every retry. The script now binds the document by its unique staged name, closes it under both its pre- and post-save names, and always propagates the original error. Excel's "Parameter error -50" had the same root and is fixed the same way (moot for `.xls` now, see Removed, but the fix also covers the PPTX-to-PDF export path)
+- **macOS: `.doc`/`.ppt` conversion failing on an Office app's first scripted launch after an Office update** ("the document never registered" / PowerPoint error -9074). In that state the app silently drops Word's parametered `open` request while answering everything else; Word's script now retries with a plain `open` mid-poll (verified to penetrate and heal the state) and logs the recovery. Error messages for the stall and for -9074 now carry the verified remedy (open the app manually once so it finishes first-run setup) instead of the misleading "app stuck or overloaded, quit and retry"
+- **Truncated or degenerate LLM output no longer poisons the cache**: screenshot extraction and URL enhancement now reject length-truncated responses like every other call site, and URL enhancement no longer caches output whose degenerate tail had to be cut
+- **`markitai -I` no longer crashes with a raw traceback when a config file is invalid**: the interactive wizard now reports the same actionable message as every other command
+- **Directory-batch reports no longer drop screenshot counts for URL entries**
+- **The defuddle HTTP client now rebuilds when proxy or timeout settings change** (it previously kept the first client for the whole process, like jina always did correctly)
+- **Disabled models (`weight: 0`) no longer affect cache scoping**: disabling a model stops serving its old cached results, and adding or removing a disabled entry no longer invalidates the pool's cache
+- **Copilot authentication status reads correctly with current Copilot CLIs**: newer CLI versions write JSONC-style comments and renamed the login key, which made `doctor` and `auth copilot status` report a parse error as "not logged in". Both formats are now accepted, an unparseable config reports as indeterminate rather than unauthenticated, and a login the CLI itself reports as successful is never vetoed by the follow-up config read
+
+## [0.20.0] - 2026-07-10
+
+### Added
+
+- **macOS can use installed Microsoft Office when LibreOffice is absent**: AppleScript drives Word, PowerPoint or Excel to convert legacy `.doc`, `.ppt` and `.xls` files, and PowerPoint can export PPTX slides to PDF for rendering. `office.macos_fallback` switches the fallback on, headless sessions can turn it off, and `doctor` and the documentation explain the one-time Automation permission macOS asks for
+
+### Changed
+
+- **Public URLs go remote without a prompt; private ones never do**: a public URL may use the remote fallbacks without confirmation, and one process-wide stderr notice covers defuddle.md, Jina, Cloudflare, FxTwitter and Twitter oEmbed. Private, local, DNS-resolved non-global and credential-bearing URLs (sensitive path tokens included) stay local, and `MARKITAI_NO_REMOTE_FETCH=1` blocks every remote path, an explicit remote `-s` included
+- **`doctor` checks that a capability works rather than that a package exists**: only RapidOCR and the configured workflows can fail a normal run; Playwright is verified by launching Chromium, the environment variables the active models reference are checked, and `--fix`, when asked for, installs and rechecks Chromium and leaves the project's dependencies alone
+- **`markitai init` now preserves existing configuration by default**: pressing Enter selects Keep, while Update and Overwrite remain explicit choices
+- **Onboarding starts with the portable installer**: the homepage works out Windows versus macOS or Linux before first paint and recommends `setup.ps1` or `setup.sh`, with `uv tool install markitai` kept as the manual route. It also carries a 60-second no-LLM example, and the Chinese navigation, screen-reader and high-contrast support got better
+- **Copilot pricing metadata recognizes `gpt-5.6-luna` when explicitly configured**: the automatic OpenAI and ChatGPT onboarding defaults stay on generally available models, and the limited-preview model is opt-in
+
+### Fixed
+
+- **Quiet mode is consistent across single and batch work**: Markdown you asked for on stdout still arrives, errors stay on stderr, a quiet dry run prints no preview, a partly failed URL batch keeps its successful outputs and exits 10, and progress and success chatter stays hidden
+- **Image conversions with no enabled extraction path no longer report success**: a standalone image without `--ocr` or `--llm` now exits 1 with an actionable message instead of producing no output with a successful status
+- **Installer reruns preserve intent**: the shell and PowerShell setup scripts skip `markitai init --yes` when `~/.markitai/config.json` already exists, preserve existing extras, and honor an explicit `MARKITAI_VERSION` even when Markitai is already installed
+- **Homepage quick-start commands remain readable in light mode**: the dark command panel now always uses light text and transparent code backgrounds and stacks before the commands get cramped, and the site serves a real `/favicon.ico` instead of a 404
+- **Python 3.14 dependency resolution avoids an incompatible ONNX Runtime pin**: the constraints are now per platform, so Magika's Windows cap stays where it is needed and other platforms can take a supported ONNX Runtime release
+
+### Security
+
+- **Configuration output hides secrets by default**: `markitai config list` recursively redacts secrets and custom header values, cuts `api_base` down to its origin, and shows the original values only when you pass `--show-secrets`
+- **URL credentials stay local and out of diagnostics**: terminal errors, progress labels, dry-run previews, console and file logs and generated output names all drop userinfo, sensitive path tokens, query strings and fragments, and a hostname that resolves to any non-global address never crosses a remote dispatch boundary
+- **macOS Office automation isolates untrusted documents**: the fallback opens a read-only staged copy with macros and external-link updates disabled, binds and closes only the exact document it opened, serializes app access across processes, and keeps the recoverable staging files private
+- **A headless install does not count as consent to optional software**: without a usable terminal, the portable installer puts in uv, Python and Markitai and nothing else, unless `MARKITAI_INSTALL_OPTIONAL=1` explicitly turns on optional packages, browser binaries, system dependencies and third-party CLIs
+
+## [0.19.0] - 2026-07-10
+
+### Changed
+
+- **Remote extraction no longer prompts by default** (`fetch.remote_consent` default `ask` → `always`): public URLs fall back to remote extraction services (defuddle.md, Jina, Cloudflare, tried one at a time and only after the local strategies fail) without an interactive confirmation; an INFO log discloses the first use. Private/local URLs never use remote services regardless of this setting, and URLs carrying credentials in the netloc (`user:pass@host`) are now treated as private too. Set `fetch.remote_consent=ask`/`never` or `MARKITAI_NO_REMOTE_FETCH=1` to restore prompting or disable remote services
+- **Consent prompt rewording** (for `remote_consent=ask`): the prompt now explains why it appears (local extraction didn't succeed), that services are tried one at a time (first success wins), and lists only the services actually in the chain, so Cloudflare (which runs against your own account credentials) appears only when configured. Interactive prompts also pause the live progress display instead of tearing it
+
+### Added
+
+- **Live progress checklist (StageList)**: multi-stage live progress for single-URL and single-file conversions. Completed stages persist as `✓ Fetched via fxtwitter (2.1s)` lines, and the active stage shows a spinner with an elapsed-time suffix. Stdout-mode conversions (no `-o`) finally show progress; they were previously fully silent through fetch + LLM enhancement
+
+### Fixed
+
+- **`--resume` was a no-op**: the CLI batch entry point accepted the flag but always reprocessed every file from scratch. It now loads the saved state, skips completed files, retries failed or interrupted ones, picks up newly discovered files, and reports `Resuming batch: N completed, M remaining`
+- **Output naming reverted to the append scheme**: `sample.pdf` → `sample.pdf.md` (not `sample.md`), undoing the 0.15.0 extension-replacement change, which hid the source format, mangled multi-suffix names, and made single-file and batch conversions of the same file disagree
+- **Windows install one-liner 404**: the website now serves `setup.ps1` (docs pointed to https://markitai.dev/setup.ps1 but only setup.sh was deployed); Chinese changelog edits now trigger site redeploys
+- **Prompt REMINDER leaked into cleaned output**: with smaller models (observed with `gpt-5.4-mini`), the vision-cleaning prompt's trailing `REMINDER: ...` instruction, `---` delimiter included, could be echoed verbatim at the end of `.llm.md` output. The prompt now delimits the document with `<document>` tags and puts all instructions before the content, and a new output guard strips echoed prompt fragments, including from previously cached results
+- **Image alt text was silently skipped for some URL conversions**: URLs with a screenshot but no multi-source content (e.g. X posts via site extractors) fell through to text-only LLM processing without image analysis, and the URL-batch path never analyzed images at all, so `--alt`/`--desc` had no effect there. Both paths now analyze downloaded images (alt text + `images.json`). The stdout asset rewrite also no longer overwrites LLM-generated alt text with the bare filename
+- **Batch image analysis no longer trips over bare-payload JSON**: small models sometimes answer a single-image batch with the bare item instead of the `{"images": [...]}` wrapper; this burned Instructor retries and fell back to per-image analysis with an ERROR log. The JSON repair layer now coerces such shapes in place, so the batch succeeds directly
+- **Weak models could mangle social-post bodies during LLM cleanup** (flattened quoted-post blockquotes, respaced CJK text; observed with `claude-agent/haiku`): content profiled as `social_post` now passes its body through verbatim and the LLM only generates metadata. For all other document types, the document-processing prompt gained explicit blockquote-preservation and CJK-spacing rules
+- **ChatGPT connection errors were non-retryable and unreadable**: httpx transport failures (connection reset/refused, timeouts) were mapped to a non-retryable `ProviderError` with an empty message, bypassing every retry layer. They are now marked retryable and carry the underlying error text
+- **Console log lines no longer tear the live progress display**: log output now routes through the shared rich stderr console, so lines print above the StageList spinner instead of leaving stale frames behind; quiet/stdout mode also applies the same third-party retry-noise filter as normal mode (raw instructor retry errors previously leaked through)
+- **Failed LLM enhancement is now visible in the output**: when every LLM path fails, the fallback `.llm.md` frontmatter carries `llm_enhanced: false` and an ERROR-level log is emitted. Previously the only hint of degraded output was an empty description
+
+### Removed
+
+- **Legacy progress facilities retired**: internal `ConversionStatus`, `ProgressReporter`, and `OutputManager` are replaced by StageList; `markitai.utils`/`markitai.cli` no longer export `ProgressReporter`, and `attempt_login()` lost its unused `output_manager` parameter
+- **Dead code sweep**: unreachable async enricher registry, unused exception hierarchy, deprecated no-caller helpers, test-only utility functions, and ~5MB of unreferenced test fixtures; `markitdown` dependency narrowed from `[all]` to the office extras actually used (drops azure/audio/pdfminer/youtube transitive deps); `httpx` and `lxml` are now declared directly
+
+## [0.18.0] - 2026-07-09
+
+### Changed
+
+- **Web extraction parity with Defuddle**: main-content selection and noise-pattern removal now closely port Defuddle's algorithms (scoring, content patterns, content-boundary detection). Benchmark corpus mean vs. the Defuddle ground truth: 91.04 → 92.72
+
+## [0.17.0] - 2026-07-08
+
+### Removed
+
+- **Gemini CLI provider** (`gemini-cli/`): Google retired the OAuth onboarding it depended on. Use a direct `GEMINI_API_KEY` or route through OpenRouter instead
+
+### Added
+
+- `COPILOT_GITHUB_TOKEN` auth support, checked ahead of `GH_TOKEN`/`GITHUB_TOKEN`
+- Elapsed-time indicator on slow conversion stages, so a long-running LLM call doesn't look hung
+
+### Fixed
+
+- **Cloudflare fetch now respects site-specific extractors**: switched from the `/markdown` to the `/content` endpoint so Cloudflare-routed pages get the same extraction quality as every other strategy
+- Reduced console log noise from duplicate retry/validation messages
+
+### Changed
+
+- Local providers no longer waste tokens on unused extended-thinking/reasoning output
+- Provider detection and `init` now suggest cheaper default models
+
+## [0.16.0] - 2026-07-07
+
+### Added
+
+- **Bilibili opus extractor** for `bilibili.com/opus/<id>` posts
+- **Anti-bot/CAPTCHA detection**: challenge pages (Geetest, Cloudflare, reCAPTCHA, hCaptcha) are now recognized instead of silently treated as real content
+
+### Changed
+
+- **X/Twitter extraction is DOM-first again**, falling back to the FxTwitter/oEmbed enricher only when native extraction comes up short
+
+### Fixed
+
+- X Article URL matching, fetch performance, and frontmatter word-count bugs
+
+## [0.15.0] - 2026-07-04
+
+A maintenance release: refreshed dependencies, Python 3.14 support, and several rounds of auditing that fixed 30+ verified bugs across batch processing, fetch/cache, LLM providers, image handling and configuration.
+
+### Added
+
+- Python 3.14 support; MIT License added to package metadata
+- Grouped, faster `--help` via rich-click
+- Garbled/scanned-text detection for PDFs, with an advisory suggesting `--ocr`
+- Repeated header/footer suppression across PDF pages
+- VLM degeneration guard (truncates repetition-loop vision/OCR output)
+- HTML extraction and footnote-handling parity with Defuddle (MathJax/MathML, code blocks, footnotes across many site types)
+- Unified `-s/--strategy` fetch flag (old per-backend flags kept as deprecated aliases)
+- **Remote-fetch consent**: URLs are no longer sent to third-party services without consent (`fetch.remote_consent`, `MARKITAI_NO_REMOTE_FETCH`)
+- PDF hidden-text sanitization (prompt-injection guard): `security.pdf_sanitize`
+- Per-page OCR routing for mixed digital/scanned documents
+- Conversion-quality benchmark harness against a Defuddle ground-truth corpus
+- Release automation via release-please
+
+### Fixed
+
+The main fixes from several rounds of bug hunting:
+
+- X/Twitter DOM extractor rebuilt for X's 2026 markup redesign; FxTwitter fallback now actually reachable from the default fetch chain
+- `.eml` email support (native), HEIC/HEIF/AVIF image input (`markitai[heif]`), quality guardrails gate for CI
+- `markitai init` merges into an existing config instead of overwriting it; clearer login-failure guidance across providers
+- Fetch/cache correctness: stale AUTO-strategy cache revalidation, Playwright context leaks, proxy auto-detection false positives, null URLs crashing batches
+- LLM/provider correctness: failures no longer silently reported as success, vision cache poisoning, Copilot concurrent temp-file races, event-loop stalls from blocking calls, retry backoff holding concurrency slots
+- Image/conversion correctness: EXIF orientation, LA-mode transparency, uncompressed-image naming, EMF/WMF mislabeling, OCR engine config drift, temp-directory leaks
+- Config/CLI correctness: config editor validates before save, symlink safety check fixed, `llm.concurrency` lower bound enforced, JSON log formatting, `config set` type coercion and bracket-notation support
+
+### Changed
+
+- Mixing an input path with a subcommand is now an error instead of silently dropping the input
+- `-o out.md` on a single file/URL writes exactly that file
+- Diagnostics moved to stderr so piped stdout output stays clean
+- Output naming switched to an extension-replacement scheme (`sample.pdf` → `sample.md`); **reverted in 0.19.0**
+- `image.stdout_persist` now defaults on
+- Reports (`.markitai/reports/`) are batch-only by default
+- Dependency refresh (litellm, opencv-python, playwright, instructor, and others)
+
+### Security
+
+- litellm supply-chain pin lifted (`>=1.83.0`) now that upstream has audited and signed releases
+
+## [0.14.0] - 2026-03-25
+
+- Added: Steam News extractor; structural MathML-to-LaTeX conversion; LibreOffice functional (not just presence) check
+- Fixed: PDF math-content extraction fallback; BBCode XSS prevention in Steam content; flaky integration tests hardened
+- Security: litellm pinned to `<1.82.7` (supply-chain incident)
+
+## [0.13.1] - 2026-03-23
+
+- Added: Config editor redesign: fuzzy search, scrollable list, in-place UI refresh
+- Added: Field descriptions added to 66 Pydantic config settings
+- Fixed: Esc-key support, bool-editor consistency, and Literal-type value preservation in the config editor
+
+## [0.12.1] - 2026-03-22
+
+- Added: Inline terminal image display (Kitty/iTerm2) for stdout mode, backed by a content-addressed asset store
+- Added: Chinese user-journey documentation
+- Fixed: LLM errors now visible in quiet/stdout mode; Kitty protocol image format fix; `init` no longer generates duplicate provider entries
+
+## [0.12.0] - 2026-03-20
+
+- Added: Native HTML extraction pipeline: resolver-based extraction, frontmatter builder, quality profiles, and structured extractors for GitHub Discussions, X threads, and YouTube
+- Added: `--static` and `--kreuzberg` CLI flags
+- Changed: HTML files now route through the native webextract pipeline by default
+- Fixed: URL stdout fallback, thread-safety for shared caches/semaphores, atomic config writes
+
+## [0.11.2] - 2026-03-14
+
+- Fixed: Windows RAM detection for task sizing; lazy `~/.markitai/` directory creation (no side effects on read-only use); output/log dirs now default to `None` instead of a hardcoded path
+
+## [0.11.1] - 2026-03-14
+
+- Added: Pure-mode option in the interactive wizard
+- Fixed: `--pure` no longer wrongly triggered vision/screenshot paths; lowered an over-aggressive "content too short" threshold
+
+## [0.11.0] - 2026-03-13
+
+- Added: **`--pure` mode**: transparent LLM pass-through (text cleaning only, no frontmatter/post-processing), decoupled from `--llm`
+- Added: `--keep-base` to force writing the base `.md` alongside `.llm.md`
+- Fixed: URL processors now respect `--pure`/`--llm`/`--keep-base` consistently with file processing
+
+## [0.10.0] - 2026-03-12
+
+- Added: Auto-detect LLM providers from environment variables and authenticated CLIs when no config exists
+- Changed: `-v` is now `--verbose` (was `--version`); `-V` is `--version`
+- Changed: Cold-startup time cut via lazy imports (~5s → ~0.3s)
+- Fixed: Alt-text language now matches the document's language instead of defaulting to English
+
+## [0.9.2] - 2026-03-11
+
+- Fixed: Copilot/Claude login now always uses inherited stdio (fixes credential storage failures); clearer error messages instead of opaque wrapped exceptions
+
+## [0.9.1] - 2026-03-09
+
+- Added: `markitai doctor --suggest-extras` as the single source of truth for install-script extras
+- Fixed: Login-guard and extras-parsing bugs in the install scripts; Rich-markup escaping fix for provider names
+
+## [0.9.0] - 2026-03-09
+
+- Added: Configurable global/per-domain fetch **strategy priority**, and `local_only_patterns`/`inherit_no_proxy` to restrict sensitive domains to local-only strategies
+- Fixed: LLM output no longer translates mixed-language page content into the wrong language
+
+## [0.8.1] - 2026-03-06
+
+- Added: **Defuddle fetch strategy** (free, no auth) as a new top-priority option; `--defuddle` CLI flag
+- Changed: Default strategy order updated to lead with Defuddle/Jina
+
+## [0.8.0] - 2026-03-06
+
+- Added: 20+ new file formats via markitdown/kreuzberg (HTML, CSV, EPUB, MSG, IPYNB, Numbers, TSV, XML, ODS, ODT, SVG, RTF, RST, ORG, TEX, EML); GIF/BMP/TIFF image support
+- Fixed: Claude Agent SDK compatibility bump; i18n test isolation; import-time log noise from kreuzberg registration
+
+## [0.7.0] - 2026-03-05
+
+- Added: **ChatGPT provider** (`chatgpt/`) via OAuth device-code flow
+- Added: **Gemini CLI provider** (`gemini-cli/`), later removed in 0.17.0
+- Added: `weight: 0` to explicitly disable a model in routing
+- Fixed: Router division-by-zero when all models were weight-0
+
+## [0.6.1] - 2026-03-05
+
+- Fixed: Claude Agent SDK compliance fixes; auth pre-checks now recognize more environment-variable-based credentials
+
+## [0.6.0] - 2026-03-04
+
+- Added: **Cloudflare integration**: Browser Rendering for URLs plus Workers AI `toMarkdown` for files
+- Added: Fetch Policy Engine with domain profiles and Playwright session persistence
+- Added: Pluggable static HTTP backend (`httpx`/`curl-cffi`)
+- Fixed: Router division-by-zero when all vision models were disabled; removed 21 dead functions across the codebase
+
+## [0.5.2] - 2026-02-07
+
+- Fixed: SQLite connection leaks; Windows path-handling bugs; stale OAuth-expiry false positives; Pyright warnings cleared
+
+## [0.5.1] - 2026-02-07
+
+- Added: Playwright auto-scroll for lazy-loaded content; DOM noise cleanup (nav/ads/cookie banners) before extraction; `python -m markitai` support
+- Changed: Default models modernized across `init`/interactive/doctor; cache fingerprint switched to a full-content hash (was a short prefix, prone to collisions)
+
+## [0.5.0] - 2026-02-06
+
+- Added: **`markitai init`** setup wizard and **interactive mode** (`-I`); `doctor --fix` auto-install
+- Changed: CLI startup ~3x faster via lazy module loading; batch UI simplified to a compact progress display
+- Fixed: Windows LibreOffice/FFmpeg detection; Playwright default wait condition (was causing hangs)
+
+## [0.4.2] - 2026-02-03
+
+- Changed: Playwright wait defaults tuned for better SPA support
+- Fixed: X/Twitter pages now wait for full JS rendering before capture; caches respect the configured directory instead of a hardcoded path
+
+## [0.4.1] - 2026-02-02
+
+- Added: **`markitai doctor`** diagnostic command; adaptive timeout for local providers; prompt caching for long Claude Agent system prompts
+
+## [0.4.0] - 2026-01-28
+
+- Added: **Claude Agent SDK** and **GitHub Copilot SDK** local providers; HTTP conditional caching (ETag/Last-Modified) for URLs; `--quiet`/`-q` flag
+- Changed: Major module reorganization (`cli/`, `llm/`, `providers/`)
+
+## [0.3.2] - 2026-01-27
+
+- Added: Chinese README and setup scripts
+
+## [0.3.1] - 2026-01-27
+
+- Added: **SPA domain learning**: auto-detect and cache JS-heavy sites to skip wasted static-fetch attempts
+- Added: Windows performance tuning (thread pool sizing, OCR engine singleton, faster image compression)
+- Fixed: Prompt-leakage prevention (system/user prompt split); auto-proxy detection for fetching
+
+## [0.3.0] - 2026-01-26
+
+- Added: **Direct URL conversion** and `.urls` batch file support
+- Added: Multi-strategy fetching (`static`/`agent-browser`/`jina`/`auto`) with a SQLite fetch cache and screenshot capture
+- Added: `--no-cache-for <pattern>` selective cache bypass; `cache stats -v`
+- Added: Official VitePress documentation website (bilingual)
+- Added: MIT License; CI/CD workflows
+
+## [0.2.4] - 2026-01-21
+
+- Fixed: Office/PPTX compatibility patches; symlink-safety hardening; LLM empty-response retry; frontmatter field ordering
+
+## [0.2.3] - 2026-01-20
+
+- Added: **Persistent SQLite LLM cache** with LRU eviction; `cache stats`/`cache clear` commands
+- Added: Vision-aware model routing; parallel PDF/image processing
+
+## [0.2.2] - 2026-01-20
+
+- Added: `constants.py` module consolidating hardcoded values; broader unit test coverage
+
+## [0.2.1] - 2026-01-20
+
+- Added: Per-file LLM usage/cost tracking; typed usage/asset models; cross-platform Office/LibreOffice detection
+- Changed: File-conflict renaming switched to `.v2.md`-style natural sort order
+
+## [0.2.0] - 2026-01-19
+
+- Added: **Monorepo rewrite**: uv workspace, LiteLLM-based provider access, new converter/workflow architecture, JSON-schema-validated config
+- Breaking: New config format and CLI syntax; dropped support below Python 3.13; legacy `src/markitai/` architecture removed
+
+## [0.1.6] - 2026-01-14
+
+- Fixed: Model routing bugs; documentation accuracy pass
+
+## [0.1.5] - 2026-01-13
+
+- Changed: Prompt management and cleaner-module refactor
+
+## [0.1.4] - 2026-01-13
+
+- Fixed: LLM JSON-parsing edge cases; log formatting
+
+## [0.1.3] - 2026-01-12
+
+- Changed: Adopted `src` layout; added CI workflow
+
+## [0.1.2] - 2026-01-12
+
+- Added: Network resilience (retry/timeout handling); AI-assistant docs (`CLAUDE.md`, `AGENTS.md`)
+
+## [0.1.1] - 2026-01-11
+
+- Changed: Major architecture refactor to a service-layer pattern
+
+## [0.1.0] - 2026-01-10
+
+- Added: Capability-based model routing, lazy provider initialization, concurrent fallback on timeout, `--fast` execution mode, per-model batch statistics
+
+## [0.0.1] - 2026-01-08
+
+- Added: **Initial release**: CLI (`convert`/`batch`/`config`/`provider`), Office/PDF/HTML conversion, 5 LLM providers with fallback, image processing, batch processing with resume

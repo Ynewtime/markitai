@@ -62,3 +62,23 @@ test runner must accept its location explicitly and record the reference SHA.
 
 See [native CI](ci.md) for the clean-checkout package driver and its actual
 installation checks. Configuring a runner is separate from executing it.
+
+## Website
+
+`website/` is markitai.dev (VitePress, English at the root, Chinese under
+`zh/`). It still documents the Python markitai 1.x line, whose source is the
+`python` branch, until the site is rewritten for 2.0. With Bun 1.4:
+
+```sh
+cd website
+bun install --frozen-lockfile
+bun run docs:build    # output in website/.vitepress/dist
+```
+
+The changelog pages come from `website/changelog/python-1.x*.md`, not from the
+repository's `CHANGELOG*.md`; `bun scripts/changelog.mjs --check` fails when a
+section there has no `vX.Y.Z` tag, and the build leaves such a section off the
+site. `website/public/setup.sh` and `setup.ps1` are the installers served as
+`https://markitai.dev/setup.sh` and `/setup.ps1`. The contract tests in
+`website/tests` compare the pages with the Python CLI; their docstring shows how
+to run them against a checkout of the `python` branch.

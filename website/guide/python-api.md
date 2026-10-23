@@ -1,0 +1,127 @@
+# Python API
+
+Use markitai as a library. `markitai.convert()` and its async twin `markitai.aconvert()` run the same pipeline as the CLI, LLM enhancement included, and return a typed result.
+
+::: warning API stability
+Treat the Python API as provisional: signatures and result fields can still change in minor releases. The CLI is the stable interface. Pin an exact version if you depend on a library detail.
+:::
+
+```bash
+uv add markitai   # or: pip install markitai
+```
+
+## Basic Conversion
+
+```python
+import markitai
+
+# In memory: get the Markdown string back
+out = markitai.convert("report.pdf")
+print(out.markdown)
+
+# Write outputs and extracted images to a directory
+out = markitai.convert("report.pdf", output_dir="out/")
+print(out.output_path)  # out/report.pdf.md
+print(out.assets)  # images under out/.markitai/assets/
+
+# URLs work the same way
+out = markitai.convert("https://example.com/article")
+```
+
+Without `output_dir` the conversion runs in a temporary directory and deletes it afterwards. You get the Markdown in memory, path fields are `None`, and image links keep their relative `.markitai/assets/...` form. Pass `output_dir` whenever you need the image files.
+
+Library calls keep `stdout` clean. Diagnostics go through [loguru](https://github.com/Delgan/loguru) on stderr; silence them with `logger.disable("markitai")`.
+
+## LLM-Enhanced Conversion
+
+`llm=True` runs cleanup and frontmatter generation and returns both variants:
+
+```python
+import os
+import markitai
+
+os.environ["MODEL"] = "openai/gpt-6-luna"  # or configure llm.model_list
+
+out = markitai.convert("report.pdf", output_dir="out/", llm=True)
+print(out.llm_markdown)  # enhanced body
+print(out.frontmatter["title"])  # parsed YAML frontmatter
+print(out.usage.cost_usd)  # LLM spend for this conversion
+```
+
+Models resolve as in the CLI: `llm.model_list` from your [configuration](/guide/configuration) first, then the `MODEL` environment variable, then [automatic detection](/guide/configuration#defaults-markitai-picks-for-you) of provider API keys in the environment and signed-in subscription providers. When detection finds several providers they share one pool, and a loguru warning (stderr by default) lists them once per process; set `MODEL` to pin one. By default it loads the same config files as the CLI. Unlike the CLI, the library does not read `.env` files, so export keys before calling it. Pass a `markitai.MarkitaiConfig` for full control:
+
+```python
+from markitai import MarkitaiConfig
+
+cfg = MarkitaiConfig()  # pure defaults, ignores config files
+cfg.llm.pure = True  # raw LLM cleanup, no frontmatter
+out = markitai.convert("notes.docx", config=cfg, llm=True)
+```
+
+The keyword toggles `llm`, `ocr`, `screenshot`, `alt` and `desc` mirror the CLI flags and override the config; `None` keeps the configured value. `profile="rag" | "obsidian" | "okf"` mirrors `--profile`, see [Output Profiles](./output-profiles.md).
+
+## Async Usage
+
+Inside an event loop, use `aconvert`. CPU-bound work runs in a thread pool, so the loop stays responsive:
+
+```python
+import asyncio
+import markitai
+
+
+async def main() -> None:
+    results = await asyncio.gather(
+        markitai.aconvert("a.pdf", output_dir="out/"),
+        markitai.aconvert("https://example.com/b", output_dir="out/"),
+    )
+    for out in results:
+        print(out.source, "->", out.output_path or len(out.markdown))
+
+
+asyncio.run(main())
+```
+
+Calling the sync `convert()` from a running loop raises `RuntimeError`. Long-lived apps should call `await markitai.fetch.close_shared_clients()` on shutdown to release shared HTTP clients.
+
+A short-lived script can occasionally end with exit code 134 after a successful conversion, an onnxruntime teardown quirk. End such scripts with `from markitai.utils.shutdown import finalize_process; finalize_process(0)` to avoid it. Do not use it in a long-lived host, since it takes the whole process down.
+
+## Parallel PDF Extraction
+
+The CLI, `markitai serve` and the MCP server extract the pages of long PDFs, and of PDFs converted at the same time, in worker processes, and read the pages of a scanned PDF with OCR there too, one page per core. The output is the same, several times faster. A script opts in with `markitai.enable_worker_processes()`:
+
+```python
+import markitai
+
+
+def main() -> None:
+    markitai.enable_worker_processes()
+    for name in ("a.pdf", "b.pdf"):
+        markitai.convert(name, output_dir="out/")
+
+
+if __name__ == "__main__":
+    main()
+```
+
+The workers are started as new processes, and each one imports the script's `__main__` module again, so keep the script's work under `if __name__ == "__main__":` as shown. `MARKITAI_PDF_WORKERS` sets the number of workers.
+
+## ConversionOutput
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `source` | `str` | Input path or URL as given |
+| `markdown` | `str` | Base Markdown body (frontmatter stripped) |
+| `llm_markdown` | `str \| None` | LLM-enhanced body, `None` without LLM |
+| `frontmatter` | `dict` | Parsed YAML frontmatter of the richest output |
+| `output_path` | `Path \| None` | Written base `.md` file |
+| `llm_output_path` | `Path \| None` | Written `.llm.md` file |
+| `assets` | `list[Path]` | Extracted image files |
+| `screenshots` | `list[Path]` | Rendered page or screenshot files |
+| `images` | `list[dict]` | Per-image LLM analysis entries (alt, description) |
+| `usage` | `ConversionUsage` | `cost_usd`, token totals, per-model breakdown |
+| `skip_reason` | `str \| None` | `"exists"` when skipped by the conflict policy |
+| `duration` | `float` | Wall-clock seconds |
+| `warnings` | `list[str]` | Notices that didn't fail the call but are worth acting on: pages that look scanned (retry with `ocr=True`), hidden PDF text (a possible prompt injection), OCR that found no text, slides that couldn't be rendered, a URL screenshot that wasn't captured, an image whose analysis failed (it keeps its original alt text), an LLM enhancement that failed (`llm_markdown` is then `None` and the result is the unenhanced conversion; with `llm.on_failure = "fail"` the call raises `ConversionError` instead). Collected per call, so concurrent `aconvert` calls never mix them up. They're also logged as warnings |
+| `page_sources` | `list[dict]` | For a PDF, one entry per page: `{"page", "source", "reason"}`, `source` being `"text"` (the text layer), `"ocr"` or `"mixed"`, and `reason` a short English note (`"text layer trusted"`, `"no text layer"`, `"text layer failed the script check: …"`). Empty for other inputs |
+
+Failures raise instead of returning partial results: `ConversionError` for pipeline failures, `FetchError` for unreachable URLs, `NoModelConfiguredError` (a `ValueError` subclass) when LLM is enabled and no model resolves or none has its API key (the message names the variable to set, and nothing is sent), `ConfigFileError` when the config file is malformed or holds invalid values. All four can be imported from `markitai.api`. One call converts one file or URL; directory batches stay with the CLI.

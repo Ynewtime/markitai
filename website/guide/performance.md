@@ -1,0 +1,136 @@
+# Conversion performance
+
+URL extraction runs local-first: short articles and CJK prose usually finish in
+the static strategy without starting a browser. Local file conversion loads only
+the backend a format needs, with dedicated paths for plain Office documents and
+fallback readers for rich content, equations and ambiguous spreadsheet values.
+The [Fetch Policy](./fetch-policy) guide has the full strategy cascade.
+
+## Recorded results (14 September 2026)
+
+An audit on macOS with Python 3.12.14 measured a **6.01×** composite speedup
+against a frozen pre-optimization source snapshot:
+
+| Equally weighted workload | Speedup |
+| --- | ---: |
+| Five URL pages over loopback HTTP | 5.83× |
+| DOCX, XLSX, PPTX and PDF cold CLI runs | 5.61× |
+| 30-file TXT/HTML/DOCX batch | 6.64× |
+
+The composite is the geometric mean of the three groups, over 49 fixed cases
+with three fresh processes each, and with model enrichment, remote fetching and
+the cache all off. The audit also compared output: 40 converter and API
+snapshots, 23 complex table cases and 208 web fixtures came out identical.
+
+These are cold CLI aggregates; don't read them as a figure for one document
+or machine. URL timings run over loopback HTTP, excluding internet latency and
+any remote service's cache. The frozen baseline already contained the Fake-IP
+and CJK fixes, so this does not compare against a released version.
+
+[`2026-09-14.json`](https://github.com/Ynewtime/markitai/blob/main/scripts/benchmarks/results/2026-09-14.json)
+holds the full record; the
+[benchmark guide](https://github.com/Ynewtime/markitai/blob/main/scripts/benchmarks/README.md)
+has the commands to reproduce it.
+
+## PDF extraction, LLM batches and the web workspace (25 September 2026)
+
+PDF text goes through a layout model, one of the heaviest steps in a
+conversion. The CLI, `markitai serve` and the MCP server extract the pages of
+a PDF with 12 or more pages, and of PDFs converted at the same time, in worker
+processes that each run the model on one thread. The output is identical to
+extracting the document in one piece. A page then takes about a third of the
+CPU time, and each worker holds about 450 MB. `MARKITAI_PDF_WORKERS` sets the
+number of workers (by default the CPU count minus two, at most 12, and no
+more than a quarter of the available memory); `0` or `1` keeps extraction
+in-process. A Python script opts in with
+[`enable_worker_processes()`](./python-api#parallel-pdf-extraction).
+
+In an LLM batch a converted file hands its conversion slot to the next file
+while it waits on the model, so conversion and enhancement overlap.
+
+Cold CLI runs against 1.1.0 on an 18-core Mac, median of three interleaved
+runs, cache off:
+
+| Workload | 1.1.0 | 1.2.0 | Speedup |
+| --- | ---: | ---: | ---: |
+| One 300-page text PDF | 16.6 s | 4.0 s | 4.1× |
+| 40 PDFs (5 pages each) | 12.1 s | 2.9 s | 4.1× |
+| 240 mixed files (PDF, DOCX, PPTX, XLSX, HTML, CSV) | 12.9 s | 3.9 s | 3.3× |
+| 30 documents with `--llm --alt`, 0.5 s model latency | 7.0 s | 4.7 s | 1.5× |
+
+`markitai serve` runs the same pipeline. A job now takes up to 1000 items,
+so 240 mixed files go in one job (1.1.0 needed five): 12.8 s → 4.0 s. Thirty
+documents with the `standard` preset: 6.2 s → 3.7 s. During a 300-page PDF
+the API answered in 295 ms at the 95th percentile before and 3 ms now.
+
+Single small files, OCR and URL batches take the same time as before. The
+speedup grows with the number of cores and pages; a small PDF converted on
+its own stays in-process, where starting workers would cost more than it
+saves.
+
+## Scanned PDFs with OCR (15 October 2026)
+
+OCR reads a scanned page in two steps: a detector finds the lines, a
+recognizer reads them. The recognizer takes over 80 % of the time, and
+running it on many cores for one page gains little. The CLI, `markitai serve`
+and the MCP server therefore read the pages of a scanned PDF in the same
+worker processes that extract PDF pages, one page per worker: each worker
+loads the OCR models once and runs them on its share of the cores. Only as
+many pages are under way as there are workers and memory for them (half of
+the available memory at about 400 MB a page), so a long scan does not keep
+other documents waiting. The text is the same as reading the pages in one
+process. `MARKITAI_PDF_WORKERS` sets the number of workers here too.
+
+An invented 490-page scanned book (Chinese with English and code, six blank
+pages), `--preset minimal --ocr`, on an 18-core machine that other work kept
+busy (load 18 to 42):
+
+| Run | Before | Now |
+| --- | ---: | ---: |
+| Workbench job | 497 s | 294 s |
+| CLI | 510 s | 288 s |
+| CLI CPU time | 6,655 s | about 2,600 s |
+| Memory | 2.1 GB | about 6 GB (12 workers) |
+
+The workbench job also includes a fix to the Markdown cleanup, which spent
+50 s on the finished book and held the server meanwhile. Pages are rendered
+at 150 dpi: 120 and 200 dpi read the invented pages no better, and the
+detector, the only step the resolution changes, is a small part of a page.
+
+## PDF extraction on every core (20 October 2026)
+
+The PDF workers used to be the CPU count minus two, leaving cores to the main
+process, which only waits for them while they extract. On a 4-core machine a
+long PDF was extracted on two cores. There is now one worker per core the
+process may use, still at most 12 and no more than a quarter of the available
+memory. A document goes to the workers in tasks of four pages, one per worker
+and one waiting at a time, so a PDF converted at the same time (another
+workbench job, the next file of a batch) waits for a task rather than for the
+whole document. Page screenshots are rendered in the workers when they are
+running: PyMuPDF holds Python's GIL while it renders, so threads in the main
+process rendered one page at a time. The output is byte-identical.
+
+Invented PDFs, cold CLI, a 4-core Linux machine shared with other work
+(interleaved runs; the first row at raised priority, so that other work took
+little of the cores):
+
+| Workload | Before | Now |
+| --- | ---: | ---: |
+| 409-page text PDF | 53–55 s | 29–32 s |
+| Its CPU time | about 100 s | about 103 s |
+| Its peak memory (all processes, PSS) | 0.8 GB | 1.3 GB |
+| A 5-page PDF started 3 s into it | 55–65 s | 1.4–4.7 s |
+| 166-page PDF with pictures, `--screenshot`: main-process CPU | 6.3 s | 1.0 s |
+
+In one process, with onnxruntime spreading each page over every core, the
+same 409 pages take 101 s and 276 s of CPU time. Machines with 14 or more
+cores already had 12 workers and are unchanged.
+
+## Understanding a slow run
+
+`-v` prints the selected strategy and the reason for each fallback. `--no-cache`
+turns off markitai's own cache and cannot reach a remote service's, so timing an
+already-warm remote reader against a fresh local CLI process compares different
+work. Measure local conversion alone with `--preset minimal --no-remote-fetch`;
+measure the workflow you actually run with your usual enhancement and OCR
+options left on.
