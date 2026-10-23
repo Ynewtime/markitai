@@ -99,6 +99,15 @@ Besides the differences above, scripts written for Python markitai notice these:
   Markdown and exited 0); `--dry-run` warns about it. The `✓ Wrote out/a.md`
   line goes to stderr, so stdout holds only document output (Python printed
   the written path on stdout). See [troubleshooting](troubleshooting.md#exit-status).
+- **Batch-only options on other inputs:** Python ignored them; here they stop
+  the run before anything is converted, so a wrapper that always passes them
+  breaks on single files. `--resume` with a single file or URL exits 1 (only
+  directory and `.urls` batches save progress). `-g`/`--glob` and
+  `--max-depth` need a directory input and exit 2 otherwise, a `.urls` list
+  included. `--llm-batch-timeout` without `--llm-batch` exits 2, for a
+  directory too. `--llm-batch` on anything but a directory exits 2 (Python: 1),
+  and `--llm-batch-collect` with an input argument exits 2. Pass these options
+  only to the runs they apply to. See [CLI](cli.md).
 - **Asset names:** extracted pictures are named by their content
   (`.markitai/assets/510f5d9476ab159c03ccda77.jpg`, so a picture used twice is
   stored once) instead of numbered `<document>.0001.<ext>` names, and with
