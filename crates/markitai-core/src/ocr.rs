@@ -2159,8 +2159,10 @@ fn table_markdown(cells: &[Vec<String>]) -> String {
 /// Appends one block's lines as Markdown blocks: lines sharing most of a
 /// vertical band form a left-to-right row; a row starts a paragraph after a
 /// wide vertical gap, and after a row that stops short of the block's right
-/// edge (only rows that run to that edge, in a block where two or more do,
-/// wrap on to the next), unless both are in a larger face. Lines meet
+/// edge by more than the next row's first word needs (only rows that run to
+/// that edge, or end with no room left for that word, in a block where two
+/// or more do, wrap on to the next: ragged-right prose keeps its
+/// paragraphs), unless both are in a larger face. Lines meet
 /// without a space where Chinese or Japanese text touches the next line, and
 /// letter-spaced text is closed up. A short row much taller than the page's
 /// text, or a little taller and bold, opening a paragraph, is a heading
@@ -2301,7 +2303,33 @@ fn rows(
     let at_edge = |row: &Row| {
         row.rect[2] >= right - sizes.map_or(row.height, |sizes| sizes.body.max(row.height * 0.5))
     };
-    let wraps = rows.iter().filter(|row| at_edge(row)).count() >= 2;
+    // Whether `above` ran on into `below`: it reaches the block's right
+    // edge, or stops short of it by less than `below`'s first word needs
+    // (left-aligned prose breaks before a word that does not fit; a row
+    // ending further short ends its paragraph). Chinese and Japanese text
+    // breaks between any two characters.
+    let wrapped = |above: &Row, below: &Row| {
+        if at_edge(above) {
+            return true;
+        }
+        let text = below.text.trim_start();
+        let chars = text.chars().count().max(1);
+        // Up to two characters into CJK text (`·安排` before `十月…`).
+        let first = text.split_whitespace().next().unwrap_or_default();
+        let word = match first.chars().position(|c| cjk::han(c) || cjk::kana(c)) {
+            Some(at) => (at + 2).min(first.chars().count()),
+            None => first.chars().count(),
+        };
+        let width = (below.rect[2] - below.rect[0]) * word as f32 / chars as f32;
+        right - above.rect[2] < width + 0.6 * below.height.max(above.height)
+    };
+    // The block's text wraps: two rows or more reach its right edge, or run
+    // on into the next.
+    let wraps = rows.iter().filter(|row| at_edge(row)).count() >= 2
+        || (1..rows.len())
+            .filter(|&n| !coded[n - 1] && !coded[n] && wrapped(&rows[n - 1], &rows[n]))
+            .count()
+            >= 2;
     let gap = |above: &Row, below: &Row| {
         below.rect[1] - above.rect[3] > 0.8 * below.height.max(above.height)
     };
@@ -2349,7 +2377,7 @@ fn rows(
             continue;
         }
         let opens = previous.is_none_or(|(above, kind)| {
-            kind != Kind::Text || gap(above, row) || !(wraps && at_edge(above))
+            kind != Kind::Text || gap(above, row) || !(wraps && wrapped(above, row))
         });
         let sized = sizes.is_some()
             && (row.size >= HEADING || (row.bold && opens && row.size >= BOLD_HEADING));
@@ -2420,7 +2448,7 @@ fn rows(
                 (Kind::ListItem | Kind::ListMore, Kind::ListMore) => "\n  ",
                 (Kind::Text, Kind::Text)
                     if !gap(last, row)
-                        && ((wraps && at_edge(last)) || (large(last) && large(row))) =>
+                        && ((wraps && wrapped(last, row)) || (large(last) && large(row))) =>
                 {
                     "\n"
                 }
@@ -3420,6 +3448,48 @@ pub(crate) mod tests {
              A sentence alone.\n\n\
              Another sentence alone.\n\n\
              A last row runs to the edge again"
+        );
+    }
+
+    /// Ragged-right prose: each row stops short of the widest by less than
+    /// the next row's first word, so it wrapped there; the paragraphs are
+    /// set apart by a gap, and a row with room left for the next word ends
+    /// its paragraph.
+    #[test]
+    fn ragged_right_rows_stay_one_paragraph() {
+        let paragraphs: [&[&str]; 3] = [
+            &[
+                "The allotment committee met in the old seed shed to",
+                "review the state of the plots, the water barrels and",
+                "borrow during the growing season.",
+            ],
+            &[
+                "Members agreed that the gate should be repainted soon",
+                "before the spring fair, and that the compost bins need",
+                "emptying.",
+            ],
+            &["Short line.", "Another short line after it."],
+        ];
+        let mut page = Vec::new();
+        let mut top = 0.;
+        for paragraph in paragraphs {
+            for row in paragraph.iter() {
+                let right = row.chars().count() as f32 * 9.;
+                page.push(sized(row, [0., top, right, top + 18.]));
+                top += 24.;
+            }
+            top += 20.;
+        }
+        assert_eq!(
+            assemble(page, 520, 320).unwrap().text,
+            "The allotment committee met in the old seed shed to\n\
+             review the state of the plots, the water barrels and\n\
+             borrow during the growing season.\n\n\
+             Members agreed that the gate should be repainted soon\n\
+             before the spring fair, and that the compost bins need\n\
+             emptying.\n\n\
+             Short line.\n\n\
+             Another short line after it."
         );
     }
 
