@@ -21,11 +21,11 @@ hero:
   <p><code>markitai serve</code> puts the same conversion core behind a local web UI. Drop files in, paste URLs, watch progress, check each result next to its original, download everything.</p>
   <picture class="home-shot-light">
     <source srcset="./images/workbench.webp" type="image/webp" />
-    <img src="./images/workbench.png" alt="The markitai web workbench: a converted one-page PDF open in a window centred over the dimmed list of conversions, on its Compare tab. The original page on the left and its Markdown on the right both outline the same diagram: Files and URLs, markitai, Markdown." width="1440" height="700" loading="lazy" />
+    <img src="./images/workbench.png" alt="The markitai web workbench: a converted one-page PDF open in a window centred over the dimmed list of conversions, on its Compare tab. The original page on the left and its Markdown on the right both outline the same diagram: Files and URLs, markitai, Markdown." width="1600" height="1000" loading="lazy" />
   </picture>
   <picture class="home-shot-dark">
     <source srcset="./images/workbench.dark.webp" type="image/webp" />
-    <img src="./images/workbench.dark.png" alt="The markitai web workbench: a converted one-page PDF open in a window centred over the dimmed list of conversions, on its Compare tab. The original page on the left and its Markdown on the right both outline the same diagram: Files and URLs, markitai, Markdown." width="1440" height="700" loading="lazy" />
+    <img src="./images/workbench.dark.png" alt="The markitai web workbench: a converted one-page PDF open in a window centred over the dimmed list of conversions, on its Compare tab. The original page on the left and its Markdown on the right both outline the same diagram: Files and URLs, markitai, Markdown." width="1600" height="1000" loading="lazy" />
   </picture>
   <p class="home-shot-link"><a href="/guide/serve">Read about the web workspace <span aria-hidden="true">→</span></a></p>
 </section>
