@@ -212,10 +212,10 @@ Microsoft Foundry address in `api_base`, and Claude on Vertex AI) use API
 version `2026-10-21`: the `anthropic-version` header, Vertex AI's
 `anthropic_version` body field, Message Batches, model discovery and the
 connection test. `litellm_params` keeps only the settings listed in
-[configuration](configuration.md); `temperature`, `top_p` and `top_k`, which
-LiteLLM forwards, are never sent, and an Anthropic model that sets them gets one
-warning naming them, since that API version refuses them on every model. A
-gateway in `api_base` must accept that version.
+[configuration](configuration.md), so `temperature`, `top_p` and `top_k` are
+never sent (Python markitai drops them too); an Anthropic model that sets them
+gets one warning naming them, since that API version refuses them on every
+model. A gateway in `api_base` must accept that version.
 
 ### OpenAI-compatible prefixes
 
