@@ -2799,6 +2799,9 @@ pub(crate) mod tests {
             small.text.split_whitespace().collect::<String>(),
             lines.concat()
         );
+        if vision_recorded_on_a_later_macos() {
+            return;
+        }
         // At 17 pixels per em the lines are read once and 環 is recovered.
         let larger =
             recognize_rgb(system_font_lines("Hiragino Sans", &lines, 17), &config).unwrap();
@@ -2824,7 +2827,7 @@ pub(crate) mod tests {
         let missed = system_font_lines("Arial Unicode MS", &lines, 16);
         let (width, height) = missed.dimensions();
         let missed = recognize_rgb(missed, &config);
-        if vision_unavailable_under_rosetta(&missed) {
+        if vision_unavailable_under_rosetta(&missed) || vision_recorded_on_a_later_macos() {
             return;
         }
         let missed = missed.unwrap();
@@ -2903,6 +2906,9 @@ pub(crate) mod tests {
         // Small and ordinary text, with the enlarged second reading.
         default_reads("Hiragino Sans GB", &chinese, 13, "zh-Hans", "zh");
         default_reads("Hiragino Sans GB", &chinese, 25, "zh-Hans", "zh");
+        if vision_recorded_on_a_later_macos() {
+            return;
+        }
         let japanese = [
             "キャッシュの保存先は環境変数で変更できます。テストの際",
             "には一時ディレクトリを指定してください。",
@@ -3749,6 +3755,39 @@ pub(crate) mod tests {
                 "round {round}"
             );
         }
+    }
+
+    /// The macOS release whose Vision recognizer the exact-reading tests
+    /// record (docs/ocr.md names macOS 27.0.1): which characters it drops at a
+    /// size, when a reading comes back empty and is read again enlarged, which
+    /// language the default policy settles on. Earlier releases ship other
+    /// recognition models (macOS 15 on GitHub's runners reads the 16-pixel
+    /// Korean lines directly and the 16-pixel Japanese lines as zh-Hans), so
+    /// there those assertions are skipped, after saying so; the rest of each
+    /// test still runs.
+    #[cfg(target_os = "macos")]
+    const VISION_RECORDED_ON_MACOS: u32 = 27;
+
+    /// True, after saying why, on a macOS release older than the one the
+    /// exact Vision readings were recorded on.
+    #[cfg(target_os = "macos")]
+    pub(crate) fn vision_recorded_on_a_later_macos() -> bool {
+        let version = std::process::Command::new("sw_vers")
+            .arg("-productVersion")
+            .output()
+            .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+            .unwrap_or_default();
+        let major = version
+            .split('.')
+            .next()
+            .and_then(|major| major.parse::<u32>().ok());
+        let older = major.is_some_and(|major| major < VISION_RECORDED_ON_MACOS);
+        if older {
+            eprintln!(
+                "skipping readings recorded with macOS {VISION_RECORDED_ON_MACOS}'s Vision: this is macOS {version}"
+            );
+        }
+        older
     }
 
     /// True, after saying why, when `result` is Vision's explicit failure in a
