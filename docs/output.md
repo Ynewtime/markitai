@@ -64,6 +64,8 @@ Pure output bypasses this normalization. Existing YAML is parsed for API metadat
 but its original bytes and the original body are retained for file output. Pure
 input without YAML has an empty frontmatter map. The OKF profile still adds its
 required document type and generator identity; generated timestamps use UTC `Z`.
+OKF front matter is written `type`, `title`, `description`, `resource`, `tags`,
+`generated` (`by`, then `at`), then the other fields, as Python markitai writes it.
 
 Pure model requests receive the complete original reader Markdown, including any
 input YAML. API metadata is parsed from the output actually retained. Normal LLM

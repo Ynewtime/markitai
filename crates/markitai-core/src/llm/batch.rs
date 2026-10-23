@@ -532,6 +532,7 @@ impl Plan {
             usage,
             cache_hit,
             warnings,
+            profile: self.profile.clone(),
         }
     }
 }
@@ -542,10 +543,12 @@ pub struct DecodedDocument {
     pub usage: ConversionUsage,
     pub cache_hit: bool,
     pub warnings: Vec<String>,
+    /// The output profile, which orders the front matter.
+    pub(crate) profile: Option<String>,
 }
 impl DecodedDocument {
     pub fn content(&self) -> Result<String> {
-        crate::output::render(&self.metadata, &self.markdown)
+        crate::output::render_profile(&self.metadata, &self.markdown, self.profile.as_deref())
     }
 }
 

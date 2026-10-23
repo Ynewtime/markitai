@@ -296,18 +296,26 @@ fn yaml_entry(key: &str, value: &Value) -> Result<String> {
         }
         // A nested mapping (OKF's `generated`) quotes its own scalars the same way.
         Value::Object(fields) if plain_key && !fields.is_empty() && holds_implicit(value) => {
-            let mut entry = format!("{key}:\n");
-            for (name, field) in fields {
-                for line in yaml_entry(name, field)?.lines() {
-                    entry.push_str("  ");
-                    entry.push_str(line);
-                    entry.push('\n');
-                }
-            }
-            Ok(entry)
+            yaml_mapping(key, fields.iter())
         }
         _ => yaml_serde::to_string(&json!({key:value})).map_err(failure),
     }
+}
+
+/// A block mapping whose fields are written in the given order.
+fn yaml_mapping<'a>(
+    key: &str,
+    fields: impl Iterator<Item = (&'a String, &'a Value)>,
+) -> Result<String> {
+    let mut entry = format!("{key}:\n");
+    for (name, field) in fields {
+        for line in yaml_entry(name, field)?.lines() {
+            entry.push_str("  ");
+            entry.push_str(line);
+            entry.push('\n');
+        }
+    }
+    Ok(entry)
 }
 
 /// Whether a mapping holds, at any depth, a string a YAML 1.1 loader would not
@@ -345,15 +353,54 @@ pub(crate) const FIELD_ORDER: [&str; 14] = [
     "fetch_strategy",
 ];
 
+/// The `okf` profile's own keys, written first in Python markitai's
+/// `okf_frontmatter` order (`type` leads, as OKF requires it); the rest
+/// follow in [`FIELD_ORDER`], then in name order.
+const OKF_FIELD_ORDER: [&str; 6] = [
+    "type",
+    "title",
+    "description",
+    "resource",
+    "tags",
+    "generated",
+];
+
+/// OKF's `generated` mapping, written `by` then `at` as Python markitai does.
+const OKF_GENERATED_ORDER: [&str; 2] = ["by", "at"];
+
 pub fn render(frontmatter: &Map<String, Value>, markdown: &str) -> Result<String> {
+    render_profile(frontmatter, markdown, None)
+}
+
+/// Front matter in the key order of the output `profile` (`okf` has its own).
+pub(crate) fn render_profile(
+    frontmatter: &Map<String, Value>,
+    markdown: &str,
+    profile: Option<&str>,
+) -> Result<String> {
+    let okf = profile == Some("okf");
+    let leading: &[&str] = if okf { &OKF_FIELD_ORDER } else { &[] };
     let mut yaml = String::new();
-    for key in FIELD_ORDER {
-        if let Some(value) = frontmatter.get(key) {
-            yaml.push_str(&yaml_entry(key, value)?);
+    let ordered = FIELD_ORDER.iter().filter(|key| !leading.contains(key));
+    for key in leading.iter().chain(ordered) {
+        let Some(value) = frontmatter.get(*key) else {
+            continue;
+        };
+        match value {
+            Value::Object(fields) if okf && *key == "generated" && !fields.is_empty() => {
+                let ordered = OKF_GENERATED_ORDER
+                    .iter()
+                    .filter_map(|name| fields.get_key_value(*name));
+                let rest = fields
+                    .iter()
+                    .filter(|(name, _)| !OKF_GENERATED_ORDER.contains(&name.as_str()));
+                yaml.push_str(&yaml_mapping(key, ordered.chain(rest))?);
+            }
+            _ => yaml.push_str(&yaml_entry(key, value)?),
         }
     }
     for (key, value) in frontmatter {
-        if !FIELD_ORDER.contains(&key.as_str()) {
+        if !leading.contains(&key.as_str()) && !FIELD_ORDER.contains(&key.as_str()) {
             yaml.push_str(&yaml_entry(key, value)?);
         }
     }
@@ -384,7 +431,11 @@ pub fn content(result: &ConversionOutput, cfg: &Value, enhanced: bool) -> Result
                 .as_ref()
                 .unwrap_or(&result.frontmatter)
         };
-        render(metadata, body)
+        render_profile(
+            metadata,
+            body,
+            cfg.pointer("/output/profile").and_then(Value::as_str),
+        )
     }
 }
 
@@ -2258,6 +2309,30 @@ mod tests {
         write(dir.path(), "file.txt", &mut pure, &[], &cfg).unwrap();
         let written = std::fs::read_to_string(pure.output_path.unwrap()).unwrap();
         assert_eq!(split_frontmatter(&written).0["type"], "Document");
+        assert!(written.starts_with("---\ntype: Document\n"), "{written}");
+    }
+
+    #[test]
+    fn okf_front_matter_leads_with_type_in_the_reference_order() {
+        // Python markitai's okf_frontmatter: type, title, description,
+        // resource, tags, generated {by, at}, then the other fields.
+        let metadata = json!({"title":"Doc","resource":"sample.pdf","description":"A doc","tags":["a"],"type":"Document","fetch_strategy":"static","custom":1,"generated":{"at":"2026-08-25T01:42:09Z","by":"markitai/2.0.0"}});
+        let metadata = metadata.as_object().unwrap();
+        let rendered = render_profile(metadata, "Body\n", Some("okf")).unwrap();
+        assert_eq!(
+            rendered,
+            "---\ntype: Document\ntitle: Doc\ndescription: A doc\nresource: sample.pdf\ntags:\n- a\n\
+             generated:\n  by: markitai/2.0.0\n  at: '2026-08-25T01:42:09Z'\nfetch_strategy: static\n\
+             custom: 1\n---\n\nBody\n"
+        );
+        let (parsed, _) = split_frontmatter(&rendered);
+        assert_eq!(&parsed, metadata);
+        // Without the profile the usual order stands.
+        assert!(
+            render(metadata, "")
+                .unwrap()
+                .starts_with("---\ntitle: Doc\ndescription: A doc\n")
+        );
     }
     #[test]
     fn paired_conflicts_and_skip_preserve_existing_bytes() {

@@ -711,6 +711,7 @@ impl PythonPlan {
                     usage: copy_usage(&usage),
                     cache_hit: false,
                     warnings,
+                    profile: self.profile.clone(),
                 },
                 PythonExtras { descriptions },
             ))

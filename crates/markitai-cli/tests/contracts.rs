@@ -81,7 +81,11 @@ fn pure_stdout_keeps_existing_yaml_and_okf_still_emits_its_schema() {
         String::from_utf8_lossy(&output.stderr)
     );
     let content = String::from_utf8(output.stdout).unwrap();
-    assert!(content.contains("type: Document\n"));
+    // `type` leads OKF front matter, as in Python markitai.
+    assert!(
+        content.starts_with("---\ntype: Document\ntitle: Original\n"),
+        "{content}"
+    );
     assert!(content.contains("custom: 42\n"));
     assert!(content.ends_with("# Heading\nBody  \n"));
 }
