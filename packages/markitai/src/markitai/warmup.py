@@ -14,9 +14,10 @@ markitai module, and every module its sources name in an import statement
 (read from the sources, so the list cannot drift), in a few processes at
 once and below normal priority. The setup scripts start it in the
 background right after installing markitai and wait for it at the end.
-With the ``ocr`` extra installed it also builds an OCR engine once
-(:func:`markitai.ocr.prepare_ocr_stack`), so the first ``--ocr`` does not
-load the OCR stack for the first time.
+It then loads every native library a conversion may use once, in a child
+process, and records it (:func:`prepare`; ``markitai doctor`` and
+``markitai serve``'s start do the same): the first load after an install is
+the slow one on macOS, and the first conversion no longer pays it.
 ``--browser`` launches Chromium once as ``markitai doctor`` does (the first
 launch after a download is the slow one on Windows) and remembers it.
 
@@ -34,8 +35,10 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
+from typing import Any
 
 _PACKAGE = Path(__file__).resolve().parent
 # Modules that run something when imported
@@ -198,26 +201,194 @@ def run(jobs: int, browser: bool) -> dict[str, object]:
         # A process that died before its report: its share compiles on use
         "crashed": crashed,
     }
-    report.update(_prepare_ocr())
+    report.update(_prepare_libraries())
     if browser:
         report.update(_launch_browser())
     report["seconds"] = round(time.perf_counter() - started, 3)
     return report
 
 
-def _prepare_ocr() -> dict[str, object]:
-    """Build an OCR engine once and remember it, as ``markitai doctor`` does
-    (``ocr.prepare_ocr_stack``): the engine's first build after an install
-    took 7 s on macOS, on top of OpenCV's first load the imports paid."""
-    from markitai.ocr import is_ocr_available, prepare_ocr_stack
-
-    if not is_ocr_available():
-        return {"ocr": "not installed"}
+def _prepare_libraries() -> dict[str, object]:
+    """Load every native library a conversion may use once, as ``markitai
+    doctor`` does (:func:`prepare`)."""
     try:
-        took = prepare_ocr_stack()
-    except Exception as exc:  # noqa: BLE001 - the first --ocr reports it
-        return {"ocr": f"failed: {exc}"}
-    return {"ocr": "prepared", "ocr_seconds": round(took or 0.0, 3)}
+        took = prepare()
+    except Exception as exc:  # noqa: BLE001 - the first conversion reports it
+        return {"libraries": f"failed: {exc}"}
+    return {"libraries": "prepared", "libraries_seconds": round(took or 0.0, 3)}
+
+
+# --- the first load after an install ---------------------------------------------
+#
+# macOS checks every newly installed native library the first time a process
+# loads it, and remembers it for every later process: on an Apple silicon test
+# machine OpenCV took 33 s (about 100 libraries), PyMuPDF 2.9 s, NumPy 1.1 s,
+# the first OCR engine 7 s; later processes 0.3 s in all. A first conversion
+# that paid it took 8 s for a PPTX and a PDF, 38 s for a 3-page scan. The
+# setup scripts (``run``), ``markitai doctor`` and ``markitai serve``'s start
+# pay it instead, in a child process: the caller keeps none of it in memory
+# and is not held up meanwhile (a process loads one native library at a time).
+
+#: Packages with native libraries a conversion loads, whose files the record
+#: names (an upgrade or a reinstall writes new files, which macOS checks again).
+_NATIVE_PACKAGES = (
+    "numpy",
+    "PIL",
+    "lxml",
+    "pymupdf",
+    "onnxruntime",
+    "psutil",
+    "pydantic_core",
+    "cv2",
+    "rapidocr",
+    "shapely",
+    "pyclipper",
+    "charset_normalizer",
+    "yaml",
+)
+#: A child loading everything for the first time may take this long (40 s on
+#: the slowest machine measured) before it is given up.
+_PREPARE_TIMEOUT = 600
+
+_prepare_lock = threading.Lock()
+_prepared_here = False
+
+
+def prepared_record() -> Path:
+    """Where :func:`prepare` records that it ran for this installation."""
+    return Path.home() / ".markitai" / "prepared.json"
+
+
+def _fingerprint() -> dict[str, object]:
+    """This installation: the interpreter, its site-packages folder and the
+    native packages' files, each with when it was written. Stats only."""
+    import sysconfig
+
+    def stamp(path: str | None) -> list[object] | None:
+        if not path:
+            return None
+        try:
+            return [path, os.stat(path).st_mtime_ns]
+        except OSError:
+            return [path, None]
+
+    packages: dict[str, object] = {}
+    for name in _NATIVE_PACKAGES:
+        try:
+            spec = importlib.util.find_spec(name)
+        except (ImportError, ValueError):
+            spec = None
+        packages[name] = stamp(getattr(spec, "origin", None))
+    return {
+        "python": sys.executable,
+        "site_packages": stamp(sysconfig.get_paths().get("purelib")),
+        "packages": packages,
+    }
+
+
+def prepared() -> bool:
+    """Whether this installation's native libraries have loaded once
+    (:func:`prepare` ran since it was installed or changed)."""
+    if _prepared_here:
+        return True
+    try:
+        record = json.loads(prepared_record().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return record == _fingerprint()
+
+
+def _load_in_child(ocr_config: Any = None) -> None:
+    """Run :func:`_load_everything` in a child process of this interpreter.
+
+    Raises:
+        RuntimeError: The child failed (its last line of error output).
+    """
+    command = [sys.executable, "-P", "-m", "markitai.warmup", "--native"]
+    if ocr_config is not None:
+        command += ["--ocr-config", ocr_config.model_dump_json()]
+    run = subprocess.run(  # noqa: S603 - this interpreter, this module
+        command,
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=_PREPARE_TIMEOUT,
+        check=False,
+    )
+    if run.returncode != 0:
+        lines = [line for line in run.stderr.splitlines() if line.strip()]
+        raise RuntimeError(lines[-1] if lines else f"exit status {run.returncode}")
+
+
+def prepare(ocr_config: Any = None) -> float | None:
+    """Load every native library a conversion may use once, in a child
+    process, and record it (see :func:`prepared`).
+
+    The child imports every installed module markitai's sources name,
+    builds the PDF layout models' sessions, loads Pillow's codecs and, with
+    the ``ocr`` extra, builds an OCR engine (with *ocr_config*'s language).
+    Threads calling it at once wait for the one that loads.
+
+    Returns:
+        The seconds it took, or None when this installation was prepared.
+
+    Raises:
+        RuntimeError: The child failed (an OCR engine the configuration
+            cannot build; the conversion reports it in its own words).
+        subprocess.TimeoutExpired: The child took over ten minutes.
+    """
+    global _prepared_here
+    with _prepare_lock:
+        if _prepared_here:
+            return None
+        if prepared():
+            _prepared_here = True
+            return None
+        started = time.perf_counter()
+        _load_in_child(ocr_config)
+        _prepared_here = True
+        record = prepared_record()
+        try:
+            record.parent.mkdir(parents=True, exist_ok=True)
+            record.write_text(json.dumps(_fingerprint()), encoding="utf-8")
+        except OSError:  # asked again next time; nothing breaks
+            pass
+        return time.perf_counter() - started
+
+
+def _load_everything(ocr_config_json: str | None) -> int:
+    """The child of :func:`prepare`: load, then exit."""
+    import contextlib
+    import io
+
+    names = [name for name in module_names() if not name.startswith("markitai")]
+    with contextlib.redirect_stdout(io.StringIO()):
+        _import_all(names)
+        from markitai.converter.onnx_threads import import_pymupdf4llm
+
+        try:
+            import_pymupdf4llm()  # its layout models' sessions
+        except Exception:  # noqa: BLE001 - the conversion reports it
+            pass
+        try:
+            from PIL import features
+
+            for feature in ("webp", "avif", "freetype2", "littlecms2"):
+                features.check(feature)
+        except Exception:  # noqa: BLE001 - optional codecs
+            pass
+    from markitai.ocr import OCRProcessor, is_ocr_available
+
+    if is_ocr_available():
+        config = None
+        if ocr_config_json:
+            from markitai.config import OCRConfig
+
+            config = OCRConfig.model_validate_json(ocr_config_json)
+        OCRProcessor._create_engine_impl(config, threads=1)
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -230,7 +401,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--browser", action="store_true")
     parser.add_argument("--only-browser", action="store_true")
     parser.add_argument("--worker", default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--native", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--ocr-config", default=None, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
+    if args.native:
+        return _load_everything(args.ocr_config)
     if args.worker is not None:
         return _worker([name for name in args.worker.split(",") if name])
     if args.only_browser:

@@ -12,13 +12,6 @@ from markitai.cli.commands.doctor import doctor
 
 
 @pytest.fixture(autouse=True)
-def _no_ocr_child(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Doctor's RapidOCR check loads the OCR stack once in a child process
-    (``ocr.prepare_ocr_stack``); these tests check its report, not that."""
-    monkeypatch.setattr("markitai.ocr._load_in_child", lambda _config: None)
-
-
-@pytest.fixture(autouse=True)
 def _keys_present():
     """These configs are MagicMocks, which the API key check cannot read.
 

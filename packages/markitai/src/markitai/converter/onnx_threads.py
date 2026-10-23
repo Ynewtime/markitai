@@ -112,17 +112,17 @@ _warm_started = False
 
 
 def warm_up_in_background(ocr_config: OCRConfig | None = None) -> None:
-    """Load the PDF layout models and converter libraries in a daemon thread,
-    then prepare the OCR stack when OCR is installed.
+    """Prepare this installation's native libraries, then load the PDF stack
+    and the converter libraries here, in a daemon thread.
 
-    For ``markitai serve``: its first job otherwise paid them, and every
-    file of that job waited (pymupdf4llm loads three ONNX models as it is
-    imported). OpenCV is loaded only by the OCR step, after the rest, and
-    only until this installation has loaded it once
-    (``ocr.prepare_ocr_stack``: the first load after an install took 40 s
-    on macOS). Once per process. As for serve's LiteLLM prewarm, the thread
-    imports only third-party modules: the markitai modules it calls are
-    imported here first.
+    For ``markitai serve``: its first job otherwise paid them, and every file
+    of that job waited. While the installation has not loaded its libraries
+    once (``warmup.prepare``: the first load after an install took 8 s for
+    the PDF and office libraries and 40 s for OCR on macOS), a child process
+    does that first, so this process is not held up loading its own
+    meanwhile; then the imports here take a moment. Once per process. As
+    for serve's LiteLLM prewarm, the thread imports only third-party
+    modules: the markitai modules it calls are imported here first.
     """
     global _warm_started
     import importlib
@@ -132,9 +132,13 @@ def warm_up_in_background(ocr_config: OCRConfig | None = None) -> None:
             return
         _warm_started = True
     importlib.import_module("markitai.converter.pdf_parallel")
-    from markitai.ocr import is_ocr_available, prepare_ocr_stack
+    from markitai.warmup import prepare
 
     def run() -> None:
+        try:
+            prepare(ocr_config)
+        except Exception:  # a conversion reports it where it matters
+            pass
         try:
             import_pymupdf4llm()
         except Exception:  # the conversion reports it where it matters
@@ -143,11 +147,6 @@ def warm_up_in_background(ocr_config: OCRConfig | None = None) -> None:
             try:
                 importlib.import_module(name)
             except Exception:
-                pass
-        if is_ocr_available():
-            try:
-                prepare_ocr_stack(ocr_config)
-            except Exception:  # an OCR conversion reports it where it matters
                 pass
 
     threading.Thread(target=run, name="markitai-converter-prewarm", daemon=True).start()

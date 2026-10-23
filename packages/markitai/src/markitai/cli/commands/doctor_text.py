@@ -38,6 +38,11 @@ _MESSAGES: list[tuple[re.Pattern[str], str]] = [
     for p, zh in [
         (r"Chromium installed", "Chromium 已安装"),
         (
+            r"loaded once for this installation in (\d+) s",
+            "已为本次安装首次加载，用时 {} 秒",
+        ),
+        (r"not all could be loaded ahead: (.*)", "未能全部提前加载：{}"),
+        (
             r"installed, but its Chromium browser is not downloaded",
             "已安装，但尚未下载其 Chromium 浏览器",
         ),

@@ -304,6 +304,15 @@ _PLAYWRIGHT_BROWSERS = _installed_playwright_browsers()
 
 
 @pytest.fixture(autouse=True)
+def _no_first_load_child(monkeypatch: pytest.MonkeyPatch):
+    """``warmup.prepare`` starts a child process that imports every native
+    library markitai may use (doctor, serve's start-up warm-up, a first OCR
+    run); a test checks its own behaviour, not that. ``test_first_load``
+    runs the real child."""
+    monkeypatch.setattr("markitai.warmup._load_in_child", lambda _config=None: None)
+
+
+@pytest.fixture(autouse=True)
 def _isolate_user_config_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """Point ``Path.home()`` at a temp dir so no test reads the developer's
     real ``~/.markitai``.

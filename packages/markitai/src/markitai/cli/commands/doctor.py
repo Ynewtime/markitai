@@ -811,23 +811,6 @@ def _check_rapidocr(cfg: Any) -> dict[str, Any]:
         message = (
             f"v{rapidocr_version}, reads {reads} text (ocr.lang: {configured_lang})"
         )
-        # The first load after an install is the slow one (a minute on
-        # macOS): paid here, where setup is expected, not by the first --ocr
-        from markitai.ocr import prepare_ocr_stack
-
-        try:
-            took = prepare_ocr_stack(cfg.ocr)
-        except Exception as e:  # noqa: BLE001 - reported, not raised
-            return {
-                "name": "RapidOCR",
-                "description": "OCR for scanned documents (--ocr)",
-                "status": "error",
-                "optional": True,
-                "message": f"v{rapidocr_version}, failed to load: {e}",
-                "install_hint": OCR_INSTALL_HINT,
-            }
-        if took is not None and took >= 1:
-            message += f"; prepared for first use in {took:.0f} s"
         return {
             "name": "RapidOCR",
             "description": "OCR for scanned documents (--ocr)",
@@ -874,18 +857,44 @@ def _record_step(name: str, seconds: float) -> None:
     record(f"doctor: {name}", seconds)
 
 
-def _rapidocr_label() -> str:
-    """The RapidOCR check's name while it runs: it loads the OCR stack the
-    first time after an install, which takes a while on macOS."""
-    from markitai.ocr import is_ocr_available, ocr_stack_prepared
-
-    if not is_ocr_available() or ocr_stack_prepared():
-        return "RapidOCR"
+def _libraries_label() -> str:
+    """The preparation's name while it runs (only the first time)."""
     return (
-        "RapidOCR（首次准备 OCR）"
+        "首次加载转换所需的库（仅首次）"
         if _zh()
-        else "RapidOCR (preparing OCR, first time only)"
+        else "Libraries (loading once, first time only)"
     )
+
+
+def _prepare_libraries(cfg: Any) -> dict[str, Any]:
+    """Load every native library a conversion may use once after an install
+    (``warmup.prepare``, in a child process): the first load is the slow one
+    on macOS (8 s for the PDF and office libraries, 40 s for OCR), paid here
+    where setup is expected, not by the first conversion. ``hidden`` when
+    this installation was prepared already (nothing to report)."""
+    from markitai.warmup import prepare
+
+    try:
+        took = prepare(cfg.ocr)
+    except Exception as e:  # noqa: BLE001 - reported, not raised
+        return {
+            "name": "Libraries",
+            "description": "Native libraries conversions load",
+            "status": "warning",
+            "optional": True,
+            "message": f"not all could be loaded ahead: {e}",
+            "install_hint": "",
+        }
+    if took is None:
+        return {"name": "Libraries", "status": "ok", "message": "", "hidden": True}
+    return {
+        "name": "Libraries",
+        "description": "Native libraries conversions load",
+        "status": "ok",
+        "optional": True,
+        "message": f"loaded once for this installation in {took:.0f} s",
+        "install_hint": "",
+    }
 
 
 def _run_checks(
@@ -991,7 +1000,7 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
             "LibreOffice",
             lambda: _check_libreoffice(cfg.office.macos_fallback),
         ),
-        "rapidocr": (_rapidocr_label(), lambda: _check_rapidocr(cfg)),
+        "rapidocr": ("RapidOCR", lambda: _check_rapidocr(cfg)),
         "anydoc": ("anydoc", _check_anydoc),
         "serve": ("Serve", _check_serve),
     }
@@ -1001,9 +1010,16 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
         checks["copilot-auth"] = ("Copilot sign-in", _check_copilot_auth)
     if uses_chatgpt:
         checks["chatgpt-auth"] = ("ChatGPT sign-in", _check_chatgpt_auth)
+    from markitai.warmup import prepared
+
+    if not prepared():
+        # The first time after an install: alongside the other checks
+        checks["libraries"] = (_libraries_label(), lambda: _prepare_libraries(cfg))
     checked = _run_checks(checks, show_progress=not as_json)
     for key in ("playwright", "libreoffice", "rapidocr", "anydoc", "serve"):
         results[key] = checked[key]
+    if "libraries" in checked and not checked["libraries"].get("hidden"):
+        results["libraries"] = checked["libraries"]
 
     # 5. Check LLM API configuration (check model_list for configured models)
     local_prefixes = ("claude-agent/", "copilot/", "chatgpt/")
@@ -1367,6 +1383,7 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
         "libreoffice",
         "anydoc",
         "serve",
+        "libraries",
     ]
     llm_keys = ["llm-api", "vision-model", "claude-agent-sdk", "copilot-sdk"]
     auth_keys = ["claude-agent-auth", "copilot-auth", "chatgpt-auth"]

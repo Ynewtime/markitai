@@ -1388,21 +1388,17 @@ async def run_job(
             and not run_cfg.llm.enabled  # with a model, pages go to the model
             and any(i.kind == "file" for i in targets)
         ):
-            from markitai.ocr import (
-                OCR_FIRST_USE_NOTICE,
-                is_ocr_available,
-                ocr_stack_prepared,
-                prepare_ocr_stack,
-            )
+            from markitai.ocr import OCR_FIRST_USE_NOTICE, is_ocr_available
+            from markitai.warmup import prepare, prepared
 
-            if is_ocr_available() and not await asyncio.to_thread(ocr_stack_prepared):
+            if is_ocr_available() and not await asyncio.to_thread(prepared):
                 ocr_notice = OCR_FIRST_USE_NOTICE
                 for item in targets:
                     if item.kind == "file":
                         item.warnings = [ocr_notice]
                         registry.publish_item(job, item)
                 try:
-                    await asyncio.to_thread(prepare_ocr_stack, run_cfg.ocr)
+                    await asyncio.to_thread(prepare, run_cfg.ocr)
                 except Exception:  # the conversion reports it where it matters
                     pass
 

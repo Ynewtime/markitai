@@ -62,17 +62,18 @@ def _file_final_stage_text(active_key: str | None, input_name: str) -> str:
 
 def prepare_ocr_first_use(cfg: MarkitaiConfig, *, console: Any, quiet: bool) -> None:
     """Load the local OCR stack before a run that reads with it, saying so,
-    the first time after an install (``ocr.prepare_ocr_stack``: a minute on
-    macOS, during which the run would otherwise sit silent).
+    the first time after an install (``warmup.prepare``: a minute on macOS,
+    during which the run would otherwise sit silent).
 
     Only for the RapidOCR route: with the LLM on, ``--ocr`` reads pages
     with the vision model.
     """
     if not cfg.ocr.enabled or cfg.llm.enabled:
         return
-    from markitai.ocr import is_ocr_available, ocr_stack_prepared, prepare_ocr_stack
+    from markitai.ocr import is_ocr_available
+    from markitai.warmup import prepare, prepared
 
-    if not is_ocr_available() or ocr_stack_prepared():
+    if not is_ocr_available() or prepared():
         return
     if not quiet:
         ui.info(
@@ -81,7 +82,7 @@ def prepare_ocr_first_use(cfg: MarkitaiConfig, *, console: Any, quiet: bool) -> 
             console=console,
         )
     try:
-        prepare_ocr_stack(cfg.ocr)
+        prepare(cfg.ocr)
     except Exception:  # the conversion reports it where it matters
         pass
 

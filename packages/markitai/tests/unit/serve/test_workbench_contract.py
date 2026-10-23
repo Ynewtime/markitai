@@ -1683,9 +1683,11 @@ class TestOcrFirstUse:
             release.wait(20)
             return 40.0
 
+        from markitai import warmup
+
         monkeypatch.setattr(ocr, "is_ocr_available", lambda: True)
-        monkeypatch.setattr(ocr, "ocr_stack_prepared", lambda: False)
-        monkeypatch.setattr(ocr, "prepare_ocr_stack", prepare)
+        monkeypatch.setattr(warmup, "prepared", lambda: False)
+        monkeypatch.setattr(warmup, "prepare", prepare)
         monkeypatch.setattr("markitai.serve.jobs.process_file_item", _converter())
         async with _client(_make_app(tmp_path)) as client:
             created = await client.post(
