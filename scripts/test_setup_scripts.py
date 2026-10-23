@@ -210,15 +210,41 @@ class SetupShTests(unittest.TestCase):
         self.assertEqual(self.run_setup("--bogus").returncode, 2)
         self.assertIn("--uninstall", self.run_setup("--help").stdout)
 
-    def test_piped_into_sh_replaces_python_markitai_from_uv(self):
+    def fake_tool(self, name, script):
         tools = self.work / "tools"
-        tools.mkdir()
-        (tools / "uv").write_text('#!/bin/sh\n'
-                                  'case "$1 $2" in\n'
-                                  '  "tool list") echo "markitai v1.2.0"; echo "- markitai" ;;\n'
-                                  '  "tool uninstall") echo "uv $*" >> "$HOME/calls" ;;\n'
-                                  'esac\n')
-        (tools / "uv").chmod(0o755)
+        tools.mkdir(exist_ok=True)
+        (tools / name).write_text("#!/bin/sh\n" + script)
+        (tools / name).chmod(0o755)
+        return tools
+
+    def fake_uv(self):
+        return self.fake_tool("uv", 'case "$1 $2" in\n'
+                                    '  "tool list") echo "markitai v1.2.0"; echo "- markitai" ;;\n'
+                                    '  "tool uninstall") echo "uv $*" >> "$HOME/calls" ;;\n'
+                                    'esac\n')
+
+    @unittest.skipIf(hasattr(os, "geteuid") and os.geteuid() == 0, "root writes into a read-only folder")
+    def test_python_markitai_from_uv_stays_when_the_install_fails(self):
+        tools = self.fake_uv()
+        target = self.work / "read-only"
+        target.mkdir()
+        target.chmod(0o555)
+        self.addCleanup(target.chmod, 0o755)
+        result = self.run_setup(PATH=f"{tools}:/usr/bin:/bin", MARKITAI_INSTALL_DIR=str(target))
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("Could not install into this folder", result.stdout)
+        self.assertIn("Setup failed", result.stdout)
+        self.assertNotIn("uv tool uninstall", (self.home / "calls").read_text() if (self.home / "calls").exists() else "")
+
+    def test_a_failed_copy_leaves_no_staged_file(self):
+        tools = self.fake_tool("chmod", "exit 1\n")
+        result = self.run_setup(PATH=f"{tools}:/usr/bin:/bin")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("Could not install into this folder", result.stdout)
+        self.assertEqual([path.name for path in (self.home / ".local/bin").iterdir()], [])
+
+    def test_piped_into_sh_replaces_python_markitai_from_uv(self):
+        tools = self.fake_uv()
         env = {"HOME": str(self.home), "PATH": f"{tools}:/usr/bin:/bin", "LANG": "C", "TERM": "dumb",
                "MARKITAI_DOWNLOAD_URL": self.releases.base, "TMPDIR": str(self.work)}
         result = subprocess.run(["sh"], input=SETUP_SH.read_text(encoding="utf-8"), env=env,
@@ -258,6 +284,12 @@ if ($body.Count -ne $statements.Count - 2) { throw "setup.ps1 ends differently t
 function Assert($Condition, $Message) { if (-not $Condition) { throw "FAILED: $Message" } }
 function Write-Host { }
 function Send-EnvironmentChange { }
+# uv's Python markitai goes only once the new release is staged in the folder.
+$script:UvRemoved = 0
+function Remove-PythonMarkitai {
+    Assert (@(Get-ChildItem -LiteralPath $script:InstallTo -Force | Where-Object { $_.Name -like ".markitai-new-*" }).Count -eq 1) "staged first"
+    $script:UvRemoved++
+}
 $script:FakeUserPath = '%USERPROFILE%\bin;C:\Tools'
 function Get-UserPath { $script:FakeUserPath }
 function Set-UserPath { param($Value) $script:FakeUserPath = $Value }
@@ -290,6 +322,15 @@ $failed = $false; try { Expand-Release $evil (Join-Path $Work "evil") } catch { 
 Assert ($failed -and -not (Test-Path (Join-Path $Work "evil"))) "unsafe member refused before extraction"
 
 $install = Join-Path $Work "Programs/markitai"
+$script:InstallTo = $install
+if (-not $IsWindows -and (& id -u) -ne "0") {
+    $readOnly = Join-Path $Work "read-only"
+    New-Item -ItemType Directory -Path $readOnly | Out-Null
+    & chmod 555 $readOnly
+    $failed = $false; try { Install-Release $unpacked $readOnly $pinned "x86_64-pc-windows-msvc" } catch { $failed = $true }
+    Assert ($failed -and $script:UvRemoved -eq 0) "an unwritable folder fails before uv's markitai goes"
+    & chmod 755 $readOnly
+}
 New-Item -ItemType Directory -Force -Path $install | Out-Null
 Set-Content -LiteralPath (Join-Path $install "user-notes.txt") -Value "mine"
 Set-Content -LiteralPath (Join-Path $install "LICENSE") -Value "my own"
@@ -307,6 +348,7 @@ Assert ((Get-Content -Raw (Join-Path $install "markitai.exe")) -eq "exe 2.0.1") 
 Assert (@(Get-ChildItem $install -Force | Where-Object { $_.Name -match '\.old-[0-9a-f]{32}$|^\.markitai-' }).Count -eq 0) "old copies and staging gone"
 Assert ((Get-Content -Raw (Join-Path $install "receipt")) -match "version=2.0.1") "receipt"
 Assert ((Read-Receipt $install).Names -contains "licenses") "receipt lists the folder's names"
+Assert ($script:UvRemoved -eq 1) "uv's markitai removed once installing"
 
 $second = Join-Path $Work "second"
 New-Item -ItemType Directory -Path $second | Out-Null
@@ -346,7 +388,7 @@ Assert ($script:FakeUserPath -eq '%USERPROFILE%\bin;C:\Tools') "user Path restor
 # The whole flow, with the pieces only Windows has replaced.
 function Get-NativeArchitecture { "ARM64" }
 function Invoke-MarkitaiVersion { param($Executable) Assert (Test-Path $Executable) "unpacked exe"; "markitai 2.0.0" }
-function Remove-PythonMarkitai { }
+$script:InstallTo = Join-Path $Work "LocalAppData/Programs/markitai"
 $env:LOCALAPPDATA = Join-Path $Work "LocalAppData"
 $env:MARKITAI_DOWNLOAD_URL = $Base
 $env:MARKITAI_INSTALL_OPTIONAL = "0"

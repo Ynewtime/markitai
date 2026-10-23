@@ -92,6 +92,7 @@ msg() {
             error_run) echo "下载的 markitai 无法在此系统运行" ;;
             error_python_version) echo "markitai 1.x 是 Python 包；请用 uv tool install 或 pip 安装该版本" ;;
             error_version) echo "MARKITAI_VERSION 应为 X.Y.Z 形式" ;;
+            error_install) echo "无法安装到此目录" ;;
             error_foreign_folder) echo "此目录不是安装脚本创建的，而每次安装都会替换它；请移走后重新运行安装脚本" ;;
             warn_http) echo "下载地址不是 HTTPS" ;;
             *) echo "$1" ;;
@@ -151,6 +152,7 @@ msg() {
         error_run) echo "The downloaded markitai does not run on this system" ;;
         error_python_version) echo "markitai 1.x is the Python package; install that release with uv tool install or pip" ;;
         error_version) echo "MARKITAI_VERSION must look like X.Y.Z" ;;
+        error_install) echo "Could not install into this folder" ;;
         error_foreign_folder) echo "Setup did not create this folder and replaces it on every install; move it away and run setup again" ;;
         warn_http) echo "The download address is not HTTPS" ;;
         *) echo "$1" ;;
@@ -195,6 +197,14 @@ fail() {
     outro "$RED" "$(msg failed)"
     exit 1
 }
+
+# The work folder, and an executable staged but not yet renamed into place.
+cleanup() {
+    rm -rf "$WORK"
+    [ -z "$STAGED" ] || rm -f "$STAGED"
+}
+
+fail_install() { fail "$(msg error_install)" "$(cat "$WORK/error" 2>/dev/null)"; }
 
 has_tty() { [ -t 0 ] || ( : </dev/tty ) 2>/dev/null; }
 
@@ -353,36 +363,40 @@ link_alias() {
             return 0
         fi
     fi
-    rm -f "$_alias"
-    ln -s markitai "$_alias"
+    { rm -f "$_alias" && ln -s markitai "$_alias"; } 2>"$WORK/error" || fail_install
 }
 
 install_release() {
     _unpacked="$WORK/unpacked"
     mkdir "$_unpacked"
-    tar -xzf "$WORK/$ARCHIVE" -C "$_unpacked"
+    tar -xzf "$WORK/$ARCHIVE" -C "$_unpacked" 2>"$WORK/error" || fail "tar -xzf $ARCHIVE" "$(cat "$WORK/error")"
     [ -f "$_unpacked/markitai" ] || fail "$(msg error_run)" "markitai is missing from $ARCHIVE"
     if ! _reported=$("$_unpacked/markitai" --version 2>&1); then
         fail "$(msg error_run)" "$_reported"
     fi
+    # Staged beside the old executable first: that proves the folder is
+    # writable and has room before uv's Python markitai is removed.
+    mkdir -p "$BIN_DIR" 2>"$WORK/error" || fail_install
+    STAGED="$BIN_DIR/.markitai.new.$$"
+    { cp "$_unpacked/markitai" "$STAGED" && chmod 755 "$STAGED"; } 2>"$WORK/error" || fail_install
     remove_python_markitai
-    mkdir -p "$BIN_DIR"
     # Renaming over the old executable is atomic, and a running markitai keeps its file.
-    cp "$_unpacked/markitai" "$BIN_DIR/.markitai.new.$$"
-    chmod 755 "$BIN_DIR/.markitai.new.$$"
-    mv -f "$BIN_DIR/.markitai.new.$$" "$BIN_DIR/markitai"
+    mv -f "$STAGED" "$BIN_DIR/markitai" 2>"$WORK/error" || fail_install
+    STAGED=""
     link_alias mkai
     link_alias markitai-mcp
     ok "$(msg installed): $(pretty "$BIN_DIR/markitai") ($_reported)"
 
-    mkdir -p "$SHARE_ROOT"
-    rm -rf "$SHARE_ROOT/current.new" "$SHARE_ROOT/current.old"
     rm -f "$_unpacked/markitai" "$_unpacked/mkai" "$_unpacked/markitai-mcp"
-    mv "$_unpacked" "$SHARE_ROOT/current.new"
-    printf 'version=%s\ntarget=%s\nbin_dir=%s\n' "$VERSION" "$TARGET" "$BIN_DIR" >"$SHARE_ROOT/current.new/receipt"
-    [ ! -d "$SHARE_ROOT/current" ] || mv "$SHARE_ROOT/current" "$SHARE_ROOT/current.old"
-    mv "$SHARE_ROOT/current.new" "$SHARE_ROOT/current"
-    rm -rf "$SHARE_ROOT/current.old"
+    {
+        mkdir -p "$SHARE_ROOT" &&
+            rm -rf "$SHARE_ROOT/current.new" "$SHARE_ROOT/current.old" &&
+            mv "$_unpacked" "$SHARE_ROOT/current.new" &&
+            printf 'version=%s\ntarget=%s\nbin_dir=%s\n' "$VERSION" "$TARGET" "$BIN_DIR" >"$SHARE_ROOT/current.new/receipt" &&
+            { [ ! -d "$SHARE_ROOT/current" ] || mv "$SHARE_ROOT/current" "$SHARE_ROOT/current.old"; } &&
+            mv "$SHARE_ROOT/current.new" "$SHARE_ROOT/current" &&
+            rm -rf "$SHARE_ROOT/current.old"
+    } 2>"$WORK/error" || fail_install
     info "$(msg notices): $(pretty "$SHARE_ROOT/current")"
 }
 
@@ -547,8 +561,9 @@ main() {
     info "$(msg platform): $TARGET"
     check_share_folder
     WORK=$(mktemp -d "${TMPDIR:-/tmp}/markitai-setup.XXXXXX")
-    trap 'rm -rf "$WORK"' EXIT
-    trap 'rm -rf "$WORK"; exit 130' INT TERM
+    STAGED=""
+    trap cleanup EXIT
+    trap 'cleanup; exit 130' INT TERM
     resolve_release
     info "$(msg release): $VERSION"
     step "$(msg downloading) $ARCHIVE"

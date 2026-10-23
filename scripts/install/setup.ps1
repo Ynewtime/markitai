@@ -573,6 +573,8 @@ function Install-Release {
     param([string]$Unpacked, [string]$Directory, [hashtable]$Release, [string]$Target)
     $previous = Read-Receipt $Directory
     $stage = New-Staging $Unpacked $Directory $Release $Target $previous
+    # Only now, with the new release staged, does uv's Python markitai go.
+    Remove-PythonMarkitai
     return (Complete-Install $stage $Directory $previous)
 }
 
@@ -779,7 +781,6 @@ function Invoke-Install {
         } catch {
             Stop-Setup (Msg "error_run") "$($_.Exception.Message)"
         }
-        Remove-PythonMarkitai
         $directory = Get-DefaultInstallDirectory
         Install-Release $unpacked $directory $release $target
         $markitai = Join-Path $directory "markitai.exe"
@@ -795,6 +796,10 @@ function Invoke-Install {
         $optionalOk = Invoke-OptionalComponents $markitai
         Write-GettingStarted $directory
         if ($optionalOk) { Write-Outro "DarkGreen" (Msg "ready") } else { Write-Outro "DarkYellow" (Msg "done_warnings") }
+    } catch {
+        # Any other error still ends with the "Setup failed" line.
+        if ("$($_.Exception.Message)" -notlike "markitai setup: *") { Stop-Setup "$($_.Exception.Message)" }
+        throw
     } finally {
         Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
     }
