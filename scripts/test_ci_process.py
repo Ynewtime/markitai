@@ -54,20 +54,55 @@ class CIProcessTests(unittest.TestCase):
                        timeout=1, progress=lambda *args, **kwargs: None)
         self.assertEqual(self.log.read_bytes(), b"")
 
-    def test_windows_stop_uses_owned_pid_tree_before_root_kill(self):
+    def windows_stop(self, taskkill, running=0, inspection=None):
+        """_stop_tree as on Windows, with taskkill's result and the tree's state given."""
         class Process:
             pid = 12345
             def poll(self): return None
             def kill(self): calls.append("kill")
             def wait(self, **kwargs): calls.append("wait")
-        calls = []
-        def taskkill(*args, **kwargs):
+
+        class Tree:
+            def __init__(self, pid):
+                if inspection:
+                    raise inspection
+                calls.append(("tree", pid))
+            def stop(self, timeout):
+                calls.append("stop")
+                return running
+            def close(self): calls.append("close")
+
+        def run(*args, **kwargs):
             calls.append(args[0])
-            return subprocess.CompletedProcess(args[0], 0)
-        with patch("ci_process.os.name", "nt"), patch("ci_process.subprocess.run", side_effect=taskkill):
-            result = _stop_tree(Process())
-        self.assertEqual(result, {"tree_termination": "confirmed", "taskkill_exit_code": 0})
-        self.assertEqual(calls, [["taskkill", "/PID", "12345", "/T", "/F"], "kill", "wait"])
+            if isinstance(taskkill, Exception):
+                raise taskkill
+            return subprocess.CompletedProcess(args[0], taskkill)
+
+        calls = []
+        with patch("ci_process.os.name", "nt"), patch("ci_process.subprocess.run", side_effect=run):
+            return _stop_tree(Process(), windows_tree=Tree), calls
+
+    def test_windows_stop_uses_owned_pid_tree_before_root_kill(self):
+        result, calls = self.windows_stop(0)
+        self.assertEqual(result, {"tree_termination": "confirmed", "taskkill_exit_code": 0, "still_running": 0})
+        # The tree is recorded before taskkill and checked after it, then the root is reaped.
+        self.assertEqual(calls, [("tree", 12345), ["taskkill", "/PID", "12345", "/T", "/F"], "stop", "close", "kill", "wait"])
+
+    def test_windows_stop_is_confirmed_by_the_tree_not_by_taskkill(self):
+        # taskkill fails when a member exits while it kills the tree (a console host, a
+        # launcher's job object); the tree being gone is what confirms the stop.
+        for taskkill in [128, 1, OSError("synthetic-secret")]:
+            with self.subTest(taskkill=taskkill):
+                result, _ = self.windows_stop(taskkill)
+                self.assertEqual(result["tree_termination"], "confirmed")
+                self.assertNotIn("synthetic-secret", json.dumps(result))
+        # And a successful taskkill does not hide a process that is still running.
+        result, _ = self.windows_stop(0, running=1)
+        self.assertEqual(result["tree_termination"], "unverified")
+        self.assertEqual(result["still_running"], 1)
+        # Without the tree (inspection refused), taskkill's own result is all there is.
+        result, _ = self.windows_stop(0, inspection=OSError("synthetic-secret"))
+        self.assertEqual(result, {"tree_termination": "confirmed", "taskkill_exit_code": 0, "inspection_error_type": "OSError"})
 
     def test_summary_has_timings_without_child_output_or_error_details(self):
         summary = self.root / "summary.md"
@@ -82,19 +117,13 @@ class CIProcessTests(unittest.TestCase):
         self.assertNotIn("synthetic-secret", text)
 
     def test_windows_cleanup_failure_is_explicit(self):
-        class Process:
-            pid = 12345
-            def poll(self): return None
-            def kill(self): pass
-            def wait(self, **kwargs): pass
-        for result in [subprocess.CompletedProcess([], 1), OSError("synthetic-secret"),
-                       subprocess.TimeoutExpired(["taskkill"], 15)]:
-            with self.subTest(result=type(result).__name__):
-                kwargs = {"side_effect": result} if isinstance(result, Exception) else {"return_value": result}
-                with patch("ci_process.os.name", "nt"), patch("ci_process.subprocess.run", **kwargs):
-                    cleanup = _stop_tree(Process())
-                self.assertEqual(cleanup["tree_termination"], "unverified")
-                self.assertNotIn("synthetic-secret", json.dumps(cleanup))
+        for taskkill in [1, OSError("synthetic-secret"), subprocess.TimeoutExpired(["taskkill"], 15)]:
+            for tree in [{"running": 1}, {"inspection": OSError("synthetic-secret")}]:
+                with self.subTest(taskkill=type(taskkill).__name__, tree=tree):
+                    cleanup, calls = self.windows_stop(taskkill, **tree)
+                    self.assertEqual(cleanup["tree_termination"], "unverified")
+                    self.assertNotIn("synthetic-secret", json.dumps(cleanup))
+                    self.assertEqual(calls[-2:], ["kill", "wait"])
 
     def test_timeout_kills_descendant_tree(self):
         # The handshake proves the grandchild is running before the timeout;
@@ -104,7 +133,7 @@ class CIProcessTests(unittest.TestCase):
             self.run_stage(script, timeout=1.5)
         self.assertTrue((self.root / "ready").exists())
         self.assertIn(b"ready", self.log.read_bytes())
-        self.assertEqual(self.events[-1]["tree_termination"], "confirmed")
+        self.assertEqual(self.events[-1]["tree_termination"], "confirmed", self.events[-1])
         import time
         # Wait longer than the child delay even if it became ready just
         # before the timeout; slow Windows spawn must not yield a false pass.
