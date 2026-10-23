@@ -46,6 +46,10 @@ impl Fixture {
                     }
                     Err(error) => panic!("loopback: {error}"),
                 };
+                // Windows hands the listener's non-blocking mode on to the
+                // accepted socket: an early read would find no request yet
+                // and answer the wrong path, unread request and all.
+                stream.set_nonblocking(false).unwrap();
                 stream
                     .set_read_timeout(Some(std::time::Duration::from_secs(5)))
                     .unwrap();
