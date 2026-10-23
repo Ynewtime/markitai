@@ -320,8 +320,8 @@ fn earlier_outcome(kind: ItemKind, key: &str, entry: &Entry, llm: bool) -> Value
     let mut item = json!({
         "kind": if kind == ItemKind::Url { "url" } else { "file" },
         "source": match kind {
-            ItemKind::Url => entry.url.as_deref().unwrap_or(key),
-            ItemKind::File => key,
+            ItemKind::Url => crate::app::shown_url(entry.url.as_deref().unwrap_or(key)),
+            ItemKind::File => key.to_owned(),
         },
         "status": if entry.output.is_none() && !skip_reason.is_null() { "skipped" } else { "completed" },
         "output": entry.output,

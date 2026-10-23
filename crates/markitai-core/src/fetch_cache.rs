@@ -431,7 +431,9 @@ impl Cache {
             total = total.saturating_sub(removed);
         }
         transaction.execute("INSERT INTO fetch_cache (key,url,content,strategy_used,title,final_url,metadata,created_at,accessed_at,size_bytes,etag,last_modified,screenshot_path,static_content,browser_content) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?8,?9,?10,?11,NULL,NULL,NULL)",
-            params![key,url,entry.content,entry.strategy_used,entry.title,entry.final_url,metadata,timestamp,size,entry.etag,entry.last_modified])?;
+            // The key identifies the page; the address column is only a
+            // label, so it keeps no credentials.
+            params![key,crate::output::redact_url(url),entry.content,entry.strategy_used,entry.title,entry.final_url,metadata,timestamp,size,entry.etag,entry.last_modified])?;
         transaction.commit()?;
         Ok(())
     }
@@ -949,6 +951,24 @@ mod tests {
         assert_eq!(stats(&cfg).unwrap()["count"], 2);
         assert!(cache.get_at("c", None, 108).unwrap().is_some());
         assert!(cache.get_at("a", None, 108).unwrap().is_some());
+    }
+
+    #[test]
+    fn a_stored_address_keeps_no_credentials_and_still_finds_its_page() {
+        let root = tempfile::tempdir().unwrap();
+        let cfg = cfg(root.path(), 1024, 60);
+        let cache = Cache::from_config(&cfg).unwrap();
+        let given = "https://alice:pw@example.test/a?api_key=k1&v=2";
+        cache.set_at(given, None, &entry("page"), 100).unwrap();
+        let connection = existing(&cache.path, false).unwrap().unwrap();
+        let stored: String = connection
+            .query_row("SELECT url FROM fetch_cache", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(stored, "https://example.test/a?api_key=REDACTED&v=2");
+        assert!(cache.get_at(given, None, 101).unwrap().is_some());
+        // Another key is another page, though its address reads the same.
+        let other = "https://alice:pw@example.test/a?api_key=k2&v=2";
+        assert!(cache.get_at(other, None, 101).unwrap().is_none());
     }
 
     #[test]

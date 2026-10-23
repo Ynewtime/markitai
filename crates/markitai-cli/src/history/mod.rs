@@ -353,6 +353,10 @@ struct Item<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     diagnostics: Option<&'a crate::diagnostics::AttemptDiagnostics>,
     page_sources: &'a [markitai_core::PageSource],
+    /// The URL carried credentials, which `name` leaves out: the server
+    /// cannot fetch it again from the history.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    address_withheld: bool,
 }
 
 impl<'a> Item<'a> {
@@ -440,6 +444,15 @@ impl<'a> Item<'a> {
                 .filter(|warning| seen.insert(*warning))
                 .collect(),
             page_sources: &item.page_sources,
+            // A URL item's report key is its address as given (and the
+            // output name it asked for, after a space).
+            address_withheld: item.kind == ItemKind::Url
+                && item
+                    .report_key
+                    .split(' ')
+                    .next()
+                    .and_then(markitai_core::output::url_without_credentials)
+                    .is_some(),
         }
     }
 }

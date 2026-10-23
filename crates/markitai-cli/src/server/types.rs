@@ -538,6 +538,15 @@ pub(super) struct Item {
     /// A saved entry of another shape is dropped.
     #[serde(default, deserialize_with = "page_sources")]
     pub page_sources: Vec<markitai_core::PageSource>,
+    /// A URL item's address as submitted, when `name` shows it without the
+    /// credentials it carries (userinfo, a secret parameter's value). Held in
+    /// memory only: answers, events and the saved history carry `name`.
+    #[serde(skip)]
+    pub address: Option<String>,
+    /// The submitted address carried credentials that were never saved, so
+    /// once `address` is gone (a restart) `name` is not the page to fetch.
+    #[serde(default, skip_serializing)]
+    pub address_withheld: bool,
 }
 fn page_sources<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
@@ -578,7 +587,33 @@ impl Item {
             models: Vec::new(),
             source_size: None,
             page_sources: Vec::new(),
+            address: None,
+            address_withheld: false,
         }
+    }
+    /// A URL item named by `url` without its credentials.
+    pub fn url(index: usize, url: String, output_name: Option<String>) -> Self {
+        let mut item = Self::new(index, url, "url", output_name);
+        item.withhold_address();
+        item
+    }
+    /// Name a URL item by its address without credentials, keeping the
+    /// address as given in memory; also applied to histories saved before
+    /// names were redacted.
+    pub fn withhold_address(&mut self) {
+        // A saved withheld address is already its name without credentials.
+        if self.kind != "url" || self.address_withheld {
+            return;
+        }
+        if let Some(shown) = markitai_core::output::url_without_credentials(&self.name) {
+            self.address = Some(std::mem::replace(&mut self.name, shown));
+            self.address_withheld = true;
+        }
+    }
+    /// The page a URL item converts: its address as given while this
+    /// process holds it, otherwise its name.
+    pub fn source_address(&self) -> &str {
+        self.address.as_deref().unwrap_or(&self.name)
     }
     pub fn created(&self) -> Value {
         json!({"item_id":self.item_id,"name":self.name,"kind":self.kind})

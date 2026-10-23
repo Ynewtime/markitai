@@ -134,7 +134,8 @@ pub(super) async fn retry(
         if prior.kind=="file" {store::safe_file(&job.folder.join("uploads"),&prior.name).map_err(|_|ApiError::new(404,"upload_missing","original upload is no longer on disk"))?;}
         else if prior.kind=="url" {
             if !trusted{return Err(ApiError::new(403,"remote_url_forbidden","URL conversion requires loopback or token authentication; safe remote URL fetching is not yet available"));}
-            let parsed=url::Url::parse(&prior.name).map_err(|_|ApiError::new(422,"invalid_url","invalid URL"))?;
+            if prior.address.is_none()&&prior.address_withheld{return Err(ApiError::new(409,"no_source","the URL carried credentials, which are not kept after the server restarts; submit the URL again"));}
+            let parsed=url::Url::parse(prior.source_address()).map_err(|_|ApiError::new(422,"invalid_url","invalid URL"))?;
             if !["http","https"].contains(&parsed.scheme())||parsed.host_str().is_none(){return Err(ApiError::new(422,"unsupported_url_scheme","URLs must use http or https"));}
         } else {return Err(ApiError::new(409,"no_source","item has no supported original source"));}
         let explicit_options=body.options.is_some();
@@ -275,7 +276,7 @@ async fn run(state: Arc<State>, job: Arc<Job>, work: Work) {
             let out = stage.path().join("out");
             create_private_dir(&out).map_err(ApiError::internal)?;
             let source = if work.prior.kind == "url" {
-                work.prior.name.clone()
+                work.prior.source_address().to_owned()
             } else {
                 store::safe_file(&worker.folder.join("uploads"), &work.prior.name)?
                     .to_string_lossy()

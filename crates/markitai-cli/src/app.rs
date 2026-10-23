@@ -1176,7 +1176,11 @@ fn execute_conversion(
     } else {
         vec![Task {
             source: input.into(),
-            display: input.into(),
+            display: if is_url(input) {
+                shown_url(input)
+            } else {
+                input.into()
+            },
             report_key: if is_url(input) {
                 input.into()
             } else {
@@ -1342,8 +1346,7 @@ fn execute_conversion(
         };
         // A conversion that takes more than a moment shows a spinner line on a
         // terminal; it is gone before the result is printed.
-        let spinner =
-            progress::Spinner::start(progress::wanted(cli.quiet, cli.json), &task.report_key);
+        let spinner = progress::Spinner::start(progress::wanted(cli.quiet, cli.json), task.shown());
         let (record, result) = match unreadable {
             Some(error) => {
                 let progress = begin_item(&task, &cfg);
@@ -1420,7 +1423,7 @@ fn execute_conversion(
                                 Mark::Warning
                             };
                             say_shaped(logging::Shape::item(mark), |lang| {
-                                skip_notice(&task.report_key, reason, lang)
+                                skip_notice(task.shown(), reason, lang)
                             });
                         } else if task.output.is_some()
                             && let Some(path) = &record.output
@@ -1501,12 +1504,30 @@ struct BatchDestination<'a> {
 #[derive(Clone)]
 struct Task {
     source: String,
+    /// The source as messages, `--json` and history name it: a URL without
+    /// its credentials ([`shown_url`]).
     display: String,
     report_key: String,
     output: Option<PathBuf>,
     filename: Option<String>,
     reserved_stem: Option<String>,
     source_file: Option<String>,
+}
+impl Task {
+    /// The name the spinner and skip notices give the item: the report's
+    /// name of a file, the shown address of a URL.
+    fn shown(&self) -> &str {
+        if is_url(&self.source) {
+            &self.display
+        } else {
+            &self.report_key
+        }
+    }
+}
+/// A URL as the CLI shows and records it: without userinfo or the value of
+/// a secret parameter, as its output's metadata has it.
+pub(crate) fn shown_url(url: &str) -> String {
+    markitai_core::output::url_without_credentials(url).unwrap_or_else(|| url.to_owned())
 }
 /// Claim document stems before any worker starts. Disk conflicts use the configured
 /// policy; another item in this run always gets a separate stem.
@@ -2747,7 +2768,7 @@ fn parse_urls(path: &Path, output: &Path) -> CliResult<Vec<Task>> {
         }
         tasks.push(Task {
             source: url.into(),
-            display: url.into(),
+            display: shown_url(url),
             report_key,
             output: Some(output.to_owned()),
             filename,

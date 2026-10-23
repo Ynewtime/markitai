@@ -401,7 +401,7 @@ pub(super) async fn create(
         // A named entry keeps its name as the base it reserves below. The list
         // reader has already refused a name that is not a plain filename.
         let name = output_name.map(|name| jobs::sanitize_name(&name));
-        items.push(Item::new(items.len() + 1, url, "url", name));
+        items.push(Item::url(items.len() + 1, url, name));
     }
     if items.is_empty() {
         return Err(ApiError::new(

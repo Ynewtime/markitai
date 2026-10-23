@@ -1034,6 +1034,69 @@ fn late_cli_history_is_imported_without_following_external_symlinks() {
     server.stop();
 }
 
+/// A URL's userinfo and secret parameter values reach the page only: the
+/// job's answers and its saved history name it without them. A retry in the
+/// same process fetches the address as given; after a restart, which kept no
+/// credentials, the retry asks for the URL again instead of fetching another.
+#[test]
+fn url_credentials_reach_the_page_but_no_answer_or_saved_history() {
+    let origin = Origin::start();
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::start(temp.path());
+    let given = format!(
+        "http://alice:pw0rd@127.0.0.1:{}/secret-page?api_key=k1secret&v=2",
+        origin.port
+    );
+    let shown = origin.url("/secret-page?api_key=REDACTED&v=2");
+    let leaks = |text: &str| text.contains("pw0rd") || text.contains("k1secret");
+    let created = server.submit(&[], json!([given]), json!({}));
+    assert_eq!(created["items"][0]["name"], shown.as_str(), "{created}");
+    let id = created["job_id"].as_str().unwrap().to_owned();
+    let snapshot = server.done(&id);
+    assert_eq!(snapshot["done"], 1, "{snapshot}");
+    assert_eq!(snapshot["items"][0]["name"], shown.as_str());
+    // The page itself was asked for with its key.
+    let markdown = server.json(&format!("/api/jobs/{id}/items/i1/result"))["markdown"].clone();
+    assert!(
+        markdown.as_str().unwrap().contains("k1secret"),
+        "{markdown}"
+    );
+    for path in ["/api/history", "/api/history?include=items"] {
+        let history = server.request("GET", path, &[], &[]).text();
+        assert!(!leaks(&history) && history.contains(&shown), "{history}");
+    }
+    let retry = |server: &Server| {
+        server.request(
+            "POST",
+            &format!("/api/jobs/{id}/items/i1/retry"),
+            &[("Content-Type", "application/json")],
+            b"",
+        )
+    };
+    let before = origin.entered.load(Ordering::SeqCst);
+    let reply = retry(&server);
+    assert_eq!(reply.status, 202, "{}", reply.text());
+    until("retry", || {
+        origin.entered.load(Ordering::SeqCst) > before
+            && server.json(&format!("/api/jobs/{id}"))["items"][0]["status"] == "done"
+    });
+    let saved = std::fs::read_to_string(server.jobdir(&id).join("meta.json")).unwrap();
+    assert!(!leaks(&saved), "{saved}");
+    server.stop();
+    let restarted = Server::start(temp.path());
+    let snapshot = restarted.json(&format!("/api/jobs/{id}"));
+    assert_eq!(snapshot["items"][0]["name"], shown.as_str());
+    assert!(!leaks(&snapshot.to_string()));
+    let reply = retry(&restarted);
+    assert_eq!(
+        (reply.status, reply.json()["reason"].clone()),
+        (409, json!("no_source")),
+        "{}",
+        reply.text()
+    );
+    restarted.stop();
+}
+
 #[test]
 fn urlencoded_url_submission_preserves_form_contract() {
     let origin = Origin::start();

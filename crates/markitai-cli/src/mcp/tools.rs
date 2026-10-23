@@ -283,7 +283,8 @@ fn project(output: ConversionOutput, directory: &Path) -> Value {
     } else {
         text
     };
-    let mut value = json!({"source":output.source,"markdown":text,"truncated":truncated,
+    // A URL is named without its credentials, as in the output's metadata.
+    let mut value = json!({"source":crate::app::shown_url(&output.source),"markdown":text,"truncated":truncated,
         "markdown_file":output.llm_output_path.or(output.output_path),"output_dir":directory,
         "assets":output.assets,"screenshots":output.screenshots,"cost_usd":output.usage.cost_usd,
         "skip_reason":output.skip_reason,"duration_s":(output.duration * 100.0).round_ties_even() / 100.0,

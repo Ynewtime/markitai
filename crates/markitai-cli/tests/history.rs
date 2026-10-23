@@ -1702,3 +1702,87 @@ fn model_content(request: &Value, markdown: &str) -> String {
         .join("\n");
     json!({"cleaned_markdown":format!("{markdown}\n\n{source}"),"frontmatter":{"description":"Local test document","tags":["fixture"]}}).to_string()
 }
+
+/// A URL's userinfo and secret parameter values reach the page only: the
+/// terminal, `--json`, the report and the recorded history name it without
+/// them, alone or from a list.
+#[test]
+fn url_credentials_stay_out_of_messages_json_reports_and_history() {
+    let server = Server::start();
+    let root = tempfile::tempdir().unwrap();
+    let mut cfg = configure(root.path());
+    cfg["output"]["report"] = json!(true);
+    save(root.path(), &cfg);
+    let with_credentials = |path: &str| {
+        server
+            .url(path)
+            .replacen("http://", "http://alice:pw0rd@", 1)
+    };
+    let single = format!("{}?api_key=k1secret&v=2", with_credentials("/single"));
+    write(
+        root.path(),
+        "list.urls",
+        &format!(
+            "{}?token=k1secret\n{}?q=1\n",
+            with_credentials("/listed"),
+            server.url("/other")
+        ),
+    );
+    let leaks = |text: &str| text.contains("pw0rd") || text.contains("k1secret");
+    for (input, shown) in [
+        (
+            single.as_str(),
+            vec![server.url("/single?api_key=REDACTED&v=2")],
+        ),
+        (
+            "list.urls",
+            vec![
+                server.url("/listed?token=REDACTED"),
+                server.url("/other?q=1"),
+            ],
+        ),
+    ] {
+        for json in [false, true] {
+            let mut args = vec![input, "-o", "out", "--record-history"];
+            if json {
+                args.push("--json");
+            }
+            let output = invoke(root.path(), &args);
+            status(&output, 0);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(!leaks(&stdout) && !leaks(&stderr), "{stdout}\n{stderr}");
+            if json {
+                let value: Value = serde_json::from_str(&stdout).unwrap();
+                let sources: Vec<_> = value["items"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|item| item["source"].as_str().unwrap().to_owned())
+                    .collect();
+                assert_eq!(sources, shown);
+            }
+        }
+    }
+    // The pages were asked for with their credentials.
+    assert_eq!(server.count("/single?api_key=k1secret&v=2"), 2);
+    assert_eq!(server.count("/listed?token=k1secret"), 2);
+    let mut reports = 0;
+    for entry in std::fs::read_dir(root.path().join("out/.markitai/reports")).unwrap() {
+        let text = std::fs::read_to_string(entry.unwrap().path()).unwrap();
+        assert!(!leaks(&text), "{text}");
+        reports += 1;
+    }
+    assert!(reports >= 2);
+    let jobs = jobs(root.path());
+    assert_eq!(jobs.len(), 4);
+    for job in jobs {
+        let text = std::fs::read_to_string(job.join("meta.json")).unwrap();
+        assert!(!leaks(&text), "{text}");
+        let meta: Value = serde_json::from_str(&text).unwrap();
+        for item in meta["items"].as_array().unwrap() {
+            let withheld = item["name"].as_str().unwrap() != server.url("/other?q=1");
+            assert_eq!(item.get("address_withheld").is_some(), withheld, "{item}");
+        }
+    }
+}

@@ -605,7 +605,7 @@ fn url_groups(items: &[&RunItem], mode: RunMode) -> Ordered {
                     ),
                     (
                         "urls",
-                        Ordered::Object(
+                        Ordered::Object(shown_urls(
                             group
                                 .iter()
                                 .map(|item| {
@@ -617,7 +617,7 @@ fn url_groups(items: &[&RunItem], mode: RunMode) -> Ordered {
                                     (item.report_key.clone(), data)
                                 })
                                 .collect(),
-                        ),
+                        )),
                     ),
                 ]);
                 (source.into(), entry)
@@ -757,6 +757,38 @@ fn summary(mode: RunMode, items: &[&RunItem], finished: &RunFinished) -> Ordered
 
 // These observations describe each latest attempt. They never enter the
 // reference-shaped usage totals or acquire authority over an output path.
+/// URL entries keyed as a report shows them: each address without its
+/// credentials ([`markitai_core::output::url_without_credentials`]), an
+/// output name after it kept, and a key that only the redaction made equal
+/// to an earlier one numbered, so no entry replaces another.
+fn shown_urls(entries: Vec<(String, Ordered)>) -> Vec<(String, Ordered)> {
+    let mut taken = BTreeSet::new();
+    entries
+        .into_iter()
+        .map(|(key, data)| {
+            let (address, rest) = key
+                .split_once(' ')
+                .map_or((key.as_str(), None), |(address, rest)| {
+                    (address, Some(rest))
+                });
+            let shown = match markitai_core::output::url_without_credentials(address) {
+                Some(address) => match rest {
+                    Some(rest) => format!("{address} {rest}"),
+                    None => address,
+                },
+                None => key.clone(),
+            };
+            let mut candidate = shown.clone();
+            let mut count = 2;
+            while !taken.insert(candidate.clone()) {
+                candidate = format!("{shown} ({count})");
+                count += 1;
+            }
+            (candidate, data)
+        })
+        .collect()
+}
+
 fn terminal_diagnostics<'a>(
     entries: impl IntoIterator<Item = (ItemKind, &'a str, &'a AttemptDiagnostics)>,
 ) -> Result<Option<Ordered>, String> {
@@ -780,7 +812,7 @@ fn terminal_diagnostics<'a>(
     crate::sort::by(&mut documents, |left, right| left.0.cmp(&right.0));
     Ok(Some(object([
         ("documents", Ordered::Object(documents)),
-        ("urls", Ordered::Object(urls)),
+        ("urls", Ordered::Object(shown_urls(urls))),
     ])))
 }
 
@@ -1382,7 +1414,7 @@ pub(crate) fn render_resumed(
                                 .count(),
                         ),
                     ),
-                    ("urls", Ordered::Object(urls)),
+                    ("urls", Ordered::Object(shown_urls(urls))),
                 ]),
             ))
         })

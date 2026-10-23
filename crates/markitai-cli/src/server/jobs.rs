@@ -330,7 +330,7 @@ async fn convert_one(
     let out = job.folder.join("out");
     let upload = job.folder.join("uploads").join(&item.name);
     let target = if item.kind == "url" {
-        item.name.clone()
+        item.source_address().to_owned()
     } else {
         upload.to_string_lossy().into_owned()
     };

@@ -158,6 +158,7 @@ pub(super) fn start(
                 });
             }
             let Some((index, source, result)) = pending.next().await else { break; };
+            let source = crate::app::shown_url(&source);
             let (value, failed) = match result {
                 Ok(mut result) => {
                     let mut value = json!({"source":source,"status":"ok","markdown_file":result["markdown_file"],"cost_usd":result["cost_usd"],"warnings":result["warnings"]});

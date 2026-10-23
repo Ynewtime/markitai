@@ -294,7 +294,10 @@ pub(super) fn files(root: &Path) -> std::io::Result<Vec<(String, PathBuf)>> {
 
 pub(super) fn persist(folder: &Path, data: &JobData) -> std::io::Result<()> {
     let mut items = serde_json::to_value(&data.items).map_err(std::io::Error::other)?;
-    for item in items.as_array_mut().unwrap() {
+    for (item, kept) in items.as_array_mut().unwrap().iter_mut().zip(&data.items) {
+        if kept.address_withheld {
+            item["address_withheld"] = json!(true);
+        }
         item["options"] = data
             .item_options
             .get(item["item_id"].as_str().unwrap_or(""))
@@ -437,6 +440,9 @@ fn load(folder: &Path, id: &str) -> std::io::Result<Option<JobData>> {
             eprintln!("Warning: Serve: ignored invalid stored rerun failure");
         }
         if let Ok(mut item) = serde_json::from_value::<Item>(object) {
+            // A history saved before URL names were redacted shows none of
+            // their credentials either, and saves them no more.
+            item.withhold_address();
             // Older history writers saved the actual enhanced name in both
             // fields. Adapt the public base name without renaming any file.
             // Native indexes disambiguate a literal source named notes.llm.

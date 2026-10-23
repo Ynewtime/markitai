@@ -579,6 +579,15 @@ pub fn redact_url(source: &str) -> String {
     url.to_string()
 }
 
+/// [`redact_url`] of a URL that carries userinfo or a secret parameter value,
+/// `None` for one that carries neither, or only values already redacted (it
+/// stays as written).
+pub fn url_without_credentials(source: &str) -> Option<String> {
+    let parsed = url::Url::parse(source).ok()?;
+    let redacted = redact_url(source);
+    (redacted != parsed.as_str()).then_some(redacted)
+}
+
 /// `name=value` parameters with each secret value replaced, or `None` when
 /// none is secret and the text stays as written.
 fn redacted_parameters(text: Option<&str>) -> Option<String> {
@@ -1279,6 +1288,32 @@ mod tests {
             ("", ""),
         ] {
             assert_eq!(masked_url(source), shown, "{source}");
+        }
+    }
+
+    #[test]
+    fn a_url_without_credentials_is_named_only_when_it_carried_some() {
+        for (source, shown) in [
+            (
+                "http://alice:pw@example.test/a?api_key=k1&v=2",
+                Some("http://example.test/a?api_key=REDACTED&v=2"),
+            ),
+            ("https://bob@example.test/", Some("https://example.test/")),
+            (
+                "https://example.test/a#access_token=t",
+                Some("https://example.test/a#access_token=REDACTED"),
+            ),
+            // Nothing to remove: the address stays as written.
+            ("https://example.test", None),
+            ("https://example.test/a b?q=1", None),
+            ("https://example.test/a?api_key=REDACTED", None),
+            ("not a url", None),
+        ] {
+            assert_eq!(
+                url_without_credentials(source).as_deref(),
+                shown,
+                "{source}"
+            );
         }
     }
     use super::*;

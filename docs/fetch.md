@@ -118,6 +118,13 @@ permissions for 401/403, `rate limited; try again later` for 429); it names
 neither the page nor the endpoint, and any token or account id the service
 echoed is replaced by `REDACTED`.
 
+Messages, `--json`, reports and recorded history name a URL the same way (no
+userinfo, secret query and fragment values replaced by `REDACTED`), as its
+output's front matter does. Bookkeeping that must tell two such URLs apart keeps
+the address as given in owner-only files: a batch's resume state and output
+records under the output folder's `.markitai/`, and the fetch cache, which keys
+pages by the full address and keeps the page's final address.
+
 A site that is known to turn automated clients away is named in the hint
 instead of the generic text, with what does work: for a 401, 403, 418 or 429
 from Zhihu, WeChat, Douban, Bilibili, Weibo, Toutiao, Reddit, Quora, Stack Overflow,

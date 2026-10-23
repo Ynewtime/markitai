@@ -714,6 +714,31 @@ fn url_tool_and_background_polling_preserve_source_order() {
     client.stop();
 }
 
+/// Tool results name a URL without its userinfo or secret parameter values.
+#[test]
+fn url_results_name_the_page_without_its_credentials() {
+    let pages = Pages::start();
+    let mut client = Client::start(false);
+    let given = format!(
+        "{}/fast?api_key=k1secret",
+        pages.base.replacen("http://", "http://alice:pw0rd@", 1)
+    );
+    let shown = format!("{}/fast?api_key=REDACTED", pages.base);
+    let single = client.success("convert_url", json!({"url":given}));
+    assert_eq!(single["source"], shown.as_str());
+    let ack = client.success("batch_convert", json!({"sources":[given]}));
+    let status = client.completed(ack["job_id"].as_str().unwrap());
+    assert_eq!(status["results"][0]["source"], shown.as_str());
+    for value in [single, status] {
+        let text = value.to_string();
+        assert!(
+            !text.contains("pw0rd") && !text.contains("k1secret"),
+            "{text}"
+        );
+    }
+    client.stop();
+}
+
 #[cfg(test)]
 mod bounded_fixture_io {
     include!(concat!(

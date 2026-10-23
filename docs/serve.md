@@ -62,7 +62,11 @@ workbench relies on; they are not a byte-for-byte contract of every payload.
    history entries. URL-only requests also accept
    `application/x-www-form-urlencoded`. A successful submission returns
    HTTP 201 with `job_id` and ordered `{item_id,name,kind}` entries. File entries
-   precede URL entries. Upload names are sanitized and made unique, including
+   precede URL entries. A URL item's `name` has no userinfo, and the value of a
+   secret query or fragment parameter reads `REDACTED`, in every answer, event
+   and saved history entry. Only the server process keeps the address as given,
+   to fetch it and retry it; after a restart, retrying such an item is refused
+   with 409 `no_source`, so submit the URL again. Upload names are sanitized and made unique, including
    case-folded collisions. Base and enhanced Markdown names are reserved as a
    pair, so an upload named `notes.llm` cannot overwrite another item's enhanced
    result. An uploaded `*.urls` file is read as a URL list rather than converted
