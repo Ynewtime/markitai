@@ -426,8 +426,11 @@ struct Segment<'a> {
     text: &'a str,
 }
 
+/// The page and slide markers, and the `rag` profile's page provenance
+/// (`<!-- page: N -->`) they become in its output.
 static MARKER: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^\s*<!--\s*(?:Page|Slide) number:\s*(\d+)\s*-->\s*$").expect("marker compiles")
+    Regex::new(r"^\s*<!--\s*(?:(?:Page|Slide) number|page):\s*(\d+)\s*-->\s*$")
+        .expect("marker compiles")
 });
 
 /// Split at page and slide markers outside fenced code.

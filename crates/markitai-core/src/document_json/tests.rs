@@ -423,6 +423,24 @@ fn pages_tables_and_pictures_follow_the_page_markers() {
 }
 
 #[test]
+fn the_rag_profile_page_provenance_divides_the_pages_too() {
+    let rag = ConversionOutput {
+        source: "report.pdf".into(),
+        markdown: "<!-- page: 1 -->\n\nIntro\n\n<!-- page: 002 -->\n\n|h|\n|-|\n|v|\n".into(),
+        ..Default::default()
+    };
+    let document = render(&rag);
+    let numbers: Vec<_> = document["pages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|page| page["number"].clone())
+        .collect();
+    assert_eq!(numbers, [json!(1), json!(2)]);
+    assert_eq!(document["tables"][0]["page"], 2);
+}
+
+#[test]
 fn plain_text_drops_markup_pictures_and_comments() {
     assert_eq!(
         plain_text(
