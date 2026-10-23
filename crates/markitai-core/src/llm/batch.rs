@@ -863,11 +863,23 @@ mod tests {
 
     #[test]
     fn other_providers_are_refused_before_any_batch_work() {
-        let cfg = json!({"llm":{"model_list":[{"litellm_params":{"model":"gemini/gemini-3.8-flash","api_key":"fixture"}}]}});
-        let Err(Error::Unsupported(message)) = Session::configured(&cfg, &HashMap::new()) else {
-            panic!("Gemini has no batch transport here");
-        };
-        assert!(message.contains("OpenAI and Anthropic"), "{message}");
+        // Claude on Microsoft Foundry speaks the Messages API, but Message
+        // Batches go to the Claude API only (as in Python markitai).
+        for (model, base) in [
+            ("gemini/gemini-3.8-flash", None),
+            (
+                "azure_ai/claude-x",
+                Some("https://foundry.invalid/anthropic"),
+            ),
+            ("azure_ai/gpt-x", Some("https://foundry.invalid/openai/v1")),
+        ] {
+            let cfg = json!({"llm":{"model_list":[{"litellm_params":{"model":model,"api_key":"fixture","api_base":base}}]}});
+            let Err(Error::Unsupported(message)) = Session::configured(&cfg, &HashMap::new())
+            else {
+                panic!("{model} has no batch transport here");
+            };
+            assert!(message.contains("OpenAI and Anthropic"), "{message}");
+        }
     }
 
     #[test]

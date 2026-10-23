@@ -208,10 +208,10 @@ both are set, as in Google's SDK), `DEEPSEEK_API_KEY`, and `OPENROUTER_API_KEY`
 or `OR_API_KEY`, as LiteLLM does.
 
 Anthropic Messages requests (`anthropic/`, including a gateway, proxy or
-Microsoft Foundry address in `api_base`, and Claude on Vertex AI) use API
-version `2026-10-21`: the `anthropic-version` header, Vertex AI's
-`anthropic_version` body field, Message Batches, model discovery and the
-connection test. `litellm_params` keeps only the settings listed in
+Microsoft Foundry address in `api_base`, `azure_ai/` Claude models, and Claude
+on Vertex AI) use API version `2026-10-21`: the `anthropic-version` header,
+Vertex AI's `anthropic_version` body field, Message Batches, model discovery
+and the connection test. `litellm_params` keeps only the settings listed in
 [configuration](configuration.md), so `temperature`, `top_p` and `top_k` are
 never sent (Python markitai drops them too); an Anthropic model that sets them
 gets one warning naming them, since that API version refuses them on every
@@ -336,7 +336,7 @@ provider picker offers them like the prefixes of the first table.
 | `datarobot/` | `https://app.datarobot.com/api/v2/genai/llmgw` | `DATAROBOT_API_TOKEN` | `DATAROBOT_ENDPOINT` | docs.datarobot.com/en/docs/agentic-ai/genai-code/dr-llm-gateway.html |
 | `databricks/` | none: `https://<workspace>/serving-endpoints` | `DATABRICKS_TOKEN`, `DATABRICKS_API_KEY` | `DATABRICKS_API_BASE` | docs.databricks.com/aws/en/large-language-models/llm-serving-intro |
 | `heroku/` | none: `<INFERENCE_URL>/v1` | `INFERENCE_KEY`, `HEROKU_API_KEY` | `HEROKU_API_BASE` | devcenter.heroku.com/articles/heroku-inference-api-v1-chat-completions |
-| `azure_ai/` | none: `https://<resource>.openai.azure.com/openai/v1` | `AZURE_INFERENCE_CREDENTIAL`, `AZURE_AI_API_KEY` | `AZURE_AI_API_BASE` | learn.microsoft.com/azure/foundry/openai/api-version-lifecycle |
+| `azure_ai/` | none: `https://<resource>.openai.azure.com/openai/v1`; Claude: `https://<resource>.services.ai.azure.com/anthropic` | `AZURE_INFERENCE_CREDENTIAL`, `AZURE_AI_API_KEY` | `AZURE_AI_API_BASE` | learn.microsoft.com/azure/foundry/openai/api-version-lifecycle |
 | `litellm_proxy/` | none (key optional) | `LITELLM_PROXY_API_KEY` | `LITELLM_PROXY_API_BASE` | LiteLLM proxy |
 | `openai_like/` | none (key optional) | `OPENAI_LIKE_API_KEY` | `OPENAI_LIKE_API_BASE` | LiteLLM |
 | `llamafile/` | `http://127.0.0.1:8080/v1` | `LLAMAFILE_API_KEY` (optional) | `LLAMAFILE_API_BASE` | github.com/mozilla-ai/llamafile docs/api.md |
@@ -362,7 +362,11 @@ How some of them name models and endpoints:
   (`…/api/v2`) and adds the LLM gateway path, as LiteLLM does.
 - `azure_ai/` expects the v1 base (`…/openai/v1`): Microsoft retired the Azure
   AI Inference route LiteLLM's default used. Azure OpenAI deployments keep
-  `azure/`.
+  `azure/`. A model whose name contains `claude` is Claude on Foundry and is
+  sent, as LiteLLM sends it, to the Anthropic Messages API at
+  `<base>/anthropic/v1/messages` (a base ending in `/v1/messages` is used as
+  is; one containing `/anthropic` is cut after it) with an `api-key` header and
+  the `anthropic-version` above. Provider Batch does not take it.
 - `databricks/` and `heroku/` have no fixed host; set `api_base` (for Heroku,
   `INFERENCE_URL` with `/v1`) or the base variable.
 - Prefixes of services that ended are refused with the reason: `github/`
@@ -499,8 +503,9 @@ limit. Requests to OpenAI itself, and GPT-5-or-later and o-series names at other
 OpenAI or Azure addresses, name it `max_completion_tokens` (OpenAI deprecated
 `max_tokens`, and its reasoning models refuse it); other chat requests use
 `max_tokens`. Without a configured cap, Gemini, DeepSeek and Anthropic models in
-the reviewed [price catalog](pricing.md) are asked for their listed output limit
-within the room their context window leaves after the prompt, as Python
+the reviewed [price catalog](pricing.md) (and Claude on Foundry under the same
+name) are asked for their listed output limit within the room their context
+window leaves after the prompt, as Python
 markitai does (an estimate of the prompt plus 1,600 tokens per image and a
 fifth, at least 2,000, of headroom; at most 128,000 and at least 1,000, or
 4,000 for a prompt with more than 20 table rows): Gemini Flash gets 65,536
@@ -527,6 +532,7 @@ litellm_params.reasoning_effort or raise max_tokens`.
 | `openai/` models that accept `none` (GPT-5.1 to GPT-5.6, `gpt-6-luna`, `gpt-6-sol`, as LiteLLM 1.104.2 lists them) | `reasoning_effort: "none"`: they reason by default | sent as `reasoning_effort` |
 | Other OpenAI-compatible endpoints (other `openai/` models, `gemini/`, `openrouter/`, `azure/`, …) | nothing; the model's own default applies | sent as `reasoning_effort`; the provider decides which values a model accepts and rejects others with HTTP 400 |
 | `anthropic/` | Claude Haiku 5.5, which thinks unless told not to: `thinking: {"type": "disabled"}` (not on a forced tool call, which does not think). Other models: nothing (Opus 5.5 and Fable refuse the switch; older models do not think by default; Sonnet 5.5's own switch, `between_tools`, is not verified here) | only `none` is accepted; other values are a configuration error |
+| `azure_ai/` Claude models | nothing (Python markitai sends the Haiku 5.5 switch to `anthropic/` only) | only `none` is accepted; other values are a configuration error |
 | `copilot/`, `claude-agent/`, `chatgpt/` | the runtime's default | not accepted, like `max_tokens` |
 
 ```json

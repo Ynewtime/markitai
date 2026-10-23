@@ -328,22 +328,7 @@ fn perform(entry: &Deployment) -> Result<(), Failure> {
             )
         })?;
     } else {
-        if let Some(key) = &entry.key {
-            call = match entry.protocol {
-                Protocol::Anthropic
-                    if entry.key_variable.as_deref() == Some("ANTHROPIC_AUTH_TOKEN") =>
-                {
-                    call.bearer_auth(key)
-                }
-                Protocol::Anthropic => call.header("x-api-key", key),
-                Protocol::Azure => call.header("api-key", key),
-                Protocol::Chat => call.bearer_auth(key),
-            };
-        }
-        if entry.protocol == Protocol::Anthropic {
-            call = call.header("anthropic-version", super::ANTHROPIC_VERSION);
-        }
-        call = call.json(&body);
+        call = super::authorized(call, entry).json(&body);
     }
     // A failure names its cause as conversion's does (diagnosis), but the
     // provider's own wording is never shown here: only its error type or
@@ -516,6 +501,52 @@ mod tests {
             said,
             "Model connection returned HTTP 401 (invalid_request_error/invalid_api_key)"
         );
+    }
+
+    #[test]
+    fn claude_on_microsoft_foundry_is_tested_through_the_messages_api() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0; 4096];
+            while !request.ends_with(b"}") {
+                match stream.read(&mut buffer) {
+                    Ok(0) | Err(_) => break,
+                    Ok(read) => request.extend_from_slice(&buffer[..read]),
+                }
+            }
+            let body = json!({"model":"claude-x","content":[{"type":"text","text":"OK"}],
+                "usage":{"input_tokens":3,"output_tokens":1}})
+            .to_string();
+            let _ = write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            String::from_utf8(request).unwrap()
+        });
+        let result = probe_explicit(
+            &json!({"model":"azure_ai/claude-x","api_key":"fake-test-key",
+            "api_base":format!("http://{address}/anthropic/")}),
+        )
+        .unwrap();
+        let request = server.join().unwrap().to_ascii_lowercase();
+        assert_eq!(result["ok"], true, "{result}");
+        assert!(
+            request.starts_with("post /anthropic/v1/messages "),
+            "{request}"
+        );
+        assert!(
+            request.contains("\r\napi-key: fake-test-key\r\n"),
+            "{request}"
+        );
+        assert!(
+            request.contains("anthropic-version: 2026-10-21"),
+            "{request}"
+        );
+        assert!(!request.contains("x-api-key") && !request.contains("authorization"));
     }
 
     #[test]

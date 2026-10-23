@@ -904,6 +904,33 @@ pub(super) fn default_base(
     }
 }
 
+/// Whether `azure_ai/<model>` is Claude on Microsoft Foundry, which is
+/// served by the Anthropic Messages API: a name containing `claude`, the
+/// test LiteLLM (Python markitai) routes by.
+pub(crate) fn foundry_claude(prefix: &str, model: &str) -> bool {
+    prefix == "azure_ai" && model.to_ascii_lowercase().contains("claude")
+}
+
+/// The Messages endpoint of Claude on Foundry, as LiteLLM forms it: a path
+/// that ends in `/v1/messages` is kept; otherwise everything after the first
+/// `/anthropic` is cut (or `/anthropic` is appended) and `/v1/messages`
+/// follows.
+pub(super) fn foundry_messages_base(base: String) -> String {
+    let Ok(mut url) = url::Url::parse(&base) else {
+        return base;
+    };
+    let path = url.path().trim_end_matches('/');
+    let path = if path.ends_with("/v1/messages") {
+        path.to_owned()
+    } else if let Some(at) = path.find("/anthropic") {
+        format!("{}/v1/messages", &path[..at + "/anthropic".len()])
+    } else {
+        format!("{path}/anthropic/v1/messages")
+    };
+    url.set_path(&path);
+    url.into()
+}
+
 /// A DataRobot API endpoint (`…/api/v2`, as `DATAROBOT_ENDPOINT` usually
 /// holds) gains the LLM gateway path, as LiteLLM adds it.
 pub(super) fn normalize_base(provider: &Provider, base: String) -> String {
@@ -1156,6 +1183,30 @@ mod tests {
             assert!(message.contains("is not routed: "), "{message}");
         }
         assert_eq!(listings().count(), PROVIDERS.len());
+    }
+
+    #[test]
+    fn claude_on_foundry_reaches_the_messages_endpoint_litellm_forms() {
+        assert!(foundry_claude("azure_ai", "Claude-Sonnet-5-5"));
+        assert!(foundry_claude("azure_ai", "my-claude-deployment"));
+        assert!(!foundry_claude("azure_ai", "gpt-x"));
+        assert!(!foundry_claude("anthropic", "claude-x"));
+        let resource = "https://example-resource.services.ai.azure.com";
+        for (base, path) in [
+            ("", "/anthropic/v1/messages"),
+            ("/", "/anthropic/v1/messages"),
+            ("/anthropic", "/anthropic/v1/messages"),
+            ("/anthropic/v1", "/anthropic/v1/messages"),
+            ("/anthropic/v1/messages/", "/anthropic/v1/messages"),
+            ("/gateway/v1/messages", "/gateway/v1/messages"),
+            ("/models", "/models/anthropic/v1/messages"),
+        ] {
+            assert_eq!(
+                foundry_messages_base(format!("{resource}{base}")),
+                format!("{resource}{path}"),
+                "{base}"
+            );
+        }
     }
 
     #[test]
