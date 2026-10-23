@@ -94,7 +94,8 @@ def _read_published(path: Path) -> tuple[dict[str, Any], str]:
     data: Any = None
     if frontmatter is not None:
         try:
-            data = yaml.load(frontmatter, Loader=_StringDates)  # noqa: S506 - SafeLoader subclass
+            # A SafeLoader subclass: builds plain objects only
+            data = yaml.load(frontmatter, Loader=_StringDates)  # noqa: S506  # nosec B506
         except yaml.YAMLError:
             data = None
     return (dict(data) if isinstance(data, dict) else {}), body
