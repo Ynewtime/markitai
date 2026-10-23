@@ -170,6 +170,17 @@ class SetupShTests(unittest.TestCase):
         self.assertFalse((self.home / ".local/share/markitai").exists())
         self.assertIn("~/.markitai", removed.stdout)
 
+    def test_a_share_folder_setup_did_not_create_is_kept(self):
+        current = self.home / ".local/share/markitai/current"
+        current.mkdir(parents=True)
+        (current / "notes.txt").write_text("mine")
+        result = self.run_setup()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("Setup did not create this folder", result.stdout)
+        self.assertFalse((self.home / ".local/bin/markitai").exists())
+        self.assertEqual(self.run_setup("--uninstall").returncode, 0)
+        self.assertEqual((current / "notes.txt").read_text(), "mine")
+
     def test_other_shells_and_chinese(self):
         for shell in ["dash", "bash", "zsh"]:
             if not shutil.which(shell):
@@ -281,19 +292,50 @@ Assert ($failed -and -not (Test-Path (Join-Path $Work "evil"))) "unsafe member r
 $install = Join-Path $Work "Programs/markitai"
 New-Item -ItemType Directory -Force -Path $install | Out-Null
 Set-Content -LiteralPath (Join-Path $install "user-notes.txt") -Value "mine"
-Set-Content -LiteralPath (Join-Path $install "markitai.exe") -Value "old exe"
-Install-Release $unpacked $install $pinned "x86_64-pc-windows-msvc"
+Set-Content -LiteralPath (Join-Path $install "LICENSE") -Value "my own"
+$failed = $false; try { Install-Release $unpacked $install $pinned "x86_64-pc-windows-msvc" } catch { $failed = $true }
+Assert $failed "a first install refuses a folder holding one of its names"
+Assert ((Get-Content -Raw (Join-Path $install "LICENSE")).Trim() -eq "my own") "the user's file is kept"
+Assert (@(Get-ChildItem -LiteralPath $install -Force).Count -eq 2) "nothing installed beside it"
+Remove-Item -LiteralPath (Join-Path $install "LICENSE")
+Set-Content -LiteralPath (Join-Path $install "settings.old-2024.json") -Value "keep"
+Set-Content -LiteralPath (Join-Path $install ("markitai.exe.old-" + ("0" * 32))) -Value "left by a running exe"
+Install-Release $unpacked $install $pinned "x86_64-pc-windows-msvc" | Out-Null
 Assert ((Get-Content -Raw (Join-Path $install "user-notes.txt")).Trim() -eq "mine") "files not installed here stay"
+Assert (Test-Path (Join-Path $install "settings.old-2024.json")) "only this script's old copies are swept"
 Assert ((Get-Content -Raw (Join-Path $install "markitai.exe")) -eq "exe 2.0.1") "new exe"
-Assert (@(Get-ChildItem $install -Filter "*.old-*").Count -eq 0) "old exe deleted"
+Assert (@(Get-ChildItem $install -Force | Where-Object { $_.Name -match '\.old-[0-9a-f]{32}$|^\.markitai-' }).Count -eq 0) "old copies and staging gone"
 Assert ((Get-Content -Raw (Join-Path $install "receipt")) -match "version=2.0.1") "receipt"
-Assert ((Get-InstalledNames $install) -contains "licenses") "receipt lists the folder's names"
+Assert ((Read-Receipt $install).Names -contains "licenses") "receipt lists the folder's names"
+
 $second = Join-Path $Work "second"
 New-Item -ItemType Directory -Path $second | Out-Null
-foreach ($name in @("markitai.exe", "mkai.exe", "markitai-mcp.exe")) { Set-Content -LiteralPath (Join-Path $second $name) -Value "exe 2.0.2" }
-Install-Release $second $install @{ Version = "2.0.2" } "x86_64-pc-windows-msvc"
+foreach ($name in @("markitai.exe", "mkai.exe", "markitai-mcp.exe", "NOTICE")) { Set-Content -LiteralPath (Join-Path $second $name) -Value "exe 2.0.2" }
+Set-Content -LiteralPath (Join-Path $install "NOTICE") -Value "mine too"
+$failed = $false; try { Install-Release $second $install @{ Version = "2.0.2" } "x86_64-pc-windows-msvc" } catch { $failed = $true }
+Assert ($failed -and (Get-Content -Raw (Join-Path $install "NOTICE")).Trim() -eq "mine too") "an update refuses a name the receipt does not list"
+Assert ((Get-Content -Raw (Join-Path $install "markitai.exe")) -eq "exe 2.0.1") "and keeps the installed release"
+Remove-Item -LiteralPath (Join-Path $install "NOTICE")
+
+# A failure halfway through the swap puts the previous release back.
+$script:FailMove = "mkai.exe"
+function Move-Item {
+    [CmdletBinding()] param([string]$LiteralPath, [string]$Destination)
+    if ($script:FailMove -and (Split-Path -Leaf $Destination) -eq $script:FailMove) { $script:FailMove = $null; throw "disk full" }
+    Microsoft.PowerShell.Management\Move-Item -LiteralPath $LiteralPath -Destination $Destination
+}
+$failed = $false; try { Install-Release $second $install @{ Version = "2.0.2" } "x86_64-pc-windows-msvc" } catch { $failed = $true }
+Assert $failed "the swap failed"
+foreach ($name in @("markitai.exe", "mkai.exe")) { Assert ((Get-Content -Raw (Join-Path $install $name)) -eq "exe 2.0.1") "$name restored" }
+Assert (Test-Path (Join-Path $install "licenses/example/LICENSE")) "licenses restored"
+Assert ((Get-Content -Raw (Join-Path $install "receipt")) -match "version=2.0.1") "receipt restored"
+Assert (@(Get-ChildItem $install -Force | Where-Object { $_.Name -match '\.old-[0-9a-f]{32}$|^\.markitai-' }).Count -eq 0) "nothing left aside"
+Remove-Item function:Move-Item
+
+Install-Release $second $install @{ Version = "2.0.2" } "x86_64-pc-windows-msvc" | Out-Null
 Assert (-not (Test-Path (Join-Path $install "licenses"))) "the previous release's files go"
 Assert (Test-Path (Join-Path $install "user-notes.txt")) "still kept"
+Assert ((Get-Content -Raw (Join-Path $install "NOTICE")).Trim() -eq "exe 2.0.2") "the new release's names come"
 
 Assert (Add-ToUserPath $install) "added"
 Assert ($script:FakeUserPath -eq "$install;%USERPROFILE%\bin;C:\Tools") "prepended, others kept unexpanded"

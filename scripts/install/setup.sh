@@ -92,6 +92,7 @@ msg() {
             error_run) echo "下载的 markitai 无法在此系统运行" ;;
             error_python_version) echo "markitai 1.x 是 Python 包；请用 uv tool install 或 pip 安装该版本" ;;
             error_version) echo "MARKITAI_VERSION 应为 X.Y.Z 形式" ;;
+            error_foreign_folder) echo "此目录不是安装脚本创建的，而每次安装都会替换它；请移走后重新运行安装脚本" ;;
             warn_http) echo "下载地址不是 HTTPS" ;;
             *) echo "$1" ;;
         esac
@@ -150,6 +151,7 @@ msg() {
         error_run) echo "The downloaded markitai does not run on this system" ;;
         error_python_version) echo "markitai 1.x is the Python package; install that release with uv tool install or pip" ;;
         error_version) echo "MARKITAI_VERSION must look like X.Y.Z" ;;
+        error_foreign_folder) echo "Setup did not create this folder and replaces it on every install; move it away and run setup again" ;;
         warn_http) echo "The download address is not HTTPS" ;;
         *) echo "$1" ;;
     esac
@@ -316,6 +318,19 @@ resolve_release() {
 
 # ---- install ----
 
+# $SHARE_ROOT/current is replaced whole on every install and removed by
+# --uninstall; only a folder holding this script's receipt is its own.
+owned_current() {
+    grep -q '^version=' "$SHARE_ROOT/current/receipt" 2>/dev/null
+}
+
+check_share_folder() {
+    [ -d "$SHARE_ROOT/current" ] || return 0
+    ! owned_current || return 0
+    [ -n "$(ls -A "$SHARE_ROOT/current" 2>/dev/null)" ] || return 0
+    fail "$(msg error_foreign_folder)" "$(pretty "$SHARE_ROOT/current")"
+}
+
 # Python markitai 1.x installed with uv would keep its own markitai, mkai and
 # markitai-mcp in the same folder; the 2.x executable replaces it.
 remove_python_markitai() {
@@ -468,7 +483,7 @@ uninstall() {
         ok "$(msg removed): $(pretty "$_bin/markitai")"
         _removed=true
     fi
-    if [ -d "$SHARE_ROOT/current" ]; then
+    if owned_current; then
         rm -rf "$SHARE_ROOT/current"
         rmdir "$SHARE_ROOT" 2>/dev/null || true
         ok "$(msg removed): $(pretty "$SHARE_ROOT/current")"
@@ -530,6 +545,7 @@ main() {
     section "$(msg section_install)"
     detect_target
     info "$(msg platform): $TARGET"
+    check_share_folder
     WORK=$(mktemp -d "${TMPDIR:-/tmp}/markitai-setup.XXXXXX")
     trap 'rm -rf "$WORK"' EXIT
     trap 'rm -rf "$WORK"; exit 130' INT TERM

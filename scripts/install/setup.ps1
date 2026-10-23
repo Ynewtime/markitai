@@ -156,10 +156,12 @@ function Msg {
             "error_arch" { '\u4e0d\u652f\u6301\u6b64\u5904\u7406\u5668\u67b6\u6784' }
             "error_checksum" { 'SHA-256 \u4e0d\u5339\u914d\uff0c\u4e0b\u8f7d\u7684\u6587\u4ef6\u5df2\u5220\u9664' }
             "error_download" { '\u4e0b\u8f7d\u5931\u8d25' }
+            "error_install" { '\u65e0\u6cd5\u5b89\u88c5\u5230\u6b64\u76ee\u5f55' }
             "error_no_asset" { '\u8be5\u7248\u672c\u6ca1\u6709\u6b64\u5e73\u53f0\u7684\u5f52\u6863' }
             "error_os_windows" { '\u6b64\u811a\u672c\u7528\u4e8e Windows\uff1bmacOS \u548c Linux \u8bf7\u4f7f\u7528 setup.sh' }
             "error_python_version" { 'markitai 1.x \u662f Python \u5305\uff1b\u8bf7\u7528 uv tool install \u6216 pip \u5b89\u88c5\u8be5\u7248\u672c' }
             "error_run" { '\u4e0b\u8f7d\u7684 markitai \u65e0\u6cd5\u5728\u6b64\u7cfb\u7edf\u8fd0\u884c' }
+            "error_shared_folder" { '\u6b64\u76ee\u5f55\u5df2\u6709\u4e0e markitai \u5b89\u88c5\u6587\u4ef6\u540c\u540d\u7684\u6587\u4ef6\uff1b\u8bf7\u4f7f\u7528\u7a7a\u76ee\u5f55\u6216\u4e13\u7528\u76ee\u5f55' }
             "error_version" { 'MARKITAI_VERSION \u5e94\u4e3a X.Y.Z \u5f62\u5f0f' }
             "failed" { '\u5b89\u88c5\u5931\u8d25' }
             "installed" { '\u5df2\u5b89\u88c5' }
@@ -238,6 +240,8 @@ function Msg {
         "error_run" { "The downloaded markitai does not run on this system" }
         "error_python_version" { "markitai 1.x is the Python package; install that release with uv tool install or pip" }
         "error_version" { "MARKITAI_VERSION must look like X.Y.Z" }
+        "error_shared_folder" { "This folder already holds files of the names markitai installs; use an empty or dedicated folder" }
+        "error_install" { "Could not install into this folder" }
         "warn_http" { "The download address is not HTTPS" }
         default { $Key }
     }
@@ -431,55 +435,145 @@ function Remove-PythonMarkitai {
     }
 }
 
-# What the receipt says this script installed: the folder's top-level names.
-# Only those are ever removed, so a MARKITAI_INSTALL_DIR shared with other
-# files keeps them.
-function Get-InstalledNames {
+# The receipt names what this script installed in the folder: the release,
+# and the folder's top-level names (file=...). Only those are ever replaced or
+# removed, so a MARKITAI_INSTALL_DIR shared with other files keeps them.
+# $null when the folder holds no receipt of this script's.
+function Read-Receipt {
     param([string]$Directory)
-    $receipt = Join-Path $Directory "receipt"
-    if (-not (Test-Path -LiteralPath $receipt -PathType Leaf)) { return @() }
-    return @([IO.File]::ReadAllLines($receipt) | Where-Object { $_ -like "file=*" } | ForEach-Object { $_.Substring(5) } |
-        Where-Object { $_ -and $_ -notmatch '[\\/:]' -and $_ -ne ".." -and $_ -ne "." })
+    $path = [IO.Path]::Combine($Directory, "receipt")
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return $null }
+    $lines = @([IO.File]::ReadAllLines($path))
+    if (-not @($lines | Where-Object { $_ -like "version=*" })) { return $null }
+    $names = @($lines | Where-Object { $_ -like "file=*" } | ForEach-Object { $_.Substring(5) } |
+        Where-Object { $_ -and $_ -notmatch '[\\/:]' -and $_ -ne ".." -and $_ -ne "." -and $_ -ne "receipt" })
+    return @{ Names = $names }
 }
 
-# A running executable cannot be deleted but can be renamed, so executables
-# are moved aside and deleted once they no longer run (or at the next update).
-function Clear-InstalledNames {
-    param([string]$Directory, [string[]]$Names)
-    foreach ($name in @($Names | Select-Object -Unique)) {
-        $path = Join-Path $Directory $name
-        if (-not (Test-Path -LiteralPath $path)) { continue }
-        $item = Get-Item -LiteralPath $path -Force
-        if (-not $item.PSIsContainer -and $item.Extension -eq ".exe") {
-            Move-Item -LiteralPath $path -Destination ($path + ".old-" + [Guid]::NewGuid().ToString("N"))
-        } else {
-            Remove-Item -LiteralPath $path -Recurse -Force
-        }
-    }
+function Write-Receipt {
+    param([string]$Directory, [hashtable]$Receipt)
+    $lines = @("version=$($Receipt.Version)", "target=$($Receipt.Target)") + @($Receipt.Names | ForEach-Object { "file=$_" })
+    [IO.File]::WriteAllText([IO.Path]::Combine($Directory, "receipt"), (($lines -join "`n") + "`n"))
 }
 
-function Remove-OldExecutables {
+# The release's names (and "receipt") that the folder already holds but the
+# receipt does not list: the user's or another program's, never replaced.
+function Get-ForeignNames {
+    param([string]$Directory, [string[]]$Names, $Receipt)
+    $owned = @()
+    if ($Receipt) { $owned = @($Receipt.Names) + @("receipt") }
+    return @(@($Names) + @("receipt") | Where-Object {
+        $owned -notcontains $_ -and (Test-Path -LiteralPath ([IO.Path]::Combine($Directory, $_)))
+    })
+}
+
+# Old copies an earlier run renamed aside (a running executable cannot be
+# deleted, only renamed) and a staging folder an interrupted run left behind:
+# exactly the names this script creates.
+$LeftoverPattern = '^((markitai|mkai|markitai-mcp)\.exe\.old-|\.markitai-new-)[0-9a-f]{32}$'
+
+function Remove-Leftovers {
     param([string]$Directory)
     $left = $false
-    foreach ($item in @(Get-ChildItem -LiteralPath $Directory -Filter "*.old-*" -Force -ErrorAction SilentlyContinue)) {
-        try { Remove-Item -LiteralPath $item.FullName -Force } catch { $left = $true }
+    foreach ($item in @(Get-ChildItem -LiteralPath $Directory -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -match $LeftoverPattern })) {
+        try { Remove-Item -LiteralPath $item.FullName -Recurse -Force } catch { $left = $true }
     }
     return $left
 }
 
-# The previous release's files (and any of the new one's names) make way for
-# the new release; the receipt lists what is installed now.
+# Renames each name aside, then deletes it. Returns $true when something
+# (a running executable) could not be deleted yet.
+function Remove-Names {
+    param([string]$Directory, [string[]]$Names)
+    $id = [Guid]::NewGuid().ToString("N")
+    $inUse = $false
+    foreach ($name in @($Names)) {
+        $path = [IO.Path]::Combine($Directory, $name)
+        if (-not (Test-Path -LiteralPath $path)) { continue }
+        Move-Item -LiteralPath $path -Destination "$path.old-$id"
+        try { Remove-Item -LiteralPath "$path.old-$id" -Recurse -Force } catch { $inUse = $true }
+    }
+    if (Remove-Leftovers $Directory) { $inUse = $true }
+    return $inUse
+}
+
+# The release is first copied into a staging folder inside the install
+# folder: that proves the folder is writable and has room before anything
+# installed is touched, and keeps the swap to renames on one volume (a
+# sibling folder could sit where the user may not write).
+function New-Staging {
+    param([string]$Unpacked, [string]$Directory, [hashtable]$Release, [string]$Target, $Previous)
+    $names = @(Get-ChildItem -LiteralPath $Unpacked -Force | ForEach-Object { $_.Name })
+    $foreign = @(Get-ForeignNames $Directory $names $Previous)
+    if ($foreign.Count) { Stop-Setup (Msg "error_shared_folder") "${Directory}: $($foreign -join ', ')" }
+    $created = -not (Test-Path -LiteralPath $Directory)
+    $stage = [IO.Path]::Combine($Directory, ".markitai-new-" + [Guid]::NewGuid().ToString("N"))
+    $receipt = @{ Version = $Release.Version; Target = $Target; Names = $names }
+    try {
+        New-Item -ItemType Directory -Force -Path $stage | Out-Null
+        foreach ($name in $names) {
+            Copy-Item -LiteralPath ([IO.Path]::Combine($Unpacked, $name)) -Destination ([IO.Path]::Combine($stage, $name)) -Recurse -Force
+        }
+        Write-Receipt $stage $receipt
+    } catch {
+        $problem = $_.Exception.Message
+        Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
+        if ($created) { Remove-Item -LiteralPath $Directory -Recurse -Force -ErrorAction SilentlyContinue }
+        Stop-Setup (Msg "error_install") $problem
+    }
+    return @{ Path = $stage; Receipt = $receipt }
+}
+
+# Swaps the staged release in: the previous release's names and the new
+# ones are renamed aside, the staged ones renamed into place, and on any
+# error everything goes back as it was, the previous receipt included.
+function Complete-Install {
+    param([hashtable]$Stage, [string]$Directory, $Previous)
+    $id = [Guid]::NewGuid().ToString("N")
+    $names = @($Stage.Receipt.Names) + @("receipt")
+    $old = @()
+    if ($Previous) { $old = @($Previous.Names) }
+    $aside = New-Object System.Collections.ArrayList
+    $placed = New-Object System.Collections.ArrayList
+    try {
+        foreach ($name in @(@($old) + $names | Select-Object -Unique)) {
+            $path = [IO.Path]::Combine($Directory, $name)
+            if (-not (Test-Path -LiteralPath $path)) { continue }
+            Move-Item -LiteralPath $path -Destination "$path.old-$id"
+            [void]$aside.Add($name)
+        }
+        foreach ($name in $names) {
+            Move-Item -LiteralPath ([IO.Path]::Combine($Stage.Path, $name)) -Destination ([IO.Path]::Combine($Directory, $name))
+            [void]$placed.Add($name)
+        }
+    } catch {
+        $problem = $_.Exception.Message
+        foreach ($name in $placed) {
+            Remove-Item -LiteralPath ([IO.Path]::Combine($Directory, $name)) -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        foreach ($name in $aside) {
+            $path = [IO.Path]::Combine($Directory, $name)
+            Move-Item -LiteralPath "$path.old-$id" -Destination $path -ErrorAction SilentlyContinue
+        }
+        Remove-Item -LiteralPath $Stage.Path -Recurse -Force -ErrorAction SilentlyContinue
+        Stop-Setup (Msg "error_install") $problem
+    }
+    Remove-Item -LiteralPath $Stage.Path -Recurse -Force -ErrorAction SilentlyContinue
+    $inUse = $false
+    foreach ($name in $aside) {
+        try { Remove-Item -LiteralPath ([IO.Path]::Combine($Directory, "$name.old-$id")) -Recurse -Force } catch { $inUse = $true }
+    }
+    if (Remove-Leftovers $Directory) { $inUse = $true }
+    if ($inUse) { Write-Info (Msg "old_in_use") }
+    return $Stage.Receipt
+}
+
+# Returns the receipt of what is installed now.
 function Install-Release {
     param([string]$Unpacked, [string]$Directory, [hashtable]$Release, [string]$Target)
-    New-Item -ItemType Directory -Force -Path $Directory | Out-Null
-    $incoming = @(Get-ChildItem -LiteralPath $Unpacked -Force | ForEach-Object { $_.Name })
-    Clear-InstalledNames $Directory (@(Get-InstalledNames $Directory) + $incoming + @("receipt"))
-    foreach ($name in $incoming) {
-        Move-Item -LiteralPath (Join-Path $Unpacked $name) -Destination (Join-Path $Directory $name)
-    }
-    $lines = @("version=$($Release.Version)", "target=$Target") + @($incoming | ForEach-Object { "file=$_" })
-    [IO.File]::WriteAllText((Join-Path $Directory "receipt"), (($lines -join "`n") + "`n"))
-    if (Remove-OldExecutables $Directory) { Write-Info (Msg "old_in_use") }
+    $previous = Read-Receipt $Directory
+    $stage = New-Staging $Unpacked $Directory $Release $Target $previous
+    return (Complete-Install $stage $Directory $previous)
 }
 
 # The user Path lives in HKCU\Environment as REG_EXPAND_SZ: written back as
@@ -638,11 +732,9 @@ function Invoke-Uninstall {
     Write-Intro (Msg "welcome_uninstall")
     $directory = Get-DefaultInstallDirectory
     $removed = $false
-    if (Test-Path -LiteralPath (Join-Path $directory "markitai.exe")) {
-        $names = @(Get-InstalledNames $directory)
-        if (-not $names) { $names = $Executables }
-        Clear-InstalledNames $directory ($names + @("receipt"))
-        if (Remove-OldExecutables $directory) { Write-Info (Msg "old_in_use") }
+    $receipt = Read-Receipt $directory
+    if ($receipt) {
+        if (Remove-Names $directory (@($receipt.Names) + @("receipt"))) { Write-Info (Msg "old_in_use") }
         if (-not @(Get-ChildItem -LiteralPath $directory -Force)) { Remove-Item -LiteralPath $directory -Force }
         Write-Ok "$(Msg 'removed'): $directory"
         $removed = $true
