@@ -85,9 +85,12 @@ fn pdf_scan_exact_transcript() {
         .split("<!-- Page number: 2 -->")
         .nth(1)
         .unwrap()
-        .split("![Image on page 2]")
+        .split("<!-- Page number: 3 -->")
         .next()
         .unwrap();
+    // A scanned page OCR read text on is its text alone; its scan is not
+    // appended as a picture again.
+    assert!(!page.contains("![Image on page 2]"), "{page}");
     let expected = include_str!("../../src/ocr/fixtures/english.txt");
     assert_eq!(
         page.split_whitespace().collect::<Vec<_>>(),
