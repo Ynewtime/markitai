@@ -1088,8 +1088,22 @@ mod tests {
                 "{name}"
             );
         }
-        let (format, media) = format("notes.md");
-        assert_eq!(sent_type(format, media), "text/markdown; charset=utf-8");
+        let (kind, media) = format("notes.md");
+        assert_eq!(sent_type(kind, media), "text/markdown; charset=utf-8");
+        // An uploaded script or style sheet is never sent as one: the shell's
+        // `script-src 'self'` would otherwise run it from this origin.
+        for name in [
+            "app.js",
+            "module.mjs",
+            "common.CJS",
+            "types.ts",
+            "worker.wasm",
+            "theme.css",
+            "page.xsl",
+        ] {
+            let (kind, media) = format(name);
+            assert_eq!(sent_type(kind, media), "application/octet-stream", "{name}");
+        }
     }
 
     #[test]

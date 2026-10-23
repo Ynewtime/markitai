@@ -886,4 +886,18 @@ mod excerpt_tests {
         assert_eq!(excerpt(b"short\n", 1024), Some("short\n"));
         assert_eq!(excerpt(b"ab\xffcd", 1024), None);
     }
+
+    /// A result file is never sent as a script or style sheet the
+    /// workbench's `script-src 'self'` would run from this origin.
+    #[test]
+    fn result_files_are_never_sent_as_scripts() {
+        for name in [
+            "out/app.js",
+            "out/.markitai/assets/x.MJS",
+            "out/a.wasm",
+            "out/a.css",
+        ] {
+            assert_eq!(content_type(name), "application/octet-stream", "{name}");
+        }
+    }
 }
