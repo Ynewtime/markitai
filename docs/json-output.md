@@ -60,7 +60,7 @@ field set, its order and types against a frozen version 1.0 list.
 | `tool.name`, `tool.version`, `tool.commit` | string | `markitai`, the version, the short build commit (`unknown` outside a checkout) |
 | `source.kind` | `"file"` \| `"url"` | |
 | `source.path` | string \| null | The file as given (a workbench item: its upload name); null for a URL |
-| `source.url` | string \| null | The URL without credentials or secret query values; null for a file |
+| `source.url` | string \| null | The URL without credentials, secret path segments or secret query values; null for a file |
 | `source.name` | string | File name, or the name a URL's output takes |
 | `source.type` | string \| null | Lower-case extension the content was read as (a PDF named `.docx` is `pdf`); null for a URL |
 | `source.size`, `source.sha256` | integer \| null, string \| null | Of a local file; null for a URL or a `.numbers` package folder |

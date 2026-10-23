@@ -563,15 +563,15 @@ pub fn prepare(source: &str, name: &str, doc: &mut Document, cfg: &Value) -> Con
     }
 }
 
-/// A URL as output metadata keeps it: no userinfo, and no value of a query
-/// or form-like fragment parameter that carries a secret (the fetch policy's
-/// judgement of a parameter name).
+/// A URL as output metadata keeps it: no userinfo, each path segment that
+/// carries a secret replaced by `REDACTED`, and no value of a query or
+/// form-like fragment parameter that carries a secret (the fetch policy's
+/// judgement of segments and parameter names, see [`log_url`]).
 pub fn redact_url(source: &str) -> String {
     let Ok(mut url) = url::Url::parse(source) else {
         return source.to_owned();
     };
-    let _ = url.set_username("");
-    let _ = url.set_password(None);
+    hide_userinfo_and_path_secrets(&mut url, "REDACTED");
     if let Some(query) = redacted_parameters(url.query()) {
         url.set_query(Some(&query));
     }
@@ -579,6 +579,47 @@ pub fn redact_url(source: &str) -> String {
         url.set_fragment(Some(&fragment));
     }
     url.to_string()
+}
+
+/// A URL as a log line names it: what [`redact_url`] hides, with the path
+/// segments marked `[REDACTED]`, and no query or fragment at all.
+/// Text that is not a URL reads `[URL redacted]`.
+pub fn log_url(source: &str) -> String {
+    let Ok(mut url) = url::Url::parse(source) else {
+        return "[URL redacted]".into();
+    };
+    hide_userinfo_and_path_secrets(&mut url, "[REDACTED]");
+    url.set_query(None);
+    url.set_fragment(None);
+    url.into()
+}
+
+/// Drop a URL's userinfo and replace each path segment that carries a secret
+/// (the fetch policy's [`crate::fetch::secret_path_segments`]) with `marker`.
+fn hide_userinfo_and_path_secrets(url: &mut url::Url, marker: &str) {
+    let _ = url.set_username("");
+    let _ = url.set_password(None);
+    if url.cannot_be_a_base() {
+        return;
+    }
+    let secret = crate::fetch::secret_path_segments(url.path());
+    if secret.is_empty() {
+        return;
+    }
+    let path = url
+        .path()
+        .split('/')
+        .enumerate()
+        .map(|(index, segment)| {
+            if secret.contains(&index) {
+                marker
+            } else {
+                segment
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("/");
+    url.set_path(&path);
 }
 
 /// [`redact_url`] of a URL that carries userinfo or a secret parameter value,
@@ -1309,6 +1350,12 @@ mod tests {
             ("https://example.test", None),
             ("https://example.test/a b?q=1", None),
             ("https://example.test/a?api_key=REDACTED", None),
+            // A secret path segment is a credential too.
+            (
+                "http://127.0.0.1:8080/reset/Ab3dEf9GhIjK1mN2oP4qR7sT",
+                Some("http://127.0.0.1:8080/reset/REDACTED"),
+            ),
+            ("https://example.test/reset/REDACTED", None),
             ("not a url", None),
         ] {
             assert_eq!(
@@ -1458,6 +1505,28 @@ mod tests {
                 "https://user:pass@example.test/a?api_key=k#section-2",
                 "https://example.test/a?api_key=REDACTED#section-2",
             ),
+            // Secret path segments: after a token route, named like a secret,
+            // or long and random-looking; ordinary segments stay.
+            (
+                "http://127.0.0.1:8080/reset/Ab3dEf9GhIjK1mN2oP4qR7sT",
+                "http://127.0.0.1:8080/reset/REDACTED",
+            ),
+            (
+                "https://example.test/token=Zx9Yw8Vu7Ts6Rq5Po4Nm/page?v=2",
+                "https://example.test/REDACTED/page?v=2",
+            ),
+            (
+                "https://example.test/files/Kq8Lm2Np4Rt6Vx9Zb3Dg5Hj7Fw1Sy0Ac/missing",
+                "https://example.test/files/REDACTED/missing",
+            ),
+            (
+                "https://example.test/reset/how-to-reset-a-router",
+                "https://example.test/reset/how-to-reset-a-router",
+            ),
+            (
+                "https://example.test/wiki/%E4%B8%AD%E6%96%87",
+                "https://example.test/wiki/%E4%B8%AD%E6%96%87",
+            ),
             // Nothing secret: the query is kept as written, not re-encoded.
             (
                 "https://example.test/a?flag&q=a%20b&x=~#top",
@@ -1465,6 +1534,34 @@ mod tests {
             ),
         ] {
             assert_eq!(redact_url(source), persisted, "{source}");
+        }
+    }
+
+    /// The log and output metadata hide the same path segments and secret
+    /// names; the log keeps no query or fragment at all.
+    #[test]
+    fn log_urls_hide_what_persisted_urls_hide_and_drop_the_query() {
+        for (source, logged) in [
+            (
+                "http://alice:pw@127.0.0.1:8080/reset/Ab3dEf9GhIjK1mN2oP4qR7sT?pass=p1#t",
+                "http://127.0.0.1:8080/reset/[REDACTED]",
+            ),
+            (
+                "https://example.test/token=Zx9Yw8Vu7Ts6Rq5Po4Nm/page",
+                "https://example.test/[REDACTED]/page",
+            ),
+            (
+                "https://example.test/wiki/%E4%B8%AD%E6%96%87?q=1",
+                "https://example.test/wiki/%E4%B8%AD%E6%96%87",
+            ),
+            ("not a url", "[URL redacted]"),
+        ] {
+            assert_eq!(log_url(source), logged, "{source}");
+            if let Ok(mut persisted) = url::Url::parse(&redact_url(source)) {
+                persisted.set_query(None);
+                persisted.set_fragment(None);
+                assert_eq!(persisted.as_str().replace("REDACTED", "[REDACTED]"), logged);
+            }
         }
     }
 

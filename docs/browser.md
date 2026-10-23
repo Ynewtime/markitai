@@ -141,9 +141,9 @@ to the initial navigation origin (its scheme, host and effective port), like
 a redirect target; a same-origin subresource still receives them. The automatic
 `Accept-Language` for X (not a caller header) still applies to every request.
 Final source metadata redacts
-userinfo and the values of secret query and fragment parameters (`token`, `key`,
-`sig`, `code`, `auth`, `session`, `access_token` and similar names) while link
-resolution uses the actual final URL.
+userinfo, secret path segments and the values of secret query and fragment
+parameters (`token`, `key`, `sig`, `code`, `auth`, `session`, `access_token`
+and similar names) while link resolution uses the actual final URL.
 Exact domain profile overrides support wait
 state, selector, extra wait, scroll suppression and resource rejection patterns.
 Built-in GitHub and X/Twitter waiting hints are available (X waits for an

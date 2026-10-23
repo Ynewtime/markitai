@@ -219,7 +219,7 @@ form: `error: …` (lower case, in red on a terminal), then the usage line, exit
 
 **`✗ HTTP 404 for https://…: the page may have been removed or is not public`.**
 The site answered with that status. The message names the page (without
-credentials, and with secret-looking query values replaced) and, for the common
+credentials, and with secret-looking path segments and query values replaced) and, for the common
 statuses, says what it usually means: 404/410, removed or not public; 401/403,
 the site refused access, may block automated clients or need a login (Markitai
 sends no cookies or login unless you configure a browser identity, see

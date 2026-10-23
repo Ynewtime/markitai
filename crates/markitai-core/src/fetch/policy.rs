@@ -459,35 +459,43 @@ const SENSITIVE_ROUTES: [&str; 13] = [
     "verification",
 ];
 
+/// The segments of a URL path that carry a secret, as indexes into
+/// `path.split('/')`: a JWT or a long random-looking segment, a `key=value`
+/// or `key:value` segment named like a secret, and a token-like segment after
+/// a route such as `/reset/` or `/token/`. The fetch policy keeps such a URL
+/// from remote services; output metadata and the log hide these segments.
+pub(crate) fn secret_path_segments(path: &str) -> Vec<usize> {
+    let segments: Vec<String> = path.split('/').map(percent_decoded).collect();
+    let mut secret = Vec::new();
+    for (index, segment) in segments.iter().enumerate() {
+        if segment.is_empty() {
+            continue;
+        }
+        let named = ['=', ':'].iter().any(|separator| {
+            segment
+                .split_once(*separator)
+                .is_some_and(|(key, value)| !value.is_empty() && secret_name(key))
+        });
+        let after_route = index > 0 && {
+            let route = &segments[index - 1];
+            (SENSITIVE_ROUTES.contains(&identifier(route).as_str()) || secret_name(route))
+                && contextual_token(segment)
+        };
+        if opaque(segment) || named || after_route {
+            secret.push(index);
+        }
+    }
+    secret
+}
+
 /// Userinfo, or a secret in the path, query or fragment: such a URL is never
 /// sent to a remote service.
 pub(crate) fn credential_material(url: &Url) -> bool {
     if !url.username().is_empty() || url.password().is_some() {
         return true;
     }
-    let segments: Vec<String> = url.path().split('/').map(percent_decoded).collect();
-    for (index, segment) in segments.iter().enumerate() {
-        if segment.is_empty() {
-            continue;
-        }
-        if opaque(segment) {
-            return true;
-        }
-        if ['=', ':'].iter().any(|separator| {
-            segment
-                .split_once(*separator)
-                .is_some_and(|(key, value)| !value.is_empty() && secret_name(key))
-        }) {
-            return true;
-        }
-        if index > 0 {
-            let route = &segments[index - 1];
-            if (SENSITIVE_ROUTES.contains(&identifier(route).as_str()) || secret_name(route))
-                && contextual_token(segment)
-            {
-                return true;
-            }
-        }
+    if !secret_path_segments(url.path()).is_empty() {
+        return true;
     }
     if url.query_pairs().any(|(key, _)| secret_parameter(&key)) {
         return true;
@@ -782,6 +790,28 @@ mod tests {
             names(&order(&url("http://localhost/a"), &cfg, &private)),
             ["static", "playwright"]
         );
+    }
+
+    #[test]
+    fn secret_path_segments_are_located_by_index() {
+        for (path, secret) in [
+            ("/reset/Ab3dEf9GhIjK1mN2oP4qR7sT", vec![2]),
+            ("/token=Zx9Yw8Vu7Ts6Rq5Po4Nm/page", vec![1]),
+            ("/files/Kq8Lm2Np4Rt6Vx9Zb3Dg5Hj7Fw1Sy0Ac/missing", vec![2]),
+            (
+                "/a/pwd:x1y2/b/verify/3f1c2a9b-4d5e-4f60-8a7b-1c2d3e4f5a6b",
+                vec![2, 5],
+            ),
+            // Percent escapes are read before judging.
+            ("/token%3DZx9Yw8Vu7Ts6Rq5Po4Nm/page", vec![1]),
+            ("/reset/how-to-reset-a-router", vec![]),
+            ("/wiki/%E4%B8%AD%E6%96%87", vec![]),
+            ("/post/3f1c2a9b-4d5e-4f60-8a7b-1c2d3e4f5a6b", vec![]),
+            ("/page=2/author/jane-doe", vec![]),
+            ("", vec![]),
+        ] {
+            assert_eq!(secret_path_segments(path), secret, "{path}");
+        }
     }
 
     #[test]

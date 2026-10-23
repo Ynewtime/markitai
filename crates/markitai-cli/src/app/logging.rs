@@ -620,7 +620,9 @@ fn redact(message: &str, secrets: &[String]) -> String {
                     || CHINESE_PUNCTUATION.contains(c)
             })
             .unwrap_or(url.len());
-        safe.push_str(&safe_url(&url[..end]));
+        // The core's redaction: the path segments output metadata hides,
+        // and no query or fragment.
+        safe.push_str(&markitai_core::output::log_url(&url[..end]));
         rest = &url[end..];
     }
     safe.push_str(rest);
@@ -648,53 +650,6 @@ fn redact(message: &str, secrets: &[String]) -> String {
     safe
 }
 
-fn safe_url(raw: &str) -> String {
-    let Ok(mut url) = url::Url::parse(raw) else {
-        return "[URL redacted]".into();
-    };
-    let _ = url.set_username("");
-    let _ = url.set_password(None);
-    url.set_query(None);
-    url.set_fragment(None);
-    // Log URLs need no opaque path identifiers. Keep ordinary paths readable,
-    // but hide token routes and encoded segments rather than guessing secrets.
-    let mut sensitive_next = false;
-    let parts: Vec<_> = url
-        .path()
-        .split('/')
-        .map(|part| {
-            let key = part.to_ascii_lowercase();
-            let hide = sensitive_next
-                || part.contains('%')
-                || part.contains('=')
-                || (part.len() >= 24
-                    && part.bytes().any(|c| c.is_ascii_uppercase())
-                    && part.bytes().any(|c| c.is_ascii_digit()));
-            sensitive_next = [
-                "token",
-                "secret",
-                "auth",
-                "password",
-                "reset",
-                "invite",
-                "session",
-                "activation",
-                "verify",
-                "magic",
-            ]
-            .iter()
-            .any(|s| key.contains(s));
-            if hide {
-                "[REDACTED]".to_owned()
-            } else {
-                part.to_owned()
-            }
-        })
-        .collect();
-    url.set_path(&parts.join("/"));
-    url.into()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -710,6 +665,24 @@ mod tests {
         collect_secrets(&cfg, &config::redact(&cfg), &mut secrets);
         assert!(secrets.contains(&"key-secret".into()));
         assert!(secrets.contains(&"Bearer header-secret".into()));
+    }
+    #[test]
+    fn secret_path_segments_are_hidden_as_in_output_metadata() {
+        assert_eq!(
+            redact(
+                "Converting http://127.0.0.1:8080/reset/Ab3dEf9GhIjK1mN2oP4qR7sT and https://example.test/token=Zx9Yw8Vu7Ts6Rq5Po4Nm/page?pw=p1",
+                &[]
+            ),
+            "Converting http://127.0.0.1:8080/reset/[REDACTED] and https://example.test/[REDACTED]/page"
+        );
+        // Ordinary segments, percent-escaped words included, stay readable.
+        assert_eq!(
+            redact(
+                "Fetched https://example.test/wiki/%E4%B8%AD%E6%96%87 and https://example.test/author/jane-doe",
+                &[]
+            ),
+            "Fetched https://example.test/wiki/%E4%B8%AD%E6%96%87 and https://example.test/author/jane-doe"
+        );
     }
     #[test]
     fn chinese_punctuation_ends_a_url_instead_of_hiding_the_text_after_it() {

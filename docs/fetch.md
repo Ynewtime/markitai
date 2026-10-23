@@ -109,10 +109,11 @@ A failed status reads `HTTP <status> for <URL>` and, for the common ones, a hint
 404 and 410 "the page may have been removed or is not public", 401 and 403 "the
 site refused access; it may block automated clients or need a login", 429 "rate
 limited; try again later" and 5xx "the site had a server error". The URL has no
-credentials or fragment, and query values are replaced by `REDACTED` for the
-usual secret names (`token`, `key`, `secret`, `password`, `signature`,
-`credential`, `auth`, `sig`, `sid`, `session`, `code` and similar) and for long
-opaque values. It is cut at 200 characters. The message keeps the status first
+credentials or fragment, a path segment that carries a secret (see below) reads
+`REDACTED`, and query values are replaced by `REDACTED` for the usual secret
+names (`token`, `key`, `secret`, `password`, `signature`, `credential`,
+`auth`, `sig`, `sid`, `session`, `code` and similar) and for long opaque
+values. It is cut at 200 characters. The message keeps the status first
 and the `fetch_error` code, so the [web interface](web-ui.md) still recognizes
 it. A remote service's own failure reads `HTTP <status> from the <service> service`,
 then the reason the service gave in JSON (cut to 160 characters) and a hint for
@@ -122,9 +123,12 @@ neither the page nor the endpoint, and any token or account id the service
 echoed is replaced by `REDACTED`.
 
 Messages, `--json`, reports and recorded history name a URL the same way (no
-userinfo, secret query and fragment values replaced by `REDACTED`), as its
-output's front matter does. Bookkeeping that must tell two such URLs apart keeps
-the address as given in owner-only files: a batch's resume state and output
+userinfo; each secret path segment and each secret query or fragment value
+replaced by `REDACTED`), as its output's front matter does. A secret path
+segment is one the fetch policy counts as credential material (below), such as
+the token in `/reset/<token>`. The log file hides the same path segments, as
+`[REDACTED]`, and keeps no query or fragment at all. Bookkeeping that must tell
+two such URLs apart keeps the address as given in owner-only files: a batch's resume state and output
 records under the output folder's `.markitai/`, and the fetch cache, which keys
 pages by the full address and keeps the page's final address.
 
