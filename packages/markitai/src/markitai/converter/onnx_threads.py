@@ -28,16 +28,12 @@ _patched = 0
 _original: Any = None
 
 
-def local_threads(share: int = 1) -> int:
-    """Intra-op threads for a session in this process.
-
-    Args:
-        share: Sessions running at once (pages read on threads): each gets
-            its share of the cores.
-    """
+def local_threads() -> int:
+    """Intra-op threads for a session in this process: four, or the cores
+    the process may run on when fewer."""
     from markitai.converter.pdf_parallel import usable_cores
 
-    return max(1, min(LOCAL_SESSION_THREADS, usable_cores() // max(1, share)))
+    return max(1, min(LOCAL_SESSION_THREADS, usable_cores()))
 
 
 def _is_layout_model(model: Any) -> bool:

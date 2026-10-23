@@ -70,14 +70,11 @@ def test_the_layout_models_get_at_most_four_threads(
     assert ort.InferenceSession is _RecordingSession
 
 
-def test_a_small_machine_gives_each_session_its_share(
+def test_a_small_machine_gives_each_session_its_cores(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(pdf_parallel, "usable_cores", lambda: 2)
     assert onnx_threads.local_threads() == 2
-    monkeypatch.setattr(pdf_parallel, "usable_cores", lambda: 10)
-    assert onnx_threads.local_threads(share=3) == 3
-    assert onnx_threads.local_threads(share=20) == 1
     monkeypatch.setattr(pdf_parallel, "usable_cores", lambda: 64)
     assert onnx_threads.local_threads() == onnx_threads.LOCAL_SESSION_THREADS
 
@@ -141,15 +138,16 @@ def test_pdf_pages_read_here_count_the_cores_this_process_may_use(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A container's CPU set, not the machine's core count, sizes the page
-    threads (and with them each engine run's share)."""
+    threads; each page's engine run keeps up to four threads (split per
+    page, three pages on six cores took 4.4 s instead of 3.3 s)."""
     import os
 
     from markitai.converter.pdf import PdfConverter
 
     monkeypatch.setattr(os, "cpu_count", lambda: 64)
-    monkeypatch.setattr(pdf_parallel, "usable_cores", lambda: 4)
-    assert PdfConverter._ocr_thread_count(3) == 2
-    assert onnx_threads.local_threads(PdfConverter._ocr_thread_count(3)) == 2
+    monkeypatch.setattr(pdf_parallel, "usable_cores", lambda: 6)
+    assert PdfConverter._ocr_thread_count(3) == 3
+    assert onnx_threads.local_threads() == 4
 
 
 def test_serve_warms_the_converters_once(monkeypatch: pytest.MonkeyPatch) -> None:

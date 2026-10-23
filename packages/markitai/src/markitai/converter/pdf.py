@@ -911,8 +911,8 @@ class PdfConverter(BaseConverter):
         """Threads reading pages in this process (no worker processes).
 
         One per two cores this process may run on, 8 at most: each page's
-        engine run takes its share of the cores (``onnx_threads``), and
-        the cores idle only while a page is in Python (layout, cropping).
+        engine run takes up to four threads (``onnx_threads``), and the
+        cores idle only while a page is in Python (layout, cropping).
         Memory may allow fewer.
         """
         from markitai.converter.pdf_parallel import ocr_slots, usable_cores
@@ -1918,16 +1918,15 @@ class PdfConverter(BaseConverter):
                 "PyMuPDF is not installed. Install with: uv add pymupdf"
             ) from e
 
-        from markitai.converter.onnx_threads import local_threads
         from markitai.ocr import OCRProcessor
 
         ocr_config = self.config.ocr if self.config else None
-        with pymupdf.open(input_path) as counted:
-            page_count = len(counted)
-        # Pages read on threads here share the cores (the workers set their own)
-        ocr = OCRProcessor(
-            ocr_config, threads=local_threads(self._ocr_thread_count(page_count))
-        )
+        # Each page read on a thread here runs the engine on up to four
+        # threads, not on a share of the cores: a page spends part of its
+        # time in Python, and three pages on two threads each took 4.4 s on
+        # six cores where four threads each took 3.3 s (the workers set
+        # their own)
+        ocr = OCRProcessor(ocr_config)
 
         logger.info(f"Converting PDF with OCR: {input_path.name}")
 
