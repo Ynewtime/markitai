@@ -584,6 +584,25 @@ class TestOCRLanguageResolution:
         with pytest.raises(OCRLanguageError, match="Unsupported ocr.lang 'klingon'"):
             resolve_ocr_language("klingon")
 
+    @pytest.mark.parametrize(
+        ("lang", "model"),
+        [
+            ("ru", "eslav"),
+            ("uk", "eslav"),
+            ("hi", "devanagari"),
+            ("mr", "devanagari"),
+            ("bg", "cyrillic"),
+            ("fa", "arabic"),
+            ("thai", "th"),
+            ("greek", "el"),
+        ],
+    )
+    def test_markitai_rusts_spellings_name_the_same_models(self, lang, model):
+        """One ocr.lang works with both: the workbench offers ru and hi."""
+        from markitai.ocr import resolve_ocr_language
+
+        assert resolve_ocr_language(lang) == (model, True)
+
     def test_engine_creation_rejects_unknown_language_before_rapidocr(self):
         pytest.importorskip("rapidocr")
         from markitai.ocr import OCRLanguageError

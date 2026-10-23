@@ -183,6 +183,32 @@ _LANG_ALIASES = {
     "jp": "japan",
     "ko": "korean",
     "ar": "arabic",
+    # The spellings markitai-rust reads for the single-script recognizers,
+    # so one ocr.lang works on both (the workbench offers ru and hi)
+    "ars": "arabic",
+    "fa": "arabic",
+    "ur": "arabic",
+    "ug": "arabic",
+    "thai": "th",
+    "greek": "el",
+    "ru": "eslav",
+    "uk": "eslav",
+    "be": "eslav",
+    "russian": "eslav",
+    "ukrainian": "eslav",
+    "bg": "cyrillic",
+    "mk": "cyrillic",
+    "kk": "cyrillic",
+    "ky": "cyrillic",
+    "mn": "cyrillic",
+    "tg": "cyrillic",
+    "sr-cyrl": "cyrillic",
+    "hi": "devanagari",
+    "mr": "devanagari",
+    "ne": "devanagari",
+    "sa": "devanagari",
+    "tamil": "ta",
+    "telugu": "te",
 }
 
 # Languages the default PP-OCRv6 multilingual model does not read. RapidOCR
@@ -242,8 +268,8 @@ def resolve_ocr_language(lang: str) -> tuple[str, bool]:
         return rec_lang, False
     # Short enough to survive the error truncation in reports and --json
     raise OCRLanguageError(
-        f"Unsupported ocr.lang {lang!r}: use en, zh, zh_tw, ja, ko, ar, th, "
-        "latin, or a code such as fr/de/es (see the OCR configuration docs)"
+        f"Unsupported ocr.lang {lang!r}: use en, zh, zh_tw, ja, ko, ru, ar, th, "
+        "hi, el, latin, or a code such as fr/de/es (see the OCR configuration docs)"
     )
 
 

@@ -90,11 +90,11 @@ _MESSAGES: list[tuple[re.Pattern[str], str]] = [
             "v{0}，可识别{1}文字（ocr.lang：{2}）",
         ),
         (
-            r"v([^,]+), Unsupported ocr\.lang (.+?): use en, zh, zh_tw, ja, ko, ar, "
-            r"th, latin, or a code such as fr/de/es \(see the OCR configuration "
-            r"docs\)",
-            "v{0}，不支持的 ocr.lang {1}：请使用 en、zh、zh_tw、ja、ko、ar、th、"
-            "latin，或 fr/de/es 这类代码（见 OCR 配置文档）",
+            r"v([^,]+), Unsupported ocr\.lang (.+?): use en, zh, zh_tw, ja, ko, ru, "
+            r"ar, th, hi, el, latin, or a code such as fr/de/es \(see the OCR "
+            r"configuration docs\)",
+            "v{0}，不支持的 ocr.lang {1}：请使用 en、zh、zh_tw、ja、ko、ru、ar、th、"
+            "hi、el、latin，或 fr/de/es 这类代码（见 OCR 配置文档）",
         ),
         (r"v([^,]+), (.+)", "v{0}，{1}"),
         (

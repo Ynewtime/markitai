@@ -461,7 +461,7 @@ Claude Code 会自动缓存较长的系统提示词。无需配置，`markitai c
 | 设置 | 默认值 | 说明 |
 |------|--------|------|
 | `enabled` | `false` | 等同 `--ocr` |
-| `lang` | `en` | 语言：`en`、`zh`、`zh_tw`、`ja`、`ko`、`ar`、`th`、`latin`、`cyrillic`、`el`、`devanagari`、`ta`、`te`，或多语言模型能读的代码（`fr`、`de`、`es`、`it`、`pt`、`nl`、`pl`、`tr`、`vi` 等）。其他值直接报错 |
+| `lang` | `en` | 语言：`en`、`zh`、`zh_tw`、`ja`、`ko`、`ru`（俄语、乌克兰语、白俄罗斯语）、`ar`、`th`、`hi`（天城文：印地语、马拉地语、尼泊尔语）、`el`、`latin`、`cyrillic`、`devanagari`、`ta`、`te`，或多语言模型能读的代码（`fr`、`de`、`es`、`it`、`pt`、`nl`、`pl`、`tr`、`vi` 等）。其他值直接报错 |
 | `per_page_routing` | `true` | 文字通过检查的页面保留原生文本层，只对其余页面做 OCR（见[读错的 PDF 文字层](/zh/guide/cli#读错的-pdf-文字层)）。`false` 则每页都 OCR |
 
 本地 OCR 用 `ocr` extra 里的 [RapidOCR](https://github.com/RapidAI/RapidOCR)：
