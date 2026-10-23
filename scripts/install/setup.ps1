@@ -43,6 +43,8 @@ $ProgressPreference = "SilentlyContinue"
 
 $RepositoryReleases = "https://github.com/Ynewtime/markitai/releases"
 $ScriptUrl = "https://markitai.dev/setup.ps1"
+# The last 1.x release, from its tag: pymupdf4llm 2 breaks its PDF support.
+$Python1xInstall = 'uv tool install "git+https://github.com/Ynewtime/markitai@v1.2.0#subdirectory=packages/markitai" --with "pymupdf4llm<2"'
 $Targets = @{ "AMD64" = "x86_64-pc-windows-msvc"; "ARM64" = "aarch64-pc-windows-msvc" }
 $Executables = @("markitai.exe", "mkai.exe", "markitai-mcp.exe")
 
@@ -352,7 +354,7 @@ function Resolve-Release {
     param([string]$Base, [string]$Target, [string]$Wanted, [string]$Work)
     if ($Wanted) {
         $Wanted = $Wanted -replace '^v', ''
-        if ($Wanted -match '^[01]\.') { Stop-Setup (Msg "error_python_version") "uv tool install markitai==$Wanted" }
+        if ($Wanted -match '^[01]\.') { Stop-Setup (Msg "error_python_version") $Python1xInstall }
         if ($Wanted -notmatch '^\d+\.\d+\.\d+') { Stop-Setup (Msg "error_version") $Wanted }
         $sumsUrl = "$Base/download/v$Wanted/SHA256SUMS"
     } else {

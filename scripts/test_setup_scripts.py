@@ -207,6 +207,8 @@ class SetupShTests(unittest.TestCase):
                 result = self.run_setup(**environment)
                 self.assertEqual(result.returncode, 1, result.stdout)
                 self.assertIn(message, result.stdout)
+        self.assertIn('markitai@v1.2.0#subdirectory=packages/markitai" --with "pymupdf4llm<2"',
+                      self.run_setup(MARKITAI_VERSION="1.2.0").stdout)
         self.assertEqual(self.run_setup("--bogus").returncode, 2)
         self.assertIn("--uninstall", self.run_setup("--help").stdout)
 
@@ -303,10 +305,12 @@ $latest = Resolve-Release $Base "aarch64-pc-windows-msvc" "" $Work
 Assert ($latest.Version -eq "2.0.0" -and $latest.Archive -eq "markitai-v2.0.0-aarch64-pc-windows-msvc.zip") "latest"
 $pinned = Resolve-Release $Base "x86_64-pc-windows-msvc" "v2.0.1" $Work
 Assert ($pinned.Version -eq "2.0.1") "pinned"
+$script:Shown.Clear()
 foreach ($wanted in @("1.2.0", "latest", "2.9.9")) {
     $failed = $false; try { Resolve-Release $Base "x86_64-pc-windows-msvc" $wanted $Work } catch { $failed = $true }
     Assert $failed "refuses $wanted"
 }
+Assert (($script:Shown -join "`n") -match [regex]::Escape('markitai@v1.2.0#subdirectory=packages/markitai" --with "pymupdf4llm<2"')) "1.x hint"
 
 $zip = Join-Path $Work $pinned.Archive
 Save-Download "$Base/download/v2.0.1/$($pinned.Archive)" $zip

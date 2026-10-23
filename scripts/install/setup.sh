@@ -27,6 +27,8 @@ set -eu
 
 REPOSITORY_RELEASES="https://github.com/Ynewtime/markitai/releases"
 SCRIPT_URL="https://markitai.dev/setup.sh"
+# The last 1.x release, from its tag: pymupdf4llm 2 breaks its PDF support.
+PYTHON_1X_INSTALL='uv tool install "git+https://github.com/Ynewtime/markitai@v1.2.0#subdirectory=packages/markitai" --with "pymupdf4llm<2"'
 
 detect_lang() {
     case "${LC_ALL:-${LC_MESSAGES:-${LANG:-}}}" in
@@ -306,7 +308,7 @@ resolve_release() {
     if [ -n "${MARKITAI_VERSION:-}" ]; then
         _wanted=${MARKITAI_VERSION#v}
         case "$_wanted" in
-            0.*|1.*) fail "$(msg error_python_version)" "uv tool install markitai==$_wanted" ;;
+            0.*|1.*) fail "$(msg error_python_version)" "$PYTHON_1X_INSTALL" ;;
             [0-9]*.[0-9]*.[0-9]*) ;;
             *) fail "$(msg error_version)" "$MARKITAI_VERSION" ;;
         esac
