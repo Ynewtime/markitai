@@ -190,8 +190,10 @@ def _save_figure(
         return None
     from urllib.parse import quote
 
-    # Encoded as the native pictures' references are (spaces, brackets)
-    return f"![]({assets.reference}/{quote(saved.name, safe='/._~-')})"
+    # Encoded as the native pictures' references are (spaces, brackets);
+    # alt as markitai-rust writes its PDF pictures (1.3.0 carries it on)
+    reference = f"{assets.reference}/{quote(saved.name, safe='/._~-')}"
+    return f"![Image on page {page_num + 1}]({reference})"
 
 
 def shoot_page(

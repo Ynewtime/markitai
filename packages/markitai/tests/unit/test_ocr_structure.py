@@ -267,7 +267,7 @@ def test_the_scan_of_sample_pdf_reads_like_the_pdf(tmp_path: Path) -> None:
         in markdown
     )
     assert "Row 1" not in markdown and "Column 2" not in markdown
-    assert "![](.markitai/assets/scan.pdf-0001-01.jpg)" in markdown
+    assert "![Image on page 1](.markitai/assets/scan.pdf-0001-01.jpg)" in markdown
     assert (
         tmp_path / "out" / ".markitai" / "assets" / "scan.pdf-0001-01.jpg"
     ).is_file()
@@ -339,5 +339,8 @@ def test_a_figure_reference_is_encoded(tmp_path: Path) -> None:
         str(tmp_path), ".markitai/assets", "my report (v2).pdf", "jpg", None
     )
     reference = _save_figure(image, (0, 0, 40, 30), 0, 0, assets)
-    assert reference == "![](.markitai/assets/my%20report%20%28v2%29.pdf-0001-01.jpg)"
+    assert (
+        reference
+        == "![Image on page 1](.markitai/assets/my%20report%20%28v2%29.pdf-0001-01.jpg)"
+    )
     assert (tmp_path / "my report (v2).pdf-0001-01.jpg").is_file()
