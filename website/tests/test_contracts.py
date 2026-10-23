@@ -37,10 +37,12 @@ in prose, or prose that contradicts behavior. Those still need review.
 
 from __future__ import annotations
 
+import atexit
 import functools
 import json
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -125,7 +127,9 @@ def _binary() -> Path:
 @functools.cache
 def _state() -> Path:
     """One private HOME/MARKITAI_HOME root for every CLI call of this run."""
-    return Path(tempfile.mkdtemp(prefix="markitai-site-tests-"))
+    root = Path(tempfile.mkdtemp(prefix="markitai-site-tests-"))
+    atexit.register(shutil.rmtree, root, ignore_errors=True)
+    return root
 
 
 def _env(**extra: str) -> dict[str, str]:
