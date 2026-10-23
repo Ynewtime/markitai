@@ -314,8 +314,10 @@ class MarkitaiRouter:
                 are owned by ``LLMEngine``'s retry loop, and the inner
                 router must not multiply them.
         """
+        from markitai.llm.anthropic_api import install_litellm_api_version
         from markitai.providers import is_local_provider_model
 
+        install_litellm_api_version()
         self._local_entries: list[dict[str, Any]] = []
         self._standard_entries: list[dict[str, Any]] = []
         for entry in model_list:

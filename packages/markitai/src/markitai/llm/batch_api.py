@@ -37,6 +37,8 @@ from typing import Any, cast
 import instructor
 from loguru import logger
 
+from markitai.constants import ANTHROPIC_API_VERSION
+from markitai.llm.anthropic_api import without_sampling
 from markitai.llm.error_redaction import redact_provider_message
 
 # ---------------------------------------------------------------------------
@@ -265,7 +267,8 @@ def build_anthropic_batch_request(
     params["messages"] = [
         _anthropic_message(message) for message in params.get("messages", [])
     ]
-    return {"custom_id": custom_id, "params": params}
+    # A batch created on 2026-10-21 refuses any request with a sampling setting
+    return {"custom_id": custom_id, "params": without_sampling(params, model)}
 
 
 def _anthropic_message(message: dict[str, Any]) -> dict[str, Any]:
@@ -551,7 +554,11 @@ def _anthropic_client(credentials: BatchCredentials | None = None) -> Any:
     """
     import anthropic
 
-    kwargs: dict[str, Any] = {}
+    # The SDK's own default is 2023-06-01 below 2.0; 2.x would send it, but
+    # also the key as a Bearer token, which proxies reading X-Api-Key refuse
+    kwargs: dict[str, Any] = {
+        "default_headers": {"anthropic-version": ANTHROPIC_API_VERSION}
+    }
     if credentials is not None and credentials.api_key:
         kwargs["api_key"] = credentials.api_key
     if credentials is not None and credentials.api_base:

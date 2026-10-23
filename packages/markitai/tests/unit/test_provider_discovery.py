@@ -340,7 +340,7 @@ class TestLiveDiscovery:
         [
             (
                 "anthropic",
-                {"x-api-key": "secret", "anthropic-version": "2023-06-01"},
+                {"x-api-key": "secret", "anthropic-version": "2026-10-21"},
                 "anthropic/claude-test",
             ),
             (
@@ -348,7 +348,7 @@ class TestLiveDiscovery:
                 {
                     "Authorization": "Bearer secret",
                     "anthropic-beta": "oauth-2025-04-20",
-                    "anthropic-version": "2023-06-01",
+                    "anthropic-version": "2026-10-21",
                 },
                 "claude-agent/claude-test",
             ),

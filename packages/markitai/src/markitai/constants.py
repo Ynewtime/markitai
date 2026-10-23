@@ -344,6 +344,15 @@ PROVIDER_API_KEY_ENV_NAMES: dict[str, tuple[str, ...]] = {
     "openrouter": ("OPENROUTER_API_KEY", "OR_API_KEY"),
 }
 
+# The Anthropic API version every Claude Messages request carries: the
+# ``anthropic-version`` header (Claude API, gateways, Microsoft Foundry,
+# Claude Platform on AWS) and Vertex AI's ``anthropic_version`` body field.
+# On it, a request with temperature, top_p or top_k is refused (HTTP 400) on
+# every model. Bedrock keeps what LiteLLM sends: its Converse and InvokeModel
+# APIs are not versioned this way (markitai.llm.anthropic_api).
+ANTHROPIC_API_VERSION = "2026-10-21"
+ANTHROPIC_SAMPLING_PARAMS = ("temperature", "top_p", "top_k")
+
 
 # The model each provider defaults to when markitai picks one for the user:
 # credential auto-detection, the `init` wizard, `serve`'s startup candidates

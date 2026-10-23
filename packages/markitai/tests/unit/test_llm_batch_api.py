@@ -332,7 +332,9 @@ class TestBatchCredentials:
             )
 
         client_cls.assert_called_once_with(
-            api_key="sk-ant-config", base_url="http://a.test"
+            api_key="sk-ant-config",
+            base_url="http://a.test",
+            default_headers={"anthropic-version": "2026-10-21"},
         )
 
 

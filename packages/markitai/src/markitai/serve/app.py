@@ -2961,6 +2961,10 @@ async def _probe_llm(body: LLMSettingsUpdate) -> str:
         )
 
     register_providers()
+    if not is_local_provider_model(body.model):
+        from markitai.llm.anthropic_api import install_litellm_api_version
+
+        install_litellm_api_version()
     kwargs: dict[str, Any] = {
         "model": body.model,
         # One token is too small for APIs that account for hidden reasoning

@@ -21,6 +21,7 @@ from urllib.parse import urljoin
 import httpx
 
 from markitai.constants import (
+    ANTHROPIC_API_VERSION,
     PROVIDER_API_KEY_ENV,
     PROVIDER_API_KEY_ENV_NAMES,
     PROVIDER_DEFAULT_MODELS,
@@ -813,7 +814,7 @@ async def _http_models(
                 headers["anthropic-beta"] = "oauth-2025-04-20"
             else:
                 headers["x-api-key"] = api_key
-        headers["anthropic-version"] = "2023-06-01"
+        headers["anthropic-version"] = ANTHROPIC_API_VERSION
         params["limit"] = "1000"
     elif provider == "chatgpt":
         url = "https://chatgpt.com/backend-api/codex/models"

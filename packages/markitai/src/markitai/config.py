@@ -9,10 +9,18 @@ from pathlib import Path
 from typing import Any, Literal
 
 from loguru import logger
-from pydantic import BaseModel, Field, ValidationError, field_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    PrivateAttr,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from markitai.constants import (
     ALL_FETCH_STRATEGIES,
+    ANTHROPIC_SAMPLING_PARAMS,
     CONFIG_FILENAME,
     DEFAULT_BATCH_CONCURRENCY,
     DEFAULT_CACHE_SIZE_LIMIT,
@@ -245,6 +253,32 @@ class LiteLLMParams(BaseModel):
         description="API version string, required by Azure OpenAI deployments and ignored by providers that do not use one. Passed through to LiteLLM.",
     )
     max_tokens: int | None = None  # Override max_output_tokens for this model
+
+    # temperature, top_p and top_k, when the entry sets them: never sent (the
+    # model is not a field), and on a Claude route the router says so
+    _sampling_settings: tuple[str, ...] = PrivateAttr(default=())
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def _note_sampling_settings(cls, data: Any, handler: Any) -> Any:
+        found: tuple[str, ...] = ()
+        if isinstance(data, dict):
+            extra = data.get("extra_body")
+            nested = extra if isinstance(extra, dict) else {}
+            found = tuple(
+                name
+                for name in ANTHROPIC_SAMPLING_PARAMS
+                if data.get(name) is not None or nested.get(name) is not None
+            )
+        params = handler(data)
+        if found:
+            params._sampling_settings = found
+        return params
+
+    @property
+    def sampling_settings(self) -> tuple[str, ...]:
+        """The sampling settings the entry set (dropped: not fields)."""
+        return self._sampling_settings
 
     def get_resolved_api_key(self, strict: bool = True) -> str | None:
         """Get API key with env: syntax resolved.

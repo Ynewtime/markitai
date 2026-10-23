@@ -591,6 +591,10 @@ class LLMProcessor:
                 the dominant cause (all disabled / missing env vars or API
                 keys, as ``MissingAPIKeyError`` / no SDKs).
         """
+        from markitai.llm.anthropic_api import (
+            report_dropped_sampling,
+            uses_messages_api,
+        )
         from markitai.providers import (
             is_local_provider_available,
             is_local_provider_model,
@@ -652,6 +656,12 @@ class LLMProcessor:
                 model_entry["litellm_params"]["api_version"] = (
                     model_config.litellm_params.api_version
                 )
+
+            # A sampling setting was never sent (it is not a field); on
+            # 2026-10-21 Claude refuses it, so say so once
+            sampling = model_config.litellm_params.sampling_settings
+            if sampling and uses_messages_api(model_id):
+                report_dropped_sampling(model_id, sampling)
 
             if model_config.litellm_params.weight != 1:
                 model_entry["litellm_params"]["weight"] = (
