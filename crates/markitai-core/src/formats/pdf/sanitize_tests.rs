@@ -674,3 +674,26 @@ fn filtering_an_extra_hidden_run_preserves_real_tagged_table_cells_and_prose() {
         );
     }
 }
+
+#[test]
+fn remove_reads_a_document_with_nothing_hidden_exactly_as_warn() {
+    // `remove` differs from `warn` only where it leaves something out: on
+    // these authored documents (tables, right-to-left text, CJK course pages,
+    // a footer) nothing is hidden, so the body and notices are the same.
+    for bytes in [
+        include_bytes!("fixtures/default-table.pdf").as_slice(),
+        include_bytes!("fixtures/borderless-table.pdf").as_slice(),
+        include_bytes!("fixtures/table-beside-prose.pdf").as_slice(),
+        include_bytes!("fixtures/wrapped-table.pdf").as_slice(),
+        include_bytes!("fixtures/rtl-text.pdf").as_slice(),
+        include_bytes!("fixtures/cjk-course/heading-over-rule.pdf").as_slice(),
+        include_bytes!("fixtures/cjk-course/symbol-fonts.pdf").as_slice(),
+        include_bytes!("fixtures/page-chrome/how-to-cjk-footer.pdf").as_slice(),
+    ] {
+        let warn = convert(bytes, "warn");
+        let removed = convert(bytes, "remove");
+        assert_eq!(warn.markdown, removed.markdown);
+        assert_eq!(warn.warnings, removed.warnings);
+        assert_eq!(warn.assets.len(), removed.assets.len());
+    }
+}

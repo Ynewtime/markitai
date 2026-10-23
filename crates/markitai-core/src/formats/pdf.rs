@@ -1568,8 +1568,10 @@ fn extract_pages_policy(
     trust: &Trust,
 ) -> Result<PdfPages> {
     crate::pdf_budget::within(bytes, || {
-        let mut pages =
-            extract_pages_inner(bytes, max_pages, mode != sanitize::Mode::Remove, trust)?;
+        // Charts are cropped only on pages with no hidden-text signal and
+        // nothing unknown, which no policy filters, so `remove` keeps them:
+        // a page with nothing to leave out reads as under `warn`.
+        let mut pages = extract_pages_inner(bytes, max_pages, true, trust)?;
         sanitize::apply(bytes, max_pages, mode, &mut pages, trust)?;
         Ok(pages)
     })
@@ -1597,6 +1599,8 @@ pub(crate) fn extract_pages_with_config(bytes: &[u8], cfg: &serde_json::Value) -
     )
 }
 
+/// Read the pages. `preserve_charts` is false only for the hidden-text
+/// policy's second reading of filtered pages, whose assets are not kept.
 fn extract_pages_inner(
     bytes: &[u8],
     max_pages: Option<usize>,
@@ -1687,9 +1691,6 @@ fn extract_pages_inner(
                 || inspection.incomplete
                 || !inspection.visibility_unknown.is_empty()
             {
-                if !preserve_charts && !charts.is_empty() {
-                    document.warnings.push(format!("PDF page {number}: automatic chart images are disabled during hidden-text removal; chart labels remain text."));
-                }
                 Vec::new()
             } else {
                 charts

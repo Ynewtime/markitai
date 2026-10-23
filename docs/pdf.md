@@ -23,7 +23,8 @@ native text supplied to page OCR, screenshots and LLM enhancement:
 - `remove` does the same, and also leaves out white text whose background
   could not be checked, and inspects pages whose paint visibility could not
   be determined (soft masks, blending, unsupported color spaces); each page
-  it filtered is named with the number of runs.
+  it filtered is named with the number of runs. A page where nothing is left
+  out reads exactly as under `warn`.
 
 Both filter the text show operators before page layout, keeping their
 advances and clipping state so later visible text stays in place. They change
@@ -709,8 +710,9 @@ This uses the existing CoreGraphics/hayro renderer at 144 DPI, opened only when
 needed, once per document and once per candidate page. Limits are four charts per
 page, 8 million rendered pixels per page and 64 million per document, within the
 shared asset-byte budget. Unsupported drawings, rotated pages and ambiguous
-layouts stay on the ordinary text path. `security.pdf_sanitize=remove` disables
-automatic chart crops so image generation cannot bypass hidden-text removal.
+layouts stay on the ordinary text path. Crops are made only on pages where the
+hidden-text inspection found nothing suspect or unknown, so every
+`security.pdf_sanitize` mode keeps them.
 
 ## Forms, annotations and protected files
 

@@ -702,17 +702,18 @@ fn clipped_vector_chart_becomes_an_asset_without_the_screenshot_option() {
     let image = image::load_from_memory(&asset.bytes).unwrap().to_rgb8();
     assert_eq!(image.dimensions(), (680, 400));
     assert!(!document.warnings.iter().any(|w| w == LIMITATION));
+    // Nothing is hidden on the page, so `remove` has nothing to leave out:
+    // it reads exactly as the default, chart included.
     let filtered = extract_pages_policy(&bytes, None, sanitize::Mode::Remove, &Trust::default())
         .unwrap()
         .finish()
         .unwrap();
-    assert!(
-        !filtered
-            .assets
-            .iter()
-            .any(|a| a.name.starts_with("pdf-chart-"))
-    );
-    assert!(filtered.markdown.contains("Category"));
+    assert_eq!(filtered.markdown, document.markdown);
+    assert_eq!(filtered.warnings, document.warnings);
+    let names = |document: &Document| -> Vec<String> {
+        document.assets.iter().map(|a| a.name.clone()).collect()
+    };
+    assert_eq!(names(&filtered), names(&document));
     assert!(
         image
             .pixels()
