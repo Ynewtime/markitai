@@ -1,16 +1,18 @@
 # Python API
 
-`markitai.convert()` and its async twin `markitai.aconvert()` run the CLI's pipeline, LLM enhancement included, and return a typed result.
+`markitai.convert()` and its async twin `markitai.aconvert()` run the CLI's pipeline, LLM enhancement included, and return a typed result. The package is the Rust engine itself, loaded in your Python process: no other dependency, no second process.
 
 ::: warning API stability
 The Python API is provisional: signatures and fields can change in minor releases. Pin an exact version; the CLI is the stable interface.
 :::
 
-Add it to your project (the [setup script](/guide/getting-started) installs a command, not an importable library). Extras work as in the CLI, e.g. `uv add "markitai[ocr]"`:
+Add it to your project (Python 3.10 or later; wheels for macOS 11+, Linux with glibc 2.28+ and Windows, x86-64 and ARM64 each). The [setup script](/guide/getting-started) installs a command, not an importable library:
 
 ```bash
 uv add markitai   # or: pip install markitai
 ```
+
+The package also installs the `markitai`, `mkai` and `markitai-mcp` commands.
 
 ## Basic Conversion
 
@@ -30,9 +32,9 @@ print(out.assets)  # images under out/.markitai/assets/
 out = markitai.convert("https://example.com/article")
 ```
 
-- Without `output_dir` the work happens in a deleted temporary directory: Markdown in memory, path fields `None`, image links left as `.markitai/assets/...`.
-- One call converts one file or URL; directory batches stay with the CLI.
-- `stdout` stays clean; [loguru](https://github.com/Delgan/loguru) logs to stderr (`logger.disable("markitai")` silences it).
+- Without `output_dir` nothing is written: Markdown in memory, `output_path` `None`, `assets` empty, image links left as `.markitai/assets/...`.
+- One call converts one file or URL; directories raise `IsADirectoryError` (batches stay with the CLI).
+- `stdout` stays clean; notices come back in `out.warnings`.
 
 ## LLM-Enhanced Conversion
 
@@ -53,25 +55,25 @@ print(out.usage.cost_usd)  # LLM spend for this conversion
 ```mermaid
 flowchart LR
   L[llm.model_list] -->|empty| M[MODEL]
-  M -->|unset| D[Detected keys]
+  M -->|unset| D[Detected keys and subscriptions]
   D -->|none| E[NoModelConfiguredError]
 ```
 
-The model is chosen as in the CLI ([configuration](/guide/configuration), then [detected](/guide/configuration#defaults-markitai-picks-for-you) API keys and signed-in subscriptions); several detected providers share one pool, logged once per process. Unlike the CLI, no `.env` file is read: export keys first. The CLI's config files are loaded unless you pass a `MarkitaiConfig`:
+The model is chosen as in the CLI ([configuration](/guide/configuration), then [detected](/guide/configuration#defaults-markitai-picks-for-you) API keys and signed-in subscriptions); `./.env` and `~/.markitai/.env` are read as the CLI reads them. The CLI's config files are loaded unless you pass a config:
 
 ```python
 from markitai import MarkitaiConfig
 
-cfg = MarkitaiConfig()  # pure defaults, ignores config files
+cfg = MarkitaiConfig()  # pure defaults, ignores config files (so does config={})
 cfg.llm.pure = True  # raw LLM cleanup, no frontmatter
 out = markitai.convert("notes.docx", config=cfg, llm=True)
 ```
 
-The keywords `llm`, `ocr`, `screenshot`, `alt`, `desc` and `profile` ([Output Profiles](./output-profiles.md)) mirror the CLI flags; `None` keeps the configured value.
+The keywords `llm`, `ocr`, `screenshot`, `alt`, `desc` and `profile` ([Output Profiles](./output-profiles.md)) mirror the CLI flags; `None` keeps the configured value. `config` also takes a plain `dict` in the shape of `markitai.json`. `MarkitaiConfig` checks values when you convert and raises `ValueError` for a bad one.
 
 ## Async Usage
 
-Inside an event loop use `aconvert`; CPU-bound work runs in a thread pool:
+Inside an event loop use `aconvert`; the conversion runs in a thread, outside the GIL:
 
 ```python
 import asyncio
@@ -91,31 +93,7 @@ asyncio.run(main())
 ```
 
 - The sync `convert()` raises `RuntimeError` inside a running loop.
-- Long-lived apps call `await markitai.fetch.close_shared_clients()` on shutdown.
-
-::: details A script that exits with code 134
-An onnxruntime teardown quirk can end a short script with code 134 after a successful conversion. End it with `from markitai.utils.shutdown import finalize_process; finalize_process(0)`; never in a long-lived host, since it ends the process.
-:::
-
-## Parallel PDF Extraction
-
-The CLI, `markitai serve` and the MCP server extract long or concurrent PDFs page by page in worker processes (OCR included): same output, several times faster. A script opts in:
-
-```python
-import markitai
-
-
-def main() -> None:
-    markitai.enable_worker_processes()
-    for name in ("a.pdf", "b.pdf"):
-        markitai.convert(name, output_dir="out/")
-
-
-if __name__ == "__main__":
-    main()
-```
-
-Workers re-import `__main__`, so keep the work under `if __name__ == "__main__":`. `MARKITAI_PDF_WORKERS` sets their number.
+- Cancelling an `aconvert` stops the wait; a conversion already running still finishes.
 
 ## ConversionOutput
 
@@ -130,24 +108,36 @@ Workers re-import `__main__`, so keep the work under `if __name__ == "__main__":
 | `assets` | `list[Path]` | Extracted images |
 | `screenshots` | `list[Path]` | Screenshot files |
 | `images` | `list[dict]` | Per-image LLM analysis |
-| `usage` | `ConversionUsage` | `cost_usd`, tokens, per model |
+| `usage` | `ConversionUsage` | `cost_usd`, `requests`, tokens, `by_model` |
 | `skip_reason` | `str \| None` | `"exists"` when skipped |
 | `duration` | `float` | Wall-clock seconds |
 | `warnings` | `list[str]` | Notices (below) |
 | `page_sources` | `list[dict]` | PDF page text origin (below) |
 
-`warnings` (per call, also logged): scanned-looking pages (retry with `ocr=True`), hidden PDF text (possible prompt injection), OCR without text, unrendered slides, a missed URL screenshot, a failed image analysis, or a failed LLM enhancement (`llm_markdown` is `None`; `llm.on_failure = "fail"` raises `ConversionError`).
+`warnings`: scanned-looking pages (retry with `ocr=True`), hidden PDF text (possible prompt injection), OCR without text, unrendered slides, a missed URL screenshot, a failed image analysis, or a failed LLM enhancement (`llm_markdown` is `None`; `llm.on_failure = "fail"` raises `ConversionError`).
 
 `page_sources`: one `{"page", "source", "reason"}` per page; `source` is `"text"`, `"ocr"` or `"mixed"`, `reason` a short note such as `"no text layer"`.
 
 ### Errors
 
-Failures raise; the markitai ones import from `markitai.api`:
+Failures raise; the markitai ones import from `markitai`. Each carries `.usage` (what the failed call already spent, or `None`):
 
 | Exception | When |
 |-----------|------|
-| `ConversionError` | Pipeline failed or empty |
+| `ConversionError` | Conversion failed, unsupported format (`.code` says which) |
 | `FetchError` | URL unreachable |
 | `NoModelConfiguredError` | LLM on, no usable model (a `ValueError`; nothing sent) |
-| `ConfigFileError` | Invalid config file |
+| `ConfigFileError` | Invalid config (a `ValueError`) |
 | `FileNotFoundError`, `IsADirectoryError` | Bad path |
+
+## Other languages
+
+The same engine is available to Node.js and Go, and to anything that calls C. These bindings are built from a source checkout (Rust 1.92+ and a C toolchain); they are not on npm or the Go module proxy yet.
+
+| Language | Needs | Build | Call |
+|----------|-------|-------|------|
+| Node.js | 18+ | `npm --prefix bindings/node run build`, then `npm pack` | `const { convert } = require('markitai'); const out = await convert('report.pdf', { llm: false })` |
+| Go | 1.23+, cgo; macOS and Linux | `cargo build --release --locked -p markitai-ffi`, then a `replace` to `bindings/go` | `out, err := markitai.Convert("report.pdf", &markitai.Options{LLM: markitai.Bool(false)})` |
+| C | a C compiler | `cargo build --release --locked -p markitai-ffi` | `markitai_convert_json()` with the JSON request, then `markitai_buffer_free()` (`bindings/c/markitai.h`) |
+
+Results have the fields above (snake_case in Node.js, typed structs in Go); failures are a `ConversionError` with a `code`. Details: [`docs/bindings.md`](https://github.com/Ynewtime/markitai/blob/main/docs/bindings.md).

@@ -1,47 +1,46 @@
 # 快速开始
 
-## 安装
+## 安装 {#install}
 
-一条命令装好 uv、Python 3.13（找不到 3.11 到 3.13 时）和 markitai，再逐项询问可选组件：
+一条命令装好 markitai。它是一个原生程序，不需要配置 Python、Node.js 或其他运行时：
 
 <!--@include: ../../snippets/setup.md-->
 
-| 组件 | 用途 | 默认 |
-|------|------|------|
-| markitai 及 `browser`、`extra-fetch`、`svg`、`heif`、`legacy`、`mcp` extra | 转换 | 总是安装 |
-| 网页工作台（`serve`） | [`markitai serve`](/zh/guide/serve) | 装 |
-| 本地 OCR（`ocr`，约 150 MB） | 扫描件和图片的 `--ocr` | 装 |
-| Playwright Chromium，Linux 上连同其系统库 | 重 JS 页面、URL 截图 | 装 |
-| Claude Code CLI 及 `claude-agent` extra | [Claude 订阅](/zh/guide/subscriptions) | 不装 |
-| Copilot CLI 及 `copilot` extra | [Copilot 订阅](/zh/guide/subscriptions) | 不装 |
+脚本下载适合你机器的发布包，用该版本的 `SHA256SUMS` 校验，然后安装 `markitai`、它的短别名 `mkai` 和 `markitai-mcp`（供 [MCP 客户端](/zh/guide/mcp)使用）。不需要 root 或管理员权限。
 
-之后它会在没有配置时写一份默认配置，并预先加载库，第一次转换不必等待。再运行一次可补装没选的组件，已装的 extra 会保留。
+| 内容 | 位置 |
+|------|------|
+| 命令 | `~/.local/bin`；Windows 为 `%LOCALAPPDATA%\Programs\markitai`，并加入用户 Path |
+| 许可声明、离线指南 | `~/.local/share/markitai/current`；Windows 上与命令同一个文件夹 |
+| 你的设置和缓存 | `~/.markitai`（`%USERPROFILE%\.markitai`） |
 
-没有交互终端时（CI、Dockerfile）只装核心。环境变量：
+有交互终端时，它接着询问是否准备可选组件（即 `markitai doctor --fix`）：本地 OCR 模型（约 45 MB），以及在找不到 Chrome 或 Chromium 时的 Chrome headless shell（约 280 MB）。首次安装还会运行 `markitai init --yes`，保存它找到的 API key 和订阅对应的模型（从不保存 key 本身；LLM 保持关闭）。从 markitai 1.x 过来？它会替换用 uv 安装的 1.x，见[从 1.x 升级](/zh/guide/upgrading)。
 
 | 变量 | 作用 |
 |------|------|
-| `MARKITAI_INSTALL_OPTIONAL=1` | 不询问，装上全部可选组件（包括两个 CLI） |
-| `MARKITAI_VERSION=X.Y.Z` | 固定 markitai 版本 |
-| `MARKITAI_USE_MIRROR=1` / `0` | 总是选择 / 从不提供 PyPI 镜像（只在 PyPI 响应慢时提供，见[中国大陆用户指南](/zh/guide/configuration#中国大陆用户指南)） |
-| `MARKITAI_SETUP_LOG=PATH` | 失败时完整日志的位置 |
+| `MARKITAI_VERSION=X.Y.Z` | 安装这个版本，而不是最新版 |
+| `MARKITAI_INSTALL_DIR=DIR` | 换一个命令文件夹 |
+| `MARKITAI_INSTALL_OPTIONAL=1` / `0` | 不询问直接准备可选组件 / 从不准备 |
+| `MARKITAI_DOWNLOAD_URL=URL` | 从 GitHub Releases 的镜像下载 |
 | `NO_COLOR=1` | 不用颜色 |
 
-::: details 手动安装
-已有 Python 3.11 到 3.13 时：
+再运行一次即可更新。卸载 markitai（`~/.markitai` 会保留）：`curl -fsSL https://markitai.dev/setup.sh | sh -s -- --uninstall`；Windows 上先设 `$env:MARKITAI_UNINSTALL = "1"`，再运行 PowerShell 命令。
+
+::: details 其他安装方式
+**发布包。** 每个 [GitHub Release](https://github.com/Ynewtime/markitai/releases) 都有 `markitai-v<version>-<target>.tar.gz`（Windows 上是 `.zip`），覆盖 macOS（Apple 芯片、Intel）、Linux（x86-64、ARM64）和 Windows（x64、ARM64）。解压到任意位置，再把该文件夹加进 `PATH`。用 `sha256sum -c SHA256SUMS --ignore-missing` 校验下载，用 `gh attestation verify <file> --repo Ynewtime/markitai` 核实来源。
+
+**pip 或 uv。** PyPI 上的 `markitai` 包带的是同一个程序，安装同样的三个命令（需要 Python 3.10 或更高版本；附带 [Python API](/zh/guide/python-api)）：
 
 ```bash
-uv tool install markitai                 # 推荐
-uv tool install "markitai[all]" --force  # 带全部 extra
-pipx install markitai
-uv pip install markitai                  # 装进当前虚拟环境
+uv tool install markitai     # 或：pipx install markitai、pip install markitai
 ```
 
-之后补装某个 extra：`uv tool install "markitai[ocr]" --force`；可用的 extra 有 `markitai[browser]`、`markitai[ocr]`、`markitai[serve]`、`markitai[mcp]`、`markitai[claude-agent]`、`markitai[copilot]`、`markitai[legacy]`、`markitai[heif]`、`markitai[svg]`、`markitai[extra-fetch]` 和 `markitai[all]`。装了 browser extra 后，`markitai doctor --fix` 会装好 Chromium。
+**从源码构建。** 需要 Rust 1.92 或更高版本，以及 C/C++ 工具链：
 
-安装、升级或添加 extra 之后，运行一次 `markitai doctor` 加载这些库（macOS 上数秒，装了 OCR 时最多一分钟）；否则第一次转换会等待这一步并给出提示。
-
-markitai 1.3.0 要求 `litellm>=1.83.0,!=1.92.0,<1.105` 和 `anthropic>=1.0.0,<2`：更新的 LiteLLM 版本会改变 markitai 依赖的模型价格和 OpenRouter 上限，Anthropic SDK 2 改用 Bearer 令牌发送 API 密钥，读取 `X-Api-Key` 的网关会拒绝 `--llm-batch`。不支持需要这两个包更新版本的环境。
+```bash
+git clone https://github.com/Ynewtime/markitai && cd markitai
+cargo build --release --locked -p markitai-cli   # target/release/markitai 和 mkai
+```
 :::
 
 ## 第一次转换
@@ -52,7 +51,7 @@ markitai 1.3.0 要求 `litellm>=1.83.0,!=1.92.0,<1.105` 和 `anthropic>=1.0.0,<2
 mkai https://markitai.dev/zh/guide/getting-started --pure
 ```
 
-`mkai` 是 `markitai` 的短别名；`--pure` 打印纯 Markdown。想写成文件，给一个输出目录：
+`--pure` 打印纯 Markdown，不带生成的 frontmatter。想写成文件，给一个输出目录：
 
 ```bash
 markitai document.docx -o output/
@@ -76,64 +75,70 @@ export GEMINI_API_KEY=...    # 或 OPENAI_ / ANTHROPIC_ / DEEPSEEK_ / OPENROUTER
 markitai report.pdf -o output/ --llm
 ```
 
-markitai 按找到的 key 自动选模型；`MODEL=provider/model` 可以自己指定。需要配置文件、订阅或多模型回退时，跑一遍引导配置：
+markitai 按找到的 key 和已登录的订阅选模型；`MODEL=provider/model` 可以自己指定。需要配置文件或多个模型时，运行：
 
 ```bash
-markitai init
-markitai doctor     # 装了什么、配了什么
+markitai init       # 把检测到的内容写进 ~/.markitai/config.json
+markitai doctor     # 装了什么、配了什么、什么已就绪
 ```
 
 **预设**打包了常用参数：`minimal` 只转换，`standard` 加 LLM 清洗和图片分析，`rich` 再加页面截图。用 `--no-*` 关掉其中一项，例如 `--preset rich --no-desc`。
 
-**URL** 先在本机抓取；公开页面抓不到时可能回退到远程阅读服务（Defuddle、Jina 或 Cloudflare），并在 stderr 提示一次。私有、内网和带凭据的 URL 永远不出本机；`MARKITAI_NO_REMOTE_FETCH=1` 强制全部本地（[抓取策略](/zh/guide/fetch-policy)）。`-s jina` 读 `JINA_API_KEY`，`-s cloudflare` 读 `CLOUDFLARE_API_TOKEN` 和 `CLOUDFLARE_ACCOUNT_ID`。
+**URL** 在本机读取：先用普通 HTTP，需要 JavaScript 的页面再用本机的 Chrome 或 Chromium。远程阅读服务（Defuddle、Jina、Cloudflare）只在你用 `-s` 选中或主动开启时才用（[抓取策略](/zh/guide/fetch-policy)）。
 
 ## 输出结构
 
 ```text
 output/
-├── document.pdf.md          # Markdown（带 --llm 时默认只写 .llm.md，除非 --keep-base）
+├── document.pdf.md          # Markdown（带 --llm 时只写 .llm.md，除非 --keep-base）
 ├── document.pdf.llm.md      # LLM 增强版
 └── .markitai/
-    ├── assets/              # 源文档里的图片，以及图片描述 images.json
-    ├── screenshots/         # 页面、幻灯片或整页截图（--screenshot）
+    ├── assets/              # 图片，按内容命名；带 --alt/--desc 时还有 images.json
+    ├── screenshots/         # 页面和幻灯片图片（--screenshot）
     ├── reports/             # 批量运行的 JSON 报告
-    └── states/              # 供 --resume 使用的批量状态
+    ├── states/              # 供 --resume 使用的批量状态
+    └── ownership/           # markitai 写过哪些文件（内部使用）
 ```
 
-输出文件名是完整输入名加 `.md`，所以 `report.pdf` 和 `report.docx` 不会互相覆盖。
+- 输出文件名是完整输入名加 `.md`，所以 `report.pdf` 和 `report.docx` 不会互相覆盖。再次转换会写成 `report.pdf.v2.md`（`output.on_conflict`：`rename`、`overwrite` 或 `skip`）。
+- 不带 `-o` 时，Markdown 输出到 stdout，图片放进 `~/.markitai/assets/blobs/`，以 `file://` URL 链接。
+- 单独一张图片需要 `--ocr` 或 `--llm`；没有它们时会跳过（退出码 `0`）。
 
 ## 支持的格式
 
 | 格式 | 扩展名 |
-|------|--------|
-| Office | `.docx`、`.doc`、`.pptx`、`.ppt`、`.xlsx`、`.xls`、`.odt`、`.ods`、`.numbers`（需要 `-b cloudflare`） |
+|--------|------------|
+| Word、OpenDocument 文本、RTF | `.docx`、`.docm`、`.dotx`、`.dotm`、`.doc`、`.dot`、`.odt`、`.ott`、`.rtf` |
+| 演示文稿 | `.pptx`、`.pptm`、`.ppsx`、`.ppsm`、`.potx`、`.potm`、`.ppt`、`.pps`、`.pot`、`.odp`、`.otp` |
+| 电子表格 | `.xlsx`、`.xlsm`、`.xlsb`、`.xltx`、`.xltm`、`.xls`、`.xlt`、`.ods`、`.ots`、`.numbers`、`.csv`、`.tsv` |
 | PDF | `.pdf` |
-| 文本与标记 | `.txt`、`.md`、`.markdown`、`.html`、`.htm`、`.xhtml`、`.xml`、`.csv`、`.tsv`、`.rtf`、`.rst`、`.org`、`.tex` |
-| 图片 | `.jpg`、`.jpeg`、`.png`、`.webp`、`.svg`、`.gif`、`.bmp`、`.tiff`、`.tif`、`.heic`、`.heif`、`.avif`（后三种需要 `markitai[heif]`） |
-| 其他文档 | `.epub`、`.eml`、`.msg`、`.ipynb` |
-| URL | `http://`、`https://` |
+| 网页与标记 | `.html`、`.htm`、`.xhtml`、`.xml`、`.md`、`.markdown`、`.txt`、`.json`、`.ipynb`、`.rst`、`.org`、`.tex`、`.latex` |
+| 图片 | `.jpg`、`.jpeg`、`.png`、`.webp`、`.gif`、`.bmp`、`.tif`、`.tiff`、`.svg`、`.heic`、`.heif`、`.avif` |
+| 电子书与邮件 | `.epub`、`.eml`、`.msg` |
+| URL | `http://`、`https://`，以及 `.urls` 列表 |
 
-旧版 `.doc`、`.ppt` 需要 `markitai[legacy]`，不用装 Office。
+所有读取器都是内置的，包括旧版 `.doc`、`.ppt` 和 `.xls`。有三样东西要用到你机器上的其他程序：
+
+| 需要 | 用于 |
+|-------|-----|
+| Chrome 或 Chromium（`markitai doctor --fix` 会安装 Chrome 的 headless shell） | 需要 JavaScript 的页面、网页截图 |
+| LibreOffice | Office 文件的页面和幻灯片图片（`--screenshot`、幻灯片 OCR）、EMF/WMF 图片 |
+| OCR 模型（`markitai doctor --fix`，或第一次 `--ocr`） | 扫描件和图片的本地 OCR |
 
 ## 平台说明
 
-Windows、Linux、macOS 功能一致，以下几点除外：
-
 | 平台 | 说明 |
-|------|------|
-| EMF/WMF 图片 | 只在 Windows 上转换（格式本身是 Windows 专有的） |
-| PPTX 幻灯片截图 | 需要渲染器：Windows 用 Office 或 LibreOffice，Linux 用 LibreOffice（`apt-get install libreoffice`）；macOS 见下文 |
-| Windows on Arm | markitai 运行在模拟的 x64 Python 上，安装脚本会选用或安装它；比 x64 电脑慢 |
+|----------|------|
+| macOS | 11 或更高版本，Apple 芯片或 Intel。本地 OCR 可以用系统的 Vision 引擎（`MARKITAI_OCR_BACKEND=vision`） |
+| Linux | x86-64 或 ARM64，glibc 2.28 或更高版本；不支持 musl（Alpine） |
+| Windows | x64 或 ARM64，都是原生构建 |
 
-::: details macOS 幻灯片截图
-macOS 优先用 LibreOffice（`brew install --cask libreoffice`），否则调用已装的 PowerPoint，首次会请求一次授权，且需要桌面会话。较新的 macOS 会直接拒绝终端写入 PowerPoint 的容器（`Operation not permitted`，不弹窗）：在「系统设置 → 隐私与安全性 → 完全磁盘访问权限」中为终端 App 授权，或安装 LibreOffice。无头 Mac 上设 `"office": { "macos_fallback": false }`。
-:::
-
-::: details Windows on Arm
-markitai 依赖的部分库没有 ARM64 版本：每个 PDF 都要用的 pymupdf-layout 完全没有，LLM 库依赖的几个包则需要用 Rust 编译。`setup.ps1` 会选用 x64 Python（没有就用 uv 安装一个）并给出说明。直接用 uv 安装时请指定：`uv tool install markitai --python cpython-3.13-windows-x86_64`。在原生 ARM64 Python 上安装会停在 `pymupdf-layout ... has no wheels with a matching platform tag (e.g., win_arm64)`。
+::: details macOS：下载的文件提示「Apple 无法验证」
+构建还没有经过公证。安装脚本和 `curl` 下载不受影响；浏览器下载的文件会受影响。确认可信后，清除它的隔离标记：`xattr -d com.apple.quarantine markitai-v<version>-aarch64-apple-darwin.tar.gz`。
 :::
 
 ## 下一步
 
 - [配置说明](/zh/guide/configuration)：LLM 提供商与全部设置
 - [CLI 命令](/zh/guide/cli)：每个命令和参数
+- [从 1.x 升级](/zh/guide/upgrading)：如果你用过 Python 版 markitai

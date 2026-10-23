@@ -9,47 +9,42 @@ Jobs and history stay on disk. Nothing leaves the machine except what goes to th
 
 ## Starting the Server
 
-The setup script installs markitai with the workbench (it asks "Install Web UI dependencies?", default yes) and offers the Playwright browser and OCR. Run it again to add the workbench to an existing install; it keeps the parts you have.
+The workbench is built into `markitai`: nothing else to install.
 
 <!--@include: ../snippets/setup.md-->
-
-::: details Manual install
-```bash
-uv tool install "markitai[serve]" --force   # pip: pip install "markitai[serve]"
-```
-:::
 
 ```bash
 markitai serve
 ```
 
-The browser opens `http://127.0.0.1:3600`.
+The browser opens `http://127.0.0.1:3600` with the access token.
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--host` | `127.0.0.1` | Interface to bind. `0.0.0.0` lets other devices in |
-| `--port` | `3600` | Port to listen on |
+| `--port` | `3600` | Port to listen on (`0`: any free port) |
 | `--no-open` | off | Do not open the browser |
 | `--no-auth` | off | Disable the access token |
 | `--allowed-host <hostname>` | — | Extra hostname to accept when you browse to a DNS name instead of an IP (repeatable) |
+| `-c, --config <path>` | — | Another config file, as for conversions |
+| `--config-json <json>` | — | Overrides merged over the config file |
+
+One server runs per `~/.markitai`; it prints its address and the folder where jobs are kept.
 
 ## Access Token
 
-At startup the server prints a URL ending in `#token=…`; the browser it opens uses it. Other devices open that URL, and scripts send `Authorization: Bearer <token>`.
+At startup the server prints a URL ending in `#token=…`; the browser it opens uses it. Every client needs the token, this machine included: open that URL, and have scripts send `Authorization: Bearer <token>`.
 
 ```mermaid
 flowchart LR
   R[Request] --> T{Token?}
   T -->|server token| A[Admin: everything]
   T -->|user token| U[Own conversions only]
-  T -->|none| L{This machine?}
-  L -->|yes| A2[All but Settings]
-  L -->|no| N[Refused, 401]
+  T -->|none| N[Refused, 401]
 ```
 
-- **This machine** needs no token, except for the settings (Models, Access token, Edit config): they hold your keys, and any local program could otherwise read them.
-- **`--no-auth`** drops the token: other devices may upload, download and use history, but submit no URL and reach no settings.
-- **`MARKITAI_SERVE_TOKEN`** keeps the same token across restarts.
+- **`MARKITAI_SERVE_TOKEN`** keeps the same token across restarts (set it in the environment, not in `.env`).
+- **`--no-auth`** drops the token: this machine gets everything; other devices may upload, download and use history, but submit no URL and reach no settings.
 - **Settings → Access token** regenerates the token, signs a tab out, and creates **user tokens** for other people: they convert files and public URLs, see only their own conversions and can bring their own models.
 
 Downloads use single-use links that expire after a minute, so the token never lands in the browser history. Details: [access tokens](/guide/serve-reference#access-tokens) and [user tokens](/guide/serve-reference#user-tokens).
@@ -73,18 +68,18 @@ The token URL is a credential. Whoever holds it can run conversions with your LL
 | Place | What it does |
 |-------|--------------|
 | **Convert** | Paste URLs (one per line), drop files or a folder, or **Upload**. Nothing is sent before **Convert**. A `.urls` file is a list of URLs, as on the command line |
-| **Options** | Preset, Enhance (LLM, OCR, image analysis), Output (profile, [document JSON](/guide/cli#format)), Advanced (fetch strategy, backend, cache), and the equivalent command line to copy. **Save as default** stores your choice |
-| **Conversions** | Every item, grouped by submission, live. Filter by name, Failed or Notices; check rows to delete several; **Stop remaining** stops what has not started; "⋯" has **Retry failed** and **Download all** |
-| **Conversion window** | Click an item: **Preview** (Rendered, Source, Files, Diff), **Compare** (the original beside the Markdown, with matching parts outlined), **Details** (status, sizes, models, cost, notices) |
+| **Options** | Preset, Enhance (LLM, OCR and its language, image analysis), Output (profile, [document JSON](/guide/cli#format)), Advanced (fetch strategy, backend, cache, text only, page markers, OCR on every page), and the equivalent command line to copy. **Save as default** stores your choice |
+| **Conversions** | Every item, grouped by submission, live. Filter by name, Failed or Notices; check rows to delete or **Re-convert** several; **Stop remaining** stops what has not started; "⋯" has **Retry failed** and **Download all** |
+| **Conversion window** | Click an item: **Preview** (Rendered with tables, math and diagrams, Source, Files, Diff), **Compare** (the original beside the Markdown, with matching parts outlined), **Details** (status, sizes, models, cost, notices) |
 | **Settings** | Appearance and language, Models, Access token, Edit config |
 
 In the window, ↑/↓ moves between items, **C** opens Compare, **F** fills the browser and Escape closes it. On a phone the places move to a bottom bar and the window fills the screen.
 
 - **Cost** is shown only when it is known: an unpriced model reads "unknown", never `$0`, and a partly priced item "at least" its amount.
-- **Notices** flag what did not fail but deserves a look: pages that look scanned, hidden PDF text, OCR that found nothing, an LLM step that failed and kept the plain result.
+- **Notices** flag what did not fail but deserves a look: pages that look scanned, hidden PDF text, OCR that found nothing, slides that could not be rendered, an LLM step that failed and kept the plain result.
 - **Limits**: 1000 items per job, 100 MB per file, 5 GB per upload.
 
-Every option has hover or tap help on what it needs, where the data goes and what it may cost. More on each place: [workspace details](/guide/serve-reference#workspace-details).
+More on each place: [workspace details](/guide/serve-reference#workspace-details).
 
 ### Presets, Overrides and Commands
 
@@ -100,11 +95,11 @@ No preset turns on OCR: you pick it yourself. Picking a preset resets those five
 
 ## LLM Settings
 
-**Settings → Models** edits the same configuration as `markitai config`, for web jobs and later CLI runs alike. **Add models** opens a picker of about 90 providers: enter a key (and an address for a server of your own), then pick models from the provider's list or type their IDs. A key variable set on the server (`OPENAI_API_KEY`, ...) shows up as a ready connection. Stored keys are only ever shown masked (`sk…7890`).
+**Settings → Models** edits the same configuration as `markitai config`, for web jobs and later CLI runs alike. **Add models** opens a picker of about 95 providers: enter a key (and an address for a server of your own), then pick models from the provider's list or type their IDs. A key variable set on the server (`OPENAI_API_KEY`, ...) shows up as a ready connection. Stored keys are only ever shown masked (`sk…7890`).
 
 **Test** says why a model failed: no key, key rejected, unknown model, rate-limited, unreachable, timed out, or another provider error, with the provider's own message.
 
-The settings page never sends a key to an address you did not save it with, and never sends the server's own logins anywhere: see [key and address rules](/guide/serve-reference#llm-settings-rules). For subscriptions, see [Claude and Copilot](/guide/subscriptions) and [ChatGPT](/guide/subscription-chatgpt).
+The settings page never sends a key to an address you did not save it with, and never sends the server's own logins anywhere: see [key and address rules](/guide/serve-reference#llm-settings-rules). Subscriptions run through their CLIs on the server's machine; the picker names the command that installs or signs in a missing one ([Claude and Copilot](/guide/subscriptions), [ChatGPT](/guide/subscription-chatgpt)).
 
 **Settings → Edit config** edits the configuration file as text, secrets masked, with a line diff before saving: see [Edit config](/guide/serve-reference#edit-config).
 
@@ -125,9 +120,14 @@ stateDiagram-v2
 ```
 
 - Finished jobs stay in **Conversions** for 7 days (Details shows the date), through reloads and restarts, under `~/.markitai/serve/jobs/`. Expired files are deleted within the hour.
-- CLI runs started with [`--record-history`](/guide/cli#record-history) appear with a CLI badge. Their URL items can be retried or enhanced; their file items cannot, because the CLI keeps only the outputs.
-- An `--llm-batch` run that stopped waiting lists its pending items as *LLM batch still running*. Collect them with the `markitai --llm-batch-collect` command the run printed; enhancing them here would pay twice.
+- CLI runs started with [`--record-history`](/guide/cli#record-history) appear too; Details says "Recorded by: the command line". Their URL items can be retried or enhanced; their file items cannot, because the CLI keeps only the outputs.
+- An `--llm-batch` run that stopped waiting lists its pending items as skipped (pending batch). Collect them with the `markitai --llm-batch-collect` command the run printed; the workbench refuses to retry them, which would pay twice.
 
 ## API
 
-The workbench runs on a REST + SSE API that scripts can call with the same token: `POST /api/jobs` to submit, `GET /api/jobs/{job_id}/events` for progress, `GET /api/jobs/{job_id}/archive` for the zip. The OpenAPI document is `GET /api/openapi.json`. Every route and error code: [API reference](/guide/serve-reference#api).
+The workbench runs on a REST + SSE API that scripts call with the same token: `POST /api/jobs` to submit, `GET /api/jobs/{job_id}/events` for progress, `GET /api/jobs/{job_id}/archive` for the zip. The OpenAPI document is `GET /api/openapi.json`. Routes and the main error codes: [API reference](/guide/serve-reference#api).
+
+```bash
+curl -H "Authorization: Bearer $MARKITAI_SERVE_TOKEN" \
+  -F files=@note.txt -F 'options={}' http://127.0.0.1:3600/api/jobs
+```

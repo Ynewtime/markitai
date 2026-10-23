@@ -60,8 +60,12 @@ hero:
             <code>powershell -ExecutionPolicy ByPass -c "irm https://markitai.dev/setup.ps1 | iex"</code>
           </div>
           <div class="home-install-option">
-            <span>已经安装 uv</span>
+            <span>通过 Python</span>
             <code>uv tool install markitai</code>
+          </div>
+          <div class="home-install-option">
+            <span>发布包</span>
+            <a href="https://github.com/Ynewtime/markitai/releases">GitHub Releases</a>
           </div>
         </details>
       </div>

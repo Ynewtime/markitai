@@ -1,24 +1,32 @@
 # ChatGPT 订阅
 
-markitai 可以通过你的 ChatGPT 订阅（Codex 登录）发送请求，不必使用 API 密钥。模型名为 `chatgpt/<模型>`，例如 `chatgpt/gpt-6-luna`。不需要安装任何东西：markitai 自己完成登录。
+markitai 可以通过 OpenAI 官方的 Codex CLI，用你的 ChatGPT 订阅代替 API 密钥发送请求。模型名为 `chatgpt/<模型>`，例如 `chatgpt/gpt-6-luna`。
 
-在运行 markitai（或 `markitai serve`）的机器上执行：
+在 markitai（或 `markitai serve`）运行的机器上执行：
 
 ```sh
-markitai auth chatgpt login
+npm install -g @openai/codex@0.159.0   # Codex CLI 0.159.0 或更新
+markitai auth chatgpt login            # 运行 Codex 自己的登录
 ```
 
 ```mermaid
 sequenceDiagram
   participant M as markitai
-  participant Y as 你（浏览器）
+  participant C as Codex CLI
   participant O as OpenAI 登录
-  M->>Y: 网址和验证码
-  Y->>O: 输入验证码并确认
-  M->>O: 等待确认
-  O-->>M: 已登录
+  M->>C: codex login
+  C->>O: 你用 ChatGPT 登录
+  O-->>C: 已登录，由 Codex 保存
+  M->>C: 用你的订阅发送请求
 ```
 
-它会显示一个网址和一个验证码（OAuth 设备码流程）：在任意浏览器里打开网址，输入验证码并确认。如果还没登录，第一次发出 `chatgpt/` 请求时也会启动登录。`markitai auth chatgpt status` 显示当前账号；之后请在工作台里重新加载模型列表。
+登录状态由 Codex 保存；markitai 从不读取或复制它，1.x 的 ChatGPT 登录也不会沿用。`markitai auth chatgpt status` 显示账户（脚本用 `--json`）；之后在工作台重新加载模型列表。Codex 用 API 密钥登录不算数。`CODEX_CLI_PATH` 可以指定另一个 Codex。
 
-如果已经登录过，工作台仍提示 ChatGPT“尚未登录”，说明登录已过期：再运行一次上面的命令。
+| | |
+|---|---|
+| 模型 | 已安装的 Codex 列出的任意模型（`codex debug models`）；其他模型在发出请求前就被拒绝 |
+| 默认 | Codex 列出的最轻量模型：目前是 `chatgpt/gpt-6-luna` |
+| 费用 | 统计 token，价格未知；`llm.max_cost_per_document_usd` 为正数时拒绝这条路线 |
+| 限制 | 限流或服务器错误会重试；套餐用量上限会让运行停止 |
+
+登录后工作台仍提示 ChatGPT“未登录”，说明登录已过期：再运行一次登录命令。

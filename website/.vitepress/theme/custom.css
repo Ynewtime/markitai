@@ -535,6 +535,13 @@ html:not(.dark) .home-shot img {
   font-size: 12px;
 }
 
+.VPHome .home-quickstart-steps .home-install-option a {
+  color: var(--mk-code-num);
+  font-size: 12px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 @media (max-width: 959px) {
   /* No forced first screen on small devices: the stacked cards are taller
      than any phone viewport, so the sections simply flow. */

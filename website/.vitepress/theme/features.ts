@@ -24,12 +24,12 @@ export const homeFeatures: HomeFeature[] = [
     en: {
       title: 'Multi-format Support',
       details:
-        'Convert DOCX, PPTX, XLSX, PDF, EPUB, EML, TXT, MD, images (JPG/PNG/WebP) and URLs to Markdown. Legacy .doc/.ppt via the legacy extra.',
+        'Convert Word, PowerPoint, Excel (legacy .doc/.ppt/.xls too), PDF, OpenDocument, EPUB, e-mail, HTML, images and URLs to Markdown, all with built-in readers.',
     },
     zh: {
       title: '多格式支持',
       details:
-        '支持 DOCX、PPTX、XLSX、PDF、EPUB、EML、TXT、MD、图片（JPG/PNG/WebP）和 URL 转换为 Markdown；旧版 .doc/.ppt 需 legacy extra。',
+        '把 Word、PowerPoint、Excel（含旧版 .doc/.ppt/.xls）、PDF、OpenDocument、EPUB、邮件、HTML、图片和 URL 转成 Markdown，读取器全部内置。',
     },
   },
   {
@@ -67,12 +67,12 @@ export const homeFeatures: HomeFeature[] = [
     en: {
       title: 'OCR Recognition',
       details:
-        'Extract text from scanned PDFs and images with local RapidOCR (markitai[ocr]), or let a vision model read the pages directly with --ocr --llm.',
+        'Extract text from scanned PDFs and images with built-in local OCR, or let a vision model read the pages directly with --ocr --llm.',
     },
     zh: {
       title: 'OCR 识别',
       details:
-        '通过可选的 markitai[ocr] extra 使用本地 RapidOCR，或用 --ocr --llm 让视觉模型直接读取页面图像（VLM-OCR）。',
+        '用内置的本地 OCR 识别扫描版 PDF 和图片，或用 --ocr --llm 让视觉模型直接读取页面图像（VLM-OCR）。',
     },
   },
   {
@@ -82,12 +82,12 @@ export const homeFeatures: HomeFeature[] = [
     en: {
       title: 'MCP for AI Agents',
       details:
-        'A bundled MCP server exposes convert_document, convert_url, batch_convert and job_status over stdio, so agents convert files without loading markitai into their context.',
+        'The built-in MCP server exposes convert_document, convert_url, batch_convert and job_status over stdio, so agents convert files without loading markitai into their context.',
     },
     zh: {
       title: '面向 AI Agent 的 MCP',
       details:
-        '随包发布的 MCP 服务器通过 stdio 暴露 convert_document、convert_url、batch_convert 与 job_status，Agent 无需把 markitai 载入上下文即可转换文件。',
+        '内置的 MCP 服务器通过 stdio 暴露 convert_document、convert_url、batch_convert 与 job_status，Agent 无需把 markitai 载入上下文即可转换文件。',
     },
   },
   {

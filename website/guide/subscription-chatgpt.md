@@ -1,24 +1,32 @@
 # ChatGPT subscription
 
-markitai can send requests through your ChatGPT subscription (Codex sign-in) instead of an API key. Models are named `chatgpt/<model>`, for example `chatgpt/gpt-6-luna`. There is nothing to install: markitai signs in itself.
+markitai can send requests through your ChatGPT subscription instead of an API key, using OpenAI's official Codex CLI. Models are named `chatgpt/<model>`, for example `chatgpt/gpt-6-luna`.
 
 Run this on the machine where markitai (or `markitai serve`) runs:
 
 ```sh
-markitai auth chatgpt login
+npm install -g @openai/codex@0.159.0   # Codex CLI 0.159.0 or later
+markitai auth chatgpt login            # runs Codex's own sign-in
 ```
 
 ```mermaid
 sequenceDiagram
   participant M as markitai
-  participant Y as You, in a browser
+  participant C as Codex CLI
   participant O as OpenAI sign-in
-  M->>Y: web address and code
-  Y->>O: enter the code, approve
-  M->>O: wait for the approval
-  O-->>M: signed in
+  M->>C: codex login
+  C->>O: you sign in with ChatGPT
+  O-->>C: signed in, kept by Codex
+  M->>C: requests, with your subscription
 ```
 
-It prints a web address and a code (the OAuth device code flow): open the address in any browser, enter the code, and approve. The first `chatgpt/` request also starts the sign-in if you have not done it. `markitai auth chatgpt status` shows the account; reload the model list in the workbench afterwards.
+Codex keeps the sign-in; markitai never reads or copies it, and a 1.x ChatGPT login is not reused. `markitai auth chatgpt status` shows the account (`--json` for scripts); reload the model list in the workbench afterwards. An API-key login of Codex does not count. `CODEX_CLI_PATH` points at another Codex.
 
-If the workbench says ChatGPT "is not signed in" after you did sign in, the sign-in expired: run the command again.
+| | |
+|---|---|
+| Models | Any model the installed Codex lists (`codex debug models`); another is refused before any request |
+| Default | The lightest model Codex lists: `chatgpt/gpt-6-luna` today |
+| Cost | Tokens are counted, the price is unknown; a positive `llm.max_cost_per_document_usd` refuses this route |
+| Limits | A rate limit or server error is retried; your plan's usage limit stops the run |
+
+If the workbench says ChatGPT "is not signed in" after you did sign in, the sign-in expired: run the login again.

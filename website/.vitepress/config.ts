@@ -19,9 +19,13 @@ const PAGE_DESCRIPTIONS: Record<string, string> = {
   // pagePath() strips the index suffix, so the locale root is '/zh'.
   '/zh': '文档、图片和网页，一条命令转成干净的 Markdown。LLM 增强按需开启，不开也完全够用。',
   '/guide/getting-started':
-    'Install markitai (guided script, uv or pipx), run your first conversion, and see the output structure and supported formats.',
+    'Install markitai (setup script, release archive, pip or uv), run your first conversion, and see the output structure and supported formats.',
   '/zh/guide/getting-started':
-    '安装 markitai（一键脚本、uv 或 pipx），完成第一次转换，并了解输出结构与支持的格式。',
+    '安装 markitai（一键脚本、发布包、pip 或 uv），完成第一次转换，并了解输出结构与支持的格式。',
+  '/guide/upgrading':
+    'Upgrading from the Python markitai 1.x to markitai 2.0: how the setup script replaces it, and what changed in the CLI, output, configuration and Python API.',
+  '/zh/guide/upgrading':
+    '从 Python 版 markitai 1.x 升级到 markitai 2.0：安装脚本如何替换旧版，以及命令行、输出、配置与 Python API 的变化。',
   '/guide/comparison':
     'How markitai compares with markitdown, docling and anydoc — and which job each tool optimizes for.',
   '/zh/guide/comparison':
@@ -47,33 +51,33 @@ const PAGE_DESCRIPTIONS: Record<string, string> = {
   '/zh/guide/output-profiles':
     '用 rag、obsidian 与 okf 输出 Profile 为下游消费者塑形 markitai 输出，含冻结的 images.json schema。',
   '/guide/python-api':
-    'Use markitai as a library: convert() and aconvert() with typed results, LLM enhancement and the same configuration as the CLI.',
+    'Use markitai as a library: convert() and aconvert() with typed results, LLM enhancement and the same configuration as the CLI, plus the Node.js, Go and C bindings.',
   '/zh/guide/python-api':
-    '把 markitai 当库使用：convert() 与 aconvert() 返回类型化结果，支持 LLM 增强并复用 CLI 的配置层级。',
+    '把 markitai 当库使用：convert() 与 aconvert() 返回类型化结果，支持 LLM 增强并复用 CLI 的配置层级；另有 Node.js、Go 与 C 绑定。',
   '/guide/mcp':
-    'Run the bundled markitai MCP server so AI agents can convert documents and URLs to Markdown over stdio.',
+    'Run the built-in markitai MCP server so AI agents can convert documents and URLs to Markdown over stdio.',
   '/zh/guide/mcp':
-    '运行随包发布的 markitai MCP 服务器，让 AI Agent 通过 stdio 把文档与 URL 转换为 Markdown。',
+    '运行内置的 markitai MCP 服务器，让 AI Agent 通过 stdio 把文档与 URL 转换为 Markdown。',
   '/guide/performance':
-    'What markitai does to keep a conversion cheap, the recorded speedup audit and its conditions, and how to diagnose a slow run.',
+    'What keeps a markitai conversion fast: one native program, local-first fetching, separate concurrency limits, caches and OCR threads, and how to diagnose a slow run.',
   '/zh/guide/performance':
-    'markitai 如何降低单次转换的开销、提速审计的实测结果与测量条件，以及慢速转换的排查方法。',
+    'markitai 如何让转换更快：单一原生程序、本地优先的抓取、分开的并发上限、缓存与 OCR 线程，以及慢速转换的排查方法。',
   '/guide/fetch-policy':
-    'How markitai fetches URLs: the static, Playwright, Defuddle, Jina and Cloudflare strategy cascade, domain profiles and remote-fetch consent.',
+    'How markitai fetches URLs: static and local-browser strategies first, Defuddle, Jina and Cloudflare only once you allow them, domain profiles and remote-fetch consent.',
   '/zh/guide/fetch-policy':
-    'markitai 如何抓取 URL：static、Playwright、Defuddle、Jina 与 Cloudflare 的策略级联、域名配置与远程抓取同意。',
+    'markitai 如何抓取 URL：先用 static 与本机浏览器，经你同意后才用 Defuddle、Jina 与 Cloudflare，以及域名配置与远程抓取同意。',
   '/guide/subscriptions':
-    'Use a Claude Code or GitHub Copilot subscription with markitai: install the CLI, sign in, and fix what the web workbench reports.',
+    'Use a Claude Code or GitHub Copilot subscription with markitai: install the official CLI, sign in, and fix what the web workbench reports.',
   '/zh/guide/subscriptions':
-    '在 markitai 中使用 Claude Code 或 GitHub Copilot 订阅：安装命令行、登录，并处理网页工作台给出的提示。',
+    '在 markitai 中使用 Claude Code 或 GitHub Copilot 订阅：安装官方命令行、登录，并处理网页工作台给出的提示。',
   '/guide/subscription-chatgpt':
-    'Use a ChatGPT subscription with markitai: sign in with the device code flow.',
+    'Use a ChatGPT subscription with markitai: install the Codex CLI and sign in through it.',
   '/zh/guide/subscription-chatgpt':
-    '在 markitai 中使用 ChatGPT 订阅：用设备码流程登录。',
+    '在 markitai 中使用 ChatGPT 订阅：安装 Codex 命令行并通过它登录。',
   '/guide/pricing':
-    'How markitai prices a conversion, what an unknown price means, and how to get a cost for a model.',
+    'How markitai prices a conversion, what an unknown price means, how to get a cost for a model, and the per-document spending limit.',
   '/zh/guide/pricing':
-    'markitai 如何为转换计费、价格未知意味着什么，以及怎样让某个模型显示费用。',
+    'markitai 如何为转换计费、价格未知意味着什么、怎样让某个模型显示费用，以及每个文档的费用上限。',
   '/changelog':
     'Release history for markitai — every added, changed, removed and fixed item, newest first.',
   '/zh/changelog':
@@ -221,6 +225,7 @@ export default defineConfig({
               text: '开始',
               items: [
                 { text: '快速开始', link: '/zh/guide/getting-started' },
+                { text: '从 1.x 升级', link: '/zh/guide/upgrading' },
                 { text: '为什么选 Markitai', link: '/zh/guide/comparison' },
               ],
             },
@@ -259,7 +264,7 @@ export default defineConfig({
               text: '集成',
               items: [
                 { text: 'MCP 服务器', link: '/zh/guide/mcp' },
-                { text: 'Python API', link: '/zh/guide/python-api' },
+                { text: 'Python 与其他语言', link: '/zh/guide/python-api' },
               ],
             },
           ],
@@ -343,6 +348,7 @@ export default defineConfig({
           text: 'Start',
           items: [
             { text: 'Getting Started', link: '/guide/getting-started' },
+            { text: 'Upgrading from 1.x', link: '/guide/upgrading' },
             { text: 'Why Markitai', link: '/guide/comparison' },
           ],
         },
@@ -381,7 +387,7 @@ export default defineConfig({
           text: 'Integrations',
           items: [
             { text: 'MCP Server', link: '/guide/mcp' },
-            { text: 'Python API', link: '/guide/python-api' },
+            { text: 'Python and other languages', link: '/guide/python-api' },
           ],
         },
       ],

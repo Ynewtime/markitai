@@ -2,46 +2,45 @@
 
 ## Install
 
-One command installs uv, Python 3.13 (when no 3.11 to 3.13 is found) and markitai, then asks about the optional parts:
+One command installs markitai, a single native program with no Python, Node.js or other runtime to set up:
 
 <!--@include: ../snippets/setup.md-->
 
-| Part | Enables | Default |
-|------|---------|---------|
-| markitai with the `browser`, `extra-fetch`, `svg`, `heif`, `legacy` and `mcp` extras | conversion | always |
-| Web workspace (`serve`) | [`markitai serve`](/guide/serve) | yes |
-| Local OCR (`ocr`, about 150 MB) | `--ocr` on scans and images | yes |
-| Playwright Chromium, plus its system libraries on Linux | JavaScript pages, URL screenshots | yes |
-| Claude Code CLI and the `claude-agent` extra | a [Claude subscription](/guide/subscriptions) | no |
-| Copilot CLI and the `copilot` extra | a [Copilot subscription](/guide/subscriptions) | no |
+The script downloads the release archive for your machine, checks it against the release's `SHA256SUMS` and installs `markitai` with its short alias `mkai` and `markitai-mcp` (for [MCP clients](/guide/mcp)). No root or administrator rights are needed.
 
-It then writes a default config if there is none and preloads the libraries, so the first conversion does not wait. Run it again to add a part you declined; installed extras are kept.
+| What | Where |
+|------|-------|
+| Commands | `~/.local/bin`; on Windows `%LOCALAPPDATA%\Programs\markitai`, added to your user Path |
+| Licence notices, offline guides | `~/.local/share/markitai/current`; on Windows beside the commands |
+| Your settings and caches | `~/.markitai` (`%USERPROFILE%\.markitai`) |
 
-Without a terminal (CI, Dockerfile) it installs only the core. Environment variables:
+With a terminal it then offers the optional parts, `markitai doctor --fix`: local OCR models (about 45 MB) and, when no Chrome or Chromium is found, Chrome's headless shell (about 280 MB). A first install also runs `markitai init --yes`, which saves the models of the API keys and subscriptions it finds (never a key; LLM stays off). Coming from markitai 1.x? It replaces a uv-installed 1.x: see [Upgrading from 1.x](/guide/upgrading).
 
 | Variable | Effect |
 |----------|--------|
-| `MARKITAI_INSTALL_OPTIONAL=1` | install every optional part without asking (both CLIs included) |
-| `MARKITAI_VERSION=X.Y.Z` | pin a markitai release |
-| `MARKITAI_USE_MIRROR=1` / `0` | always pick / never offer a PyPI mirror (offered only when PyPI answers slowly) |
-| `MARKITAI_SETUP_LOG=PATH` | where the full log of a failure goes |
-| `NO_COLOR=1` | no colours |
+| `MARKITAI_VERSION=X.Y.Z` | Install this release instead of the latest |
+| `MARKITAI_INSTALL_DIR=DIR` | Another command folder |
+| `MARKITAI_INSTALL_OPTIONAL=1` / `0` | Prepare the optional parts without asking / never |
+| `MARKITAI_DOWNLOAD_URL=URL` | Download from a mirror of the GitHub Releases |
+| `NO_COLOR=1` | No colours |
 
-::: details Manual install
-With Python 3.11 to 3.13 already installed:
+Run the command again to update. To remove markitai (your `~/.markitai` stays): `curl -fsSL https://markitai.dev/setup.sh | sh -s -- --uninstall`, or on Windows set `$env:MARKITAI_UNINSTALL = "1"` before the PowerShell command.
+
+::: details Other ways to install
+**Release archives.** Each [GitHub Release](https://github.com/Ynewtime/markitai/releases) has `markitai-v<version>-<target>.tar.gz` (`.zip` on Windows) for macOS (Apple silicon, Intel), Linux (x86-64, ARM64) and Windows (x64, ARM64). Unpack it anywhere and put the folder on your `PATH`. Check a download with `sha256sum -c SHA256SUMS --ignore-missing`, its origin with `gh attestation verify <file> --repo Ynewtime/markitai`.
+
+**pip or uv.** The `markitai` package on PyPI carries the same program and installs the same three commands (Python 3.10 or later; the [Python API](/guide/python-api) comes with it):
 
 ```bash
-uv tool install markitai                 # recommended
-uv tool install "markitai[all]" --force  # with every extra
-pipx install markitai
-uv pip install markitai                  # into the active virtual environment
+uv tool install markitai     # or: pipx install markitai, pip install markitai
 ```
 
-Add one extra later with `uv tool install "markitai[ocr]" --force`; the extras are `markitai[browser]`, `markitai[ocr]`, `markitai[serve]`, `markitai[mcp]`, `markitai[claude-agent]`, `markitai[copilot]`, `markitai[legacy]`, `markitai[heif]`, `markitai[svg]`, `markitai[extra-fetch]` and `markitai[all]`. After the browser extra, `markitai doctor --fix` installs Chromium.
+**From source.** Rust 1.92 or later and a C/C++ toolchain:
 
-After installing, upgrading or adding an extra, run `markitai doctor` once to load the libraries (seconds on macOS, up to a minute with OCR); otherwise the first conversion waits for it and says so.
-
-markitai 1.3.0 requires `litellm>=1.83.0,!=1.92.0,<1.105` and `anthropic>=1.0.0,<2`: newer LiteLLM releases change model prices and OpenRouter limits markitai relies on, and Anthropic SDK 2 sends the API key as a Bearer token, which gateways that read `X-Api-Key` refuse for `--llm-batch`. An environment that needs newer versions of either package is not supported.
+```bash
+git clone https://github.com/Ynewtime/markitai && cd markitai
+cargo build --release --locked -p markitai-cli   # target/release/markitai and mkai
+```
 :::
 
 ## Your First Conversion
@@ -52,7 +51,7 @@ Convert a real page, this very guide:
 mkai https://markitai.dev/guide/getting-started --pure
 ```
 
-`mkai` is a short alias for `markitai`; `--pure` prints plain Markdown. To write files, give an output directory:
+`--pure` prints plain Markdown, without the generated frontmatter. To write files, give an output directory:
 
 ```bash
 markitai document.docx -o output/
@@ -69,71 +68,77 @@ flowchart LR
 
 ### Turning on LLM enhancement
 
-Export an API key for any supported provider and add `--llm`:
+Export an API key for a provider and add `--llm`:
 
 ```bash
 export GEMINI_API_KEY=...    # or OPENAI_ / ANTHROPIC_ / DEEPSEEK_ / OPENROUTER_API_KEY
 markitai report.pdf -o output/ --llm
 ```
 
-markitai picks a model from the key it finds; `MODEL=provider/model` chooses one. For a config file, a subscription or several models with fallback, run the guided setup:
+markitai picks a model from the keys and signed-in subscriptions it finds; `MODEL=provider/model` chooses one. For a config file or several models, run:
 
 ```bash
-markitai init
-markitai doctor     # what is installed and configured
+markitai init       # writes ~/.markitai/config.json with what it detects
+markitai doctor     # what is installed, configured and ready
 ```
 
 **Presets** bundle the common flags: `minimal` converts, `standard` adds LLM cleanup and image analysis, `rich` adds page screenshots. Turn a part off with `--no-*`, for example `--preset rich --no-desc`.
 
-**URLs** are fetched on your machine first; a public page that fails may fall back to a remote reader (Defuddle, Jina or Cloudflare), said once on stderr. Private, intranet and credential-bearing URLs never leave your machine; `MARKITAI_NO_REMOTE_FETCH=1` keeps everything local ([Fetch Policy](/guide/fetch-policy)). `-s jina` reads `JINA_API_KEY`, `-s cloudflare` `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`.
+**URLs** are read on your machine: plain HTTP first, then a local Chrome or Chromium for pages that need JavaScript. Remote readers (Defuddle, Jina, Cloudflare) are used only when you choose one with `-s` or opt in ([Fetch Policy](/guide/fetch-policy)).
 
 ## Output Structure
 
 ```text
 output/
-├── document.pdf.md          # Markdown (with --llm, only .llm.md is written unless --keep-base)
+├── document.pdf.md          # Markdown (with --llm only .llm.md, unless --keep-base)
 ├── document.pdf.llm.md      # LLM-enhanced version
 └── .markitai/
-    ├── assets/              # images from the source, plus images.json descriptions
-    ├── screenshots/         # page, slide or full-page screenshots (--screenshot)
-    ├── reports/             # JSON reports for batch runs
-    └── states/              # batch state for --resume
+    ├── assets/              # pictures, named by their content; images.json with --alt/--desc
+    ├── screenshots/         # page and slide images (--screenshot)
+    ├── reports/             # JSON report of a batch
+    ├── states/              # batch state for --resume
+    └── ownership/           # which files markitai wrote (internal)
 ```
 
-The output name is the full input name plus `.md`, so `report.pdf` and `report.docx` never collide.
+- The output name is the full input name plus `.md`, so `report.pdf` and `report.docx` never collide. Converting again writes `report.pdf.v2.md` (`output.on_conflict`: `rename`, `overwrite` or `skip`).
+- Without `-o`, Markdown goes to stdout and its pictures to `~/.markitai/assets/blobs/`, linked as `file://` URLs.
+- A picture on its own needs `--ocr` or `--llm`; without them it is skipped (exit `0`).
 
 ## Supported Formats
 
 | Format | Extensions |
 |--------|------------|
-| Office | `.docx`, `.doc`, `.pptx`, `.ppt`, `.xlsx`, `.xls`, `.odt`, `.ods`, `.numbers` (needs `-b cloudflare`) |
+| Word, OpenDocument text, RTF | `.docx`, `.docm`, `.dotx`, `.dotm`, `.doc`, `.dot`, `.odt`, `.ott`, `.rtf` |
+| Presentations | `.pptx`, `.pptm`, `.ppsx`, `.ppsm`, `.potx`, `.potm`, `.ppt`, `.pps`, `.pot`, `.odp`, `.otp` |
+| Spreadsheets | `.xlsx`, `.xlsm`, `.xlsb`, `.xltx`, `.xltm`, `.xls`, `.xlt`, `.ods`, `.ots`, `.numbers`, `.csv`, `.tsv` |
 | PDF | `.pdf` |
-| Text and markup | `.txt`, `.md`, `.markdown`, `.html`, `.htm`, `.xhtml`, `.xml`, `.csv`, `.tsv`, `.rtf`, `.rst`, `.org`, `.tex` |
-| Images | `.jpg`, `.jpeg`, `.png`, `.webp`, `.svg`, `.gif`, `.bmp`, `.tiff`, `.tif`, `.heic`, `.heif`, `.avif` (last three need `markitai[heif]`) |
-| Other documents | `.epub`, `.eml`, `.msg`, `.ipynb` |
-| URLs | `http://`, `https://` |
+| Web and markup | `.html`, `.htm`, `.xhtml`, `.xml`, `.md`, `.markdown`, `.txt`, `.json`, `.ipynb`, `.rst`, `.org`, `.tex`, `.latex` |
+| Images | `.jpg`, `.jpeg`, `.png`, `.webp`, `.gif`, `.bmp`, `.tif`, `.tiff`, `.svg`, `.heic`, `.heif`, `.avif` |
+| E-books and e-mail | `.epub`, `.eml`, `.msg` |
+| URLs | `http://`, `https://`, and `.urls` lists |
 
-Legacy `.doc` and `.ppt` need `markitai[legacy]` and no Office install.
+Every reader is built in, legacy `.doc`, `.ppt` and `.xls` included. Three things use another program on your machine:
+
+| Needs | For |
+|-------|-----|
+| Chrome or Chromium (`markitai doctor --fix` installs Chrome's headless shell) | JavaScript pages, web screenshots |
+| LibreOffice | Page and slide images of Office files (`--screenshot`, OCR of slides), EMF/WMF pictures |
+| OCR models (`markitai doctor --fix`, or the first `--ocr`) | Local OCR of scans and pictures |
 
 ## Platform Notes
 
-Everything works on Windows, Linux and macOS, except:
-
 | Platform | Note |
 |----------|------|
-| EMF/WMF images | convert only on Windows (the format is Windows-only) |
-| PPTX slide screenshots | need a renderer: Office or LibreOffice on Windows, LibreOffice on Linux (`apt-get install libreoffice`); see below for macOS |
-| Windows on Arm | markitai runs on an emulated x64 Python, which the setup script picks or installs; slower than on an x64 PC |
+| macOS | 11 or later, Apple silicon or Intel. Local OCR can use the system's Vision engine (`MARKITAI_OCR_BACKEND=vision`) |
+| Linux | x86-64 or ARM64 with glibc 2.28 or later; musl (Alpine) is not supported |
+| Windows | x64 or ARM64, both native builds |
 
-::: details macOS slide screenshots
-macOS prefers LibreOffice (`brew install --cask libreoffice`) and otherwise drives an installed PowerPoint, which asks for permission once and needs a desktop session. Recent macOS versions refuse the terminal's writes to PowerPoint's container (`Operation not permitted`, no dialog): give the terminal app Full Disk Access in System Settings → Privacy & Security, or install LibreOffice. On a headless Mac set `"office": { "macos_fallback": false }`.
-:::
-
-::: details Windows on Arm
-Some libraries markitai needs have no ARM64 build: pymupdf-layout, used for every PDF, has none, and the LLM library needs packages that would have to be compiled with Rust. `setup.ps1` picks an x64 Python or installs one with uv, and says so. With uv directly, ask for one: `uv tool install markitai --python cpython-3.13-windows-x86_64`. On a native ARM64 Python the install stops with `pymupdf-layout ... has no wheels with a matching platform tag (e.g., win_arm64)`.
+::: details macOS: "Apple cannot verify" a download
+The builds are not notarized yet. The setup script and `curl` downloads are not affected; a file your browser downloaded is. Once you trust it, clear its quarantine mark: `xattr -d com.apple.quarantine markitai-v<version>-aarch64-apple-darwin.tar.gz`.
 :::
 
 ## Next Steps
 
 - [Configuration](/guide/configuration) for LLM providers and every setting
 - [CLI Reference](/guide/cli) for every command and flag
+- [Upgrading from 1.x](/guide/upgrading) if you used the Python markitai

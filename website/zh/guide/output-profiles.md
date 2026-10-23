@@ -40,14 +40,14 @@ out = markitai.convert("document.pdf", output_dir="out/", profile="rag")
 LlamaIndex 的 `SimpleDirectoryReader` 等摄取器会跳过隐藏路径，比如默认的 `.markitai/assets/`。`rag`：
 
 - **可见资源**：图片移到 `assets/`，引用同步改写。
-- **页码标记**：PDF 真实分页处写 `<!-- page: N -->`（替代 `<!-- Page number: N -->`）。
-- **表格检查**：列数与表头不一致的行会报警告；带 `--llm` 时提示词要求各行列数一致。
+- **页码标记**：PDF 真实分页处写 `<!-- page: N -->`，与 `--page-markers` 是否在别处保留普通的 `<!-- Page number: N -->` 无关。
+- **表格检查**：pipe 表格中列数与表头不同的行会给出警告。
 
 ```text
 out/
-├── document.pdf.md          # 引用形如 ![](assets/document.pdf-0001-10.jpg)
+├── document.pdf.md          # 引用形如 ![](assets/10872bbc70f1048fbb0ddbe1.jpg)
 └── assets/
-    ├── document.pdf-0001-10.jpg
+    ├── 10872bbc70f1048fbb0ddbe1.jpg
     └── images.json          # 带 --llm --desc 时生成
 ```
 
@@ -56,7 +56,7 @@ out/
 ## `obsidian` — 导入 vault
 
 - **可见资源**，同 `rag`：vault 里不会出现隐藏文件夹。
-- **Wikilink**：设 `output.wikilinks: true` 后写成 `![[assets/x.png]]`，alt 文本保留为显示文本。
+- **Wikilink**：设 `output.wikilinks: true` 后写成 `![[assets/x.jpg|alt]]`，alt 文本保留为显示文本。
 - markitai 的 frontmatter（`title`、`source`、`tags`）在 Obsidian 里显示为 Properties。
 
 ```bash
@@ -66,7 +66,7 @@ markitai note.docx --profile obsidian --config-json '{"output":{"wikilinks":true
 
 ## `okf` — Open Knowledge Format
 
-把 frontmatter 映射到 [Open Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md) 规范（v0.2）；资源位置不变。
+把 frontmatter 映射到 [Open Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md) 规范；资源位置不变。
 
 | markitai 字段 | OKF 字段 |
 |---|---|
@@ -77,18 +77,20 @@ markitai note.docx --profile obsidian --config-json '{"output":{"wikilinks":true
 
 ```yaml
 ---
-type: Document
 title: Quarterly report
-resource: report.pdf
 generated:
-  by: markitai/1.3.0
+  by: markitai/2.0.0
   at: '2026-08-25T01:42:13Z'
+resource: report.pdf
+type: Document
 ---
 ```
 
+文档中已有的 `type`、`resource` 或 `generated` 值会保留。`okf` 也作用于 `--pure` 输出。
+
 ## images.json schema（已冻结）
 
-带 `--llm --desc` 时，每个资源目录会生成一份 `images.json`。schema 冻结在 1.0 版本。
+带 `--llm --desc` 和 `-o` 时，每个资源目录会生成一份 `images.json`（`.markitai/assets/`，`rag` 与 `obsidian` 下为 `assets/`）。schema 冻结在 1.0 版本。
 
 顶层：
 
@@ -108,7 +110,7 @@ generated:
 | `desc` | string | 详细描述 |
 | `text` | string | 图片里的文字（可能为空） |
 | `created` | string | ISO 8601，分析时间 |
-| `source` | string | 源文档绝对路径 |
+| `source` | string | 按给定方式写的源文档（URL 则为输出文件名） |
 
 ## Recipe：LlamaIndex 摄取
 
@@ -130,5 +132,5 @@ print(len(documents))
 ## 注意
 
 - Profile 只改写本次运行写出的文件：别在同一个目录里混用带 profile 和不带 profile 的运行。
-- stdout 模式（不带 `-o`）不写文件，profile 不起作用。
+- 不带 `-o`（stdout）时 profile 仍会塑形 Markdown；图片保留 `file://` 链接，不写 `images.json`。
 - 批量报告和 `--resume` 状态留在 `.markitai/`；嵌套批量时每个子目录各有一个 `assets/`。

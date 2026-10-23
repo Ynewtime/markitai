@@ -10,8 +10,8 @@
  * Consecutive strategies of the same kind are drawn as one labelled group, so
  * the privacy boundary is the gap between two cards rather than a hairline
  * nobody notices — and "on your machine" is said once per group instead of
- * once per pill. Both orders happen to group cleanly: the default chain is
- * local→remote, and the SPA chain is local→remote→local.
+ * once per pill. Every order groups cleanly: local first, then the remote
+ * services, which run only after the reader opted in (fetch.remote_consent).
  *
  * Bilingual like `features.ts`: the strategy names are proper nouns and
  * identical in both locales, so only the group labels switch on `lang`. That
@@ -22,8 +22,12 @@ import { useData } from 'vitepress'
 
 const props = withDefaults(
   defineProps<{
-    /** `default` = standard domains, `spa` = known JS-heavy domains. */
-    mode?: 'default' | 'spa'
+    /**
+     * `default` = most domains, `listed` = domains in a fetch.fallback_patterns
+     * you wrote, `learned` = domains markitai learned need a browser
+     * (crates/markitai-core/src/fetch/policy.rs).
+     */
+    mode?: 'default' | 'listed' | 'learned'
   }>(),
   { mode: 'default' },
 )
@@ -36,15 +40,16 @@ const LOCAL = new Set(['Static', 'Playwright'])
 
 const ORDER = {
   default: ['Static', 'Playwright', 'Defuddle', 'Jina', 'Cloudflare'],
-  spa: ['Playwright', 'Defuddle', 'Jina', 'Cloudflare', 'Static'],
+  listed: ['Playwright', 'Static', 'Defuddle', 'Jina', 'Cloudflare'],
+  learned: ['Playwright', 'Defuddle', 'Jina', 'Cloudflare'],
 } as const
 
 const copy = computed(() =>
   zh.value
-    ? { local: '本机', remote: '远程服务', order: '抓取策略回退顺序' }
+    ? { local: '本机', remote: '远程服务，需你同意', order: '抓取策略回退顺序' }
     : {
         local: 'On your machine',
-        remote: 'Remote services',
+        remote: 'Remote services, once you opt in',
         order: 'Fetch strategy fallback order',
       },
 )

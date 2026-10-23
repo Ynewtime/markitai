@@ -2,53 +2,57 @@
 
 > Opinionated Markdown converter with native LLM enhancement support. Converts documents, images, and URLs to clean Markdown, with optional LLM cleaning, frontmatter metadata, vision analysis, OCR for scans, and a local web workspace.
 
-Command-line tool (`markitai`, alias `mkai`) and Python package. Source and issue tracker: https://github.com/Ynewtime/markitai. Docs are bilingual: English at the site root, 简体中文 under `/zh/`.
+One native program (`markitai`, alias `mkai`, and `markitai-mcp`) with a local REST/web workspace (`markitai serve`), an MCP server (`markitai mcp`), and Python (PyPI `markitai`), Node.js and Go bindings of the same Rust engine. Install: `curl -fsSL https://markitai.dev/setup.sh | sh` (macOS, Linux) or `irm https://markitai.dev/setup.ps1 | iex` (Windows), or `pip install markitai`. Source and issue tracker: https://github.com/Ynewtime/markitai. Docs are bilingual: English at the site root, 简体中文 under `/zh/`.
 
-License: markitai's own source code is MIT. The default install is not uniformly MIT — the PDF engine is PyMuPDF (`pymupdf`, `pymupdf-layout`, `pymupdf4llm`) from Artifex Software, dual-licensed AGPL-3.0 or commercial. Local use is unaffected; redistributing the combined work or offering it to others over a network triggers AGPL-3.0 obligations (or requires a commercial licence from Artifex). See NOTICE for full third-party attribution: https://github.com/Ynewtime/markitai/blob/python/NOTICE
+License: markitai is MIT. Its Rust dependencies are under permissive licences (MIT, Apache-2.0, BSD, ISC, Zlib, Unicode and similar) and, for four CSS-parser crates, the file-level MPL-2.0; none is GPL. Release archives and wheels carry the notices. See NOTICE for full third-party attribution: https://github.com/Ynewtime/markitai/blob/main/NOTICE
 
 ## Automation
 
-- `markitai input -o out/ --json` returns final per-item status, output paths, usage and costs; check the exit code and `ok`/`error`. `--dry-run` and `--llm-batch-collect` exclude JSON output.
-- `--no-remote-fetch` disables remote URL extraction; it does not disable separately enabled LLM enhancement or a Cloudflare file backend.
-- MCP conversions accept `profile`; batches accept `concurrency` (default 10) and isolate outputs by batch/item. Omitted `llm` inherits server configuration; `llm: false` disables it.
+- `markitai input -o out/ --json` returns final per-item status, output paths, usage and costs; check the exit code and `ok`/`error`. `--dry-run` and `--llm-batch-collect` exclude JSON output. Usage errors exit 2 with no JSON.
+- `markitai input -f json` prints one versioned document object (`schema_version` 1.0) instead of Markdown.
+- `--no-remote-fetch` disables remote URL extraction; it does not disable separately enabled LLM enhancement or a Cloudflare file backend. By default `auto` URL fetching stays on the machine.
+- MCP tools: `convert_document`, `convert_url`, `batch_convert`, `job_status`; paths must be absolute. Conversions accept `profile`; batches accept `concurrency` (default 10) and isolate outputs by batch/item. Omitted `llm` inherits server configuration; `llm: false` disables it.
 
 ## Docs
 
-- [Getting Started](https://markitai.dev/guide/getting-started): Install (the setup script and what it installs, or uv/pipx by hand), first conversion, output structure, supported formats, platform notes
+- [Getting Started](https://markitai.dev/guide/getting-started): Install (the setup script, release archives, pip/uv, building from source), first conversion, output structure, supported formats, platform notes
+- [Upgrading from 1.x](https://markitai.dev/guide/upgrading): What changed from the Python markitai 1.x: install, CLI, output, configuration, Python API
 - [Why Markitai](https://markitai.dev/guide/comparison): How markitai compares with markitdown, docling and anydoc, and which job each tool optimizes for
 - [CLI Reference](https://markitai.dev/guide/cli): Every command and flag
 - [Output Profiles](https://markitai.dev/guide/output-profiles): rag/obsidian/okf output shaping, frozen images.json schema, LlamaIndex ingestion recipe
-- [Python API](https://markitai.dev/guide/python-api): Programmatic `convert`/`aconvert` with typed results (provisional)
-- [MCP Server](https://markitai.dev/guide/mcp): bundled `markitai-mcp` server (`markitai[mcp]` extra) exposing conversion tools to AI agents over stdio
-- [Configuration](https://markitai.dev/guide/configuration): Config file and env vars, LLM providers, image/screenshot/OCR/office settings, cache, security
-- [Fetch Policy](https://markitai.dev/guide/fetch-policy): URL fetch strategy cascade (static/Playwright/Defuddle/Jina/Cloudflare), domain profiles, remote-fetch consent
+- [Python API](https://markitai.dev/guide/python-api): `convert`/`aconvert` with typed results (provisional), plus the Node.js, Go and C bindings
+- [MCP Server](https://markitai.dev/guide/mcp): `markitai-mcp` exposing conversion tools to AI agents over stdio
+- [Configuration](https://markitai.dev/guide/configuration): Config file and env vars, LLM providers, image/screenshot/OCR settings, cache, security
+- [Fetch Policy](https://markitai.dev/guide/fetch-policy): URL fetch strategy cascade (static/local browser, then Defuddle/Jina/Cloudflare once allowed), domain profiles, remote-fetch consent
 - [Web Workspace](https://markitai.dev/guide/serve): `markitai serve` local UI, access token, job history, REST + SSE API
 - [Web Workspace Reference](https://markitai.dev/guide/serve-reference): Access and user tokens, model rules, Edit config, the REST API and its error codes
-- [Claude and Copilot](https://markitai.dev/guide/subscriptions): use a Claude Code or GitHub Copilot subscription: install, sign in, fix what the workbench reports
-- [ChatGPT](https://markitai.dev/guide/subscription-chatgpt): use a ChatGPT subscription (device code sign-in)
-- [Prices and Cost](https://markitai.dev/guide/pricing): how a conversion is priced, what an unknown price means
-- [Conversion Performance](https://markitai.dev/guide/performance): what keeps a run cheap, the dated speedup audit and its measurement conditions, diagnosing a slow run
+- [Claude and Copilot](https://markitai.dev/guide/subscriptions): use a Claude Code or GitHub Copilot subscription through the official CLIs
+- [ChatGPT](https://markitai.dev/guide/subscription-chatgpt): use a ChatGPT subscription through the Codex CLI
+- [Prices and Cost](https://markitai.dev/guide/pricing): how a conversion is priced, what an unknown price means, the spending limit
+- [Conversion Performance](https://markitai.dev/guide/performance): what keeps a run fast, diagnosing a slow run
 - [Changelog](https://markitai.dev/changelog): Release history
 
 ## 中文文档
 
-- [快速开始](https://markitai.dev/zh/guide/getting-started): 安装（安装脚本及其安装内容，或用 uv/pipx 手动安装）、首次转换、输出结构、支持格式、平台说明
+- [快速开始](https://markitai.dev/zh/guide/getting-started): 安装（安装脚本、发布包、pip/uv、从源码构建）、首次转换、输出结构、支持格式、平台说明
+- [从 1.x 升级](https://markitai.dev/zh/guide/upgrading): 与 Python 版 markitai 1.x 相比的变化：安装、命令行、输出、配置、Python API
 - [为什么选 Markitai](https://markitai.dev/zh/guide/comparison): 与 markitdown、docling、anydoc 的对比，以及每个工具各自优化的目标
 - [CLI 命令](https://markitai.dev/zh/guide/cli): 完整命令与参数参考
 - [输出 Profile](https://markitai.dev/zh/guide/output-profiles): rag/obsidian/okf 输出塑形、冻结的 images.json schema、LlamaIndex 摄取示例
-- [Python API](https://markitai.dev/zh/guide/python-api): 程序化调用 `convert`/`aconvert` 与类型化结果（暂定阶段）
-- [MCP 服务器](https://markitai.dev/zh/guide/mcp): 随主包发布的 `markitai-mcp` 服务器（`markitai[mcp]` extra），通过 stdio 向 AI Agent 提供转换工具
+- [Python API](https://markitai.dev/zh/guide/python-api): `convert`/`aconvert` 与类型化结果（暂定阶段），以及 Node.js、Go 与 C 绑定
+- [MCP 服务器](https://markitai.dev/zh/guide/mcp): `markitai-mcp` 通过 stdio 向 AI Agent 提供转换工具
 - [配置说明](https://markitai.dev/zh/guide/configuration): 配置文件与环境变量、LLM 提供商、缓存、安全设置
 - [抓取策略](https://markitai.dev/zh/guide/fetch-policy): URL 抓取策略级联、域名配置、远程抓取同意
-- [Claude 与 Copilot 订阅](https://markitai.dev/zh/guide/subscriptions): 使用 Claude Code 或 GitHub Copilot 订阅：安装、登录、处理工作台的提示
-- [ChatGPT 订阅](https://markitai.dev/zh/guide/subscription-chatgpt): 使用 ChatGPT 订阅（设备码登录）
-- [价格与费用显示](https://markitai.dev/zh/guide/pricing): 转换如何计费、价格未知意味着什么
+- [Claude 与 Copilot 订阅](https://markitai.dev/zh/guide/subscriptions): 通过官方命令行使用 Claude Code 或 GitHub Copilot 订阅
+- [ChatGPT 订阅](https://markitai.dev/zh/guide/subscription-chatgpt): 通过 Codex 命令行使用 ChatGPT 订阅
+- [价格与费用显示](https://markitai.dev/zh/guide/pricing): 转换如何计费、价格未知意味着什么、费用上限
 - [网页工作台](https://markitai.dev/zh/guide/serve): `markitai serve` 本地界面、访问令牌、历史记录、REST + SSE API
 - [工作台参考](https://markitai.dev/zh/guide/serve-reference): 访问令牌与用户令牌、模型规则、编辑配置、REST API 与错误代码
-- [转换性能](https://markitai.dev/zh/guide/performance): 降低单次转换开销的做法、带日期的提速审计与测量条件、慢速转换排查
+- [转换性能](https://markitai.dev/zh/guide/performance): 让转换更快的做法、慢速转换排查
 - [更新日志](https://markitai.dev/zh/changelog): 发布历史
 
 ## Optional
 
 - [GitHub repository](https://github.com/Ynewtime/markitai): Source, issues, NOTICE and license details
-- [PyPI package](https://pypi.org/project/markitai/): Installable releases
+- [GitHub Releases](https://github.com/Ynewtime/markitai/releases): Release archives for macOS, Linux and Windows, with SHA256SUMS
+- [PyPI package](https://pypi.org/project/markitai/): The Python package, which also installs the commands

@@ -40,14 +40,14 @@ out = markitai.convert("document.pdf", output_dir="out/", profile="rag")
 Ingestors such as LlamaIndex `SimpleDirectoryReader` skip hidden paths like the default `.markitai/assets/`. `rag`:
 
 - **Visible assets**: images move to `assets/`, references follow.
-- **Page markers**: `<!-- page: N -->` at real PDF page boundaries (instead of `<!-- Page number: N -->`).
-- **Table checks**: warns on rows whose column count differs from the header; with `--llm` the prompt asks for equal counts.
+- **Page markers**: `<!-- page: N -->` at real PDF page boundaries, whether or not `--page-markers` keeps the plain `<!-- Page number: N -->` elsewhere.
+- **Table checks**: warns on pipe tables whose rows have a different column count from the header.
 
 ```text
 out/
-├── document.pdf.md          # refs like ![](assets/document.pdf-0001-10.jpg)
+├── document.pdf.md          # refs like ![](assets/10872bbc70f1048fbb0ddbe1.jpg)
 └── assets/
-    ├── document.pdf-0001-10.jpg
+    ├── 10872bbc70f1048fbb0ddbe1.jpg
     └── images.json          # with --llm --desc
 ```
 
@@ -56,7 +56,7 @@ Page screenshots stay in `.markitai/screenshots/`, out of the corpus.
 ## `obsidian` — vault imports
 
 - **Visible assets**, as in `rag`: no hidden folder in the vault.
-- **Wikilinks** with `output.wikilinks: true`: `![[assets/x.png]]`, alt text kept as display text.
+- **Wikilinks** with `output.wikilinks: true`: `![[assets/x.jpg|alt]]`, alt text kept as display text.
 - markitai's frontmatter (`title`, `source`, `tags`) shows as Obsidian Properties.
 
 ```bash
@@ -66,7 +66,7 @@ markitai note.docx --profile obsidian --config-json '{"output":{"wikilinks":true
 
 ## `okf` — Open Knowledge Format
 
-Maps the frontmatter to the [Open Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md) spec (v0.2); assets stay where they are.
+Maps the frontmatter to the [Open Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md) spec; assets stay where they are.
 
 | markitai field | OKF field |
 |---|---|
@@ -77,18 +77,20 @@ Maps the frontmatter to the [Open Knowledge Format](https://github.com/GoogleClo
 
 ```yaml
 ---
-type: Document
 title: Quarterly report
-resource: report.pdf
 generated:
-  by: markitai/1.3.0
+  by: markitai/2.0.0
   at: '2026-08-25T01:42:13Z'
+resource: report.pdf
+type: Document
 ---
 ```
 
+Values a document already has for `type`, `resource` or `generated` are kept. `okf` also applies to `--pure` output.
+
 ## images.json schema (frozen)
 
-With `--llm --desc`, each assets directory gets an `images.json`. The schema is frozen at version 1.0.
+With `--llm --desc` and `-o`, each assets directory gets an `images.json` (`.markitai/assets/`, or `assets/` under `rag` and `obsidian`). The schema is frozen at version 1.0.
 
 Top level:
 
@@ -108,7 +110,7 @@ Each entry in `images`:
 | `desc` | string | Detailed description |
 | `text` | string | Text in the image (may be empty) |
 | `created` | string | ISO 8601, analysis time |
-| `source` | string | Absolute source document path |
+| `source` | string | The source document as given (for a URL, the output file's name) |
 
 ## Recipe: LlamaIndex ingestion
 
@@ -130,5 +132,5 @@ print(len(documents))
 ## Notes
 
 - A profile rewrites only its own run's files: don't mix profiled and plain runs in one directory.
-- Stdout mode (no `-o`) writes no files, so profiles do nothing there.
+- Without `-o` (stdout) a profile still shapes the Markdown; its pictures keep their `file://` links and no `images.json` is written.
 - Batch reports and `--resume` state stay under `.markitai/`; nested batches get one `assets/` per subdirectory.

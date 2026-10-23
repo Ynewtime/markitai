@@ -7,12 +7,12 @@ The details behind the [web workspace guide](/guide/serve): access rules, user t
 | Caller | Converts | Sees | Settings |
 |--------|----------|------|----------|
 | Server (admin) token | files and URLs | every conversion | all |
-| This machine, no token | files and URLs | every conversion | Appearance only |
-| User token | files and public URLs, no remote services | its own conversions | Appearance and its own Models |
-| Other device, no token | nothing (401) | nothing | none |
+| User token | files and public URLs, no remote services | its own conversions | Appearance, its own Models and their Edit config |
+| No token, this machine included | nothing (401) | nothing | none |
+| This machine, `--no-auth` | files and URLs | every conversion | all |
 | Other device, `--no-auth` | files only, no URLs | every conversion | none |
 
-- **This machine.** Requests from it need no token, except for the settings and token routes (`/api/settings/…`, `/api/access-tokens…`, `/api/access-token/regenerate`): they hold your provider keys and the tokens, and any local program or a page on another `localhost` port also connects from this machine. Under `--no-auth` this machine reaches them without a token, and other devices never do. A request whose client address the server can't see counts as another device.
+- **This machine needs the token too**: any local program, or a page on another `localhost` port, also connects from this machine. Under `--no-auth` a direct connection from this machine (no proxy headers) gets everything, and other devices never reach the settings and token routes; a request whose client address the server can't see counts as another device.
 - **A tab without the token** asks for it where it is needed; **Settings → Access token** holds it for that tab. **Sign out of this tab** forgets it there only.
 - **Downloads** opened by the browser use a single-use `?ticket=` link that expires after a minute, so the token never appears in a URL, the browser history or the download list.
 - **Regenerate token…** (**Settings → Access token**) replaces the token: every other tab and device, this machine included, signs in again, and unused download links stop working. The new token is shown once, with its sign-in link and a QR code, and lasts until the server stops, like the startup token. `MARKITAI_SERVE_TOKEN` keeps one token across restarts instead.
@@ -23,23 +23,23 @@ The details behind the [web workspace guide](/guide/serve): access rules, user t
 **Settings → Access token → User tokens** gives another person or device a token of its own: name it and **Create token**. It is shown once, with Copy, its sign-in link and a QR code, then listed by its last characters with when it was last used.
 
 - **Converts** files and URLs, public addresses only: its URLs, and the pictures its documents link to, are never fetched from the server's own network.
-- **Never uses a remote service**, whatever `fetch.remote_consent` says: not defuddle.md, Jina Reader or Cloudflare (it cannot choose them as strategy or backend, and they are not its fallback), and not the X/Twitter embed lookups. A remote default strategy of the server runs as `auto` for it, and the item says when a remote fallback or lookup was skipped.
+- **Never uses a remote service**, whatever `fetch.remote_consent` says: not defuddle.md, Jina Reader or Cloudflare (it cannot choose them as strategy or backend, and they are not its fallback). A remote default strategy of the server runs as `auto` for it, and the item says when a remote fallback was skipped.
 - **Sees, downloads, stops, retries and deletes** only its own conversions. The admin sees everyone's.
-- **Settings**: Models, Access token and Edit config need the server's token. A tab signed in with a user token says so there and shows Appearance and its [own models](#users-models-and-shared-models).
-- **Revoke** signs it out at once, with its download links and live progress, on this machine too.
+- **Settings**: Models, Access token and Edit config need the server's token. A tab signed in with a user token says so there and shows Appearance and its [own models](#users-models-and-shared-models), with their Edit config.
+- **Revoke** signs it out at once, with its download links and live progress.
 - **Storage**: only a SHA-256 digest of each user token is kept, in `~/.markitai/serve/access.json` (readable by your user only, never the config file), so user tokens survive restarts and a regenerated admin token. The server's log names a token by its label, never the token.
 
 ## Workspace Details
 
-**Build line.** Under the sidebar a line names the server's build: version, commit (`-dirty` when built with uncommitted changes) and build time in your time zone (`1.3.0 1a2b3c4 10-15 09:30`; hover for the full time). A server run from a source checkout has no build time.
+**Build line.** The sidebar's foot names the server's build: the version beside **Docs**, the commit beside **GitHub** (`-dirty` when built with uncommitted changes), and under them `Build: 20261017 19:54` in your time zone (hover for the full time). On a phone it ends the Settings list.
 
 **Convert.** Files are staged with upload progress until **Convert**, and may share one submission with URLs. **Upload**'s menu also picks a folder. URLs are checked before anything is sent.
 
 **Options.** They start from the server's defaults: `config.json` over the built-in defaults, for the keys the command line reads too:
 
-`llm.enabled`, `ocr.enabled`, `image.alt_enabled`, `image.desc_enabled`, `screenshot.enabled`, `screenshot.screenshot_only`, `llm.pure`, `cache.no_cache`, `image.compress`, `output.profile`, `fetch.strategy`, `output.format`, `ocr.lang`, `ocr.per_page_routing`
+`llm.enabled`, `ocr.enabled`, `image.alt_enabled`, `image.desc_enabled`, `screenshot.enabled`, `screenshot.screenshot_only`, `llm.pure`, `cache.no_cache`, `image.compress`, `output.profile`, `fetch.strategy`, `output.format`, `ocr.lang`, `ocr.per_page_routing`, `output.page_markers`
 
-- Besides the preset and Enhance: Output (profile, and **JSON** for the [document JSON](/guide/cli#format) beside the Markdown), the local OCR language while OCR runs without LLM, and Advanced (fetch strategy, files backend, cache, compression, OCR on every PDF page).
+- Besides the preset and Enhance: Output (profile, and **JSON** for the [document JSON](/guide/cli#format) beside the Markdown), the local OCR language while OCR runs without LLM, and Advanced (fetch strategy, files backend, cache, compression, text only, page markers, OCR on every PDF page).
 - A row above the command line says whether the options are the server's, yours or changed, with **Reset to defaults** and **Save as default**.
 - The admin's saved choice goes to `config.json` and applies to the next conversion; a user token's is kept in its own file (**Use the server's defaults** undoes it). Cloudflare is never a default.
 
@@ -57,8 +57,8 @@ On a phone, tap **Select** first; **Stop remaining** sits in the header of the f
 **Conversion window.** Click an item or press Enter on it.
 
 - The header's arrows or ↑/↓ move between items; the expand button (or **F**) fills the browser and back, remembered per browser.
-- The header has **Download** (opens Preview's **Files**) and, when it is the fix, **Retry** (never for a file type markitai cannot convert); "⋯" holds **Enhance with LLM**, **Run again** and Delete.
-- Details also shows how long the item is kept and the start of the result. A failed action (a Retry the server refuses, say) is reported at its top.
+- The header has **Download** (the Markdown; its caret offers JSON, all files as a .zip, or Choose files…) and, when it is the fix, **Retry**, **Add a model** or **Enable OCR and retry**; "⋯" holds **Enhance with LLM**, **Run again**, **Re-convert**, **Retry without LLM** and Delete.
+- Details also shows how long the item is kept and the start of the result. A failed action shows an error that stays until you close it; a failed rerun that kept the earlier result says so in Details.
 
 **Preview.** "⋯" adds Copy and Export PDF with an optional header and footer. **Files** lists the original, then every result file, each with its own download, and **Download all (.zip)** of the result with its original.
 
@@ -90,7 +90,7 @@ A web page in Compare:
 - hidden PDF text that may be a prompt injection, OCR that found no text;
 - slides that couldn't be rendered, a URL screenshot that wasn't captured;
 - image analysis that failed and kept the original alt text, an LLM enhancement that failed and left the unenhanced result;
-- a model answer that did not match the document page by page (the converted Markdown is kept).
+- a model answer that left out or changed too much of the document (the converted Markdown is kept).
 
 **Downloads.** A single file, a submission's zip, or everything with **Download all** in the Conversions "⋯".
 
@@ -123,28 +123,19 @@ A web page in Compare:
 ```mermaid
 flowchart TD
   S[Save a connection] --> E{Key field}
-  E -->|typed| OK[Saved]
-  E -->|env:| V{"Provider's variable?"}
-  V -->|yes| OK
-  V -->|"no, or custom address"| X[Refused, 422]
+  E -->|"typed key"| OK[Saved]
+  E -->|"picked Using OPENAI_API_KEY"| V["Saved as env:OPENAI_API_KEY,<br/>provider's address only"]
+  E -->|"typed env:…"| X[Refused, 422]
   E -->|"kept, new address"| X
   E -->|"empty + address"| P[Saved, markitai-no-key]
 ```
 
 - To use a refused pairing, enter the key itself with the new address, or write the pair in the config file (`markitai config edit`, or by hand; see [Custom API Endpoint](/guide/configuration#custom-api-endpoint)). Pairs already in the config file keep working from the settings page.
-- **`markitai-no-key`** is a placeholder no server accepts as a credential. Without it, LiteLLM would send the server's own key variable (`OPENAI_API_KEY`, `GROQ_API_KEY`, ...) to that address. Servers that check no key (LM Studio, vLLM, llama.cpp) work with it; the page shows such a connection as having no key.
+- **`markitai-no-key`** is a placeholder no server accepts as a credential. Without it, markitai would send the server's own key variable (`OPENAI_API_KEY`, `GROQ_API_KEY`, ...) to that address. Servers that check no key (LM Studio, vLLM, llama.cpp) work with it; the page shows such a connection as having no key.
 - A connection with a key cannot become one without a key at another address (422): add a new connection for that server.
 - Entries you write in the config file yourself are unchanged: one without `api_key` still reads the provider's key variable.
 
-**Cloud logins.** These providers sign in with the server's own login, which LiteLLM would send to whatever address an entry names, so the page saves and tests them only at the provider's own endpoint (422 with an address):
-
-| Provider | Login |
-|----------|-------|
-| Vertex AI | Google application default credentials (`gcloud auth application-default login`, `GOOGLE_APPLICATION_CREDENTIALS`) |
-| watsonx | `WATSONX_TOKEN` |
-| GigaChat | `GIGACHAT_ACCESS_TOKEN` |
-
-**Add models** shows Vertex AI without an address field, noting it uses the server's Google login; a private endpoint goes in the config file. Amazon Bedrock may take an address: without a key it sends the placeholder there, never the server's AWS credentials.
+**Cloud logins.** Vertex AI signs in with the server's own Google login (`gcloud auth application-default login`, `GOOGLE_APPLICATION_CREDENTIALS`), which would go to whatever address an entry names, so the page saves and tests it only at Google's own endpoint (422 with an address). **Add models** shows it without an address field; a private endpoint goes in the config file. Amazon Bedrock may take an address: without a key it sends the placeholder there, never the server's AWS credentials.
 
 ## Users' Models and Shared Models
 
@@ -162,16 +153,16 @@ flowchart LR
 - **Weights** are edited in place on every saved row (the admin's too): click, type a whole number from 0 to 100, Enter or leave the field to save, Escape to cancel.
 - **Storage**: `~/.markitai/serve/user-models/<token id>.json`, readable by your user only and never the config file, so Edit config and the CLI never see them. Only that user's conversions use them; keys show masked only.
 - **Allowed**: a model with the user's own API key, or the address of a server that takes none (stored with `markitai-no-key`); 50 models at most.
-- **Refused**: providers that sign in with the server's account or cloud login (Claude Code, Copilot and ChatGPT subscriptions, Vertex AI, watsonx, GigaChat, SageMaker, Bedrock without a key), `env:` references, and addresses on the server's own machine (`localhost`, `127.0.0.1`, `::1`, `0.0.0.0`; Ollama or LM Studio need an address of the user's own).
-- **Public addresses only**: every request for a user's own model (conversions, model discovery, tests) resolves the name when it connects and refuses an address outside the public internet (loopback, private, link-local such as cloud metadata, unique-local), so a name pointing at the server's machine or network fails too. No redirect is followed, and a request an environment proxy would carry is refused, because the proxy would choose the address. Models the admin shares are not restricted.
+- **Refused**: providers that sign in with the server's account or cloud login (Claude Code, Copilot and ChatGPT subscriptions, Vertex AI, Bedrock without a key), `env:` references, and addresses on the server's own machine (`localhost`, `127.0.0.1`, `::1`, `0.0.0.0`; Ollama or LM Studio need an address of the user's own).
+- **Public addresses only**: every request for a user's own model (conversions, model discovery, tests) resolves the name when it connects and refuses an address outside the public internet (loopback, private, link-local such as cloud metadata, unique-local), so a name pointing at the server's machine or network fails too. No redirect is followed and no proxy is used. Models the admin shares are not restricted.
 
 **Shared models.** The admin's saved models are **Private** by default; **Shared** lets every user's conversions use one (saved as `"model_info": {"share": "shared"}`). Turning one private applies to the next request.
 
 - Users see a shared model under **Shared by the admin** as model ID, provider and weight only. Its key and address stay on the server, and no failure a user sees names where it is served.
-- A user's conversions route over one pool of its own and the shared models by weight; a failed request moves on to another model of the pool. Prompts, budgets and the cache stay the admin's, and the job shows which model ran and what it cost.
+- A user's conversions route over one pool of its own and the shared models by weight; a failed request moves on to another model of the pool. The job shows which model ran and what it cost.
 - A user with neither has no LLM options, and a request for one is refused (`llm_unavailable`): the server's environment keys and detected models never serve a user.
 - **A user's weight** for a shared row applies to that user's conversions only: 0 turns it off for them, and **Use the admin's N** follows the admin's weight again (kept in the user's file as `shared_weights`).
-- **Test** on a shared row runs on the server with the admin's key and address and says only whether it passed and, if not, why ("ask the admin to check it"), never the provider's words, the address or the key. Because the admin's key pays, a user runs one such test at a time, six a minute at most.
+- **Test** on a shared row runs on the server with the admin's key and address and says only whether it passed and, if not, to tell the admin which model failed, never the provider's words, the address or the key. Because the admin's key pays, a user runs one such test at a time, six a minute at most.
 
 **A user's Edit config** edits its own models as text, with the same masking, check, review and conflict flow as the [admin's page](#edit-config):
 
@@ -183,7 +174,7 @@ flowchart LR
 
 **Settings → Edit config** shows the configuration file the server reads (the one `markitai config` edits) as text.
 
-- **Secrets are masked** as `markitai config show` redacts them: API keys, tokens, passwords, cookies and other values under a secret-sounding key, and every HTTP header value, read `sk…7890`; an `env:` reference shows as it is; a saved address shows without its credentials. A masked value left in place keeps the stored secret; to change one, type the whole new value or an `env:` reference.
+- **Secrets are masked** as `markitai config list` redacts them: API keys, tokens, passwords, cookies and other values under a secret-sounding key, and every HTTP header value, read `sk…7890`; an `env:` reference shows as it is; a saved address shows without its credentials. A masked value left in place keeps the stored secret; to change one, type the whole new value or an `env:` reference.
 - **Saving**: the JSON is checked as you type (with line and column), **Review changes** shows a line diff, and **Save config** writes exactly the reviewed text, keeping layout, key order and line endings (a file written on Windows stays CRLF; the page says so).
 - **Conflicts**: if the file changed since the page read it, the save is refused and **Load current file** reads it again.
 - Models and connections apply at once; the page says when other changes need a restart.
@@ -194,21 +185,27 @@ Errors are JSON `{"detail", "code", "reason"}`: `detail` is an English sentence,
 
 | Code | When |
 |------|------|
-| 401 `token_required` | No valid token: another device, a revoked or regenerated token, or the settings without the server token |
+| 400 `host_not_allowed` | A `Host` the server does not answer to (add `--allowed-host`) |
+| 401 `token_required` | No valid token: none at all, or a revoked or regenerated one |
 | 401 `ticket_invalid` | A download ticket that is invalid, expired or already used |
 | 422 `invalid_options` | An unknown job option or a value of the wrong type (`invalid_retry_body` on a retry) |
 | 422 `invalid_url`, `unsupported_url_scheme` | A URL refused when it is submitted |
 | 403 `remote_processing_forbidden` | A user token choosing `jina`, `defuddle` or `cloudflare`; Cloudflare for anyone but the admin |
 | 403 `remote_url_forbidden` | A URL from another machine under `--no-auth` |
-| 403 `settings_forbidden` | A user token on the settings and token routes |
+| 403 `settings_forbidden` | A user token, or another device under `--no-auth`, on the settings and token routes |
+| 403 `origin_not_allowed` | A state-changing request from another web origin |
 | 403 `user_token_required` | Anyone but a user token on `/api/me/…` |
-| 404 `job_not_found` | A conversion the user token did not create |
+| 404 `job_not_found` | An unknown or expired job, or one the user token did not create |
+| 409 `token_disabled` | A token route under `--no-auth` |
+| 409 `batch_pending` | Retrying or enhancing an item still in an `--llm-batch` |
+| 413 `file_too_large` | A file over 100 MB |
+| 422 `llm_unavailable` | A job asking for LLM processing without a usable model (409 when enhancing an item) |
 
 Cloudflare processing (`strategy` or `backend` `"cloudflare"`) also needs `"remote_processing": "cloudflare"` in the same request's options, as the workbench sends after you confirm; it bills the server's account, so only the admin may use it. `GET /api/capabilities` says who is asking (`access.role`: `admin` or `user`).
 
 | Endpoint | Description |
 |----------|-------------|
-| `GET /api/capabilities` | Server version and build (`build: {version, commit, built_at, dirty}`), presets, LLM and extras status, limits and supported features |
+| `GET /api/capabilities` | Server version and build (`build: {version, commit, built_at, dirty}`), presets, supported features, OCR languages, limits and who is asking |
 | `POST /api/jobs` | Create a job (multipart form: `files`, `urls` JSON array, `options` JSON, optional `label`). A `.urls` file becomes URL items. Asking for LLM processing without a usable model is refused (`llm_unavailable`) |
 | `GET /api/jobs/{job_id}` | Job status and items (each with its `warnings`, `error_code`, `page_sources` (where each PDF page's text came from; empty for other items) and, when a model ran, `pricing`) |
 | `GET /api/jobs/{job_id}/events` | Live progress stream (SSE) |
