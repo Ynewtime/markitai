@@ -223,3 +223,16 @@ fn a_tables_top_rule_under_a_heading_is_no_underline() {
         "{markdown}"
     );
 }
+
+#[test]
+fn a_wrapped_title_running_past_a_comma_is_one_heading_without_a_space() {
+    // The page goes to the page reader (a borderless two-row table), which
+    // made the title's first line a paragraph and joined its lines with a
+    // space.
+    let markdown = markdown(include_bytes!("fixtures/cjk-course/wrapped-title.pdf"));
+    assert!(
+        markdown.contains("# 社区课程的报名表、课程表和缴费凭证，一条命令全部转成 Markdown 文本\n"),
+        "{markdown}"
+    );
+    assert!(markdown.contains("DOCX, XLSX, PPTX"), "{markdown}");
+}

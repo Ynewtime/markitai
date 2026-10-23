@@ -12,8 +12,8 @@ use super::analysis::{
     is_leader_continuation, is_toc_entry_line, is_toc_marker_heading, trailing_leader_dots,
 };
 use super::classify::{
-    format_list_item, is_caption_line, is_list_item, reads_as_field, reads_as_sentence,
-    starts_with_bullet_marker, text_words,
+    ends_as_sentence, format_list_item, is_caption_line, is_list_item, reads_as_field,
+    reads_as_sentence, starts_with_bullet_marker, text_words,
 };
 use super::heading::classify_heading_sequences;
 use super::postprocess::clean_markdown;
@@ -881,6 +881,24 @@ fn heading_tiers(lines: &[TextLine], base_size: f32, options: &MarkdownOptions) 
 }
 
 /// Convert text lines to markdown, inserting tables and images at appropriate Y positions
+/// markitai: how much larger than the body text a title is set, at least.
+const TITLE_SIZE: f32 = 1.4;
+
+/// markitai: whether `line` reads as a sentence rather than a heading
+/// ([`reads_as_sentence`]); a line set at a title's size ([`TITLE_SIZE`])
+/// may run on past a comma ([`ends_as_sentence`]).
+fn reads_like_sentence(text: &str, line: &TextLine, base_size: f32) -> bool {
+    if line
+        .items
+        .first()
+        .is_some_and(|item| item.font_size >= base_size * TITLE_SIZE)
+    {
+        ends_as_sentence(text)
+    } else {
+        reads_as_sentence(text)
+    }
+}
+
 /// markitai: where CJK lines end or continue their paragraph, as the
 /// indices `(ends, wraps)`. CJK text fills every line of a paragraph to the
 /// column's edge, a character at a time, but its last (line-breaking rules
@@ -1475,7 +1493,7 @@ pub(super) fn to_markdown_from_lines_with_tables_and_images(
             && !looks_like_list_continuation
             && plain_trimmed.len() > 3
             && text_words(plain_trimmed) <= 15
-            && !reads_as_sentence(plain_trimmed)
+            && !reads_like_sentence(plain_trimmed, line, base_size)
             && !starts_with_bullet_marker(plain_trimmed)
             && !is_toc_entry_line(plain_trimmed)
             && !is_heading_fragment(plain_trimmed)
@@ -2085,7 +2103,7 @@ pub fn to_markdown_from_lines(lines: Vec<TextLine>, options: MarkdownOptions) ->
             && !wrapped_large_paragraph_lines.contains_key(&line_idx)
             && plain_trimmed.len() > 3
             && text_words(plain_trimmed) <= 15
-            && !reads_as_sentence(plain_trimmed)
+            && !reads_like_sentence(plain_trimmed, line, base_size)
             && !is_toc_entry_line(plain_trimmed)
             && !is_heading_fragment(plain_trimmed)
             && toc_suppress_page != Some(line.page)
@@ -3657,5 +3675,35 @@ mod tests {
         let md = reader_markdown(lines);
         assert!(md.contains("## Features I'd be cautious about\n"), "{md}");
         assert!(!md.contains("about Some purifiers"), "{md}");
+    }
+
+    #[test]
+    fn a_wrapped_cjk_title_running_past_a_comma_is_one_heading() {
+        // markitai: a title wrapped between two CJK characters, which run
+        // on past a comma, is one heading without a space at its break.
+        let mut lines = vec![
+            sized_line("港务办公室的文件、网页和潮汐表，一条命令全部转", 760.0, 20.0, "Title"),
+            sized_line("成 Markdown 文本格式", 733.0, 20.0, "Title"),
+        ];
+        lines.extend(body_lines(700.0));
+        let md = reader_markdown(lines);
+        assert!(
+            md.contains("# 港务办公室的文件、网页和潮汐表，一条命令全部转成 Markdown 文本格式\n"),
+            "{md}"
+        );
+    }
+
+    #[test]
+    fn a_body_size_cjk_line_running_past_a_comma_stays_text() {
+        // markitai: the comma run-on rule still holds below a title's size.
+        let mut lines = vec![sized_line(
+            "本中心办学资质与服务评价符合要求，您可以登录",
+            760.0,
+            11.0,
+            "Body",
+        )];
+        lines.extend(body_lines(730.0));
+        let md = reader_markdown(lines);
+        assert!(!md.contains("# 本中心"), "{md}");
     }
 }

@@ -40,3 +40,6 @@ bytes; `author-fixtures.json` records the SHA-256 and size of each.
   little larger than the body text, right above its paragraph.
 - `heading-over-rule.pdf`: a heading right above a table whose top rule is
   drawn a segment per column under the heading's text.
+- `wrapped-title.pdf`: a 20 pt title running past `，`, wrapped between two
+  ideographs, over a borderless two-row table whose cells stand far apart
+  (the page goes to the page reader).

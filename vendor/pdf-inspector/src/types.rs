@@ -1084,6 +1084,20 @@ impl TextLine {
         let curr_starts_with_space = text.starts_with(' ');
         let space_already_exists = prev_ends_with_space || curr_starts_with_space;
 
+        // markitai: a title wrapped within Chinese or Japanese text, its
+        // lines merged into one (`merge_heading_lines`), rejoins at the
+        // break without a space: the run after it starts a line lower at
+        // the same size.
+        let unspaced = |c: Option<char>| c.is_some_and(crate::text_utils::is_unspaced_cjk_char);
+        if !space_already_exists
+            && prev_item.y - item.y > prev_item.font_size * 0.8
+            && (item.font_size - prev_item.font_size).abs() <= prev_item.font_size * 0.1
+            && unspaced(result.chars().next_back())
+            && unspaced(text.chars().next())
+        {
+            return false;
+        }
+
         // Script runs flagged by extraction share one edge-spacing policy
         // with table cells (see `script_edge_needs_space`). The blanket
         // suppression below is for unflagged size changes only.

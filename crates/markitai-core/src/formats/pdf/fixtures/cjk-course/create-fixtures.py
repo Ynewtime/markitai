@@ -412,6 +412,22 @@ def heading_over_rule(page, yahei, bold, simsun):
     body(page, yahei, 650)
 
 
+def wrapped_title(page, yahei, bold, simsun):
+    # A 20 pt title running past `，` and wrapped between two ideographs, the
+    # first line reaching the text's right edge, as LibreOffice sets it;
+    # then a borderless two-row table whose cells stand far apart on their
+    # line, which leaves the page to the page reader.
+    title = "社区课程的报名表、课程表和缴费凭证，一条命令全部转成 Markdown 文本"
+    page.text(yahei, 20, 45, 760, title[:24])
+    page.text(yahei, 20, 45, 733, title[24:])
+    top = body(page, yahei, 700, 2)
+    page.text(yahei, 10, 45, top - 14, "部门")
+    page.text(yahei, 10, 245, top - 14, "文件")
+    page.text(yahei, 10, 45, top - 30, "教务")
+    page.text(yahei, 10, 245, top - 30, "DOCX, XLSX, PPTX")
+    body(page, yahei, top - 60, 2)
+
+
 def main():
     records = [
         build("nul-separated.pdf", nul_separated, separator=b" \x00 "),
@@ -425,6 +441,7 @@ def main():
         build("short-last-lines.pdf", short_last_lines),
         build("symbol-fonts.pdf", symbol_fonts),
         build("heading-over-rule.pdf", heading_over_rule),
+        build("wrapped-title.pdf", wrapped_title),
     ]
     (ROOT / "author-fixtures.json").write_text(json.dumps({"fixtures": records}, indent=2) + "\n")
     print(json.dumps(records, indent=2))

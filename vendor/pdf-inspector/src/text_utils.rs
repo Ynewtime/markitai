@@ -79,6 +79,15 @@ pub(crate) fn is_cjk_char(c: char) -> bool {
     )
 }
 
+/// markitai: CJK text that sets no spaces between its words (Chinese and
+/// Japanese; Korean spaces its words), so a line wrapped within it rejoins
+/// without one.
+pub(crate) fn is_unspaced_cjk_char(c: char) -> bool {
+    is_cjk_char(c)
+        && !matches!(c,
+            '\u{1100}'..='\u{11FF}' | '\u{3130}'..='\u{318F}' | '\u{AC00}'..='\u{D7AF}')
+}
+
 pub(crate) fn is_rtl_char(c: char) -> bool {
     matches!(c,
         '\u{0590}'..='\u{05FF}'   // Hebrew

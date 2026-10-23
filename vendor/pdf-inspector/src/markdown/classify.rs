@@ -220,13 +220,20 @@ pub(crate) fn text_words(text: &str) -> usize {
 /// CJK comma, the sentence running on, or runs on past a comma for a dozen
 /// characters or more.
 pub(crate) fn reads_as_sentence(text: &str) -> bool {
+    ends_as_sentence(text) || (text.contains('，') && text.trim().chars().count() >= 12)
+}
+
+/// markitai: [`reads_as_sentence`] without the comma run-on: a line ending
+/// with, or holding within, a CJK sentence end, or ending with a CJK comma.
+/// A line set at a title's size is held to this only: a title may run on
+/// past a comma (`文件和网页，一条命令转成 Markdown`).
+pub(crate) fn ends_as_sentence(text: &str) -> bool {
     let text = text.trim();
     let ends = |c: char| matches!(c, '。' | '！' | '？' | '；');
     text.ends_with(|c: char| ends(c) || matches!(c, '，' | '、'))
         || text
             .char_indices()
             .any(|(at, c)| ends(c) && !text[at + c.len_utf8()..].trim().is_empty())
-        || (text.contains('，') && text.chars().count() >= 12)
 }
 
 /// markitai: a labelled field, `label：value`, rather than a heading: a
@@ -559,6 +566,11 @@ mod tests {
         assert!(!reads_as_sentence("一、总则，范围"));
         assert!(!reads_as_sentence("学习中心办学资质告知和服务评价"));
         assert!(!reads_as_sentence("Results."));
+        // A title may run on past a comma; a sentence end still rules it out.
+        assert!(reads_as_sentence("文件和网页，一条命令转成 Markdown"));
+        assert!(!ends_as_sentence("文件和网页，一条命令转成 Markdown"));
+        assert!(ends_as_sentence("第一句。第二句"));
+        assert!(ends_as_sentence("如有隐瞒或填写不实，"));
         assert!(reads_as_field("报名人：示例学员 证件类型：学生证"));
         assert!(reads_as_field("首期材料费合计：960.50"));
         assert!(!reads_as_field("说明："));

@@ -131,9 +131,25 @@ pub(crate) fn merge_heading_lines(
             // Append this line's items to the previous line
             let prev = result.last_mut().unwrap();
             // Add a space-bearing TextItem to separate the merged text
+            // (markitai: none where Chinese or Japanese text meets such
+            // text: a title wrapped there has no space at its break, and
+            // `TextLine::text` sets none between the two lines' runs).
             if let Some(first_item) = line.items.first() {
+                let unspaced =
+                    |c: Option<char>| c.is_some_and(crate::text_utils::is_unspaced_cjk_char);
+                let start = first_item.text.trim_start();
+                let before = prev.items.last().map(|item| item.text.trim_end());
                 let mut space_item = first_item.clone();
-                space_item.text = format!(" {}", space_item.text.trim_start());
+                if unspaced(before.and_then(|text| text.chars().next_back()))
+                    && unspaced(start.chars().next())
+                {
+                    if let Some(last) = prev.items.last_mut() {
+                        last.text = last.text.trim_end().to_string();
+                    }
+                    space_item.text = start.to_string();
+                } else {
+                    space_item.text = format!(" {start}");
+                }
                 prev.items.push(space_item);
             }
             for item in line.items.into_iter().skip(1) {

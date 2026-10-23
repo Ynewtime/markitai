@@ -65,6 +65,12 @@
       "bytes": 8418,
       "sha256": "16facb2704908753b60f85944546ab0043deb4df9a75a70a6445e415a1e1f222",
       "provenance": "Authored minimal PDF operators and invented text; no external or personal input."
+    },
+    {
+      "file": "wrapped-title.pdf",
+      "bytes": 4895,
+      "sha256": "c6de774874527d81fc13a480e22b5d02fda22795eec37eb71543cc0f09b7f8ae",
+      "provenance": "Authored minimal PDF operators and invented text; no external or personal input."
     }
   ]
 }
