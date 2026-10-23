@@ -175,11 +175,17 @@ class TestCapabilitiesAndRoot:
             "user_config": False,
             "convert_defaults": True,
             "pdf_outline": True,
+            "document_json": True,
+            "ocr_lang": True,
+            "ocr_all_pages": True,
         }
         # Features Rust has and Python lacks (the shared workbench shows them
-        # only when announced): Document JSON results and text-only runs
-        assert "document_json" not in data["features"]
+        # only when announced): text-only runs, and the page-marker switch
+        # (Python always writes PDF page and slide markers)
         assert "text_only" not in data["features"]
+        assert "page_markers" not in data["features"]
+        assert data["ocr_languages"][0] == "en"
+        assert data["ocr_lang"] == "en"
         # Loopback without a token is the admin (no user tokens without one)
         assert data["access"] == {"role": "admin", "label": None}
         # Loopback is trusted: Cloudflare's state is reported, not hidden

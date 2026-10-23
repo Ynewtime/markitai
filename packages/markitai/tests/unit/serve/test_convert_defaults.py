@@ -38,6 +38,9 @@ ALL = {
     "no_compress": False,
     "profile": None,
     "strategy": "auto",
+    "format": "markdown",
+    "ocr_lang": "en",
+    "ocr_all_pages": False,
 }
 
 
@@ -80,6 +83,10 @@ async def test_capabilities_name_the_features(tmp_path: Path) -> None:
         ]
     assert features["convert_defaults"] is True
     assert features["pdf_outline"] is True
+    # v1.20: Python always writes page markers, so it has no page_markers
+    assert (features["document_json"], features["ocr_lang"]) == (True, True)
+    assert features["ocr_all_pages"] is True
+    assert "page_markers" not in features
 
 
 async def test_the_admin_saves_into_the_file_and_the_running_config(
@@ -156,6 +163,32 @@ async def test_a_file_that_does_not_exist_yet_is_created(tmp_path: Path) -> None
     }
 
 
+async def test_the_v1_20_defaults_are_saved_at_their_configuration_keys(
+    tmp_path: Path,
+) -> None:
+    async with _server(_app(tmp_path)) as client:
+        view = (await client.get(URL, headers=ADMIN)).json()
+        put = await client.put(
+            URL,
+            json={
+                "expected_revision": view["revision"],
+                "defaults": {"format": "json", "ocr_lang": "ko", "ocr_all_pages": True},
+            },
+            headers=ADMIN,
+        )
+    assert put.status_code == 200, put.text
+    server = put.json()["server"]
+    assert (server["format"], server["ocr_lang"], server["ocr_all_pages"]) == (
+        "json",
+        "ko",
+        True,
+    )
+    assert json.loads((tmp_path / "config.json").read_text()) == {
+        "output": {"format": "json"},
+        "ocr": {"lang": "ko", "per_page_routing": False},
+    }
+
+
 @pytest.mark.parametrize(
     "defaults",
     [
@@ -166,6 +199,11 @@ async def test_a_file_that_does_not_exist_yet_is_created(tmp_path: Path) -> None
         {"llm": None},
         {"profile": "html"},
         {"preset": "rich"},
+        {"format": "yaml"},
+        {"ocr_lang": "klingon"},
+        {"ocr_lang": None},
+        {"ocr_all_pages": "yes"},
+        {"page_markers": True},
         None,
         [],
     ],

@@ -96,9 +96,13 @@ async def test_serve_file_items_use_the_shared_mapping(
     async def fake_core(ctx: ConversionContext, max_size: int) -> ConversionStepResult:
         return ConversionStepResult(success=True, skip_reason="image_only")
 
+    from markitai.batch import ProcessResult
+
+    mapped = ProcessResult(success=True, error="skipped (image_only)")
+
     def fake_mapping(ctx: ConversionContext, result: ConversionStepResult) -> Any:
         seen.append((ctx.input_path, result.skip_reason))
-        return "mapped"
+        return mapped
 
     monkeypatch.setattr("markitai.workflow.core.convert_document_core", fake_core)
     monkeypatch.setattr(
@@ -106,5 +110,5 @@ async def test_serve_file_items_use_the_shared_mapping(
     )
     source = tmp_path / "pic.png"
     result = await jobs.process_file_item(source, MarkitaiConfig(), tmp_path, None)
-    assert result == "mapped"
+    assert result is mapped
     assert seen == [(source, "image_only")]

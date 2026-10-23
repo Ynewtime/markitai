@@ -53,6 +53,7 @@ from markitai.serve.artifacts import (
     markdown_pair,
     split_output_name,
 )
+from markitai.serve.documents import document_path, kept_document_files
 from markitai.serve.errors import (
     ApiError,
     error_response,
@@ -1139,6 +1140,12 @@ def _build_job_config(base: MarkitaiConfig, opts: JobOptions) -> MarkitaiConfig:
     # different flags rather than one setting (see cli/main.py).
     if opts.backend is not None:
         cfg.fetch.cloudflare.convert_enabled = opts.backend == "cloudflare"
+    if opts.format is not None:
+        cfg.output.format = opts.format
+    if opts.ocr_lang is not None:
+        cfg.ocr.lang = opts.ocr_lang
+    if opts.ocr_all_pages is not None:
+        cfg.ocr.per_page_routing = not opts.ocr_all_pages
     if cfg.llm.enabled and not cfg.llm.model_list:
         # Only a server configuration that enables LLM gets here: a request
         # that asks for a model is refused first (_require_model).
@@ -1164,12 +1171,21 @@ def _parse_job_options(raw: str) -> JobOptions:
         ) from None
 
 
-def _check_preset(state: ServeState, opts: JobOptions) -> None:
+def _check_option_values(state: ServeState, opts: JobOptions) -> None:
+    """Refuse a preset or an ``ocr_lang`` this server does not have."""
     if opts.preset is not None:
         from markitai.config import get_preset
 
         if get_preset(opts.preset.lower(), state.config) is None:
             raise ApiError(422, "unknown_preset", f"unknown preset '{opts.preset}'")
+    if opts.ocr_lang is not None:
+        languages = convert_defaults.ocr_languages(state.config.ocr.lang)
+        if opts.ocr_lang not in languages:
+            raise ApiError(
+                422,
+                "invalid_options",
+                f"option 'ocr_lang' must be one of: {', '.join(languages)}",
+            )
 
 
 def _requests_llm(opts: JobOptions, base: MarkitaiConfig) -> bool:
@@ -3071,6 +3087,8 @@ def _item_artifacts(
     """
     files: list[Path] = []
     candidates = [base_path, *([llm_path] if item.llm_enhanced else [])]
+    # -f json: the document beside the Markdown (contract v1.20)
+    candidates.append(base_path.with_name(f"{base_name}.json"))
     candidates += _item_assets(item, out_dir, base_name, base_path, llm_path)
     for path in candidates:
         if path.is_file() and path not in files:
@@ -3093,7 +3111,9 @@ def _item_claimed_files(out_dir: Path, item: JobItem) -> set[Path]:
     if base_name is None:
         return set()
     pair = markdown_pair(out_dir, base_name)
-    claimed = {path for path in pair if path.is_file()}
+    claimed = {
+        path for path in (*pair, out_dir / f"{base_name}.json") if path.is_file()
+    }
     claimed.update(item_asset_files(out_dir, base_name, pair))
     return claimed
 
@@ -3119,6 +3139,7 @@ def _item_owned_files(job: Job, item: JobItem) -> list[Path]:
             owned.append(upload)
     # Its kept page, capture record, block boxes and compare screenshots
     owned.extend(kept_capture_files(job, item))
+    owned.extend(kept_document_files(job, item))
     return sorted(owned)
 
 
@@ -3640,9 +3661,11 @@ def create_app(
 
         state = _state(request)
         caller = _caller(request)
+        conversion_config = state.config
         if caller.user_id is not None:
             # A user's conversions route over its pool only (contract v1.15)
             conversion = await conversion_of(state, caller.user_id)
+            conversion_config = conversion.config
             models = [m.litellm_params.model for m in conversion.config.llm.model_list]
             llm = {
                 "configured": bool(models),
@@ -3703,7 +3726,13 @@ def create_app(
                 "user_config": request.app.state.serve_token is not None,
                 "convert_defaults": True,
                 "pdf_outline": True,
+                "document_json": True,
+                "ocr_lang": True,
+                "ocr_all_pages": True,
             },
+            # The ocr.lang values a job's ocr_lang may name (v1.20)
+            "ocr_languages": convert_defaults.ocr_languages(conversion_config.ocr.lang),
+            "ocr_lang": conversion_config.ocr.lang,
             # Anonymous callers may not use the settings, so they are users
             "access": (
                 {"role": "admin"}
@@ -5378,7 +5407,10 @@ def create_app(
         wanted = (
             None
             if body["defaults"] is None
-            else convert_defaults.checked(body["defaults"])
+            else convert_defaults.checked(
+                body["defaults"],
+                convert_defaults.ocr_languages(state.config.ocr.lang),
+            )
         )
         if caller.role == "anonymous":
             raise ApiError(
@@ -5572,7 +5604,7 @@ def create_app(
                 raise ApiError(422, problem, "URLs must use http or https")
 
         await _guard_fetch_targets(request, [url for url, _ in url_entries])
-        _check_preset(state, opts)
+        _check_option_values(state, opts)
         trusted = _is_trusted_request(request)
         _refuse_remote_strategy(opts, _caller(request).user_id)
         _check_remote_processing(
@@ -5772,7 +5804,7 @@ def create_app(
             # "enhance" asks for the model: an item converted without one
             # (preset minimal, "llm": false) is exactly the one to enhance
             opts = opts.model_copy(update={"llm": True})
-        _check_preset(state, opts)
+        _check_option_values(state, opts)
 
         if item.kind == "file":
             upload = kept_upload(job, item)
@@ -6087,6 +6119,25 @@ def create_app(
             "truncated": truncated,
             "markdown_bytes": total,
         }
+
+    @app.get("/api/jobs/{job_id}/items/{item_id}/document")
+    async def get_item_document(
+        request: Request, job_id: str, item_id: str
+    ) -> Response:
+        """The item's document JSON (contract v1.19): 404 ``result_unavailable``
+        when it has none (not finished, failed, skipped, or converted before
+        documents were kept)."""
+        job = _get_job(request, job_id)
+        item = _get_item(job, item_id)
+        unavailable = ApiError(404, "result_unavailable", "item result not available")
+        target = document_path(job, item.item_id)
+        if item.status != "done" or item.skipped or target is None:
+            raise unavailable
+        try:
+            data = await asyncio.to_thread(target.read_bytes)
+        except OSError:
+            raise unavailable from None
+        return Response(data, media_type="application/json; charset=utf-8")
 
     @app.get("/api/jobs/{job_id}/items/{item_id}/assets/{relpath:path}")
     async def get_item_asset(

@@ -55,6 +55,11 @@ class JobOptions(BaseModel):
     no_compress: bool | None = None
     strategy: FetchStrategy | None = None
     backend: ConversionBackend | None = None
+    # v1.20: output.format, ocr.lang (one of capabilities.ocr_languages),
+    # ocr.per_page_routing turned around
+    format: Literal["markdown", "json"] | None = None
+    ocr_lang: str | None = None
+    ocr_all_pages: bool | None = None
     # Consent to Cloudflare processing for this one request (a Cloudflare
     # strategy or backend in the same options). Never stored or echoed.
     remote_processing: Literal["cloudflare"] | None = None
@@ -370,6 +375,11 @@ class CapabilitiesFeatures(BaseModel):
     batch_delete: bool  # v1.13: POST /api/history/delete
     convert_defaults: bool  # v1.17: GET/PUT /api/convert-defaults
     pdf_outline: bool  # v1.17: GET …/original/outline
+    # v1.19: GET …/items/{item_id}/document; v1.20: also the job option and
+    # convert default `format`
+    document_json: bool
+    ocr_lang: bool  # v1.20: job option and convert default `ocr_lang`
+    ocr_all_pages: bool  # v1.20: job option and convert default `ocr_all_pages`
     user_models: bool  # v1.15: /api/me/models* and `share` (not --no-auth)
     user_config: bool  # v1.16: GET/PUT /api/me/config (not --no-auth)
 
@@ -453,6 +463,10 @@ class Capabilities(BaseModel):
     remote_services: RemoteServices
     access: CapabilitiesAccess
     build: BuildInfo  # v1.16, for every caller
+    # v1.20 (features.ocr_lang): the ocr.lang values a job's ocr_lang may
+    # name, and what a job gets without one
+    ocr_languages: list[str]
+    ocr_lang: str
 
 
 class LLMDeployment(BaseModel):

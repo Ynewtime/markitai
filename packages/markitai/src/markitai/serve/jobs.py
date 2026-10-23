@@ -960,7 +960,13 @@ async def process_file_item(
                 out_dir, [ctx.image_analysis], visible_assets=assets_visible(cfg)
             )
 
-        return document_process_result(ctx, result)
+        processed = document_process_result(ctx, result)
+        if processed.success and result.skip_reason is None:
+            from markitai.workflow.document import context_parts
+
+            # Every finished item keeps its document (GET …/document)
+            processed.document = context_parts(ctx)
+        return processed
     except Exception as e:
         return ProcessResult(
             success=False,
@@ -1106,6 +1112,21 @@ async def process_url_item(
             redact_url(url),
         )
     final_output = result.llm_output_path or result.output_path
+    document = None
+    if final_output is not None and result.target_file is not None:
+        from markitai.workflow.document import url_parts
+
+        # Every finished item keeps its document (GET …/document)
+        document = url_parts(
+            url,
+            cfg,
+            result.target_file,
+            llm_fell_back=result.llm_error is not None,
+            llm_file=result.llm_output_path,
+            base_markdown=result.markdown,
+            screenshots=[result.screenshot_path, *result.screenshot_tiles],
+            llm_usage=result.llm_usage,
+        )
     return ProcessResult(
         success=True,
         output_path=str(final_output) if final_output is not None else None,
@@ -1115,6 +1136,7 @@ async def process_url_item(
         llm_enhanced=result.llm_output_path is not None,
         warnings=list(result.warnings),
         page_html=result.html,
+        document=document,
     )
 
 
@@ -1301,6 +1323,10 @@ async def _run_item(
         await asyncio.to_thread(keep_ocr_layout, job, item, result.ocr_pages)
     if item.kind == "url" and item.status == "done" and not item.skipped:
         await asyncio.to_thread(_keep_page_capture, job, item, result.page_html, sink)
+    if item.status == "done" and not item.skipped and result.document is not None:
+        from markitai.serve.documents import keep
+
+        await asyncio.to_thread(keep, job, item, result.document, cfg)
     item.finished_at = now_iso()
     registry.publish_item(job, item)
     registry.publish_job(job)
@@ -1691,7 +1717,7 @@ def _sibling_markdown(job: Job, item: JobItem) -> set[Path]:
 def _snapshot_outputs(
     job: Job, item: JobItem, work: RetryWork
 ) -> dict[Path, str | None]:
-    """Capture the item's ``.md``/``.llm.md`` pair before a rerun touches it.
+    """Capture the item's ``.md``/``.llm.md`` pair and ``<base>.json`` before a rerun touches it.
 
     A rerun writes into the job's own out_dir with ``on_conflict=overwrite``,
     so the snapshot is what makes the rerun provisional: its files only
@@ -1709,7 +1735,7 @@ def _snapshot_outputs(
         return {}
     out_dir = job.out_dir.resolve()
     snapshot: dict[Path, str | None] = {}
-    for name in (f"{stem}.md", f"{stem}.llm.md"):
+    for name in (f"{stem}.md", f"{stem}.llm.md", f"{stem}.json"):
         path = (out_dir / name).resolve()
         if not path.is_relative_to(out_dir):
             continue

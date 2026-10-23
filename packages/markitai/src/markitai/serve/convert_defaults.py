@@ -19,7 +19,23 @@ from markitai.serve.errors import ApiError
 if TYPE_CHECKING:
     from markitai.config import MarkitaiConfig
 
-Kind = Literal["flag", "inverted", "word"]
+Kind = Literal["flag", "inverted", "word", "language"]
+
+#: The ``ocr.lang`` values the composer offers (contract v1.20), in its
+#: order: ``en`` first (the default model: Latin, Chinese, Japanese), then
+#: the languages that need their own RapidOCR recognizer. The same list as
+#: markitai-rust's.
+OCR_LANGUAGES = ("en", "zh", "zh_tw", "ja", "ko", "ru", "ar", "th", "hi", "el")
+
+
+def ocr_languages(configured: str) -> list[str]:
+    """The ``ocr_lang`` values a job may name: :data:`OCR_LANGUAGES`, and the
+    configured ``ocr.lang`` as written when it is not one of them."""
+    languages = list(OCR_LANGUAGES)
+    if configured not in languages:
+        languages.append(configured)
+    return languages
+
 
 #: The options that can be defaulted: name → (config path, kind, words, null
 #: allowed). ``no_compress`` is ``image.compress`` turned around.
@@ -40,6 +56,10 @@ OPTIONS: dict[str, tuple[tuple[str, str], Kind, tuple[str, ...], bool]] = {
         ("auto", "static", "playwright", "defuddle", "jina"),
         False,
     ),
+    # v1.20
+    "format": (("output", "format"), "word", ("markdown", "json"), False),
+    "ocr_lang": (("ocr", "lang"), "language", (), False),
+    "ocr_all_pages": (("ocr", "per_page_routing"), "inverted", (), False),
 }
 
 
@@ -56,15 +76,16 @@ def of_config(config: MarkitaiConfig) -> dict[str, Any]:
             shown[name] = bool(value)
         elif kind == "inverted":
             shown[name] = not value
-        elif value in words:
+        elif kind == "language" or value in words:
             shown[name] = value
         else:
             shown[name] = None if nullable else words[0]
     return shown
 
 
-def checked(value: Any) -> dict[str, Any]:
-    """A caller's ``defaults`` object: only known options, each of its kind."""
+def checked(value: Any, languages: list[str] | None = None) -> dict[str, Any]:
+    """A caller's ``defaults`` object: only known options, each of its kind;
+    ``ocr_lang`` one of *languages* (:func:`ocr_languages`)."""
     if not isinstance(value, dict):
         raise invalid("defaults must be an object")
     for key, entry in value.items():
@@ -75,7 +96,11 @@ def checked(value: Any) -> dict[str, Any]:
                 f"'{shown}' cannot be a default; these can: {', '.join(OPTIONS)}"
             )
         _path, kind, words, nullable = option
-        if kind == "word":
+        if kind == "language":
+            allowed = languages or list(OCR_LANGUAGES)
+            if not isinstance(entry, str) or entry not in allowed:
+                raise invalid(f"default '{key}' must be one of: {', '.join(allowed)}")
+        elif kind == "word":
             fits = (entry is None and nullable) or (
                 isinstance(entry, str) and entry in words
             )

@@ -83,6 +83,9 @@ OPTION_KEYS = (
     "no_compress",
     "strategy",
     "backend",
+    "format",
+    "ocr_lang",
+    "ocr_all_pages",
 )
 
 SHAPES: dict[str, dict[str, F]] = {
@@ -105,6 +108,9 @@ SHAPES: dict[str, dict[str, F]] = {
         "features": opt("@Features", nullable=False),
         "access": opt("@Access", nullable=False),
         "build": opt("@BuildInfo", nullable=False),
+        # v1.20, present with features.ocr_lang
+        "ocr_languages": opt(["str"], nullable=False),
+        "ocr_lang": opt("str", nullable=False),
     },
     "BuildInfo": {
         "version": F("str"),
@@ -162,6 +168,9 @@ SHAPES: dict[str, dict[str, F]] = {
             "user_config",
             "convert_defaults",
             "pdf_outline",
+            "document_json",
+            "ocr_lang",
+            "ocr_all_pages",
         )
     },
     "PresetFeatures": {
