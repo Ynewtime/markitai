@@ -1527,6 +1527,11 @@ mod tests {
                 "https://example.test/wiki/%E4%B8%AD%E6%96%87",
                 "https://example.test/wiki/%E4%B8%AD%E6%96%87",
             ),
+            // Password spellings are secret names.
+            (
+                "https://example.test/a?pass=p1&pw=p2&passphrase=p3&v=2",
+                "https://example.test/a?pass=REDACTED&pw=REDACTED&passphrase=REDACTED&v=2",
+            ),
             // Nothing secret: the query is kept as written, not re-encoded.
             (
                 "https://example.test/a?flag&q=a%20b&x=~#top",

@@ -282,10 +282,10 @@ fn identifier(key: &str) -> String {
 
 /// A query, fragment or path parameter name that carries a secret.
 fn secret_name(key: &str) -> bool {
-    const WHOLE: [&str; 8] = [
-        "apikey", "auth", "code", "key", "pwd", "sid", "sig", "ticket",
+    const WHOLE: [&str; 10] = [
+        "apikey", "auth", "code", "key", "pass", "pw", "pwd", "sid", "sig", "ticket",
     ];
-    const PARTS: [&str; 18] = [
+    const PARTS: [&str; 19] = [
         "assertion",
         "authorization",
         "auth",
@@ -295,6 +295,7 @@ fn secret_name(key: &str) -> bool {
         "jwt",
         "otp",
         "passcode",
+        "passphrase",
         "passwd",
         "password",
         "pwd",
@@ -310,6 +311,7 @@ fn secret_name(key: &str) -> bool {
     WHOLE.contains(&normalized.as_str())
         || (parts.contains("api") && parts.contains("key"))
         || (parts.contains("key") && (parts.contains("auth") || parts.contains("access")))
+        || (parts.contains("pass") && parts.contains("phrase"))
         || PARTS.iter().any(|part| parts.contains(part))
 }
 
@@ -790,6 +792,32 @@ mod tests {
             names(&order(&url("http://localhost/a"), &cfg, &private)),
             ["static", "playwright"]
         );
+    }
+
+    #[test]
+    fn password_spellings_are_secret_names_and_ordinary_words_are_not() {
+        for key in [
+            "pass",
+            "PASS",
+            "pw",
+            "pwd",
+            "passwd",
+            "password",
+            "passphrase",
+            "ssh_passphrase",
+            "passPhrase",
+            "passcode",
+        ] {
+            assert!(secret_parameter(key), "{key}");
+        }
+        for key in ["page", "passage", "bypass", "pass_through", "power", "view"] {
+            assert!(!secret_parameter(key), "{key}");
+        }
+        assert!(credential_material(&url(
+            "https://example.com/a?pass=x1&v=2"
+        )));
+        assert!(credential_material(&url("https://example.com/a?pw=x1")));
+        assert!(credential_material(&url("https://example.com/pw=x1/a")));
     }
 
     #[test]

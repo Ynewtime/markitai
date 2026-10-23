@@ -111,7 +111,7 @@ site refused access; it may block automated clients or need a login", 429 "rate
 limited; try again later" and 5xx "the site had a server error". The URL has no
 credentials or fragment, a path segment that carries a secret (see below) reads
 `REDACTED`, and query values are replaced by `REDACTED` for the usual secret
-names (`token`, `key`, `secret`, `password`, `signature`, `credential`,
+names (`token`, `key`, `secret`, `password`, `pass`, `signature`, `credential`,
 `auth`, `sig`, `sid`, `session`, `code` and similar) and for long opaque
 values. It is cut at 200 characters. The message keeps the status first
 and the `fetch_error` code, so the [web interface](web-ui.md) still recognizes
@@ -429,11 +429,11 @@ does. The first rule that applies wins:
 The list is cut to `fetch.policy.max_strategy_hops` (default 5, at most 6).
 Remote services are then removed for a URL with credential material: userinfo,
 a query or fragment parameter named like a secret (`token`, `key`, `secret`,
-`password`, `signature`, `credential`, `auth`, `code`, `sid`, `sig`, `ticket`,
-`session`, `jwt`, `otp`, `apiKey`, `access_key` and similar spellings), a
-`token=…` path segment, a JWT or a long random-looking path segment, or a
-token-like segment after `/reset/`, `/verify/`, `/token/`, `/invite/`,
-`/session/` and similar routes. A list left without a step that can run becomes
+`password`, `pass`, `pw`, `passphrase`, `signature`, `credential`, `auth`,
+`code`, `sid`, `sig`, `ticket`, `session`, `jwt`, `otp`, `apiKey`, `access_key`
+and similar spellings), a `token=…` path segment, a JWT or a long
+random-looking path segment, or a token-like segment after `/reset/`,
+`/verify/`, `/token/`, `/invite/`, `/session/` and similar routes. A list left without a step that can run becomes
 the local default. Local steps keep their rules: a page that needs JavaScript,
 a challenge or a verification page goes on to the browser; a script-rendered
 shell keeps its static text when nothing better comes; any other static failure
