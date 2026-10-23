@@ -297,19 +297,28 @@ pub(crate) fn diagnostic_with(executable: &Path) -> Result<()> {
 }
 
 fn diagnostic_within(executable: &Path, starts: &[Duration]) -> Result<()> {
+    diagnostic_tries(starts, |startup| {
+        let mut options = options::Options::diagnostic();
+        options.startup = startup;
+        let mut browser = cdp::Browser::launch(executable, &options)?;
+        if browser.evaluate("location.href")?.as_str() != Some("about:blank") {
+            return Err(Error::Fetch(
+                "Browser diagnostic did not open a blank page".into(),
+            ));
+        }
+        Ok(())
+    })
+}
+
+/// One `launch` per startup window until one succeeds: a launch that timed
+/// out is tried again in the next window, any other failure ends the
+/// diagnostic.
+fn diagnostic_tries(
+    starts: &[Duration],
+    mut launch: impl FnMut(Duration) -> Result<()>,
+) -> Result<()> {
     for startup in starts {
-        let run = || -> Result<()> {
-            let mut options = options::Options::diagnostic();
-            options.startup = *startup;
-            let mut browser = cdp::Browser::launch(executable, &options)?;
-            if browser.evaluate("location.href")?.as_str() != Some("about:blank") {
-                return Err(Error::Fetch(
-                    "Browser diagnostic did not open a blank page".into(),
-                ));
-            }
-            Ok(())
-        };
-        match run() {
+        match launch(*startup) {
             Ok(()) => return Ok(()),
             // Slow, not broken: try once more.
             Err(Error::Fetch(message)) if message == cdp::STARTUP_TIMED_OUT => {}

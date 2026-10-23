@@ -1036,7 +1036,11 @@ mod bounded_fixture_io {
 
 #[cfg(unix)]
 mod app_bundle_diagnostic {
-    use super::super::{SLOW_TO_START, diagnostic_within, inside_app_bundle, version_probe};
+    use super::super::cdp::STARTUP_TIMED_OUT;
+    use super::super::{
+        SLOW_TO_START, diagnostic_tries, diagnostic_within, inside_app_bundle, version_probe,
+    };
+    use crate::Error;
     use std::os::unix::fs::PermissionsExt;
     use std::path::Path;
     use std::time::{Duration, Instant};
@@ -1048,17 +1052,48 @@ mod app_bundle_diagnostic {
         path
     }
 
-    /// A browser that never names its debugging port is tried twice and
-    /// called slow to start; one that exits at once is not retried.
+    /// A launch that times out is tried in each startup window and the
+    /// diagnostic calls Chromium slow; any other failure is not retried.
     #[test]
     fn a_launch_that_stays_slow_is_tried_twice_and_called_slow() {
+        let windows = [Duration::from_millis(300), Duration::from_millis(200)];
+        let mut tried = Vec::new();
+        let error = diagnostic_tries(&windows, |startup| {
+            tried.push(startup);
+            Err(Error::Fetch(STARTUP_TIMED_OUT.into()))
+        })
+        .unwrap_err();
+        assert_eq!(error.to_string(), SLOW_TO_START);
+        assert_eq!(tried, windows);
+        // A launch that succeeds in the second window ends the diagnostic.
+        let mut launches = 0;
+        diagnostic_tries(&windows, |_| {
+            launches += 1;
+            if launches == 1 {
+                Err(Error::Fetch(STARTUP_TIMED_OUT.into()))
+            } else {
+                Ok(())
+            }
+        })
+        .unwrap();
+        assert_eq!(launches, 2);
+        let mut launches = 0;
+        let error = diagnostic_tries(&windows, |_| {
+            launches += 1;
+            Err(Error::Fetch("Chromium exited during startup".into()))
+        })
+        .unwrap_err();
+        assert!(!error.to_string().contains("slow to start"), "{error}");
+        assert_eq!(launches, 1);
+    }
+
+    /// The same with real processes. A launch is killed when its window
+    /// ends, possibly before a slow shell has run a line of its script, so
+    /// a script's own record cannot count launches (the test above does).
+    #[test]
+    fn a_real_browser_that_never_names_its_port_is_called_slow() {
         let dir = tempfile::tempdir().unwrap();
-        let log = dir.path().join("launches");
-        let slow = script(
-            dir.path(),
-            "slow",
-            &format!("echo x >> '{}'; exec sleep 30", log.display()),
-        );
+        let slow = script(dir.path(), "slow", "exec sleep 30");
         let started = Instant::now();
         let error = diagnostic_within(&slow, &[Duration::from_millis(300); 2]).unwrap_err();
         assert_eq!(error.to_string(), SLOW_TO_START);
@@ -1067,7 +1102,8 @@ mod app_bundle_diagnostic {
             "{:?}",
             started.elapsed()
         );
-        assert_eq!(std::fs::read_to_string(&log).unwrap().lines().count(), 2);
+        // An exit ends its window at once, so a wide window costs nothing
+        // and leaves the script time to record its launch.
         let broken = script(
             dir.path(),
             "broken",
@@ -1076,7 +1112,7 @@ mod app_bundle_diagnostic {
                 dir.path().join("broken-launches").display()
             ),
         );
-        let error = diagnostic_within(&broken, &[Duration::from_secs(5); 2]).unwrap_err();
+        let error = diagnostic_within(&broken, &[Duration::from_secs(60); 2]).unwrap_err();
         assert!(!error.to_string().contains("slow to start"), "{error}");
         assert_eq!(
             std::fs::read_to_string(dir.path().join("broken-launches"))
