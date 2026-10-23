@@ -97,24 +97,43 @@ class PackageValidationTests(unittest.TestCase):
         self.assertTrue(any(f.endswith("/=rustup/") for f in flags))
 
     def test_sbom_loses_every_local_path(self):
-        # A synthetic build user the repository privacy check accepts.
-        root = pathlib.Path("/home/ci/checkout")
-        home = os.path.expanduser("~")
-        data = (
-            '{"components":[{"bom-ref":"path+file:///home/ci/checkout/crates/x#1"},'
-            '{"purl":"path+file:///home/ci/checkout/vendor/lopdf#2"},'
-            f'{{"a":"path+file://{home}/.cargo/registry/src/idx/dep-1.0"}},'
-            '{"keep":"pkg:cargo/serde@1.0"}]}'
-        )
-        with patch.dict(os.environ, {"CARGO_HOME": home + "/.cargo"}):
-            cleaned = _sbom_without_local_paths(data, root)
-        json.loads(cleaned)
-        self.assertNotIn("/home/ci/checkout", cleaned)
-        self.assertNotIn(home, cleaned)
-        self.assertIn("path+file://./crates/x#1", cleaned)
-        self.assertIn("path+file://./vendor/lopdf#2", cleaned)
-        self.assertIn("path+file://./registry/src/idx/dep-1.0", cleaned)
-        self.assertIn("pkg:cargo/serde@1.0", cleaned)
+        # Synthetic build users the repository privacy check accepts. Cargo writes path
+        # dependencies as file URLs: percent-escaped, and `file:///C:/...` on Windows.
+        for windows, root, home, environ, url, checkout in [
+            (False, "/home/ci/checkout", "/home/ci", {"CARGO_HOME": "/opt/cargo"}, "/home/ci", "/home/ci/checkout"),
+            (True, "C:\\Users\\ci\\checkout", "C:\\Users\\ci", {}, "/C:/Users/ci", "/C:/Users/ci/checkout"),
+            (True, "C:\\Users\\Test User\\checkout", "C:\\Users\\Test User", {}, "/c:/users/Test%20User",
+             "/C:/Users/Test%20User/checkout"),
+            (True, "D:\\a\\checkout", "C:\\Users\\测试", {"RUSTUP_HOME": "D:\\rustup"}, "/C:/Users/%E6%B5%8B%E8%AF%95",
+             "/d:/a/checkout"),
+        ]:
+            with self.subTest(root=root):
+                registry = (environ["CARGO_HOME"] if environ.get("CARGO_HOME") else url + "/.cargo") + "/registry"
+                rustup = "/D:/rustup" if environ.get("RUSTUP_HOME") else url + "/.rustup"
+                data = json.dumps({"components": [
+                    {"bom-ref": f"path+file://{checkout}/crates/x#1"},
+                    {"purl": f"path+file://{checkout}/vendor/lopdf#2"},
+                    {"a": f"path+file://{registry}/src/idx/dep-1.0"},
+                    {"b": f"path+file://{rustup}/toolchains/stable"},
+                    {"c": f"path+file://{url}/elsewhere/y"},
+                    {"keep": "pkg:cargo/serde@1.0"},
+                ]})
+                cleaned = _sbom_without_local_paths(data, root, environ=environ, home=home, windows=windows)
+                self.assertEqual(json.loads(cleaned), {"components": [
+                    {"bom-ref": "path+file://./crates/x#1"},
+                    {"purl": "path+file://./vendor/lopdf#2"},
+                    {"a": "path+file://./registry/src/idx/dep-1.0"},
+                    {"b": "path+file://./rustup/toolchains/stable"},
+                    {"c": "path+file://./elsewhere/y"},
+                    {"keep": "pkg:cargo/serde@1.0"},
+                ]})
+        # A path outside the checkout, home and toolchains is not a build-machine path.
+        self.assertEqual(_sbom_without_local_paths('"path+file:///D:/other/x#1"', "C:\\w", environ={},
+                                                   home="C:\\Users\\ci", windows=True), '"path+file:///D:/other/x#1"')
+        # This host's own file URL for its checkout, as Cargo writes it.
+        root = self.root / "check out"
+        data = json.dumps({"bom-ref": "path+" + (root / "crates" / "x").as_uri() + "#1"})
+        self.assertEqual(json.loads(_sbom_without_local_paths(data, root)), {"bom-ref": "path+file://./crates/x#1"})
 
     def test_windows_cli_target_directory_keeps_custom_cache_separate(self):
         for cache in ["relative cache", str(self.root / "absolute cache")]:

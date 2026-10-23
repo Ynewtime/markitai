@@ -364,33 +364,51 @@ def stage_node_licenses(directory, licenses):
     return sorted(parent.relative_to(directory).as_posix() for parent in overrides)
 
 
-def _sbom_without_local_paths(data, root):
+def _sbom_without_local_paths(data, root, environ=None, home=None, windows=None):
     """A CycloneDX SBOM (maturin generates one through cargo-cyclonedx) with the
     `path+file://` locators of path dependencies made relative: the checkout
     becomes `.` (vendored crates stay `./vendor/...`), the registry and
     toolchain keep their crate-relative tail, and any other home path is
     stripped, so the wheel's SBOM names no build machine. maturin 1.9-1.15 has
-    no option to disable or configure this SBOM, so it is rewritten here."""
-    import re
+    no option to disable or configure this SBOM, so it is rewritten here.
 
-    cargo_home = str(Path(os.environ.get("CARGO_HOME", Path.home() / ".cargo")))
-    rustup_home = str(Path(os.environ.get("RUSTUP_HOME", Path.home() / ".rustup")))
-    home = os.path.expanduser("~")
+    Cargo writes these locators as file URLs: percent-escaped, and on Windows
+    `file:///C:/Users/...` with forward slashes, so paths are compared in that
+    form (case-insensitively on Windows). `environ`, `home` and `windows` default
+    to this host; tests pass another host's."""
+    import ntpath
+    import posixpath
+    import re
+    from urllib.parse import quote, unquote
+
+    environ = os.environ if environ is None else environ
+    home = os.path.expanduser("~") if home is None else str(home)
+    windows = os.name == "nt" if windows is None else windows
+    join = ntpath.join if windows else posixpath.join
+    cargo_home = environ.get("CARGO_HOME") or join(home, ".cargo")
+    rustup_home = environ.get("RUSTUP_HOME") or join(home, ".rustup")
+
+    def url_path(path):
+        """`path` as the decoded path of the file URL Cargo writes for it."""
+        text = str(path)
+        if windows:
+            text = "/" + text.replace("\\", "/")
+        return text.rstrip("/")
+
+    def fold(text):
+        return text.casefold() if windows else text
+
+    # The most specific first: the checkout and the toolchain may live under home.
+    prefixes = [(url_path(root), ""), (url_path(cargo_home) + "/registry", "registry/"),
+                (url_path(rustup_home), "rustup/"), (url_path(home), "")]
 
     def shorten(match):
-        path = match.group(1)
-        root_prefix = str(root).rstrip("/") + "/"
-        if (path + "/").startswith(root_prefix) or path == str(root):
-            tail = path[len(str(root)):].lstrip("/")
-            return "path+file://." + ("/" + tail if tail else "")
-        for base, name in (
-            (cargo_home + "/registry/", "registry/"),
-            (rustup_home + "/", "rustup/"),
-        ):
-            if path.startswith(base):
-                return "path+file://./" + name + path[len(base):]
-        if path.startswith(home + "/"):
-            return "path+file://./" + path[len(home) + 1:]
+        path = unquote(match.group(1))
+        for base, name in prefixes:
+            head, rest = path[:len(base)], path[len(base):]
+            if fold(head) == fold(base) and rest[:1] in ("", "/"):
+                relative = name + rest[1:]
+                return "path+file://." + ("/" + quote(relative, safe="/:@!$&'()*+,;=") if relative else "")
         return match.group(0)
 
     return re.sub(r"path\+file://(/[^\"#\s]*)", shorten, data)
