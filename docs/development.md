@@ -15,7 +15,11 @@ installation steps are in the [quick start](quickstart.md) and
 `python scripts/check.py` runs the source gate with `MARKITAI_HOME` set to
 `.local/test-home` and `HOME` and `USERPROFILE` set to `.local/test-user-home`
 on all hosts; `scripts/check.sh` delegates to it on Unix. It runs the first
-three commands below and the `scripts/test_*.py` helper tests. `CARGO_HOME` and
+three commands below and the `scripts/test_*.py` helper tests. Those include the
+workbench tests, which import its npm packages: when Node is installed and
+`crates/markitai-cli/src/server/web/node_modules` is missing or differs from
+`package-lock.json`, the gate first runs `npm ci` there (it says so) and stops
+if npm is missing or the install fails. `CARGO_HOME` and
 `RUSTUP_HOME` default to the original home's `.cargo` and `.rustup`, and Python
 or Node reached through a home-relative shim (mise, asdf) is replaced on `PATH`
 by the directory of the interpreter it resolves to. Other tools must be on

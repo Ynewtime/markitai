@@ -5,7 +5,9 @@ import shutil
 import subprocess
 import sys
 
+from ci_packages import npm_command
 from isolation import isolated_env
+from web_deps import WEB, stale_web_dependencies
 
 # Each interpreter names its own executable.
 PROBES = {"python3": ["-c", "import sys; print(sys.executable)"], "node": ["-p", "process.execPath"]}
@@ -28,6 +30,31 @@ def unshimmed_path(path):
     return os.pathsep.join(directories + ([path] if path else []))
 
 
+def install_web_dependencies(root, environment):
+    """Run `npm ci` for the workbench when its packages differ from package-lock.json.
+
+    The workbench tests import them (Preact, Pele), so a checkout that has never
+    run `npm ci`, or ran it before the lockfile changed, would otherwise fail
+    them with module-not-found errors. Without Node the web tests skip.
+    """
+    node = shutil.which("node", path=environment["PATH"])
+    stale = stale_web_dependencies(WEB) if node else []
+    if not stale:
+        return 0
+    where = WEB.relative_to(root).as_posix()
+    more = f" and {len(stale) - 1} more" if len(stale) > 1 else ""
+    print(f"check.py: {where}/node_modules differs from package-lock.json ({stale[0]}{more}); running npm ci",
+          flush=True)
+    npm = shutil.which("npm", path=environment["PATH"])
+    if not npm:
+        print(f"check.py: npm is not on PATH; install Node.js with npm, or run `npm ci` in {where}", file=sys.stderr)
+        return 1
+    code = subprocess.run([*npm_command(npm, node), "ci"], cwd=WEB, env=environment).returncode
+    if code:
+        print(f"check.py: npm ci failed in {where} (exit {code})", file=sys.stderr)
+    return code
+
+
 def main():
     root = Path(__file__).resolve().parents[1]
     local = root / ".local"
@@ -38,12 +65,14 @@ def main():
         # Every test binary runs even after a failure, so one run reports them all.
         ["cargo", "test", "--workspace", "--locked", "--no-fail-fast"],
         ["cargo", "clippy", "--workspace", "--all-targets", "--locked", "--", "-D", "warnings"],
+        # The helper tests include the workbench's, which need its locked npm packages.
+        lambda: install_web_dependencies(root, environment),
         [sys.executable, "-m", "unittest", "discover", "-s", "scripts", "-p", "test_*.py"],
     ]
     for command in commands:
-        result = subprocess.run(command, cwd=root, env=environment)
-        if result.returncode:
-            return result.returncode
+        code = command() if callable(command) else subprocess.run(command, cwd=root, env=environment).returncode
+        if code:
+            return code
     return 0
 
 

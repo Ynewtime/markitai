@@ -14,8 +14,15 @@ import json
 import pathlib
 import re
 import shutil
+import contextlib
+import io
 import subprocess
+import tempfile
 import unittest
+from unittest.mock import patch
+
+import check
+from web_deps import stale_web_dependencies
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 WEB = ROOT / "crates/markitai-cli/src/server/web"
@@ -137,6 +144,11 @@ class WebDistTest(unittest.TestCase):
     def test_the_workbench_unit_tests_css_scale_and_contrast_pass(self):
         tests = sorted(str(path.relative_to(WEB)) for path in (WEB / "src").rglob("*.test.ts"))
         self.assertTrue(tests)
+        # The tests import the locked packages; without them two files fail only by "test failed".
+        stale = stale_web_dependencies(WEB)
+        if stale:
+            self.fail(f"run `npm ci` in {WEB.relative_to(ROOT).as_posix()} (scripts/check.py does when needed): "
+                      + "; ".join(stale[:3]) + (f"; {len(stale) - 3} more" if len(stale) > 3 else ""))
         for command in [
             ["node", "--test", *tests],
             ["node", "scripts/check-css-scale.mjs"],
@@ -144,6 +156,60 @@ class WebDistTest(unittest.TestCase):
         ]:
             result = subprocess.run(command, cwd=WEB, capture_output=True, encoding="utf-8", errors="replace", timeout=300)
             self.assertEqual(result.returncode, 0, result.stdout[-4000:] + result.stderr[-4000:])
+
+
+class WebDependencyTest(unittest.TestCase):
+    """node_modules against package-lock.json, and check.py's `npm ci` when they differ."""
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.web = pathlib.Path(temporary.name)
+        (self.web / "package-lock.json").write_text(json.dumps({"lockfileVersion": 3, "packages": {
+            "": {"version": "1.0.0"},
+            "node_modules/preact": {"version": "11.0.1", "dev": True},
+            "node_modules/@esbuild/aix-ppc64": {"version": "0.28.2", "dev": True, "optional": True, "os": ["aix"]},
+            "node_modules/a/node_modules/b": {"version": "2.0.0", "dev": True},
+            "node_modules/local": {"resolved": "../local", "link": True},
+        }}), encoding="utf-8")
+
+    def install(self, key, version):
+        (self.web / key).mkdir(parents=True, exist_ok=True)
+        (self.web / key / "package.json").write_text(json.dumps({"version": version}), encoding="utf-8")
+
+    def test_missing_or_other_versions_are_named_and_other_platforms_may_be_absent(self):
+        self.assertEqual(stale_web_dependencies(self.web), ["preact is not installed", "b is not installed"])
+        self.install("node_modules/preact", "10.29.8")
+        self.install("node_modules/a/node_modules/b", "2.0.0")
+        self.assertEqual(stale_web_dependencies(self.web), ["preact 10.29.8 is installed, the lockfile has 11.0.1"])
+        self.install("node_modules/preact", "11.0.1")
+        self.install("node_modules/@esbuild/aix-ppc64", "0.27.0")
+        self.assertEqual(stale_web_dependencies(self.web), ["@esbuild/aix-ppc64 0.27.0 is installed, the lockfile has 0.28.2"])
+        self.install("node_modules/@esbuild/aix-ppc64", "0.28.2")
+        self.assertEqual(stale_web_dependencies(self.web), [])
+
+    def run_check(self, tools, stale):
+        runs, out, err = [], io.StringIO(), io.StringIO()
+        with (patch("check.WEB", self.web), patch("check.stale_web_dependencies", return_value=stale),
+              patch("check.shutil.which", side_effect=lambda name, path=None: tools.get(name)),
+              patch("check.subprocess.run", side_effect=lambda command, **kwargs: runs.append((command, kwargs)) or
+                    subprocess.CompletedProcess(command, 0)),
+              contextlib.redirect_stdout(out), contextlib.redirect_stderr(err)):
+            code = check.install_web_dependencies(self.web.parent, {"PATH": "synthetic"})
+        return code, runs, out.getvalue() + err.getvalue()
+
+    def test_check_runs_npm_ci_only_when_the_packages_differ(self):
+        tools = {"node": "/opt/node/bin/node", "npm": "/opt/node/bin/npm"}
+        self.assertEqual(self.run_check(tools, []), (0, [], ""))
+        code, runs, said = self.run_check(tools, ["pele is not installed", "preact is not installed"])
+        self.assertEqual(code, 0)
+        self.assertEqual([(command, kwargs["cwd"]) for command, kwargs in runs], [(["/opt/node/bin/npm", "ci"], self.web)])
+        self.assertIn("differs from package-lock.json (pele is not installed and 1 more); running npm ci", said)
+        # Without npm it says what to do and stops the gate; without Node the web tests skip.
+        code, runs, said = self.run_check({"node": tools["node"]}, ["pele is not installed"])
+        self.assertEqual((code, runs), (1, []))
+        self.assertIn("npm is not on PATH", said)
+        self.assertEqual(self.run_check({}, ["pele is not installed"]), (0, [], ""))
 
 
 if __name__ == "__main__":
