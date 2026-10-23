@@ -1,6 +1,6 @@
 # Claude and Copilot subscriptions
 
-markitai can send requests through a Claude Code or GitHub Copilot subscription instead of a per-token API key. Each goes through the vendor's command line on the machine where markitai (or `markitai serve`) runs.
+markitai can use a Claude Code or GitHub Copilot subscription instead of a per-token API key, through the vendor's CLI on the machine where markitai (or `markitai serve`) runs.
 
 ```mermaid
 flowchart LR
@@ -17,7 +17,7 @@ flowchart LR
 
 ## Install
 
-Run the setup script and answer yes to "Install Claude Code CLI?" or "Install Copilot CLI?" (both default to no). It installs the CLI with the vendor's installer (bun, pnpm or npm as a fallback; winget for Copilot on Windows) and adds the matching extra. A CLI that is already installed only gets its extra.
+The setup script installs each CLI and its extra when you answer yes to "Install Claude Code CLI?" or "Install Copilot CLI?" (default no); a CLI already installed only gets its extra.
 
 <!--@include: ../snippets/setup.md-->
 
@@ -36,10 +36,10 @@ npm install -g @github/copilot@1.0.90-2             # or: curl -fsSL https://gh.
 
 ## Sign in
 
-Run the sign-in command from the table on the machine where markitai runs, then check it with the status command or `markitai doctor`. When the web workbench says a subscription "is not installed" or "is not signed in", run the install or sign-in on the server's machine and reload the model list.
+Sign in where markitai runs. When the workbench says a subscription "is not installed" or "is not signed in", fix it on the server's machine and reload the model list.
 
-- **Claude:** with `ANTHROPIC_API_KEY` set, Claude Code would bill that key instead of the subscription; markitai hides the variable from Claude Code while a subscription is signed in.
-- **Copilot:** a `COPILOT_GITHUB_TOKEN`, `GH_TOKEN` or `GITHUB_TOKEN` with the "Copilot Requests" permission works instead of signing in.
+- **Claude:** markitai hides `ANTHROPIC_API_KEY` from Claude Code while a subscription is signed in, so the key is not billed instead.
+- **Copilot:** a `COPILOT_GITHUB_TOKEN`, `GH_TOKEN` or `GITHUB_TOKEN` with the "Copilot Requests" permission replaces signing in.
 
 ## ChatGPT
 

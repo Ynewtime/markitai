@@ -1,6 +1,6 @@
 # Claude 与 Copilot 订阅
 
-markitai 可以通过 Claude Code 或 GitHub Copilot 订阅发送请求，不必使用按 token 计费的 API 密钥。两者都经由厂商自己的命令行，运行在 markitai（或 `markitai serve`）所在的机器上。
+markitai 可以用 Claude Code 或 GitHub Copilot 订阅代替按 token 计费的 API 密钥，经由 markitai（或 `markitai serve`）所在机器上的厂商 CLI。
 
 ```mermaid
 flowchart LR
@@ -17,7 +17,7 @@ flowchart LR
 
 ## 安装
 
-运行安装脚本，在“安装 Claude Code CLI?”或“安装 Copilot CLI?”处回答是（两者默认都是否）。它用厂商的安装程序装好 CLI（失败时改用 bun、pnpm 或 npm；Windows 上 Copilot 先用 winget），并加上对应的 extra。已经装好的 CLI 只补上 extra。
+安装脚本问到“安装 Claude Code CLI?”或“安装 Copilot CLI?”时回答是（默认否），就会装好 CLI 和对应的 extra；已装好的 CLI 只补上 extra。
 
 <!--@include: ../../snippets/setup.md-->
 
@@ -36,10 +36,10 @@ npm install -g @github/copilot@1.0.90-2             # 或：curl -fsSL https://g
 
 ## 登录
 
-在运行 markitai 的机器上执行表中的登录命令，再用检查命令或 `markitai doctor` 确认。网页工作台提示某个订阅“尚未安装”或“尚未登录”时，在服务器所在的机器上完成安装或登录，然后重新加载模型列表。
+在运行 markitai 的机器上登录。工作台提示订阅“尚未安装”或“尚未登录”时，在服务器所在的机器上处理，再重新加载模型列表。
 
-- **Claude：**设置了 `ANTHROPIC_API_KEY` 时，Claude Code 会按该密钥计费而不是用订阅；已登录订阅时，markitai 会把这个变量对 Claude Code 隐藏。
-- **Copilot：**带有“Copilot Requests”权限的 `COPILOT_GITHUB_TOKEN`、`GH_TOKEN` 或 `GITHUB_TOKEN` 可以代替登录。
+- **Claude：**已登录订阅时，markitai 对 Claude Code 隐藏 `ANTHROPIC_API_KEY`，以免改按该密钥计费。
+- **Copilot：**带“Copilot Requests”权限的 `COPILOT_GITHUB_TOKEN`、`GH_TOKEN` 或 `GITHUB_TOKEN` 可代替登录。
 
 ## ChatGPT
 

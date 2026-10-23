@@ -8,14 +8,14 @@
 
 | 组件 | 用途 | 默认 |
 |------|------|------|
-| markitai 及 `browser`、`extra-fetch`、`svg`、`heif`、`legacy`、`mcp` extra | 核心与几个小 extra | 总是安装 |
+| markitai 及 `browser`、`extra-fetch`、`svg`、`heif`、`legacy`、`mcp` extra | 转换 | 总是安装 |
 | 网页工作台（`serve`） | [`markitai serve`](/zh/guide/serve) | 装 |
 | 本地 OCR（`ocr`，约 150 MB） | 扫描件和图片的 `--ocr` | 装 |
 | Playwright Chromium，Linux 上连同其系统库 | 重 JS 页面、URL 截图 | 装 |
 | Claude Code CLI 及 `claude-agent` extra | [Claude 订阅](/zh/guide/subscriptions) | 不装 |
 | Copilot CLI 及 `copilot` extra | [Copilot 订阅](/zh/guide/subscriptions) | 不装 |
 
-之后，没有配置时它会写一份默认配置（`markitai init --yes`），并预先加载转换要用的库，第一次转换不必等待。想补装之前没选的组件，再运行一次即可：已装的 extra 会保留。
+之后它会在没有配置时写一份默认配置，并预先加载库，第一次转换不必等待。再运行一次可补装没选的组件，已装的 extra 会保留。
 
 没有交互终端时（CI、Dockerfile）只装核心。环境变量：
 
@@ -39,7 +39,7 @@ uv pip install markitai                  # 装进当前虚拟环境
 
 之后补装某个 extra：`uv tool install "markitai[ocr]" --force`；可用的 extra 有 `markitai[browser]`、`markitai[ocr]`、`markitai[serve]`、`markitai[mcp]`、`markitai[claude-agent]`、`markitai[copilot]`、`markitai[legacy]`、`markitai[heif]`、`markitai[svg]`、`markitai[extra-fetch]` 和 `markitai[all]`。装了 browser extra 后，`markitai doctor --fix` 会装好 Chromium。
 
-安装、升级或添加 extra 之后，运行一次 `markitai doctor`：它会首次加载这些库（macOS 上数秒，装了 OCR 时最多一分钟，系统会逐个检查新装的库）。否则第一次转换会等待这一步并给出提示；`markitai serve` 启动时会在后台完成。
+安装、升级或添加 extra 之后，运行一次 `markitai doctor` 加载这些库（macOS 上数秒，装了 OCR 时最多一分钟）；否则第一次转换会等待这一步并给出提示。
 
 markitai 1.3.0 要求 `litellm>=1.83.0,!=1.92.0,<1.105` 和 `anthropic>=1.0.0,<2`：更新的 LiteLLM 版本会改变 markitai 依赖的模型价格和 OpenRouter 上限，Anthropic SDK 2 改用 Bearer 令牌发送 API 密钥，读取 `X-Api-Key` 的网关会拒绝 `--llm-batch`。不支持需要这两个包更新版本的环境。
 :::
@@ -76,7 +76,7 @@ export GEMINI_API_KEY=...    # 或 OPENAI_ / ANTHROPIC_ / DEEPSEEK_ / OPENROUTER
 markitai report.pdf -o output/ --llm
 ```
 
-markitai 按找到的 key 自动选模型；`MODEL=provider/model` 可以自己指定。需要配置文件、订阅（ChatGPT、Claude Code、Copilot）或多模型回退时，跑一遍引导配置，再检查一下：
+markitai 按找到的 key 自动选模型；`MODEL=provider/model` 可以自己指定。需要配置文件、订阅或多模型回退时，跑一遍引导配置：
 
 ```bash
 markitai init
@@ -85,7 +85,7 @@ markitai doctor     # 装了什么、配了什么
 
 **预设**打包了常用参数：`minimal` 只转换，`standard` 加 LLM 清洗和图片分析，`rich` 再加页面截图。用 `--no-*` 关掉其中一项，例如 `--preset rich --no-desc`。
 
-**URL** 先在本机抓取。公开页面本机抓不到时，markitai 可能回退到远程阅读服务（Defuddle、Jina 或 Cloudflare），并在 stderr 提示一次；私有、内网和带凭据的 URL 永远不出本机，`MARKITAI_NO_REMOTE_FETCH=1` 强制全部本地（[抓取策略](/zh/guide/fetch-policy)）。`-s jina` 读 `JINA_API_KEY`；`-s cloudflare` 读 `CLOUDFLARE_API_TOKEN` 和 `CLOUDFLARE_ACCOUNT_ID`。
+**URL** 先在本机抓取；公开页面抓不到时可能回退到远程阅读服务（Defuddle、Jina 或 Cloudflare），并在 stderr 提示一次。私有、内网和带凭据的 URL 永远不出本机；`MARKITAI_NO_REMOTE_FETCH=1` 强制全部本地（[抓取策略](/zh/guide/fetch-policy)）。`-s jina` 读 `JINA_API_KEY`，`-s cloudflare` 读 `CLOUDFLARE_API_TOKEN` 和 `CLOUDFLARE_ACCOUNT_ID`。
 
 ## 输出结构
 

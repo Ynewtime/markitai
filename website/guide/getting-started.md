@@ -8,14 +8,14 @@ One command installs uv, Python 3.13 (when no 3.11 to 3.13 is found) and markita
 
 | Part | Enables | Default |
 |------|---------|---------|
-| markitai with the `browser`, `extra-fetch`, `svg`, `heif`, `legacy` and `mcp` extras | the core and the small extras | always |
+| markitai with the `browser`, `extra-fetch`, `svg`, `heif`, `legacy` and `mcp` extras | conversion | always |
 | Web workspace (`serve`) | [`markitai serve`](/guide/serve) | yes |
 | Local OCR (`ocr`, about 150 MB) | `--ocr` on scans and images | yes |
 | Playwright Chromium, plus its system libraries on Linux | JavaScript pages, URL screenshots | yes |
 | Claude Code CLI and the `claude-agent` extra | a [Claude subscription](/guide/subscriptions) | no |
 | Copilot CLI and the `copilot` extra | a [Copilot subscription](/guide/subscriptions) | no |
 
-It then writes a default config (`markitai init --yes`) if there is none and loads the libraries conversions use, so the first conversion does not wait. Run it again to add a part you declined: the extras already installed are kept.
+It then writes a default config if there is none and preloads the libraries, so the first conversion does not wait. Run it again to add a part you declined; installed extras are kept.
 
 Without a terminal (CI, Dockerfile) it installs only the core. Environment variables:
 
@@ -39,7 +39,7 @@ uv pip install markitai                  # into the active virtual environment
 
 Add one extra later with `uv tool install "markitai[ocr]" --force`; the extras are `markitai[browser]`, `markitai[ocr]`, `markitai[serve]`, `markitai[mcp]`, `markitai[claude-agent]`, `markitai[copilot]`, `markitai[legacy]`, `markitai[heif]`, `markitai[svg]`, `markitai[extra-fetch]` and `markitai[all]`. After the browser extra, `markitai doctor --fix` installs Chromium.
 
-After installing, upgrading or adding an extra, run `markitai doctor` once: it loads the libraries for the first time (seconds on macOS, up to a minute with OCR, while the system checks each new library). Otherwise the first conversion waits for it and says so; `markitai serve` does it in the background at start.
+After installing, upgrading or adding an extra, run `markitai doctor` once to load the libraries (seconds on macOS, up to a minute with OCR); otherwise the first conversion waits for it and says so.
 
 markitai 1.3.0 requires `litellm>=1.83.0,!=1.92.0,<1.105` and `anthropic>=1.0.0,<2`: newer LiteLLM releases change model prices and OpenRouter limits markitai relies on, and Anthropic SDK 2 sends the API key as a Bearer token, which gateways that read `X-Api-Key` refuse for `--llm-batch`. An environment that needs newer versions of either package is not supported.
 :::
@@ -76,7 +76,7 @@ export GEMINI_API_KEY=...    # or OPENAI_ / ANTHROPIC_ / DEEPSEEK_ / OPENROUTER_
 markitai report.pdf -o output/ --llm
 ```
 
-markitai picks a model from the key it finds; `MODEL=provider/model` chooses one. For a config file, a subscription (ChatGPT, Claude Code, Copilot) or several models with fallback, run the guided setup, then check it:
+markitai picks a model from the key it finds; `MODEL=provider/model` chooses one. For a config file, a subscription or several models with fallback, run the guided setup:
 
 ```bash
 markitai init
@@ -85,7 +85,7 @@ markitai doctor     # what is installed and configured
 
 **Presets** bundle the common flags: `minimal` converts, `standard` adds LLM cleanup and image analysis, `rich` adds page screenshots. Turn a part off with `--no-*`, for example `--preset rich --no-desc`.
 
-**URLs** are fetched on your machine first. When that fails on a public page, markitai may fall back to a remote reader (Defuddle, Jina or Cloudflare) and says so once on stderr; private, intranet and credential-bearing URLs never leave your machine, and `MARKITAI_NO_REMOTE_FETCH=1` keeps everything local ([Fetch Policy](/guide/fetch-policy)). `-s jina` reads `JINA_API_KEY`; `-s cloudflare` reads `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`.
+**URLs** are fetched on your machine first; a public page that fails may fall back to a remote reader (Defuddle, Jina or Cloudflare), said once on stderr. Private, intranet and credential-bearing URLs never leave your machine; `MARKITAI_NO_REMOTE_FETCH=1` keeps everything local ([Fetch Policy](/guide/fetch-policy)). `-s jina` reads `JINA_API_KEY`, `-s cloudflare` `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`.
 
 ## Output Structure
 
