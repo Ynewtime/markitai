@@ -164,6 +164,7 @@ function Msg {
             "error_shared_folder" { '\u6b64\u76ee\u5f55\u5df2\u6709\u4e0e markitai \u5b89\u88c5\u6587\u4ef6\u540c\u540d\u7684\u6587\u4ef6\uff1b\u8bf7\u4f7f\u7528\u7a7a\u76ee\u5f55\u6216\u4e13\u7528\u76ee\u5f55' }
             "error_version" { 'MARKITAI_VERSION \u5e94\u4e3a X.Y.Z \u5f62\u5f0f' }
             "failed" { '\u5b89\u88c5\u5931\u8d25' }
+            "files_removed" { '\u5df2\u5220\u9664 markitai \u7684\u6587\u4ef6\uff1b\u76ee\u5f55\u4e2d\u7684\u5176\u4ed6\u6587\u4ef6\u4fdd\u7559' }
             "installed" { '\u5df2\u5b89\u88c5' }
             "interactive" { '\u4ea4\u4e92\u6a21\u5f0f' }
             "nothing_installed" { '\u672a\u627e\u5230\u5b89\u88c5\u811a\u672c\u5b89\u88c5\u7684 markitai' }
@@ -173,6 +174,7 @@ function Msg {
             "optional_later" { '\u7a0d\u540e\u51c6\u5907\u53ef\u9009\u7ec4\u4ef6' }
             "optional_ready" { '\u53ef\u9009\u7ec4\u4ef6\u5df2\u5c31\u7eea' }
             "path_added" { '\u5df2\u52a0\u5165\u7528\u6237 Path\uff1b\u65b0\u7ec8\u7aef\u53ef\u76f4\u63a5\u8fd0\u884c markitai' }
+            "path_kept" { '\u8be5\u76ee\u5f55\u4ecd\u5728\u7528\u6237 Path \u4e2d\uff1b\u5b83\u4e0d\u662f\u5b89\u88c5\u811a\u672c\u6dfb\u52a0\u7684' }
             "path_removed" { '\u5df2\u4ece\u7528\u6237 Path \u4e2d\u79fb\u9664' }
             "platform" { '\u5e73\u53f0' }
             "ready" { 'markitai \u5df2\u5c31\u7eea' }
@@ -219,6 +221,8 @@ function Msg {
         "optional_later" { "Prepare optional components later" }
         "path_added" { "Added to the user Path; new terminals find markitai" }
         "path_removed" { "Removed from the user Path" }
+        "path_kept" { "The folder stays on the user Path; setup did not add it" }
+        "files_removed" { "Removed markitai's files; the folder keeps its other files" }
         "shadowed" { "Another markitai comes first on PATH and runs instead" }
         "convert_file" { "Convert a file" }
         "interactive" { "Interactive mode" }
@@ -436,7 +440,8 @@ function Remove-PythonMarkitai {
 }
 
 # The receipt names what this script installed in the folder: the release,
-# and the folder's top-level names (file=...). Only those are ever replaced or
+# whether setup added the folder to the user Path (path_added=1, so
+# uninstall leaves an entry the user made alone), and the folder's top-level names (file=...). Only those are ever replaced or
 # removed, so a MARKITAI_INSTALL_DIR shared with other files keeps them.
 # $null when the folder holds no receipt of this script's.
 function Read-Receipt {
@@ -447,12 +452,15 @@ function Read-Receipt {
     if (-not @($lines | Where-Object { $_ -like "version=*" })) { return $null }
     $names = @($lines | Where-Object { $_ -like "file=*" } | ForEach-Object { $_.Substring(5) } |
         Where-Object { $_ -and $_ -notmatch '[\\/:]' -and $_ -ne ".." -and $_ -ne "." -and $_ -ne "receipt" })
-    return @{ Names = $names }
+    return @{ Names = $names; PathAdded = ($lines -contains "path_added=1") }
 }
 
 function Write-Receipt {
     param([string]$Directory, [hashtable]$Receipt)
-    $lines = @("version=$($Receipt.Version)", "target=$($Receipt.Target)") + @($Receipt.Names | ForEach-Object { "file=$_" })
+    $pathAdded = 0
+    if ($Receipt.PathAdded) { $pathAdded = 1 }
+    $lines = @("version=$($Receipt.Version)", "target=$($Receipt.Target)", "path_added=$pathAdded") +
+        @($Receipt.Names | ForEach-Object { "file=$_" })
     [IO.File]::WriteAllText([IO.Path]::Combine($Directory, "receipt"), (($lines -join "`n") + "`n"))
 }
 
@@ -508,7 +516,7 @@ function New-Staging {
     if ($foreign.Count) { Stop-Setup (Msg "error_shared_folder") "${Directory}: $($foreign -join ', ')" }
     $created = -not (Test-Path -LiteralPath $Directory)
     $stage = [IO.Path]::Combine($Directory, ".markitai-new-" + [Guid]::NewGuid().ToString("N"))
-    $receipt = @{ Version = $Release.Version; Target = $Target; Names = $names }
+    $receipt = @{ Version = $Release.Version; Target = $Target; Names = $names; PathAdded = [bool]($Previous -and $Previous.PathAdded) }
     try {
         New-Item -ItemType Directory -Force -Path $stage | Out-Null
         foreach ($name in $names) {
@@ -733,19 +741,23 @@ function Write-GettingStarted {
 function Invoke-Uninstall {
     Write-Intro (Msg "welcome_uninstall")
     $directory = Get-DefaultInstallDirectory
-    $removed = $false
     $receipt = Read-Receipt $directory
     if ($receipt) {
         if (Remove-Names $directory (@($receipt.Names) + @("receipt"))) { Write-Info (Msg "old_in_use") }
-        if (-not @(Get-ChildItem -LiteralPath $directory -Force)) { Remove-Item -LiteralPath $directory -Force }
-        Write-Ok "$(Msg 'removed'): $directory"
-        $removed = $true
+        if (-not @(Get-ChildItem -LiteralPath $directory -Force)) {
+            Remove-Item -LiteralPath $directory -Force
+            Write-Ok "$(Msg 'removed'): $directory"
+        } else {
+            Write-Ok "$(Msg 'files_removed'): $directory"
+        }
+        if ($receipt.PathAdded) {
+            if (Remove-FromUserPath $directory) { Write-Ok (Msg "path_removed") }
+        } elseif (@(Split-PathList (Get-UserPath) | Where-Object { Test-SamePath $_ $directory })) {
+            Write-Info (Msg "path_kept")
+        }
+    } else {
+        Write-Info (Msg "nothing_installed")
     }
-    if (Remove-FromUserPath $directory) {
-        Write-Ok (Msg "path_removed")
-        $removed = $true
-    }
-    if (-not $removed) { Write-Info (Msg "nothing_installed") }
     $state = Get-StateDirectory
     if (Test-Path -LiteralPath $state) { Write-Info "$(Msg 'state_kept'): $state" }
     Write-Outro "DarkGreen" (Msg "done_uninstall")
@@ -782,10 +794,14 @@ function Invoke-Install {
             Stop-Setup (Msg "error_run") "$($_.Exception.Message)"
         }
         $directory = Get-DefaultInstallDirectory
-        Install-Release $unpacked $directory $release $target
+        $receipt = Install-Release $unpacked $directory $release $target
         $markitai = Join-Path $directory "markitai.exe"
         Write-Ok "$(Msg 'installed'): $markitai ($reported)"
-        if (Add-ToUserPath $directory) { Write-Ok (Msg "path_added") }
+        if (Add-ToUserPath $directory) {
+            $receipt.PathAdded = $true
+            Write-Receipt $directory $receipt
+            Write-Ok (Msg "path_added")
+        }
         # First install only: `init --yes` writes a configuration with the
         # providers this machine already has.
         if (-not (Test-Path -LiteralPath (Join-Path (Get-StateDirectory) "config.json"))) {

@@ -282,7 +282,8 @@ $body = @($statements | Where-Object { $_.Extent.Text -notmatch '^if \((-not \$O
 if ($body.Count -ne $statements.Count - 2) { throw "setup.ps1 ends differently than expected" }
 . ([scriptblock]::Create(($body | ForEach-Object { $_.Extent.Text }) -join "`n"))
 function Assert($Condition, $Message) { if (-not $Condition) { throw "FAILED: $Message" } }
-function Write-Host { }
+$script:Shown = New-Object System.Collections.ArrayList
+function Write-Host { param([Parameter(Position = 0)]$Object, $ForegroundColor, [switch]$NoNewline) [void]$script:Shown.Add("$Object") }
 function Send-EnvironmentChange { }
 # uv's Python markitai goes only once the new release is staged in the folder.
 $script:UvRemoved = 0
@@ -393,14 +394,36 @@ $env:LOCALAPPDATA = Join-Path $Work "LocalAppData"
 $env:MARKITAI_DOWNLOAD_URL = $Base
 $env:MARKITAI_INSTALL_OPTIONAL = "0"
 $env:MARKITAI_HOME = Join-Path $Work "state"
+# An existing configuration: init would start the stand-in "exe", which is no program here.
+New-Item -ItemType Directory -Path $env:MARKITAI_HOME | Out-Null
+Set-Content -LiteralPath (Join-Path $env:MARKITAI_HOME "config.json") -Value "{}"
 Invoke-Install
 $programs = Join-Path $env:LOCALAPPDATA "Programs/markitai"
 Assert ((Get-Content -Raw (Join-Path $programs "mkai.exe")) -eq "exe 2.0.0") "installed latest"
 Assert ($script:FakeUserPath.StartsWith("$programs;")) "on the user Path"
 Assert (@(Get-ChildItem ([IO.Path]::GetTempPath()) -Filter "markitai-setup-*").Count -eq 0) "work folder removed"
+Assert ((Get-Content -Raw (Join-Path $programs "receipt")) -match "path_added=1") "the receipt says setup added it"
 Invoke-Uninstall
 Assert (-not (Test-Path $programs)) "uninstalled"
 Assert ($script:FakeUserPath -eq '%USERPROFILE%\bin;C:\Tools') "off the user Path"
+
+# A folder already on the user Path, holding the user's files too.
+$tools = Join-Path $Work "tools"
+New-Item -ItemType Directory -Path $tools | Out-Null
+Set-Content -LiteralPath (Join-Path $tools "jq.exe") -Value "jq"
+$script:FakeUserPath = "$tools;C:\Tools"
+$env:MARKITAI_INSTALL_DIR = $tools
+$script:InstallTo = $tools
+Invoke-Install
+Assert ($script:FakeUserPath -eq "$tools;C:\Tools") "the Path is left as it was"
+Assert ((Get-Content -Raw (Join-Path $tools "receipt")) -match "path_added=0") "the receipt says setup did not add it"
+$script:Shown.Clear()
+Invoke-Uninstall
+Assert ($script:FakeUserPath -eq "$tools;C:\Tools") "uninstall leaves an entry setup did not add"
+Assert (@(Get-ChildItem -LiteralPath $tools -Force | ForEach-Object { $_.Name }) -join "," -eq "jq.exe") "only markitai's files go"
+$shown = $script:Shown -join "`n"
+Assert ($shown -match "the folder keeps its other files" -and $shown -match "setup did not add it" -and $shown -notmatch "Removed: ") "uninstall says what it did: $shown"
+Remove-Item env:MARKITAI_INSTALL_DIR
 
 $script:LANG_CODE = "zh"
 Assert ((Msg "verified") -eq ("$([char]0x5DF2)$([char]0x6821)$([char]0x9A8C) SHA-256")) "zh decoding"
@@ -423,9 +446,9 @@ $piped = $null; $block = $null; $functions = $null; $variables = $null
 $functions = @(Get-ChildItem function: | ForEach-Object { $_.Name })
 $variables = @(Get-Variable | ForEach-Object { $_.Name })
 $env:MARKITAI_UNINSTALL = "1"
-try { $piped = $code | Invoke-Expression 6>&1 | Out-String } catch { $piped = "$_" }
+$piped = $code | Invoke-Expression 6>&1 | Out-String
 Remove-Item env:MARKITAI_UNINSTALL
-try { $block = & ([scriptblock]::Create($code)) -Uninstall 6>&1 | Out-String } catch { $block = "$_" }
+$block = & ([scriptblock]::Create($code)) -Uninstall 6>&1 | Out-String
 function Assert($Condition, $Message) { if (-not $Condition) { throw "FAILED: $Message" } }
 Assert ($ErrorActionPreference -eq "Continue" -and $ProgressPreference -eq "Continue") "preferences kept"
 $left = @(Get-ChildItem function: | Where-Object { $functions -notcontains $_.Name -and $_.Name -ne "Assert" })
@@ -433,6 +456,9 @@ Assert ($left.Count -eq 0) "functions left: $($left.Name -join ', ')"
 $left = @(Get-Variable | Where-Object { $variables -notcontains $_.Name -and $_.Name -notmatch '^(_|PSItem|left|LASTEXITCODE)$' })
 Assert ($left.Count -eq 0) "variables left: $($left.Name -join ', ')"
 Assert (-not (Test-Path env:MARKITAI_UNINSTALL)) "MARKITAI_UNINSTALL not set"
+foreach ($output in @($piped, $block)) {
+    Assert ($output -match "Markitai uninstall" -and $output -match "No markitai installed") "uninstall ran: $output"
+}
 "ok"
 """
 
