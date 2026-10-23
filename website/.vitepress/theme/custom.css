@@ -716,6 +716,8 @@ html:not(.dark) .home-shot img {
   display: inline-block;
   max-width: 100%;
   height: auto;
+  /* A scaled drawing keeps even letter spacing (hinting is for one size). */
+  text-rendering: geometricPrecision;
 }
 
 .vp-doc .mk-diagram-narrow {
@@ -729,5 +731,22 @@ html:not(.dark) .home-shot img {
 
   .vp-doc .mk-diagram.has-narrow .mk-diagram-narrow {
     display: block;
+    overflow-x: auto;
+  }
+
+  /* Labels never drop below 11 px: a wider drawing scrolls in its box, with
+     a shadow on the side that has more to show. */
+  .vp-doc .mk-diagram-narrow svg {
+    min-width: var(--mk-diagram-min, 0);
+  }
+
+  .vp-doc .mk-diagram-narrow[style] {
+    background:
+      linear-gradient(to right, var(--vp-c-bg) 30%, transparent) 0 0 / 40px 100%,
+      linear-gradient(to left, var(--vp-c-bg) 30%, transparent) 100% 0 / 40px 100%,
+      radial-gradient(farthest-side at 0 50%, var(--vp-c-divider), transparent) 0 0 / 14px 100%,
+      radial-gradient(farthest-side at 100% 50%, var(--vp-c-divider), transparent) 100% 0 / 14px 100%;
+    background-repeat: no-repeat;
+    background-attachment: local, local, scroll, scroll;
   }
 }

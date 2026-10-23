@@ -25,6 +25,8 @@ const NARROW = 342
 /** Below this scale a wide drawing's labels get too small: draw it upright. */
 const MIN_SCALE = 0.85
 const FONT_SIZE = 14
+/** The smallest label size on a phone: a wider drawing scrolls sideways instead. */
+const MIN_PHONE_FONT = 11
 /** The fallback in the SVG; custom.css sets the theme's font through `--pele-font`. */
 const FONT_FAMILY = 'Inter, ui-sans-serif, system-ui, sans-serif'
 
@@ -49,6 +51,14 @@ function fit(source: string, maxWidth: number, idPrefix: string) {
   if (drawn.width <= maxWidth / MIN_SCALE) return drawn
   const upright = draw(source, maxWidth, idPrefix, true)
   return upright.width < drawn.width ? upright : drawn
+}
+
+/** The phone's drawing: whichever layout keeps the labels largest. */
+function phoneFit(source: string, idPrefix: string) {
+  const scale = (width: number) => Math.min(1, NARROW / width)
+  const drawn = draw(source, NARROW, idPrefix, false)
+  const upright = draw(source, NARROW, idPrefix, true)
+  return scale(upright.width) > scale(drawn.width) ? upright : drawn
 }
 
 /**
@@ -83,11 +93,15 @@ export function mermaid(md: MarkdownIt): void {
       if (wide.width <= NARROW / MIN_SCALE) {
         return `<figure class="mk-diagram" ${html(wide.svg)}></figure>\n`
       }
-      const narrow = fit(token.content, NARROW, `${id}n-`)
+      const narrow = phoneFit(token.content, `${id}n-`)
+      // Shrunk to the column its labels would drop below MIN_PHONE_FONT: it
+      // keeps that size and its box scrolls sideways (custom.css).
+      const least = Math.ceil((narrow.width * MIN_PHONE_FONT) / FONT_SIZE)
+      const scroll = least > NARROW ? ` style="--mk-diagram-min:${least}px"` : ''
       return (
         `<figure class="mk-diagram has-narrow">` +
         `<div class="mk-diagram-wide" ${html(wide.svg)}></div>` +
-        `<div class="mk-diagram-narrow" ${html(narrow.svg)}></div>` +
+        `<div class="mk-diagram-narrow"${scroll} ${html(narrow.svg)}></div>` +
         `</figure>\n`
       )
     } catch (error) {
