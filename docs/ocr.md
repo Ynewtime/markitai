@@ -156,7 +156,8 @@ the next row's first word ends its paragraph (rows that run to the edge, or
 stop where that word would not fit, wrap on, so ragged-right prose keeps its
 paragraphs), a short row much taller than the page's text, or a little taller
 and bold where a paragraph starts, is a heading (with the rows of its size
-right below it), rows of cells in columns or divided by
+right below it; a title over a single line of text is one too), rows of cells
+in columns or divided by
 drawn rules (read as `|`) are a table, and letter-spaced Latin
 (`M a r k i t a i`, Latin set in full-width cells) is closed up. Sizes are
 judged against the page's lines of prose (short labels, such as a photograph's,

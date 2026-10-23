@@ -1866,8 +1866,10 @@ const MIN_BODY_CHARS: usize = 12;
 /// Lines of at least this many letters and digits give the body's type size.
 const MIN_INK_BODY_CHARS: usize = 20;
 
-/// A page needs this many lines before a taller one is a heading.
-const MIN_SIZED_LINES: usize = 4;
+/// A page needs this many lines before a taller one is a heading: a title
+/// over one line of text (a cover, a slide, a title card) is one, as Python
+/// markitai reads it.
+const MIN_SIZED_LINES: usize = 2;
 /// A heading's line is at least this many times the median line's height.
 const HEADING: f32 = 1.25;
 /// Rows at least this many times the median line's height, one after the
@@ -1885,9 +1887,16 @@ fn sizes(lines: &[Line]) -> Option<Sizes> {
     if lines.len() < MIN_SIZED_LINES {
         return None;
     }
+    // The middle value, or the mean of the middle two: of a title's line
+    // and one line of text, the title is no body line.
     let median = |mut values: Vec<f32>| {
         values.sort_by(f32::total_cmp);
-        values[values.len() / 2]
+        let middle = values.len() / 2;
+        if values.len().is_multiple_of(2) {
+            (values[middle - 1] + values[middle]) / 2.
+        } else {
+            values[middle]
+        }
     };
     let height = |line: &Line| line.bounds[3] - line.bounds[1];
     let prose: Vec<f32> = lines
@@ -3449,6 +3458,40 @@ pub(crate) mod tests {
              Another sentence alone.\n\n\
              A last row runs to the edge again"
         );
+    }
+
+    /// A short page (a title card, a cover): its title over one or two lines
+    /// of text is a heading, as on a longer page; a single line is none.
+    #[test]
+    fn a_title_over_one_or_two_lines_is_a_heading() {
+        let title = || sized("Harbour Tide Table", [40., 20., 400., 70.]);
+        let page = vec![
+            title(),
+            sized(
+                "High water at the north pier comes at seven.",
+                [40., 100., 440., 130.],
+            ),
+        ];
+        assert_eq!(
+            assemble(page, 480, 200).unwrap().text,
+            "# Harbour Tide Table\n\nHigh water at the north pier comes at seven."
+        );
+        let page = vec![
+            title(),
+            sized(
+                "High water at the north pier comes at seven.",
+                [40., 100., 440., 130.],
+            ),
+            sized("Low water follows at one.", [40., 140., 270., 170.]),
+        ];
+        assert!(
+            assemble(page, 480, 200)
+                .unwrap()
+                .text
+                .starts_with("# Harbour Tide Table\n\n"),
+        );
+        let page = vec![title()];
+        assert_eq!(assemble(page, 480, 200).unwrap().text, "Harbour Tide Table");
     }
 
     /// Ragged-right prose: each row stops short of the widest by less than
