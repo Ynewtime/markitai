@@ -1064,6 +1064,20 @@ impl TextLine {
         result
     }
 
+    /// markitai: whether this line's runs on `above`'s baseline reach at
+    /// least as far right as its runs on `below`'s (see
+    /// `needs_space_between`).
+    fn wrapped_at(&self, above: &TextItem, below: &TextItem) -> bool {
+        let right = |baseline: &TextItem| {
+            self.items
+                .iter()
+                .filter(|item| (item.y - baseline.y).abs() <= baseline.font_size * 0.5)
+                .map(|item| item.x + item.width)
+                .fold(f32::NEG_INFINITY, f32::max)
+        };
+        right(above) >= right(below) - 0.5
+    }
+
     /// Determine if a space is needed between two items
     fn needs_space_between(
         &self,
@@ -1087,13 +1101,16 @@ impl TextLine {
         // markitai: a title wrapped within Chinese or Japanese text, its
         // lines merged into one (`merge_heading_lines`), rejoins at the
         // break without a space: the run after it starts a line lower at
-        // the same size.
+        // the same size, and the runs above the break reach at least as far
+        // right as those below it (a wrapped line fills its measure; two
+        // fields on consecutive lines keep their space).
         let unspaced = |c: Option<char>| c.is_some_and(crate::text_utils::is_unspaced_cjk_char);
         if !space_already_exists
             && prev_item.y - item.y > prev_item.font_size * 0.8
             && (item.font_size - prev_item.font_size).abs() <= prev_item.font_size * 0.1
             && unspaced(result.chars().next_back())
             && unspaced(text.chars().next())
+            && self.wrapped_at(prev_item, item)
         {
             return false;
         }
@@ -1194,6 +1211,26 @@ mod formatting_tests {
         it.font = "Menlo-Regular".into();
         it.fixed_pitch = Some(true);
         it
+    }
+
+    #[test]
+    fn merged_cjk_lines_join_without_a_space_only_where_they_wrapped() {
+        // markitai: two lines of one merged heading, the second a line lower.
+        let lower = |text: &str, x: f32, width: f32| {
+            let mut it = body(text, x, width);
+            it.y = 84.0;
+            it
+        };
+        let wrapped = line(vec![
+            body("一条命令全部转", 0.0, 300.0),
+            lower("成文本", 0.0, 120.0),
+        ]);
+        assert_eq!(wrapped.text(), "一条命令全部转成文本");
+        let fields = line(vec![
+            body("班级类型：周末班", 0.0, 96.0),
+            lower("家庭报名关联编号：", 0.0, 108.0),
+        ]);
+        assert_eq!(fields.text(), "班级类型：周末班 家庭报名关联编号：");
     }
 
     #[test]

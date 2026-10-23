@@ -3723,4 +3723,22 @@ mod tests {
             "{md}"
         );
     }
+
+    #[test]
+    fn bold_fields_on_consecutive_lines_keep_their_space() {
+        // markitai: a short CJK line above a longer one did not wrap there;
+        // merged as one bold heading, its two fields stay apart.
+        let mut first = sized_line("班级类型：周末班", 760.0, 11.0, "Bold");
+        let mut second = sized_line("家庭报名关联编号：", 744.0, 11.0, "Bold");
+        for line in [&mut first, &mut second] {
+            for item in &mut line.items {
+                item.is_bold = true;
+                item.width = item.text.chars().count() as f32 * 11.0;
+            }
+        }
+        let mut lines = vec![first, second];
+        lines.extend(body_lines(700.0));
+        let md = reader_markdown(lines);
+        assert!(!md.contains("周末班家庭"), "{md}");
+    }
 }

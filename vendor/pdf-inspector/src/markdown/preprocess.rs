@@ -69,8 +69,16 @@ pub(crate) fn merge_heading_lines(
     }
 
     let mut result: Vec<TextLine> = Vec::with_capacity(lines.len());
-    // markitai: the baseline of the lowest line merged into each of `result`.
+    // markitai: the baseline and right edge of the lowest line merged into
+    // each of `result`.
     let mut lowest: Vec<f32> = Vec::with_capacity(lines.len());
+    let mut rights: Vec<f32> = Vec::with_capacity(lines.len());
+    let right = |line: &TextLine| {
+        line.items
+            .iter()
+            .map(|item| item.x + item.width)
+            .fold(f32::NEG_INFINITY, f32::max)
+    };
 
     for line in lines {
         let line_level = effective_heading_level(&line, base_size, heading_tiers, struct_roles);
@@ -132,14 +140,22 @@ pub(crate) fn merge_heading_lines(
             };
 
         if should_merge {
+            // A wrapped line fills its measure: the line above reaches at
+            // least as far right as this one.
+            let wrapped = rights
+                .last()
+                .is_some_and(|above| *above >= right(&line) - 0.5);
             if let Some(last) = lowest.last_mut() {
                 *last = line.y;
+            }
+            if let Some(last) = rights.last_mut() {
+                *last = right(&line);
             }
             // Append this line's items to the previous line
             let prev = result.last_mut().unwrap();
             // Add a space-bearing TextItem to separate the merged text
-            // (markitai: none where Chinese or Japanese text meets such
-            // text: a title wrapped there has no space at its break, and
+            // (markitai: none where Chinese or Japanese text wrapped, meeting
+            // such text: a title has no space at its break, and
             // `TextLine::text` sets none between the two lines' runs).
             if let Some(first_item) = line.items.first() {
                 let unspaced =
@@ -147,7 +163,8 @@ pub(crate) fn merge_heading_lines(
                 let start = first_item.text.trim_start();
                 let before = prev.items.last().map(|item| item.text.trim_end());
                 let mut space_item = first_item.clone();
-                if unspaced(before.and_then(|text| text.chars().next_back()))
+                if wrapped
+                    && unspaced(before.and_then(|text| text.chars().next_back()))
                     && unspaced(start.chars().next())
                 {
                     if let Some(last) = prev.items.last_mut() {
@@ -164,6 +181,7 @@ pub(crate) fn merge_heading_lines(
             }
         } else {
             lowest.push(line.y);
+            rights.push(right(&line));
             result.push(line);
         }
     }
