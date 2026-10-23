@@ -42,7 +42,7 @@ def _top_level_modules() -> set[str]:
 
 
 def _contracts() -> list[dict]:
-    data = tomllib.loads((_REPO_ROOT / "pyproject.toml").read_text())
+    data = tomllib.loads((_REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     return data["tool"]["importlinter"]["contracts"]
 
 

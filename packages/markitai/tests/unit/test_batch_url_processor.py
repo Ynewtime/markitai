@@ -125,7 +125,9 @@ async def test_directory_batch_screenshot_only_llm_reads_the_screenshot(
     assert result.success, result.error
     assert calls == ["screenshot"]
     assert result.cost_usd == 0.25
-    assert Path(result.output_path).read_text() == "from the screenshot\n"
+    assert (
+        Path(result.output_path).read_text(encoding="utf-8") == "from the screenshot\n"
+    )
 
 
 @pytest.mark.asyncio

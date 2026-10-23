@@ -78,8 +78,8 @@ class TestAtomicWriteText:
         atomic_write_text(path_obj, "path content")
         atomic_write_text(Path(path_str), "str content")
 
-        assert Path(path_obj).read_text() == "path content"
-        assert Path(path_str).read_text() == "str content"
+        assert Path(path_obj).read_text(encoding="utf-8") == "path content"
+        assert Path(path_str).read_text(encoding="utf-8") == "str content"
 
 
 class TestAtomicWriteJson:

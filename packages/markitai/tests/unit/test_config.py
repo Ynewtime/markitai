@@ -211,7 +211,7 @@ class TestConfigManager:
         manager.save(save_path)
 
         # Load and verify
-        with open(save_path) as f:
+        with open(save_path, encoding="utf-8") as f:
             saved_data = json.load(f)
 
         assert saved_data["llm"]["enabled"] is True
@@ -671,7 +671,7 @@ class TestBracketNotationSetAndNullGet:
         manager_with_models.set("llm.model_list[0].litellm_params.weight", 0)
         save_path = manager_with_models.save()
 
-        saved = json.loads(Path(save_path).read_text())
+        saved = json.loads(Path(save_path).read_text(encoding="utf-8"))
         assert saved["llm"]["model_list"][0]["litellm_params"]["weight"] == 0
         # Untouched sibling keys survive the minimal-diff save
         assert saved["llm"]["model_list"][0]["model_name"] == "default"

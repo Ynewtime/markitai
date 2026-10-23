@@ -91,7 +91,7 @@ class TestConfigListCommand:
         }
 
         with runner.isolated_filesystem():
-            Path("markitai.json").write_text(json.dumps(config_data))
+            Path("markitai.json").write_text(json.dumps(config_data), encoding="utf-8")
             result = runner.invoke(config_list)
 
         assert result.exit_code == 0
@@ -145,7 +145,7 @@ class TestConfigListCommand:
         }
 
         with runner.isolated_filesystem():
-            Path("markitai.json").write_text(json.dumps(config_data))
+            Path("markitai.json").write_text(json.dumps(config_data), encoding="utf-8")
             result = runner.invoke(
                 config_list,
                 format_args,
@@ -163,7 +163,7 @@ class TestConfigListCommand:
         config_data = {"fetch": {"jina": {"api_key": "jina-plaintext-secret"}}}
 
         with runner.isolated_filesystem():
-            Path("markitai.json").write_text(json.dumps(config_data))
+            Path("markitai.json").write_text(json.dumps(config_data), encoding="utf-8")
             result = runner.invoke(config_list, ["--show-secrets"])
 
         assert result.exit_code == 0

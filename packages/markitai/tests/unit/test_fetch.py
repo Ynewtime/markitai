@@ -642,7 +642,7 @@ class TestSPADomainCache:
                     }
                 },
             }
-            with open(cache_path, "w") as f:
+            with open(cache_path, "w", encoding="utf-8") as f:
                 json.dump(data, f)
 
             cache = SPADomainCache(cache_path)
@@ -667,7 +667,7 @@ class TestSPADomainCache:
                     }
                 },
             }
-            with open(cache_path, "w") as f:
+            with open(cache_path, "w", encoding="utf-8") as f:
                 json.dump(data, f)
 
             cache = SPADomainCache(cache_path)
@@ -681,7 +681,7 @@ class TestSPADomainCache:
             cache_path = Path(tmp_dir) / "spa_cache.json"
 
             # Write invalid JSON
-            with open(cache_path, "w") as f:
+            with open(cache_path, "w", encoding="utf-8") as f:
                 f.write("not valid json {{{")
 
             # Should not raise, just start fresh
@@ -713,7 +713,7 @@ class TestSPADomainCache:
                     },
                 },
             }
-            with open(cache_path, "w") as f:
+            with open(cache_path, "w", encoding="utf-8") as f:
                 json.dump(data, f)
 
             cache = SPADomainCache(cache_path)
@@ -1376,7 +1376,7 @@ class TestSPADomainCacheEdgeCases:
                     }
                 },
             }
-            with open(cache_path, "w") as f:
+            with open(cache_path, "w", encoding="utf-8") as f:
                 json.dump(data, f)
 
             cache = SPADomainCache(cache_path)
@@ -1398,7 +1398,7 @@ class TestSPADomainCacheEdgeCases:
                     }
                 },
             }
-            with open(cache_path, "w") as f:
+            with open(cache_path, "w", encoding="utf-8") as f:
                 json.dump(data, f)
 
             cache = SPADomainCache(cache_path)

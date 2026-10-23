@@ -441,7 +441,7 @@ class TestConfig:
             / "markitai"
             / "config.schema.json"
         )
-        schema = json.loads(schema_path.read_text())
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
         assert "OfficeConfig" in schema["$defs"]
         assert schema["properties"]["office"]["$ref"] == "#/$defs/OfficeConfig"
 

@@ -433,7 +433,7 @@ class TestCaseInsensitiveNames:
             from markitai.batch import ProcessResult
 
             out = out_dir / f"{file_path.name}.md"
-            out.write_text(file_path.read_text(), encoding="utf-8")
+            out.write_text(file_path.read_text(encoding="utf-8"), encoding="utf-8")
             return ProcessResult(success=True, output_path=str(out))
 
         monkeypatch.setattr("markitai.serve.jobs.process_file_item", convert)

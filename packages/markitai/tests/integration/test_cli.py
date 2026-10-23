@@ -1517,7 +1517,7 @@ class TestConfigOutputDir:
 
         # Copy sample file to project dir
         input_file = project_dir / "test.txt"
-        input_file.write_text(sample_txt.read_text())
+        input_file.write_text(sample_txt.read_text(encoding="utf-8"))
 
         # Run from project directory (where markitai.json exists)
 
@@ -1542,7 +1542,7 @@ class TestConfigOutputDir:
         """Test that single file mode with -o saves to file."""
         output_dir = tmp_path / "output"
         input_file = tmp_path / "test.txt"
-        input_file.write_text(sample_txt.read_text())
+        input_file.write_text(sample_txt.read_text(encoding="utf-8"))
 
         result = runner.invoke(app, [str(input_file), "-o", str(output_dir)])
 
@@ -1564,7 +1564,7 @@ class TestConfigOutputDir:
         config_file.write_text(json.dumps({"output": {"dir": str(config_output)}}))
 
         input_file = project_dir / "test.txt"
-        input_file.write_text(sample_txt.read_text())
+        input_file.write_text(sample_txt.read_text(encoding="utf-8"))
 
         # Run with explicit -o flag
 
@@ -1592,7 +1592,7 @@ class TestConfigOutputDir:
         config_file.write_text(json.dumps({"output": {"dir": str(output_dir)}}))
 
         input_file = tmp_path / "test.txt"
-        input_file.write_text(sample_txt.read_text())
+        input_file.write_text(sample_txt.read_text(encoding="utf-8"))
 
         # Run with explicit -c flag but no -o
         result = runner.invoke(app, [str(input_file), "-c", str(config_file)])

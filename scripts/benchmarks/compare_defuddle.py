@@ -138,7 +138,7 @@ def main() -> None:
     )
     native = []
     for item in cases:
-        html = Path(item["path"]).read_text()
+        html = Path(item["path"]).read_text(encoding="utf-8")
         times = []
         try:
             for _ in range(args.iterations):

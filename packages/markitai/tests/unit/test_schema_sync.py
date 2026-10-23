@@ -46,7 +46,7 @@ SCHEMA_PATH = (
 @pytest.fixture
 def schema() -> dict:
     """Load the JSON schema."""
-    with open(SCHEMA_PATH) as f:
+    with open(SCHEMA_PATH, encoding="utf-8") as f:
         return json.load(f)
 
 
