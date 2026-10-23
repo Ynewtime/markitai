@@ -1,8 +1,9 @@
 # URL fetching and extracted-page caching
 
 The native `static` strategy and anonymous `auto` strategy fetch HTTP(S) directly. They extract
-HTML, plain text and Markdown, or dispatch supported downloaded documents to
-the local format readers. Requests negotiate
+HTML, plain text and Markdown, read CSV, TSV, reStructuredText, Org, LaTeX and
+notebook text as the local readers read such files (a CSV becomes a table), or
+dispatch supported downloaded documents to the local format readers. Requests negotiate
 `Accept: text/markdown, text/html;q=0.9, */*;q=0.5`, follow at most ten redirects
 and bound response bodies to 500 MiB, the limit of a local input file (a
 larger declared length fails before reading). HTML links resolve against the final
@@ -94,6 +95,16 @@ A page read with a warning is not cached (see below). Very short pages are often
 undecidable, and there is no option to name the encoding. Plain-text responses
 (`text/*` other than HTML) follow a BOM, then the HTTP charset, then UTF-8, with
 replacement characters and no detection.
+
+A text format a local reader knows is converted as a file of that format would
+be: `text/csv` (or `application/csv`), `text/tab-separated-values`,
+`text/x-rst`, `text/org`, `text/x-tex`, `text/x-latex` and
+`application/x-ipynb+json`, and a `text/plain` response whose URL path ends in
+`.csv`, `.tsv`, `.rst`, `.org`, `.tex`, `.latex` or `.ipynb` (raw-file hosts
+serve every text file as `text/plain`). The HTTP charset decodes the body first;
+without one the reader detects the encoding as it does for a local file. A body
+the reader rejects stays text. Other `text/*` responses except XML, Markdown
+and JSON included, are kept as written.
 
 ## Failures, retries and redirects
 
@@ -715,8 +726,10 @@ or bytes. `application/pdf` and `application/x-pdf` identify a PDF representatio
 even when it is corrupt. Generic/absent MIME or a final `.pdf` path require a PDF
 version header within the first 1,024 bytes. A path suffix alone is insufficient.
 This preserves Rust's literal text behavior; the Python reference instead treats
-`text/plain` as generic and also uses Content-Disposition filenames. That broader
-filename precedence is not implemented here.
+`text/plain` as generic for every extension and also uses Content-Disposition
+filenames. Here only the text formats listed under
+[character encodings](#character-encodings) follow a `text/plain` path's
+extension, and Content-Disposition filenames are not read.
 
 An accepted 200 PDF invalidates the old HTML cache entry before native parsing,
 OCR or rendering. Later PDF failure therefore neither redownloads the body nor
@@ -742,7 +755,8 @@ removes the cost of a subsequent model request. The internal fetch-hit flag
 feeds the CLI's existing `fetch_cache_hit` field without adding a field to the
 bindings conversion JSON.
 
-Only successful HTML and `text/*` responses other than XML are eligible.
+Only successful HTML and `text/*` responses other than XML, and the CSV, TSV,
+markup and notebook types read above, are eligible.
 Admission also requires nonblank Markdown, no owned asset bytes and no
 extraction warnings. The warning restriction avoids replaying content without
 its original warning because warnings are not stored in the reference table

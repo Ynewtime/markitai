@@ -1725,11 +1725,78 @@ impl StaticResponse {
                 && (prefix.starts_with(b"<!doctype html") || prefix.starts_with(b"<html")))
         {
             StaticKind::Html
+        } else if let Some(extension) = self.text_format() {
+            StaticKind::Format(extension)
         } else if self.mime.starts_with("text/") && !self.mime.contains("xml") {
             StaticKind::Text
         } else {
             StaticKind::Other
         }
+    }
+
+    /// The local reader a text response is read with, as a file of that
+    /// extension would be: a CSV, TSV, reStructuredText, Org, LaTeX or
+    /// notebook type, or one of those extensions on the URL's path when the
+    /// type is the generic `text/plain` that raw-file hosts give every text
+    /// file. Plain text, Markdown, JSON and XML keep their own handling.
+    fn text_format(&self) -> Option<&'static str> {
+        const BY_EXTENSION: [&str; 7] = ["csv", "tsv", "rst", "org", "tex", "latex", "ipynb"];
+        let declared = match self.mime.as_str() {
+            "text/csv" | "application/csv" | "text/comma-separated-values" => Some("csv"),
+            "text/tab-separated-values" => Some("tsv"),
+            "text/x-rst" | "text/prs.fallenstein.rst" => Some("rst"),
+            "text/org" | "text/x-org" => Some("org"),
+            "text/x-tex" | "application/x-tex" => Some("tex"),
+            "text/x-latex" | "application/x-latex" => Some("latex"),
+            "application/x-ipynb+json" => Some("ipynb"),
+            _ => None,
+        };
+        declared.or_else(|| {
+            if self.mime != "text/plain" {
+                return None;
+            }
+            let extension = std::path::Path::new(self.effective_url.path())
+                .extension()?
+                .to_str()?
+                .to_ascii_lowercase();
+            BY_EXTENSION.into_iter().find(|known| *known == extension)
+        })
+    }
+
+    /// The document a text response in a format a local reader knows
+    /// becomes: the reader's result, from the body decoded with the
+    /// declared charset (without one, the reader detects the encoding as
+    /// for a local file). A body the reader rejects stays text.
+    fn read_text_format(&self, extension: &str) -> Result<Document> {
+        let declared_charset = self.content_type.split(';').skip(1).any(|parameter| {
+            parameter
+                .split_once('=')
+                .is_some_and(|(key, _)| key.trim().eq_ignore_ascii_case("charset"))
+        });
+        let bytes = if declared_charset {
+            std::borrow::Cow::Owned(
+                decode_text(&self.bytes, &self.content_type, false)
+                    .0
+                    .into_owned()
+                    .into_bytes(),
+            )
+        } else {
+            std::borrow::Cow::Borrowed(self.bytes.as_slice())
+        };
+        let mut file = tempfile::Builder::new()
+            .prefix("markitai-fetch-")
+            .suffix(&format!(".{extension}"))
+            .tempfile()?;
+        file.write_all(&bytes)?;
+        file.flush()?;
+        Ok(
+            formats::extract_as(file.path(), extension).unwrap_or_else(|_| Document {
+                markdown: decode_text(&self.bytes, &self.content_type, false)
+                    .0
+                    .into_owned(),
+                ..Default::default()
+            }),
+        )
     }
 
     fn is_pdf(&self) -> bool {
@@ -1776,6 +1843,8 @@ impl StaticResponse {
 #[derive(PartialEq, Eq)]
 enum StaticKind {
     Html,
+    /// Text in a format a local reader converts (its extension).
+    Format(&'static str),
     Text,
     Other,
 }
@@ -1904,6 +1973,7 @@ fn decode_static(response: Response, defer_pdf: bool) -> Result<StaticPage> {
             }
             document
         }
+        StaticKind::Format(extension) => response.read_text_format(extension)?,
         StaticKind::Text => Document {
             markdown: decode_text(&response.bytes, &response.content_type, false)
                 .0
@@ -2987,6 +3057,63 @@ mod cache_tests {
             assert_eq!(cached.document().markdown, example);
             assert!(cached.cache_hit);
             assert_eq!(server.requests().len(), 1);
+        }
+    }
+
+    /// A CSV, TSV or markup response is read by the local reader its type
+    /// names, or that its path names when it is served as `text/plain`, as
+    /// a file of that format would be; the result is cached like text.
+    #[test]
+    fn delimited_and_markup_text_go_through_the_local_readers() {
+        let table = "| stall | owner | goods | price |\n| --- | --- | --- | --- |\n| 1 | Avery | Bread | 2.50 |\n| 2 | Blake | Fish, chips | 6.00 |";
+        let csv = "stall,owner,goods,price\n1,Avery,Bread,2.50\n2,Blake,\"Fish, chips\",6.00\n";
+        let tsv =
+            "stall\towner\tgoods\tprice\n1\tAvery\tBread\t2.50\n2\tBlake\tFish, chips\t6.00\n";
+        for (path, content_type, body) in [
+            ("/page", "text/csv", csv),
+            ("/page", "application/csv", csv),
+            ("/page", "text/tab-separated-values", tsv),
+            ("/stalls.csv", "text/plain; charset=utf-8", csv),
+            ("/stalls.tsv", "text/plain", tsv),
+        ] {
+            let (_directory, cfg) = settings();
+            let server = Server::new(vec![Reply::text(body).header("Content-Type", content_type)]);
+            let fresh = fetch_with_context(&server.url(path), &cfg, None, true).unwrap();
+            assert_eq!(
+                fresh.document().markdown.trim(),
+                table,
+                "{path} {content_type}"
+            );
+            let cached = fetch_with_context(&server.url(path), &cfg, None, true).unwrap();
+            assert!(cached.cache_hit, "{path} {content_type}");
+            assert_eq!(cached.document().markdown, fresh.document().markdown);
+        }
+        // A declared charset decodes the body before the reader sees it.
+        let (_directory, mut cfg) = settings();
+        cfg["cache"]["enabled"] = json!(false);
+        let mut reply = Reply::text("").header("Content-Type", "text/csv; charset=gbk");
+        reply.body = b"name,goods\n\xb5\xcf,\xb7\xe4\xc3\xdb\n".to_vec();
+        let server = Server::new(vec![reply]);
+        assert_eq!(
+            run(&server, &cfg).document().markdown.trim(),
+            "| name | goods |\n| --- | --- |\n| 迪 | 蜂蜜 |"
+        );
+        // reStructuredText becomes Markdown; plain text and Markdown, and a
+        // CSV path served as Markdown, stay as written.
+        let server = Server::new(vec![
+            Reply::text("Market notes\n============\n\nThe stalls open at *eight*.\n")
+                .header("Content-Type", "text/x-rst"),
+        ]);
+        let markdown = run(&server, &cfg).document().markdown.clone();
+        assert!(markdown.starts_with("# Market notes"), "{markdown}");
+        for (path, content_type) in [
+            ("/notes.txt", "text/plain"),
+            ("/page", "text/plain"),
+            ("/stalls.csv", "text/markdown"),
+        ] {
+            let server = Server::new(vec![Reply::text(csv).header("Content-Type", content_type)]);
+            let outcome = fetch_with_context(&server.url(path), &cfg, None, true).unwrap();
+            assert_eq!(outcome.document().markdown, csv, "{path} {content_type}");
         }
     }
 
