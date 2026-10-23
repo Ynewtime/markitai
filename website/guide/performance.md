@@ -27,9 +27,9 @@ or machine. URL timings run over loopback HTTP, excluding internet latency and
 any remote service's cache. The frozen baseline already contained the Fake-IP
 and CJK fixes, so this does not compare against a released version.
 
-[`2026-09-14.json`](https://github.com/Ynewtime/markitai/blob/main/scripts/benchmarks/results/2026-09-14.json)
+[`2026-09-14.json`](https://github.com/Ynewtime/markitai/blob/python/scripts/benchmarks/results/2026-09-14.json)
 holds the full record; the
-[benchmark guide](https://github.com/Ynewtime/markitai/blob/main/scripts/benchmarks/README.md)
+[benchmark guide](https://github.com/Ynewtime/markitai/blob/python/scripts/benchmarks/README.md)
 has the commands to reproduce it.
 
 ## PDF extraction, LLM batches and the web workspace (25 September 2026)

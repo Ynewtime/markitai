@@ -43,7 +43,7 @@ markitai config validate
 ### Full Configuration Example
 
 Every setting, with the value it takes when nothing sets it. The values come straight from the models in
-[`config.py`](https://github.com/Ynewtime/markitai/blob/main/packages/markitai/src/markitai/config.py);
+[`config.py`](https://github.com/Ynewtime/markitai/blob/python/packages/markitai/src/markitai/config.py);
 `markitai config list` prints your own effective values.
 
 :::: details markitai.json with all defaults

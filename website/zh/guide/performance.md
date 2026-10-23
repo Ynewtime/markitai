@@ -25,8 +25,8 @@ URL 提取本地优先：短文和中日韩正文通常在 static 策略内就�
 修复，因此这不算与某个已发布版本的对比。
 
 完整记录见
-[`2026-09-14.json`](https://github.com/Ynewtime/markitai/blob/main/scripts/benchmarks/results/2026-09-14.json)，
-复现命令见[基准指南](https://github.com/Ynewtime/markitai/blob/main/scripts/benchmarks/README.md)。
+[`2026-09-14.json`](https://github.com/Ynewtime/markitai/blob/python/scripts/benchmarks/results/2026-09-14.json)，
+复现命令见[基准指南](https://github.com/Ynewtime/markitai/blob/python/scripts/benchmarks/README.md)。
 
 ## PDF 提取、LLM 批处理与网页工作台（2026-09-25）
 

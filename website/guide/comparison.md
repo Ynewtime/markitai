@@ -29,4 +29,4 @@ Two of them also run inside markitai: markitdown converts the Office formats, an
 
 ## License
 
-markitai's own source code is [MIT](https://github.com/Ynewtime/markitai/blob/main/LICENSE). The default installation does not stay MIT throughout: the PDF engine, PyMuPDF from Artifex Software, comes dual-licensed **AGPL-3.0 or commercial**. Local use is unaffected. Redistributing the combined work, or offering it to others over a network, triggers AGPL-3.0 obligations. [NOTICE](https://github.com/Ynewtime/markitai/blob/main/NOTICE) has the full attribution and the exact dependency list.
+markitai's own source code is [MIT](https://github.com/Ynewtime/markitai/blob/main/LICENSE). The default installation does not stay MIT throughout: the PDF engine, PyMuPDF from Artifex Software, comes dual-licensed **AGPL-3.0 or commercial**. Local use is unaffected. Redistributing the combined work, or offering it to others over a network, triggers AGPL-3.0 obligations. [NOTICE](https://github.com/Ynewtime/markitai/blob/python/NOTICE) has the full attribution and the exact dependency list.

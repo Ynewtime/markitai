@@ -29,4 +29,4 @@ anydoc 追求零依赖的速度，docling 追求 RAG 管线里的 ML 文档结�
 
 ## 许可
 
-markitai 自身源码采用 [MIT](https://github.com/Ynewtime/markitai/blob/main/LICENSE)。默认安装并非全部 MIT：PDF 引擎用的是 Artifex Software 的 PyMuPDF，**AGPL-3.0 或商业**双许可。本地使用不受影响。再分发这一组合作品，或通过网络向他人提供服务，就会触发 AGPL-3.0 义务。完整的第三方归属与依赖清单见 [NOTICE](https://github.com/Ynewtime/markitai/blob/main/NOTICE)。
+markitai 自身源码采用 [MIT](https://github.com/Ynewtime/markitai/blob/main/LICENSE)。默认安装并非全部 MIT：PDF 引擎用的是 Artifex Software 的 PyMuPDF，**AGPL-3.0 或商业**双许可。本地使用不受影响。再分发这一组合作品，或通过网络向他人提供服务，就会触发 AGPL-3.0 义务。完整的第三方归属与依赖清单见 [NOTICE](https://github.com/Ynewtime/markitai/blob/python/NOTICE)。

@@ -43,7 +43,7 @@ markitai config validate
 ### 完整配置示例
 
 每个设置在没有任何配置时取的值。这些值直接来自
-[`config.py`](https://github.com/Ynewtime/markitai/blob/main/packages/markitai/src/markitai/config.py)
+[`config.py`](https://github.com/Ynewtime/markitai/blob/python/packages/markitai/src/markitai/config.py)
 中的模型定义；`markitai config list` 打印你这台机器上的实际生效值。
 
 :::: details 含全部默认值的 markitai.json
