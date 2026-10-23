@@ -1571,6 +1571,10 @@ mod tests {
                 "https://example.test/files/REDACTED/missing",
             ),
             (
+                "https://example.test/verify/123456?next=/home",
+                "https://example.test/verify/REDACTED?next=/home",
+            ),
+            (
                 "https://example.test/reset/how-to-reset-a-router",
                 "https://example.test/reset/how-to-reset-a-router",
             ),

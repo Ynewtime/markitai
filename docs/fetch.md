@@ -444,7 +444,8 @@ a query or fragment parameter named like a secret (`token`, `key`, `secret`,
 `code`, `sid`, `sig`, `ticket`, `session`, `jwt`, `otp`, `apiKey`, `access_key`
 and similar spellings), a `token=…` path segment, a JWT or a long
 random-looking path segment, or a token-like segment after `/reset/`,
-`/verify/`, `/token/`, `/invite/`, `/session/` and similar routes. A list left without a step that can run becomes
+`/verify/`, `/token/`, `/invite/`, `/session/` and similar routes (a short
+code with a digit, `/verify/123456`, counts). A list left without a step that can run becomes
 the local default. Local steps keep their rules: a page that needs JavaScript,
 a challenge or a verification page goes on to the browser; a script-rendered
 shell keeps its static text when nothing better comes; any other static failure

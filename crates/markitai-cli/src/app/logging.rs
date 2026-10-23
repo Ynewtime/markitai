@@ -675,6 +675,11 @@ mod tests {
             ),
             "Converting http://127.0.0.1:8080/reset/[REDACTED] and https://example.test/[REDACTED]/page"
         );
+        // A short code after a token route, as the log always hid it.
+        assert_eq!(
+            redact("Fetched https://example.test/verify/123456", &[]),
+            "Fetched https://example.test/verify/[REDACTED]"
+        );
         // Ordinary segments, percent-escaped words included, stay readable.
         assert_eq!(
             redact(

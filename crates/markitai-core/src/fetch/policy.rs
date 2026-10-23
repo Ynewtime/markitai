@@ -396,10 +396,21 @@ fn uuid(value: &str) -> bool {
 }
 
 /// A segment after a route such as `/reset/` or `/token/` that looks like a
-/// token rather than a word.
+/// token rather than a word: a short code holding a digit (`/verify/123456`,
+/// `/invite/X7k2p9`) among them, as the log always hid them.
 fn contextual_token(segment: &str) -> bool {
     if segment.len() < 8 {
-        return false;
+        return segment.len() >= 4
+            && url_safe(segment)
+            && segment.bytes().any(|byte| byte.is_ascii_digit());
+    }
+    if url_safe(segment)
+        && segment.bytes().any(|byte| byte.is_ascii_digit())
+        && segment.bytes().any(|byte| byte.is_ascii_alphabetic())
+        && !segment.contains(['-', '_', '.'])
+    {
+        // A code of letters and digits (`ab12cd34`), not a slug of words.
+        return true;
     }
     if uuid(segment) || opaque(segment) {
         return true;
@@ -833,6 +844,10 @@ mod tests {
             // Percent escapes are read before judging.
             ("/token%3DZx9Yw8Vu7Ts6Rq5Po4Nm/page", vec![1]),
             ("/reset/how-to-reset-a-router", vec![]),
+            ("/verify/123456", vec![2]),
+            ("/invite/X7k2p9/accept", vec![2]),
+            ("/reset/ab12cd34", vec![2]),
+            ("/session/v2", vec![]),
             ("/wiki/%E4%B8%AD%E6%96%87", vec![]),
             ("/post/3f1c2a9b-4d5e-4f60-8a7b-1c2d3e4f5a6b", vec![]),
             ("/page=2/author/jane-doe", vec![]),
