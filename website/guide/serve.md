@@ -4,8 +4,8 @@
 
 Jobs and history stay on disk. Nothing leaves the machine except what goes to the fetch strategies and LLM providers you configure.
 
-![The markitai web workbench: a converted one-page PDF open in a window centred over the dimmed list of conversions, on its Compare tab. The original page on the left and its Markdown on the right both outline the same diagram: Files and URLs, markitai, Markdown.](/workbench.png){.light-only}
-![The markitai web workbench: a converted one-page PDF open in a window centred over the dimmed list of conversions, on its Compare tab. The original page on the left and its Markdown on the right both outline the same diagram: Files and URLs, markitai, Markdown.](/workbench.dark.png){.dark-only}
+![The markitai web workbench: a converted one-page PDF open in a window centred over the dimmed list of conversions, on its Compare tab. The original page on the left and its Markdown on the right both outline the same diagram: Files and URLs, markitai, Markdown.](../images/workbench.png){.light-only}
+![The markitai web workbench: a converted one-page PDF open in a window centred over the dimmed list of conversions, on its Compare tab. The original page on the left and its Markdown on the right both outline the same diagram: Files and URLs, markitai, Markdown.](../images/workbench.dark.png){.dark-only}
 
 ## Starting the Server
 

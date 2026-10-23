@@ -84,6 +84,14 @@ site. `website/public/setup.sh` and `setup.ps1` are the installers served as
 to run them against a checkout of the `python` branch. The website workflows
 are described in [native CI](ci.md#website).
 
+The workbench screenshots on the home page and the serve guide are
+`website/images/workbench[.zh][.dark].{png,webp}`, referenced by relative path
+so the build gives each a content-hashed URL under `/assets/` (a new shot is
+never hidden by a cached old one; keep them out of `public/`). Retake all eight
+from a clean commit with `cargo build --release --locked -p markitai-cli` and
+`uv run scripts/website_shots.py`; its docstring lists the inputs it fetches
+and what it needs installed.
+
 A ```` ```mermaid ```` block becomes SVG while the site builds
 (`website/.vitepress/mermaid.ts`, Pele); a diagram Pele cannot draw fails the
 build. `website/NOTICE` credits the site's build dependencies, separately from

@@ -4,8 +4,8 @@
 
 任务和历史保存在磁盘上。除了发给你配置的抓取策略和 LLM 提供商的内容，不会有任何东西离开本机。
 
-![markitai 网页工作台：一个已转换的单页 PDF 在窗口中打开，窗口居中于变暗的转换任务列表上方，位于「对照」标签。左侧的原件页面和右侧的 Markdown 同时框出同一张图：文件和网页、markitai、Markdown。](/workbench.zh.png){.light-only}
-![markitai 网页工作台：一个已转换的单页 PDF 在窗口中打开，窗口居中于变暗的转换任务列表上方，位于「对照」标签。左侧的原件页面和右侧的 Markdown 同时框出同一张图：文件和网页、markitai、Markdown。](/workbench.zh.dark.png){.dark-only}
+![markitai 网页工作台：一个已转换的单页 PDF 在窗口中打开，窗口居中于变暗的转换任务列表上方，位于「对照」标签。左侧的原件页面和右侧的 Markdown 同时框出同一张图：文件和网页、markitai、Markdown。](../../images/workbench.zh.png){.light-only}
+![markitai 网页工作台：一个已转换的单页 PDF 在窗口中打开，窗口居中于变暗的转换任务列表上方，位于「对照」标签。左侧的原件页面和右侧的 Markdown 同时框出同一张图：文件和网页、markitai、Markdown。](../../images/workbench.zh.dark.png){.dark-only}
 
 ## 启动服务
 
