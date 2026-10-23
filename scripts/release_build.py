@@ -14,6 +14,7 @@
   smoke     extract a release archive and exercise the installed CLI
   smoke-wheel  install a wheel into a new venv and exercise it
   smoke-sdist  build a wheel from the sdist with pip and exercise it
+  licenses  check every archive and wheel carries the same license set
   sums      write SHA256SUMS for the release assets
 
 Archives are `markitai-v<version>-<target>.tar.gz` (`.zip` on Windows) with
@@ -376,7 +377,7 @@ def build_cli(target, output):
     archive = output / archive_name(version, target)
     if archive.exists():
         archive.unlink()
-    licenses = cli_attribution(ROOT, package_attribution(ROOT))
+    licenses = release_attribution(ROOT)
     documentation = cli_documentation(ROOT)
     if windows:
         # One optimized executable under all three names; argv[0] selects MCP mode.
@@ -386,6 +387,74 @@ def build_cli(target, output):
     print(json.dumps({"archive": archive.name, **identity(archive), "executable": {**identity(binary), **info}},
                      indent=2), flush=True)
     return archive
+
+
+def release_attribution(root):
+    """The license notices every CLI archive and wheel carries. A wheel embeds
+    and serves the same workbench (web libraries, the Inter font) as the CLI,
+    so it carries the CLI's set: the archive root, the wheel's
+    `.dist-info/licenses/`."""
+    return cli_attribution(root, package_attribution(root))
+
+
+def archive_attribution(archive):
+    """The attribution files of a CLI archive: everything but the executables and guides."""
+    skip = {"markitai", "mkai", "markitai-mcp", "markitai.exe", "mkai.exe", "markitai-mcp.exe",
+            *cli_documentation(ROOT)}
+    if archive.name.endswith(".zip"):
+        with zipfile.ZipFile(archive) as bundle:
+            return {item.filename: bundle.read(item) for item in bundle.infolist()
+                    if not item.is_dir() and item.filename not in skip}
+    with tarfile.open(archive, "r:gz") as bundle:
+        return {member.name: bundle.extractfile(member).read() for member in bundle.getmembers()
+                if member.isfile() and member.name not in skip}
+
+
+def wheel_attribution(wheel):
+    """The files under a wheel's `.dist-info/licenses/`, by their path below it."""
+    with zipfile.ZipFile(wheel) as bundle:
+        found = {}
+        for name in bundle.namelist():
+            head, separator, relative = name.partition(".dist-info/licenses/")
+            if separator and "/" not in head and relative and not name.endswith("/"):
+                found[relative] = bundle.read(name)
+        return found
+
+
+def attribution_differences(label, found, expected):
+    """What `found` lacks, adds or changes against `expected`, as messages."""
+    problems = [f"{label} lacks {name}" for name in sorted(expected.keys() - found.keys())]
+    problems += [f"{label} has unexpected {name}" for name in sorted(found.keys() - expected.keys())]
+    problems += [f"{label} has a different {name}" for name in sorted(expected.keys() & found.keys())
+                 if found[name] != expected[name]]
+    return problems
+
+
+def check_release_licenses(directory, version=None):
+    """Every CLI archive and wheel in `directory` carries the same license set, the checkout's."""
+    version = version or workspace_version((ROOT / "Cargo.toml").read_text(encoding="utf-8"))
+    expected = release_attribution(ROOT)
+    problems, checked = [], []
+    for target, tag in TARGETS.items():
+        archive = directory / archive_name(version, target)
+        wheel = directory / f"markitai-{python_version(version)}-cp310-abi3-{tag}.whl"
+        sets = {}
+        if archive.is_file():
+            sets[archive.name] = archive_attribution(archive)
+        if wheel.is_file():
+            sets[wheel.name] = wheel_attribution(wheel)
+        for name, found in sets.items():
+            problems += attribution_differences(name, found, expected)
+            checked.append(name)
+        if len(sets) == 2:
+            first, second = sets.values()
+            if first != second:
+                problems.append(f"{archive.name} and {wheel.name} carry different license sets")
+    if not checked:
+        raise SystemExit(f"No release archives or wheels for {version} in {directory}")
+    if problems:
+        raise SystemExit("\n".join(problems))
+    print(f"{len(checked)} packages carry the same {len(expected)} license files: " + ", ".join(checked))
 
 
 def _safe_member(name):
@@ -468,6 +537,9 @@ def smoke_archive(archive, target):
         work = Path(directory)
         install = work / "安装 with spaces"
         shape = extract_release_archive(archive, install)
+        problems = attribution_differences(archive.name, archive_attribution(archive), release_attribution(ROOT))
+        if problems:
+            raise SystemExit("\n".join(problems))
         extension = ".exe" if windows else ""
         names = [install / (name + extension) for name in ["markitai", "mkai", "markitai-mcp"]]
         verify_target_executable(names[0], target)
@@ -505,13 +577,18 @@ def build_wheel(target, output):
         wheel = output / built[0].name
         if wheel.exists():
             wheel.unlink()
-        supplement_wheel_licenses(built[0], wheel, package_attribution(ROOT), ROOT)
+        supplement_wheel_licenses(built[0], wheel, release_attribution(ROOT), ROOT)
     print(json.dumps({"wheel": wheel.name, **identity(wheel)}, indent=2), flush=True)
     return wheel
 
 
-def smoke_wheel(wheel, python, run_tests):
+def smoke_wheel(wheel, python, run_tests, release=True):
+    """`release`: a wheel `wheel` built, which carries the release license set
+    (pip's wheel from the sdist has only maturin's)."""
     version = workspace_version((ROOT / "Cargo.toml").read_text(encoding="utf-8"))
+    problems = release and attribution_differences(wheel.name, wheel_attribution(wheel), release_attribution(ROOT))
+    if problems:
+        raise SystemExit("\n".join(problems))
     with tempfile.TemporaryDirectory(prefix="markitai-wheel-smoke-") as directory:
         work = Path(directory)
         environment = isolated_environment(work)
@@ -557,7 +634,7 @@ def smoke_sdist(sdist, python):
         built = list((work / "wheels").glob("markitai-*.whl"))
         if len(built) != 1:
             raise SystemExit(f"pip built {len(built)} wheels from the sdist")
-        smoke_wheel(built[0], python, run_tests=False)
+        smoke_wheel(built[0], python, run_tests=False, release=False)
 
 
 def tracked_files(directory):
@@ -655,6 +732,9 @@ def main(argv=None):
     sdist_smoke = commands.add_parser("smoke-sdist")
     sdist_smoke.add_argument("--python", default=sys.executable)
     sdist_smoke.add_argument("sdist", type=Path)
+    licenses = commands.add_parser("licenses")
+    licenses.add_argument("--version", help="the release's version (default: Cargo's)")
+    licenses.add_argument("directory", type=Path)
     sums = commands.add_parser("sums")
     sums.add_argument("--version", help="require exactly this release's assets")
     sums.add_argument("directory", type=Path)
@@ -689,6 +769,8 @@ def main(argv=None):
         smoke_wheel(args.wheel.resolve(), args.python, not args.no_tests)
     elif args.command == "smoke-sdist":
         smoke_sdist(args.sdist.resolve(), args.python)
+    elif args.command == "licenses":
+        check_release_licenses(args.directory, args.version)
     elif args.command == "sums":
         write_sums(args.directory, args.version)
     return 0

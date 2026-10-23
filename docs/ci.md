@@ -147,7 +147,9 @@ separately from a single executable.
 CLI, FFI and language packages carry project and upstream attribution,
 including `licenses/hayro/`, `licenses/paddleocr/`, pricing and
 Tailwind palette (`licenses/tailwind/`) notices. CLI archives also include `vendor/web/` attribution and the explicit
-public Markdown whitelist in `scripts/cli_documentation.py`. Models and browser
+public Markdown whitelist in `scripts/cli_documentation.py`; release wheels, which serve the same workbench,
+carry the same `vendor/web/` attribution under `.dist-info/licenses/` (`release_build.py licenses` compares the
+sets). Models and browser
 runtimes are not included. The drivers verify source, archive and installed
 notice bytes rather than trusting a filename alone.
 
@@ -194,9 +196,9 @@ a tag). It uses no caches and no stored secrets. Each step runs a subcommand of
 | `prepare` | Checks the tag names the Cargo version and that `bindings/python/pyproject.toml` and `server.json` agree, that a published tag is on `main`, and writes the release notes: the tag's `## [X.Y.Z]` section of `CHANGELOG.md` with a link to the full changelog (a release without one fails). A section over 100,000 characters is represented by its lead, the summary between the heading and its first `###`; without one, the run fails here, dry runs too (GitHub refuses a Release body over 125,000 characters). |
 | `test` | `scripts/check.py` on the six release platforms. |
 | `cli` | `markitai-v<version>-<target>.tar.gz` (`.zip` on Windows) for `aarch64-apple-darwin`, `x86_64-apple-darwin`, `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`, `x86_64-pc-windows-msvc` and `aarch64-pc-windows-msvc`, built natively, then extracted and run (version, aliases, Markdown round trip, MCP tools, `doctor --json`). |
-| `wheel` | One abi3 wheel per platform (`cp310-abi3`, `macosx_11_0`, `manylinux_2_28`, `win_amd64`, `win_arm64`), installed into a new venv: its three commands, the Python API and `bindings/python/tests`. |
+| `wheel` | One abi3 wheel per platform (`cp310-abi3`, `macosx_11_0`, `manylinux_2_28`, `win_amd64`, `win_arm64`) with the CLI archives' license set, installed into a new venv: its three commands, the Python API and `bindings/python/tests`. |
 | `sdist` | The source distribution, then a wheel pip builds from it alone. |
-| `github-release` | `SHA256SUMS` over every asset, build-provenance attestations, and the Release with the notes, created as a draft with all assets and then published. |
+| `github-release` | A check that each target's archive and wheel carry the same license files, `SHA256SUMS` over every asset, build-provenance attestations, and the Release with the notes, created as a draft with all assets and then published. |
 | `pypi` | Wheels and sdist by trusted publishing from the `pypi` environment (the action also uploads PEP 740 attestations). |
 | `mcp-registry` | `server.json` (`io.github.Ynewtime/markitai`, pointing at the PyPI release) through `mcp-publisher` with GitHub OIDC, once PyPI lists the version. |
 

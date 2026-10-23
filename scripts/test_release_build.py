@@ -205,6 +205,62 @@ class AssetTests(unittest.TestCase):
         self.assertEqual(len(set(images)), 2)
 
 
+class LicenseSetTests(unittest.TestCase):
+    """Wheels embed and serve the CLI's workbench, so they carry the archives' license set."""
+
+    def test_wheels_carry_the_web_licenses(self):
+        expected = release_build.release_attribution(ROOT)
+        for name in ["LICENSE", "NOTICE", "vendor/web/Inter-OFL.txt", "vendor/web/KaTeX-LICENSE",
+                     "vendor/web/marked-LICENSE", "vendor/web/provenance.json"]:
+            self.assertIn(name, expected)
+        source = Path(release_build.__file__).read_text(encoding="utf-8")
+        for function in ["build_cli", "build_wheel"]:
+            body = source.split(f"def {function}(", 1)[1].split("\ndef ", 1)[0]
+            self.assertIn("release_attribution(ROOT)", body)
+            self.assertNotIn("package_attribution(ROOT)", body)
+
+    def write(self, directory, version, licenses, drop=None):
+        target = "aarch64-unknown-linux-gnu"
+        archive = directory / archive_name(version, target)
+        members = [("markitai", "file", 0o755, b"\x7fELF"), ("mkai", "link", 0o777, "markitai"),
+                   ("README.md", "file", 0o644, b"# guide")]
+        members += [(name, "file", 0o644, value) for name, value in licenses.items()]
+        tar_with(archive, members)
+        python = python_version(version)
+        wheel = directory / f"markitai-{python}-cp310-abi3-{TARGETS[target]}.whl"
+        with zipfile.ZipFile(wheel, "w") as bundle:
+            bundle.writestr("markitai/__init__.py", b"")
+            bundle.writestr(f"markitai-{python}.dist-info/METADATA", b"Name: markitai\n")
+            for name, value in licenses.items():
+                if name != drop:
+                    bundle.writestr(f"markitai-{python}.dist-info/licenses/{name}", value)
+        return archive, wheel
+
+    def test_archive_and_wheel_sets_are_compared(self):
+        licenses = release_build.release_attribution(ROOT)
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            archive, wheel = self.write(folder, "9.8.7", licenses)
+            self.assertEqual(release_build.archive_attribution(archive), licenses)
+            self.assertEqual(release_build.wheel_attribution(wheel), licenses)
+            with contextlib.redirect_stdout(io.StringIO()) as printed:
+                release_build.check_release_licenses(folder, "9.8.7")
+            self.assertIn("2 packages", printed.getvalue())
+        with tempfile.TemporaryDirectory() as directory:
+            self.write(Path(directory), "9.8.7", licenses, drop="vendor/web/Inter-OFL.txt")
+            with self.assertRaises(SystemExit) as raised:
+                release_build.check_release_licenses(Path(directory), "9.8.7")
+            self.assertIn("lacks vendor/web/Inter-OFL.txt", str(raised.exception))
+            self.assertIn("carry different license sets", str(raised.exception))
+        with tempfile.TemporaryDirectory() as directory, self.assertRaises(SystemExit):
+            release_build.check_release_licenses(Path(directory), "9.8.7")
+
+    def test_the_release_checks_the_downloaded_assets(self):
+        workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+        job = workflow.split("\n  github-release:", 1)[1]
+        self.assertLess(job.index("release_build.py licenses"), job.index("release_build.py sums"))
+
+
 class SdistTests(unittest.TestCase):
     def test_files_embedded_from_outside_a_crate_are_in_the_sdist(self):
         """maturin copies each crate's own files; anything else a build embeds is in SDIST_EXTRA."""
