@@ -33,7 +33,7 @@ claude mcp add markitai -- markitai-mcp
 Use the absolute path the setup script printed (`%LOCALAPPDATA%\Programs\markitai\markitai-mcp.exe` on Windows): a desktop client may not read your shell's `PATH`.
 
 ::: details Without installing: uvx
-`uvx` fetches the PyPI package on demand; it carries the same program:
+`uvx` fetches the PyPI package on demand; it carries the same program (on the six platforms PyPI has wheels for; elsewhere it would fetch 1.x):
 
 ```json
 { "mcpServers": { "markitai": { "command": "uvx", "args": ["--from", "markitai", "markitai-mcp"] } } }

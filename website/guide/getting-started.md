@@ -19,17 +19,38 @@ With a terminal it then offers the optional parts, `markitai doctor --fix`: loca
 | Variable | Effect |
 |----------|--------|
 | `MARKITAI_VERSION=X.Y.Z` | Install this release instead of the latest |
-| `MARKITAI_INSTALL_DIR=DIR` | Another command folder |
+| `MARKITAI_INSTALL_DIR=DIR` | Another folder; later updates and uninstalls reuse it. On Windows use an empty or dedicated folder: setup refuses one that already holds files of the names it installs |
 | `MARKITAI_INSTALL_OPTIONAL=1` / `0` | Prepare the optional parts without asking / never |
 | `MARKITAI_DOWNLOAD_URL=URL` | Download from a mirror of the GitHub Releases |
 | `NO_COLOR=1` | No colours |
 
-Run the command again to update. To remove markitai (your `~/.markitai` stays): `curl -fsSL https://markitai.dev/setup.sh | sh -s -- --uninstall`, or on Windows set `$env:MARKITAI_UNINSTALL = "1"` before the PowerShell command.
+Run the install command again to update. Setup keeps a receipt of the files it installed: an update replaces and an uninstall removes only those, and on Windows the user Path entry goes only if setup added it. The new release is staged before anything is replaced, so a failed Windows update leaves the previous one in place. To uninstall (your `~/.markitai` stays):
+
+::: code-group
+```bash [Linux/macOS]
+curl -fsSL https://markitai.dev/setup.sh | sh -s -- --uninstall
+```
+
+```powershell [Windows]
+& ([scriptblock]::Create((irm https://markitai.dev/setup.ps1))) -Uninstall
+```
+:::
 
 ::: details Other ways to install
-**Release archives.** Each [GitHub Release](https://github.com/Ynewtime/markitai/releases) has `markitai-v<version>-<target>.tar.gz` (`.zip` on Windows) for macOS (Apple silicon, Intel), Linux (x86-64, ARM64) and Windows (x64, ARM64). Unpack it anywhere and put the folder on your `PATH`. Check a download with `sha256sum -c SHA256SUMS --ignore-missing`, its origin with `gh attestation verify <file> --repo Ynewtime/markitai`.
+**Release archives.** Each [GitHub Release](https://github.com/Ynewtime/markitai/releases) has one archive per platform, `SHA256SUMS` and build provenance:
 
-**pip or uv.** The `markitai` package on PyPI carries the same program and installs the same three commands (Python 3.10 or later; the [Python API](/guide/python-api) comes with it):
+| Platform | Archive |
+|----------|---------|
+| macOS, Apple silicon | `markitai-v<version>-aarch64-apple-darwin.tar.gz` |
+| macOS, Intel | `markitai-v<version>-x86_64-apple-darwin.tar.gz` |
+| Linux x86-64 | `markitai-v<version>-x86_64-unknown-linux-gnu.tar.gz` |
+| Linux ARM64 | `markitai-v<version>-aarch64-unknown-linux-gnu.tar.gz` |
+| Windows x64 | `markitai-v<version>-x86_64-pc-windows-msvc.zip` |
+| Windows ARM64 | `markitai-v<version>-aarch64-pc-windows-msvc.zip` |
+
+Unpack it into a new folder, keep its files together and put the folder on your `PATH`. Check a download with `sha256sum -c SHA256SUMS --ignore-missing` (macOS: `grep <archive> SHA256SUMS | shasum -a 256 -c`), its origin with `gh attestation verify <archive> --repo Ynewtime/markitai`.
+
+**pip or uv.** The `markitai` package on PyPI carries the same program and installs the same three commands (Python 3.10 or later; the [Python API](/guide/python-api) comes with it). PyPI has wheels for the same six platforms and no source package, so anywhere else pip installs or keeps markitai 1.x:
 
 ```bash
 uv tool install markitai     # or: pipx install markitai, pip install markitai
@@ -41,6 +62,8 @@ uv tool install markitai     # or: pipx install markitai, pip install markitai
 git clone https://github.com/Ynewtime/markitai && cd markitai
 cargo build --release --locked -p markitai-cli   # target/release/markitai and mkai
 ```
+
+The release's source archive, `markitai-<version>.tar.gz`, builds the Python package with Rust installed on a platform without a wheel: `pip install markitai-<version>.tar.gz`.
 :::
 
 ## Your First Conversion
@@ -130,11 +153,11 @@ Every reader is built in, legacy `.doc`, `.ppt` and `.xls` included. Three thing
 | Platform | Note |
 |----------|------|
 | macOS | 11 or later, Apple silicon or Intel. Local OCR can use the system's Vision engine (`MARKITAI_OCR_BACKEND=vision`) |
-| Linux | x86-64 or ARM64 with glibc 2.28 or later; musl (Alpine) is not supported |
+| Linux | x86-64 or ARM64 with glibc 2.28 or later (RHEL 8, Debian 10, Ubuntu 18.10 and newer); musl (Alpine) is not supported |
 | Windows | x64 or ARM64, both native builds |
 
 ::: details macOS: "Apple cannot verify" a download
-The builds are not notarized yet. The setup script and `curl` downloads are not affected; a file your browser downloaded is. Once you trust it, clear its quarantine mark: `xattr -d com.apple.quarantine markitai-v<version>-aarch64-apple-darwin.tar.gz`.
+The builds are not code-signed or notarized. The setup script and `curl` downloads are not affected; a file your browser downloaded is. Once you trust it, clear its quarantine mark: `xattr -d com.apple.quarantine markitai-v<version>-aarch64-apple-darwin.tar.gz`.
 :::
 
 ## Next Steps

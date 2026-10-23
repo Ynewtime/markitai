@@ -453,7 +453,7 @@ PDF 页面、Office 页面和幻灯片存为 JPEG，URL 截整页，放在 `.mar
 | `cyrillic` | 其他西里尔文语言 |
 | `hi`（也可写 `mr`、`ne`）、`devanagari` | 印地语、马拉地语、尼泊尔语 |
 
-可以带地区后缀（`pt-BR`）。Vision 只接受单一语言（`en-US`、`zh`、`ja`、`ko` 等），不接受 `latin` 或 `cyrillic`。
+可以带地区后缀（`pt-BR`）。Vision 只接受单一语言（`en-US`、`zh`、`ja`、`ko` 等），不接受 `latin` 或 `cyrillic`。在 macOS 15 上，默认语言下的 Vision 可能用中文识别器读日文：读日文时请设 `ocr.lang: ja`。
 
 ## 批处理配置
 

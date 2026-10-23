@@ -453,7 +453,7 @@ Local OCR is built in: PaddleOCR models run inside markitai on every system. The
 | `cyrillic` | Other Cyrillic languages |
 | `hi` (or `mr`, `ne`), `devanagari` | Hindi, Marathi, Nepali |
 
-A region suffix is accepted (`pt-BR`). Vision takes single languages (`en-US`, `zh`, `ja`, `ko`, ...), not `latin` or `cyrillic`.
+A region suffix is accepted (`pt-BR`). Vision takes single languages (`en-US`, `zh`, `ja`, `ko`, ...), not `latin` or `cyrillic`. On macOS 15, Vision under the default language may read Japanese with its Chinese recognizer: set `ocr.lang: ja` for Japanese there.
 
 ## Batch Configuration
 

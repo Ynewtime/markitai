@@ -4,16 +4,17 @@ markitai 2.0 是用 Rust 重写的 Python 版 markitai 1.x：一个原生程序�
 
 ## 替换 1.x
 
-运行安装脚本。它会移除用 uv 安装的 Python 版 markitai，装上 2.0，并原样保留 `~/.markitai`（配置、`.env`、缓存、历史记录）：
+运行安装脚本。它先把 2.0 放到暂存位置，再移除用 uv 安装的 Python 版 markitai，把 2.0 换上，并原样保留 `~/.markitai`（配置、`.env`、缓存、历史记录）：
 
 <!--@include: ../../snippets/setup.md-->
 
 ```mermaid
 flowchart LR
-  S[安装脚本] --> U{"用 uv 安装的<br/>markitai 1.x？"}
+  S[安装脚本] --> N["2.x 暂存在<br/>安装文件夹里"]
+  N --> U{"用 uv 安装的<br/>markitai 1.x？"}
   U -->|是| R["uv tool uninstall markitai"]
   U -->|否| I
-  R --> I["markitai 2.x<br/>取而代之"]
+  R --> I["2.x 重命名<br/>就位"]
   I --> K["~/.markitai 保留，<br/>照常读取"]
 ```
 
@@ -23,7 +24,17 @@ flowchart LR
 | `pipx install` | `pipx upgrade markitai`，或 `pipx uninstall markitai` 后运行安装脚本 |
 | 在项目里用 `pip` / `uv add` | `pip install -U markitai`：2.0 的 wheel 带有 CLI 和 [Python API](/zh/guide/python-api) |
 
-暂时留在 1.x：`uv tool install "markitai<2"`。它的历史见[更新日志](/zh/changelog)。
+pip、pipx 和 uv 只在 PyPI 有 wheel 的六个平台（macOS 11+、glibc 2.28+ 的 Linux、Windows；各有 x86-64 和 ARM64）上装到 2.0；在其他平台上它们保留 1.x。新文件无法暂存时（文件夹不可写或磁盘已满），用 uv 安装的 1.x 保留不动。
+
+### 退回 1.x
+
+先[卸载](/zh/guide/getting-started#install) 2.0，再从 1.2.0 的 tag 安装该版本，并固定它发布时的 PDF 库版本（直接装 `markitai==1.2.0` 现在会解析到 pymupdf4llm 2，它会破坏 1.2.0 的 PDF 支持）：
+
+```bash
+uv tool install "git+https://github.com/Ynewtime/markitai@v1.2.0#subdirectory=packages/markitai" --with "pymupdf4llm<2"
+```
+
+`MARKITAI_VERSION` 指定 1.x 版本时，安装脚本会打印同一条命令。1.x 的历史见[更新日志](/zh/changelog)。
 
 ## 变化一览
 
@@ -47,6 +58,8 @@ flowchart LR
 | `--llm` 但没有可用模型 | 输出基础 Markdown，退出码 `0` | 转换前就停止，退出码 `1`（`--dry-run` 只警告） |
 | `✓ Wrote out/a.md` 这一行 | stdout | stderr：stdout 只放文档本身 |
 | `doctor --timings`、`doctor --suggest-extras` | 可用 | 已移除（`--suggest-extras` 会被拒绝） |
+| 在不适用的场合用 `--resume`、`-g`、`--max-depth`、`--llm-batch-timeout`（单个文件；对 `.urls` 列表用 `-g`/`--max-depth`；不带 `--llm-batch` 的 `--llm-batch-timeout`） | 忽略 | 转换前就停止：`--resume` 退出码 `1`，其他退出码 `2`（[批量选项](/zh/guide/cli#batch-options)） |
+| 对目录以外的输入用 `--llm-batch` | 退出码 `1` | 退出码 `2` |
 
 新增：`--text-only`（只输出图片和 PDF 中识别出的文字）和 `--page-markers`。
 
@@ -57,6 +70,7 @@ flowchart LR
 | `<!-- Page number: N -->`、`<!-- Slide number: N -->` | 总是写入 | 默认关闭；`--page-markers` 或 `output.page_markers` 保留它们 |
 | 图片名 | `report.docx.0001.png` | 按内容命名：`.markitai/assets/510f5d9476ab159c03ccda77.jpg`；`image.compress` 开启时 PNG 和 HEIC 会变成 `.jpg` |
 | 幻灯片图片 | `deck.pptx.slide0001.jpg` | `deck.pptx.page0001.jpg` |
+| `image.format: webp` | 按 `image.quality` 写有损 WebP | 质量低于 100 时，不含透明像素的图片和页面截图写为 JPEG（`.jpg`，每个文档一条警告）；含透明像素或质量 100 时为无损 WebP |
 | 文件夹批量转换中的符号链接 | 跟随 | 跳过（`skip_reason: "symlink"`）；`output.allow_symlinks: true` 时跟随 |
 | `.markitai/ownership/` | — | 新增：记录 markitai 写过哪些文件，重跑时不会替换你自己的文件 |
 

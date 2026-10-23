@@ -77,16 +77,16 @@ markitai note.docx --profile obsidian --config-json '{"output":{"wikilinks":true
 
 ```yaml
 ---
+type: Document
 title: Quarterly report
+resource: report.pdf
 generated:
   by: markitai/2.0.0
   at: '2026-08-25T01:42:13Z'
-resource: report.pdf
-type: Document
 ---
 ```
 
-文档中已有的 `type`、`resource` 或 `generated` 值会保留。`okf` 也作用于 `--pure` 输出。
+键的顺序与 Python 版 markitai 一致：`type`、`title`、`description`、`resource`、`tags`、`generated`（先 `by` 后 `at`），然后是其他字段。文档中已有的 `type`、`resource` 或 `generated` 值会保留。`okf` 也作用于 `--pure` 输出。
 
 ## images.json schema（已冻结）
 

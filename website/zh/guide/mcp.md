@@ -33,7 +33,7 @@ claude mcp add markitai -- markitai-mcp
 填安装脚本打印出的绝对路径（Windows 上是 `%LOCALAPPDATA%\Programs\markitai\markitai-mcp.exe`）：桌面客户端不一定读取你 shell 的 `PATH`。
 
 ::: details 不安装：uvx
-`uvx` 按需拉取 PyPI 包，里面是同一个程序：
+`uvx` 按需拉取 PyPI 包，里面是同一个程序（限 PyPI 有 wheel 的六个平台；在其他平台上它会拉取 1.x）：
 
 ```json
 { "mcpServers": { "markitai": { "command": "uvx", "args": ["--from", "markitai", "markitai-mcp"] } } }

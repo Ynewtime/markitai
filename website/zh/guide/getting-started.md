@@ -19,17 +19,38 @@
 | 变量 | 作用 |
 |------|------|
 | `MARKITAI_VERSION=X.Y.Z` | 安装这个版本，而不是最新版 |
-| `MARKITAI_INSTALL_DIR=DIR` | 换一个命令文件夹 |
+| `MARKITAI_INSTALL_DIR=DIR` | 换一个文件夹；之后的更新和卸载沿用它。Windows 上请用空文件夹或专用文件夹：已有与安装文件同名文件的文件夹会被拒绝 |
 | `MARKITAI_INSTALL_OPTIONAL=1` / `0` | 不询问直接准备可选组件 / 从不准备 |
 | `MARKITAI_DOWNLOAD_URL=URL` | 从 GitHub Releases 的镜像下载 |
 | `NO_COLOR=1` | 不用颜色 |
 
-再运行一次即可更新。卸载 markitai（`~/.markitai` 会保留）：`curl -fsSL https://markitai.dev/setup.sh | sh -s -- --uninstall`；Windows 上先设 `$env:MARKITAI_UNINSTALL = "1"`，再运行 PowerShell 命令。
+再运行一次安装命令即可更新。安装脚本会留一份清单（receipt），记下它装了哪些文件：更新只替换、卸载只删除这些文件；Windows 上只有安装脚本自己加的用户 Path 条目才会被移除。新版本先放到暂存位置再替换，所以 Windows 上更新失败时，旧版本原样保留。卸载（`~/.markitai` 会保留）：
+
+::: code-group
+```bash [Linux/macOS]
+curl -fsSL https://markitai.dev/setup.sh | sh -s -- --uninstall
+```
+
+```powershell [Windows]
+& ([scriptblock]::Create((irm https://markitai.dev/setup.ps1))) -Uninstall
+```
+:::
 
 ::: details 其他安装方式
-**发布包。** 每个 [GitHub Release](https://github.com/Ynewtime/markitai/releases) 都有 `markitai-v<version>-<target>.tar.gz`（Windows 上是 `.zip`），覆盖 macOS（Apple 芯片、Intel）、Linux（x86-64、ARM64）和 Windows（x64、ARM64）。解压到任意位置，再把该文件夹加进 `PATH`。用 `sha256sum -c SHA256SUMS --ignore-missing` 校验下载，用 `gh attestation verify <file> --repo Ynewtime/markitai` 核实来源。
+**发布包。** 每个 [GitHub Release](https://github.com/Ynewtime/markitai/releases) 为每个平台提供一个发布包，另有 `SHA256SUMS` 和构建来源证明（provenance）：
 
-**pip 或 uv。** PyPI 上的 `markitai` 包带的是同一个程序，安装同样的三个命令（需要 Python 3.10 或更高版本；附带 [Python API](/zh/guide/python-api)）：
+| 平台 | 发布包 |
+|------|--------|
+| macOS，Apple 芯片 | `markitai-v<version>-aarch64-apple-darwin.tar.gz` |
+| macOS，Intel | `markitai-v<version>-x86_64-apple-darwin.tar.gz` |
+| Linux x86-64 | `markitai-v<version>-x86_64-unknown-linux-gnu.tar.gz` |
+| Linux ARM64 | `markitai-v<version>-aarch64-unknown-linux-gnu.tar.gz` |
+| Windows x64 | `markitai-v<version>-x86_64-pc-windows-msvc.zip` |
+| Windows ARM64 | `markitai-v<version>-aarch64-pc-windows-msvc.zip` |
+
+解压到一个新文件夹，文件放在一起，再把该文件夹加进 `PATH`。用 `sha256sum -c SHA256SUMS --ignore-missing` 校验下载（macOS：`grep <archive> SHA256SUMS | shasum -a 256 -c`），用 `gh attestation verify <archive> --repo Ynewtime/markitai` 核实来源。
+
+**pip 或 uv。** PyPI 上的 `markitai` 包带的是同一个程序，安装同样的三个命令（需要 Python 3.10 或更高版本；附带 [Python API](/zh/guide/python-api)）。PyPI 只有这六个平台的 wheel，没有源码包，所以在其他平台上 pip 会安装或保留 markitai 1.x：
 
 ```bash
 uv tool install markitai     # 或：pipx install markitai、pip install markitai
@@ -41,6 +62,8 @@ uv tool install markitai     # 或：pipx install markitai、pip install markita
 git clone https://github.com/Ynewtime/markitai && cd markitai
 cargo build --release --locked -p markitai-cli   # target/release/markitai 和 mkai
 ```
+
+在没有 wheel 的平台上，可以用该版本的源码包 `markitai-<version>.tar.gz` 在装有 Rust 的机器上构建 Python 包：`pip install markitai-<version>.tar.gz`。
 :::
 
 ## 第一次转换
@@ -130,11 +153,11 @@ output/
 | 平台 | 说明 |
 |----------|------|
 | macOS | 11 或更高版本，Apple 芯片或 Intel。本地 OCR 可以用系统的 Vision 引擎（`MARKITAI_OCR_BACKEND=vision`） |
-| Linux | x86-64 或 ARM64，glibc 2.28 或更高版本；不支持 musl（Alpine） |
+| Linux | x86-64 或 ARM64，glibc 2.28 或更高版本（RHEL 8、Debian 10、Ubuntu 18.10 及更新版本）；不支持 musl（Alpine） |
 | Windows | x64 或 ARM64，都是原生构建 |
 
 ::: details macOS：下载的文件提示「Apple 无法验证」
-构建还没有经过公证。安装脚本和 `curl` 下载不受影响；浏览器下载的文件会受影响。确认可信后，清除它的隔离标记：`xattr -d com.apple.quarantine markitai-v<version>-aarch64-apple-darwin.tar.gz`。
+构建没有代码签名，也没有经过公证。安装脚本和 `curl` 下载不受影响；浏览器下载的文件会受影响。确认可信后，清除它的隔离标记：`xattr -d com.apple.quarantine markitai-v<version>-aarch64-apple-darwin.tar.gz`。
 :::
 
 ## 下一步

@@ -70,10 +70,10 @@ markitai config set fetch.remote_consent always   # 1.x 默认就有的远程回
 无论什么策略或设置，下面这些都只走本地：
 
 - localhost、私有 IP 和内网主机名（`.local`、`.internal`、`.lan`、`.home`、`.corp`、单标签主机名），以及解析到这些地址的主机
-- 带凭据的 URL：userinfo、token、签名、密码、API key、授权码
+- 带凭据的 URL：userinfo；名字像机密的查询或片段参数（`token`、`key`、`password`、`pass`、`pw`、`passphrase`、`sig`、`code`、`session`、`apiKey` 等）；JWT 或看起来随机的长路径段；`/reset/`、`/verify/`、`/token/`、`/invite/` 等路由后面的 token（带数字的短码如 `/verify/123456` 也算）
 - 设置了 `MARKITAI_NO_REMOTE_FETCH=1` 时的一切
 
-`fetch.policy.local_only_patterns` 和 `NO_PROXY` 同样让匹配的域名只走本地；对公网 URL，单次运行的 `-s` 可以覆盖它们。在 `markitai serve` 里，只有你写下的 `always` 才会开启回退，[用户令牌](/zh/guide/serve-reference#user-tokens)的任务从不使用远程阅读服务；MCP 和各语言绑定从不回退到远程阅读服务。
+消息、`--json`、frontmatter、报告、历史记录和网页工作台显示这类 URL 时去掉 userinfo，每个机密路径段和机密查询值都显示为 `REDACTED`；日志显示为 `[REDACTED]`，并且不保留查询和片段。`fetch.policy.local_only_patterns` 和 `NO_PROXY` 同样让匹配的域名只走本地；对公网 URL，单次运行的 `-s` 可以覆盖它们。在 `markitai serve` 里，只有你写下的 `always` 才会开启回退，[用户令牌](/zh/guide/serve-reference#user-tokens)的任务从不使用远程阅读服务；MCP 和各语言绑定从不回退到远程阅读服务。
 
 ## 配置 {#configuration}
 
@@ -131,7 +131,8 @@ markitai config set fetch.remote_consent always   # 1.x 默认就有的远程回
 
 - 它以 `markitai/<版本> (+https://github.com/Ynewtime/markitai)` 表明身份，维基百科等拒绝库 User-Agent 的站点会响应它。遇到 401 或 403 时用桌面浏览器的请求头重试一次；请求发出前连接就被断开时重试两次。超时不重试。
 - PDF 响应交给 PDF 读取器；其他文档类型按 URL 的文件扩展名转换。
-- 最多跟随 10 次重定向和 `<meta refresh>`；响应最大 500 MiB。
+- CSV、TSV、reStructuredText、Org、LaTeX 和 notebook 文本按同格式本地文件的方式读取（CSV 会变成表格）：依据其类型（`text/csv`、`text/tab-separated-values` 等），或路径以 `.csv`、`.tsv`、`.rst`、`.org`、`.tex`、`.latex`、`.ipynb` 结尾的 `text/plain` 响应（原始文件托管站点就是这样提供它们的）。其他文本保持原样。
+- 最多跟随 10 次重定向和 `<meta refresh>`；响应最大 500 MiB。markitai 自己发出的 HTTP 请求（页面、图片、远程服务）不发送 `Referer`，所以重定向不会把来源地址（以及其中的 token）告诉下一个站点。
 
 ::: details 字符编码与链接
 解码顺序同浏览器：BOM、`Content-Type` 的 charset、前 1024 字节里的 `<meta charset>`，最后检测。旧标签按浏览器的方式映射（`gb2312`/`gbk` → GB18030，`shift_jis` → Windows-31J，`iso-8859-1` → Windows-1252）。相对链接和图片按重定向后的 URL 解析。

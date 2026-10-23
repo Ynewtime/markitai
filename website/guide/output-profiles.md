@@ -77,16 +77,16 @@ Maps the frontmatter to the [Open Knowledge Format](https://github.com/GoogleClo
 
 ```yaml
 ---
+type: Document
 title: Quarterly report
+resource: report.pdf
 generated:
   by: markitai/2.0.0
   at: '2026-08-25T01:42:13Z'
-resource: report.pdf
-type: Document
 ---
 ```
 
-Values a document already has for `type`, `resource` or `generated` are kept. `okf` also applies to `--pure` output.
+The keys come in the order Python markitai writes them: `type`, `title`, `description`, `resource`, `tags`, `generated` (`by`, then `at`), then the others. Values a document already has for `type`, `resource` or `generated` are kept. `okf` also applies to `--pure` output.
 
 ## images.json schema (frozen)
 

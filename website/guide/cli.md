@@ -115,7 +115,7 @@ flowchart LR
   L -->|yes| V[vision model]
 ```
 
-- Local OCR runs PaddleOCR models inside markitai; the first `--ocr` downloads them (about 45 MB), or prepare them with `markitai doctor --fix`. On macOS, `MARKITAI_OCR_BACKEND=vision` uses the system's Vision instead.
+- Local OCR runs PaddleOCR models inside markitai; the first `--ocr` downloads them (about 45 MB), or prepare them with `markitai doctor --fix`. On macOS, `MARKITAI_OCR_BACKEND=vision` uses the system's Vision instead; on macOS 15, Vision may read Japanese with its Chinese recognizer, so set `ocr.lang: ja` for Japanese there.
 - With `--llm` the pages go to the vision model; `MARKITAI_NO_VLM_OCR=1` OCRs locally and sends only the text.
 - Good pages keep their text (headings, lists, tables, images). An unreadable file fails; a blank image converts with a notice. A picture on its own needs `--ocr` or `--llm`, else it is skipped (exit `0`).
 
@@ -182,7 +182,7 @@ markitai ./docs -f json -o out/                # one JSON per file + out/markita
 - With `--json`: `-f json --json -o out/`. `markitai serve` keeps the document per item (`GET /api/jobs/{job_id}/items/{item_id}/document`).
 
 ::: details The document's keys
-`schema_version`, `tool`, `source` (`kind`, `path`, `url` without credentials, `name`, `type`, `size`, `sha256`), `status`, `skip_reason`, `title`, `properties` (frontmatter), `markdown` (`base`, `llm`), `text`, `pages[]` (`number`, `text`, `markdown`, `images`, `screenshot`), `images[]` (`path`, `alt`, `description`, `text`, `page`), `tables[]` (`page`, `header`, `rows`), `notices[]` (`code`, `level`, `message`, `items`), `usage`, `timings`, `outputs`.
+`schema_version`, `tool`, `source` (`kind`, `path`, `url` without credentials or secret path and query values, `name`, `type`, `size`, `sha256`), `status`, `skip_reason`, `title`, `properties` (frontmatter), `markdown` (`base`, `llm`), `text`, `pages[]` (`number`, `text`, `markdown`, `images`, `screenshot`), `images[]` (`path`, `alt`, `description`, `text`, `page`), `tables[]` (`page`, `header`, `rows`), `notices[]` (`code`, `level`, `message`, `items`), `usage`, `timings`, `outputs`.
 :::
 
 ### `--resume` {#resume}
@@ -191,9 +191,9 @@ markitai ./docs -f json -o out/                # one JSON per file + out/markita
 markitai ./docs -o ./output --resume
 ```
 
-- Skips completed items, retries failed and interrupted ones, adds new files. Directories and `.urls` lists only; Ctrl-C saves progress.
+- Skips completed items, retries failed and interrupted ones, adds new files. Directories and `.urls` lists only (a single file or URL exits `1`); Ctrl-C saves progress.
 - A retried item overwrites its own output (no `.v2`); one with no recorded name follows `output.on_conflict`, so it never overwrites a file the batch did not write.
-- Run the same command again. With other feature switches (`--llm`, `--ocr`, `--screenshot`, `--alt`, `--desc`) or other output settings (`--profile`, `--keep-base`, `--pure`, `--screenshot-only`, `-s`, `-f json`, `--text-only`, page markers) the saved state is not found: the run starts a fresh batch and converts everything again (existing files follow `output.on_conflict`). Going back to the original options finds the progress again.
+- Run the same command again. With other feature switches (`--llm`, `--ocr`, `--screenshot`, `--alt`, `--desc`) or other output settings (`--profile`, `--keep-base` or `--pure` with `--llm`, `--screenshot-only`, `-s`, `-f json`, `--text-only`, page markers, wikilinks) the saved state is not found: the run starts a fresh batch and converts everything again (existing files follow `output.on_conflict`). Going back to the original options finds the progress again.
 - Resume does not notice a new model or prompt: use a new output folder to redo everything.
 
 ### `--record-history` {#record-history}
@@ -214,6 +214,16 @@ Adds the run to the [web workspace](/guide/serve#history) history (kept seven da
 | `--llm-batch-collect <id>` | — | Collect a batch; `-o` is the original output, no input |
 
 A partially successful batch keeps its results and exits `10`.
+
+These options stop any other run before it converts anything, so pass them only where they apply:
+
+| Option | Applies to | Otherwise |
+|--------|------------|-----------|
+| `--resume` | A directory or `.urls` batch | exit `1` |
+| `-g, --glob`, `--max-depth` | A directory (not a `.urls` list) | exit `2` |
+| `--llm-batch` | A directory | exit `2` |
+| `--llm-batch-timeout` | A run with `--llm-batch` | exit `2` |
+| `--llm-batch-collect` | A run without an input argument | exit `2` |
 
 ```bash
 markitai ./docs -o ./output -j 4 -g "*.pdf" -g '!drafts/**'   # single-quote ! patterns

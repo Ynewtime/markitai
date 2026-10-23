@@ -70,10 +70,10 @@ markitai config set fetch.remote_consent always   # the remote fallback 1.x had 
 Always local, whatever the strategy or setting:
 
 - localhost, private IPs and intranet names (`.local`, `.internal`, `.lan`, `.home`, `.corp`, single-label hosts), and hosts that resolve to them
-- URLs with credentials: userinfo, tokens, signatures, passwords, API keys, authorization codes
+- URLs with credentials: userinfo; a query or fragment parameter named like a secret (`token`, `key`, `password`, `pass`, `pw`, `passphrase`, `sig`, `code`, `session`, `apiKey` and similar); a JWT or long random-looking path segment; a token after `/reset/`, `/verify/`, `/token/`, `/invite/` and similar routes (a short code with a digit, `/verify/123456`, counts)
 - everything under `MARKITAI_NO_REMOTE_FETCH=1`
 
-`fetch.policy.local_only_patterns` and `NO_PROXY` keep matching domains local too; `-s` for one run overrides them for a public URL. In `markitai serve` only a written `always` enables the fallback, and a [user token](/guide/serve-reference#user-tokens)'s jobs never use a remote reader; MCP and the bindings never fall back to one.
+Messages, `--json`, front matter, reports, history and the web workspace show such a URL without its userinfo and with each secret path segment and secret query value as `REDACTED`; the log shows `[REDACTED]` and keeps no query or fragment. `fetch.policy.local_only_patterns` and `NO_PROXY` keep matching domains local too; `-s` for one run overrides them for a public URL. In `markitai serve` only a written `always` enables the fallback, and a [user token](/guide/serve-reference#user-tokens)'s jobs never use a remote reader; MCP and the bindings never fall back to one.
 
 ## Configuration
 
@@ -131,7 +131,8 @@ Nothing is kept between runs. Sign-in cookies go in `fetch.playwright.cookies` (
 
 - It identifies as `markitai/<version> (+https://github.com/Ynewtime/markitai)`, which sites such as Wikipedia serve where they refuse library agents. A 401 or 403 is retried once with desktop-browser headers; a connection cut before the request was sent is retried twice. Timeouts are not retried.
 - A PDF response goes through the PDF reader; another document type is converted by the URL's file extension.
-- Up to 10 redirects and `<meta refresh>` are followed; a response may be up to 500 MiB.
+- CSV, TSV, reStructuredText, Org, LaTeX and notebook text is read as a local file of that format is (a CSV becomes a table): by its type (`text/csv`, `text/tab-separated-values`, ...), or a `text/plain` response whose path ends in `.csv`, `.tsv`, `.rst`, `.org`, `.tex`, `.latex` or `.ipynb`, as raw-file hosts serve them. Other text stays as written.
+- Up to 10 redirects and `<meta refresh>` are followed; a response may be up to 500 MiB. markitai's own HTTP requests (pages, pictures, remote services) send no `Referer`, so a redirect never tells the next site the address, or a token in it, that it came from.
 
 ::: details Character encodings and links
 Decoding follows browsers: byte-order mark, `Content-Type` charset, `<meta charset>` in the first 1024 bytes, then detection. Legacy labels map as browsers do (`gb2312`/`gbk` → GB18030, `shift_jis` → Windows-31J, `iso-8859-1` → Windows-1252). Relative links and images resolve against the URL after redirects.

@@ -6,7 +6,7 @@
 Python API 尚未定型：签名和字段在小版本里仍可能变化。请固定精确版本；CLI 才是稳定接口。
 :::
 
-把它加进你的项目（需要 Python 3.10 或更高版本；提供 macOS 11+、glibc 2.28+ 的 Linux 和 Windows 的 wheel，x86-64 和 ARM64 都有）。[安装脚本](/zh/guide/getting-started)装的是命令，不是可导入的库：
+把它加进你的项目（需要 Python 3.10 或更高版本；提供 macOS 11+、glibc 2.28+ 的 Linux 和 Windows 的 wheel，x86-64 和 ARM64 都有；PyPI 没有源码包，所以在其他平台上 pip 会安装或保留 markitai 1.x，该版本的 `markitai-<version>.tar.gz` 可以用 Rust 构建 2.0）。[安装脚本](/zh/guide/getting-started)装的是命令，不是可导入的库：
 
 ```bash
 uv add markitai   # 或：pip install markitai

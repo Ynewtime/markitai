@@ -115,7 +115,7 @@ flowchart LR
   L -->|是| V[视觉模型]
 ```
 
-- 本机 OCR 在 markitai 内部运行 PaddleOCR 模型；第一次 `--ocr` 时下载（约 45 MB），也可以用 `markitai doctor --fix` 预先准备。macOS 上 `MARKITAI_OCR_BACKEND=vision` 改用系统的 Vision。
+- 本机 OCR 在 markitai 内部运行 PaddleOCR 模型；第一次 `--ocr` 时下载（约 45 MB），也可以用 `markitai doctor --fix` 预先准备。macOS 上 `MARKITAI_OCR_BACKEND=vision` 改用系统的 Vision；在 macOS 15 上，Vision 可能用中文识别器读日文，读日文图片时请设 `ocr.lang: ja`。
 - 带 `--llm` 时页面交给视觉模型；`MARKITAI_NO_VLM_OCR=1` 在本机做 OCR，只发送文字。
 - 正常页面保留文字（标题、列表、表格、图片）。读不了的文件直接失败；空白图片照常转换并给出提示。单独一张图片需要 `--ocr` 或 `--llm`，否则跳过（退出码 `0`）。
 
@@ -182,7 +182,7 @@ markitai ./docs -f json -o out/                # 每个文件一个 JSON，另�
 - 与 `--json` 同用：`-f json --json -o out/`。`markitai serve` 为每个条目保留这份文档（`GET /api/jobs/{job_id}/items/{item_id}/document`）。
 
 ::: details 文档的键
-`schema_version`、`tool`、`source`（`kind`、`path`、去掉凭据的 `url`、`name`、`type`、`size`、`sha256`）、`status`、`skip_reason`、`title`、`properties`（frontmatter）、`markdown`（`base`、`llm`）、`text`、`pages[]`（`number`、`text`、`markdown`、`images`、`screenshot`）、`images[]`（`path`、`alt`、`description`、`text`、`page`）、`tables[]`（`page`、`header`、`rows`）、`notices[]`（`code`、`level`、`message`、`items`）、`usage`、`timings`、`outputs`。
+`schema_version`、`tool`、`source`（`kind`、`path`、去掉凭据、机密路径段和机密查询值的 `url`、`name`、`type`、`size`、`sha256`）、`status`、`skip_reason`、`title`、`properties`（frontmatter）、`markdown`（`base`、`llm`）、`text`、`pages[]`（`number`、`text`、`markdown`、`images`、`screenshot`）、`images[]`（`path`、`alt`、`description`、`text`、`page`）、`tables[]`（`page`、`header`、`rows`）、`notices[]`（`code`、`level`、`message`、`items`）、`usage`、`timings`、`outputs`。
 :::
 
 ### `--resume` {#resume}
@@ -191,16 +191,16 @@ markitai ./docs -f json -o out/                # 每个文件一个 JSON，另�
 markitai ./docs -o ./output --resume
 ```
 
-- 跳过已完成的条目，重试失败和中断的，捡起新文件。只适用于目录和 `.urls` 列表；按 Ctrl-C 时会保存进度。
+- 跳过已完成的条目，重试失败和中断的，捡起新文件。只适用于目录和 `.urls` 列表（单个文件或 URL 以退出码 `1` 停止）；按 Ctrl-C 时会保存进度。
 - 重试的条目覆盖自己的输出（不会多出 `.v2`）；没记下输出名的条目按 `output.on_conflict` 处理，因此绝不覆盖不是这次批量写的文件。
-- 用同一条命令再运行。换了功能开关（`--llm`、`--ocr`、`--screenshot`、`--alt`、`--desc`）或改变输出的设置（`--profile`、`--keep-base`、`--pure`、`--screenshot-only`、`-s`、`-f json`、`--text-only`、页码标记）时找不到已保存的状态：运行会开始一个新批次，全部重新转换（已有文件按 `output.on_conflict` 处理）。换回原来的选项，原来的进度仍能找到。
+- 用同一条命令再运行。换了功能开关（`--llm`、`--ocr`、`--screenshot`、`--alt`、`--desc`）或改变输出的设置（`--profile`、与 `--llm` 同用的 `--keep-base` 或 `--pure`、`--screenshot-only`、`-s`、`-f json`、`--text-only`、页码标记、wikilink）时找不到已保存的状态：运行会开始一个新批次，全部重新转换（已有文件按 `output.on_conflict` 处理）。换回原来的选项，原来的进度仍能找到。
 - 续跑察觉不到换了模型或提示词：要全部重做，请换一个新的输出目录。
 
 ### `--record-history` {#record-history}
 
 把这次运行记入[网页工作台](/zh/guide/serve#history)的历史（保留七天）。优先级：`--record-history` / `--no-record-history`、`MARKITAI_RECORD_HISTORY`、`history.record`、默认关闭。stdout 模式不记录；记录失败不会让运行失败。
 
-## 批量选项
+## 批量选项 {#batch-options}
 
 | 选项 | 默认 | 作用 |
 |------|------|------|
@@ -214,6 +214,16 @@ markitai ./docs -o ./output --resume
 | `--llm-batch-collect <id>` | — | 收取批次；`-o` 指向原输出目录，不需要输入 |
 
 部分成功的批量保留成功的结果，以 `10` 退出。
+
+下面这些选项用在其他运行上时，运行在转换任何内容之前就会停止，所以只在适用的地方传入：
+
+| 选项 | 适用于 | 否则 |
+|------|--------|------|
+| `--resume` | 目录或 `.urls` 批量 | 退出码 `1` |
+| `-g, --glob`、`--max-depth` | 目录（不包括 `.urls` 列表） | 退出码 `2` |
+| `--llm-batch` | 目录 | 退出码 `2` |
+| `--llm-batch-timeout` | 带 `--llm-batch` 的运行 | 退出码 `2` |
+| `--llm-batch-collect` | 不带输入参数的运行 | 退出码 `2` |
 
 ```bash
 markitai ./docs -o ./output -j 4 -g "*.pdf" -g '!drafts/**'   # ! 模式用单引号
