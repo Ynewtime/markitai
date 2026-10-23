@@ -443,10 +443,11 @@ function Remove-PythonMarkitai {
 }
 
 # The receipt names what this script installed in the folder: the release,
-# whether setup added the folder to the user Path (path_added=1, so
-# uninstall leaves an entry the user made alone), and the folder's top-level names (file=...). Only those are ever replaced or
-# removed, so a MARKITAI_INSTALL_DIR shared with other files keeps them.
-# $null when the folder holds no receipt of this script's.
+# whether setup added the folder to the user Path (path_added=1; uninstall
+# leaves an entry the user made alone) and the folder's top-level names
+# (file=...). Only those are ever replaced or removed, so a
+# MARKITAI_INSTALL_DIR shared with other files keeps them. $null when the
+# folder holds no receipt of this script's.
 function Read-Receipt {
     param([string]$Directory)
     $path = [IO.Path]::Combine($Directory, "receipt")

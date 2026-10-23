@@ -261,10 +261,20 @@ archive for this machine: the latest release, or `MARKITAI_VERSION`. They read
 the asset names from the release's `SHA256SUMS`, verify the archive against it,
 and install `markitai`, `mkai` and `markitai-mcp` to `~/.local/bin` (notices and
 guides in `~/.local/share/markitai/current`) or to
-`%LOCALAPPDATA%\Programs\markitai`, which setup.ps1 adds to the user Path. A
-Python markitai 1.x that uv installed is uninstalled first. With a terminal
-they offer `markitai doctor --fix` (OCR models, a headless Chromium when no
-browser is found); `MARKITAI_INSTALL_OPTIONAL=1` runs it without one, `0` never.
-`--uninstall` (`MARKITAI_UNINSTALL=1`) removes what they installed and keeps
-`~/.markitai`. `MARKITAI_DOWNLOAD_URL` points them at another releases base, which
+`%LOCALAPPDATA%\Programs\markitai`, which setup.ps1 adds to the user Path. The
+new files are staged in the install folder first; only then is a Python
+markitai 1.x that uv installed uninstalled and the new release renamed into
+place, and a failed Windows update puts the previous release back. A receipt
+(`~/.local/share/markitai/current/receipt`, or `receipt` in the Windows install
+folder) lists what they installed: updates and uninstall remove only those
+names, setup.ps1 refuses a folder without its receipt that already holds one of
+the release's names, and removes the user Path entry only when it added it. A
+run without `MARKITAI_INSTALL_DIR` reuses the last install's folder (setup.ps1
+records a custom one in `%LOCALAPPDATA%\markitai\install-location`). With a
+terminal they offer `markitai doctor --fix` (OCR models, a headless Chromium
+when no browser is found); `MARKITAI_INSTALL_OPTIONAL=1` runs it without one,
+`0` never. `--uninstall` (setup.ps1: `-Uninstall`; both: `MARKITAI_UNINSTALL=1`)
+removes what they installed and keeps `~/.markitai`. setup.ps1 runs in a script
+block of its own, so `irm | iex` leaves the user's session as it was.
+`MARKITAI_DOWNLOAD_URL` points them at another releases base, which
 `scripts/test_setup_scripts.py` uses with a local fake release.
