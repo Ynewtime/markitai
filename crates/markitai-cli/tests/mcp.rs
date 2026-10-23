@@ -388,6 +388,46 @@ fn single_document_writes_full_files_and_unicode_preview_survives_server_exit() 
     assert!(full_path.is_file());
 }
 
+/// `convert_document` with a visible-assets profile publishes only the
+/// document's own pictures; asset references in its text, percent-encoded
+/// `..` included, move or replace no file outside the output folder.
+#[test]
+fn profile_asset_references_never_reach_outside_the_output_folder() {
+    let mut client = Client::start(false);
+    let png = "iVBORw0KGgoAAAANSUhEUgAAAFAAAABQCAIAAAABc2X6AAAAZ0lEQVR42u3PAQ0AAAgDoGd6/wDGsoeyUYBM+0qEhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFL1l6G020DcUTKQAAAABJRU5ErkJggg==";
+    let victim = client.file("victim/keep.txt", "SECRET-VICTIM");
+    let replaced = client.file("keep.txt", "OLD-DST");
+    let output = client.root().join("out");
+    client.file("out/.markitai/assets/inside.txt", "INSIDE");
+    let source = client.file(
+        "in/notes.md",
+        &format!(
+            "# Notes\n\n![real](data:image/png;base64,{png})\n\n\
+             ![x](.markitai/assets/..%2F..%2F..%2Fvictim%2Fkeep.txt)\n\
+             ![y](.markitai/assets/../../../keep.txt)\n\
+             ![i](.markitai/assets/inside.txt)\n"
+        ),
+    );
+    for profile in ["rag", "obsidian"] {
+        let result = client.success(
+            "convert_document",
+            json!({"path":source,"output_dir":output,"profile":profile,"llm":false}),
+        );
+        assert!(
+            PathBuf::from(result["markdown_file"].as_str().unwrap()).starts_with(&output),
+            "{result}"
+        );
+        assert_eq!(std::fs::read_to_string(&victim).unwrap(), "SECRET-VICTIM");
+        assert_eq!(std::fs::read_to_string(&replaced).unwrap(), "OLD-DST");
+        assert_eq!(
+            std::fs::read_to_string(output.join(".markitai/assets/inside.txt")).unwrap(),
+            "INSIDE"
+        );
+    }
+    assert_eq!(std::fs::read_dir(output.join("assets")).unwrap().count(), 1);
+    client.stop();
+}
+
 #[test]
 fn validation_and_expected_conversion_errors_leave_service_usable() {
     let mut client = Client::start(false);

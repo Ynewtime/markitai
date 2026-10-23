@@ -495,3 +495,54 @@ fn item_assets_need_the_startup_token_and_no_ticket_names_them() {
     assert_eq!(foreign.status, 400);
     server.stop();
 }
+
+/// A visible-assets profile requested through the API publishes the
+/// document's own pictures inside the job's output; asset references written
+/// in the uploaded text, percent-encoded `..` included, move or replace
+/// nothing else of the job or the machine.
+#[test]
+fn asset_references_in_an_uploaded_document_stay_inside_the_job_output() {
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::start(temp.path());
+    let canaries = [
+        temp.path().join("canary.txt"),
+        temp.path().join("home/canary.txt"),
+    ];
+    for canary in &canaries {
+        std::fs::create_dir_all(canary.parent().unwrap()).unwrap();
+        std::fs::write(canary, "CANARY").unwrap();
+    }
+    let climb = "..%2F".repeat(6);
+    let plain = "../".repeat(5);
+    let document = format!(
+        "# Notes\n\n![real](data:image/png;base64,{PIXELS})\n\n\
+         ![x](.markitai/assets/{climb}canary.txt)\n\
+         ![y](.markitai/assets/{plain}canary.txt)\n\
+         ![z](.markitai/assets/..%2F..%2Fuploads%2Fnotes.md)\n"
+    );
+    for profile in ["rag", "obsidian"] {
+        let created = server.submit(
+            &[("notes.md", document.as_bytes())],
+            json!([]),
+            json!({"profile":profile}),
+        );
+        let id = created["job_id"].as_str().unwrap();
+        let snapshot = server.done(id);
+        assert_eq!(snapshot["done"], 1, "{snapshot}");
+        let folder = server.jobdir(id);
+        assert_eq!(
+            std::fs::read_to_string(folder.join("uploads/notes.md")).unwrap(),
+            document
+        );
+        let published: Vec<_> = std::fs::read_dir(folder.join("out/assets"))
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(published.len(), 1, "{published:?}");
+        assert!(!folder.join("out/.markitai/assets").exists());
+        for canary in &canaries {
+            assert_eq!(std::fs::read_to_string(canary).unwrap(), "CANARY");
+        }
+    }
+    server.stop();
+}
