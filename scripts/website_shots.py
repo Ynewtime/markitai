@@ -397,27 +397,49 @@ def _bar_chart(bars: list[tuple[str, str, float]]) -> str:
 
 
 def _diagram(boxes: list[tuple[str, str]]) -> str:
-    width, height, box, gap = 900, 170, 230, 105
+    width, height, margin, box, arrow = 960, 170, 24, 262, 26
+    gap = (width - 2 * margin - len(boxes) * box) / (len(boxes) - 1)
     parts = [_svg_start(width, height)]
     for i, (name, detail) in enumerate(boxes):
-        x = 30 + i * (box + gap)
+        x = margin + i * (box + gap)
         core = i == 1
         parts.append(
-            f'<rect x="{x}" y="30" width="{box}" height="110" rx="14" '
+            f'<rect class="box" x="{x:.0f}" y="30" width="{box}" height="110" rx="14" '
             f'fill="{"#2f6fdf" if core else "#ffffff"}" stroke="#2f6fdf" stroke-width="3"/>'
-            f'<text x="{x + box / 2}" y="78" text-anchor="middle" font-size="27" '
+            f'<text x="{x + box / 2:.0f}" y="78" text-anchor="middle" font-size="27" '
             f'font-weight="700" fill="{"#ffffff" if core else "#0f172a"}">{html.escape(name)}</text>'
-            f'<text x="{x + box / 2}" y="112" text-anchor="middle" font-size="19" '
+            f'<text x="{x + box / 2:.0f}" y="112" text-anchor="middle" font-size="17" '
             f'fill="{"#dbe7ff" if core else "#5b6b84"}">{html.escape(detail)}</text>'
         )
         if i:
-            start = x - gap + 12
+            start, end = x - gap + 10, x - 10
             parts.append(
-                f'<path d="M{start} 85 H{x - 16}" stroke="#5b6b84" stroke-width="4"/>'
-                f'<path d="M{x - 28} 73 L{x - 12} 85 L{x - 28} 97" fill="none" '
-                f'stroke="#5b6b84" stroke-width="4"/>'
+                f'<path d="M{start:.0f} 85 H{end - 4:.0f}" stroke="#5b6b84" stroke-width="4"/>'
+                f'<path d="M{end - arrow / 2:.0f} 73 L{end:.0f} 85 L{end - arrow / 2:.0f} 97" '
+                'fill="none" stroke="#5b6b84" stroke-width="4"/>'
             )
     return "".join(parts) + "</svg>"
+
+
+# Every label inside its box (with room to spare) and every shape inside the
+# figure: the empty list when the figure is whole
+FIGURE_OVERFLOW = """svg => {
+  const out = [];
+  const view = svg.getBoundingClientRect();
+  const boxes = [...svg.querySelectorAll('rect.box')].map(r => r.getBoundingClientRect());
+  for (const shape of svg.querySelectorAll('rect, text, path')) {
+    const b = shape.getBoundingClientRect();
+    if (b.left < view.left || b.right > view.right) out.push(shape.outerHTML.slice(0, 80));
+  }
+  for (const label of svg.querySelectorAll('text')) {
+    const b = label.getBoundingClientRect();
+    const home = boxes.find(r => b.top >= r.top && b.bottom <= r.bottom
+      && b.left < r.right && b.right > r.left);
+    if (home && (b.left < home.left + 8 || b.right > home.right - 8))
+      out.push(label.textContent);
+  }
+  return out;
+}"""
 
 
 def build_report(document: str, lang: str, target: Path, browser: Any) -> None:
@@ -429,6 +451,9 @@ def build_report(document: str, lang: str, target: Path, browser: Any) -> None:
     page = browser.new_page(device_scale_factor=2)
     figure = _bar_chart(text["bars"]) if "bars" in text else _diagram(text["diagram"])
     page.set_content(f"<style>{css}</style><div id=figure>{figure}</div>")
+    clipped = page.locator("#figure svg").evaluate(FIGURE_OVERFLOW)
+    if clipped:
+        raise SystemExit(f"the {document} figure does not fit: {clipped}")
     picture = base64.b64encode(page.locator("#figure svg").screenshot()).decode()
     rows = "".join(
         "<tr>"
