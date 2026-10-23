@@ -612,9 +612,8 @@ pub fn stats(cfg: &Value) -> Result<Value> {
         )?;
         Ok(Some(counts))
     })?;
-    let Some((count, size)) = counted else {
-        return Ok(Value::Null);
-    };
+    // An absent store reads as an empty one, as the LLM cache's does.
+    let (count, size) = counted.unwrap_or((0, 0));
     Ok(
         json!({"count":count,"size_bytes":size,"size_mb":megabytes(size),"max_size_mb":megabytes(capacity(cfg)),"db_path":path}),
     )
@@ -753,7 +752,10 @@ mod tests {
         let mut cfg = cfg(&directory, 1, 60);
         let cache = Cache::from_config(&cfg).unwrap();
         assert!(cache.get("https://example.com/a", None).unwrap().is_none());
-        assert_eq!(stats(&cfg).unwrap(), Value::Null);
+        let absent = stats(&cfg).unwrap();
+        assert_eq!(absent["count"], 0);
+        assert_eq!(absent["size_bytes"], 0);
+        assert_eq!(absent["db_path"], json!(directory.join("fetch_cache.db")));
         preflight_clear(&cfg).unwrap();
         assert_eq!(clear(&cfg).unwrap(), 0);
         cache

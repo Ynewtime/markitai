@@ -469,9 +469,20 @@ pub fn stats(cfg: &Value, verbose: bool, limit: usize) -> Result<Value> {
     Ok(json!({"cache":cache,"enabled":enabled(cfg),"fetch_cache":fetch}))
 }
 
+fn summary(cfg: &Value, path: &Path, count: i64, bytes: i64) -> Value {
+    json!({"count":count,"size_bytes":bytes,"size_mb":megabytes(bytes),"max_size_mb":megabytes(capacity(cfg)),"db_path":path})
+}
+
 fn inspect(cfg: &Value, path: &Path, verbose: bool, limit: usize) -> Result<Value> {
     let Some(connection) = existing(path, true)? else {
-        return Ok(Value::Null);
+        // An absent store reads as an empty one (`.cache.count` is 0, not
+        // null) and inspection still does not create it.
+        let mut details = summary(cfg, path, 0, 0);
+        if verbose {
+            details["by_model"] = json!({});
+            details["entries"] = json!([]);
+        }
+        return Ok(details);
     };
     // Hold one read snapshot so verbose groups and totals agree even while
     // other processes refresh or evict entries.
@@ -485,7 +496,7 @@ fn inspect(cfg: &Value, path: &Path, verbose: bool, limit: usize) -> Result<Valu
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .map_err(|_| unavailable())?;
-    let mut details = json!({"count":count,"size_bytes":bytes,"size_mb":megabytes(bytes),"max_size_mb":megabytes(capacity(cfg)),"db_path":path});
+    let mut details = summary(cfg, path, count, bytes);
     if verbose {
         let mut groups = Map::new();
         let mut statement = connection.prepare("SELECT COALESCE(NULLIF(model,''),'unknown'),COUNT(*),COALESCE(SUM(size_bytes),0) FROM cache GROUP BY 1 ORDER BY 3 DESC").map_err(|_| unavailable())?;
@@ -816,7 +827,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let target = root.path().join("not-created");
         let mut cfg = configuration(&target, 100);
-        assert_eq!(stats(&cfg, true, usize::MAX).unwrap()["cache"], Value::Null);
+        assert_eq!(stats(&cfg, true, usize::MAX).unwrap()["cache"]["count"], 0);
         preflight_clear(&cfg).unwrap();
         assert_eq!(clear(&cfg).unwrap(), 0);
         assert_eq!(
@@ -830,6 +841,30 @@ mod tests {
         cfg["cache"]["enabled"] = json!(false);
         assert!(Cache::configured(&cfg, "file.md").is_none());
         assert!(!target.exists());
+    }
+
+    #[test]
+    fn absent_store_reports_the_shape_of_an_empty_one() {
+        let root = tempfile::tempdir().unwrap();
+        let cfg = configuration(&root.path().join("store"), 1_000);
+        for verbose in [false, true] {
+            let absent = stats(&cfg, verbose, 20).unwrap();
+            assert_eq!(absent["cache"]["count"], 0);
+            assert_eq!(absent["cache"]["size_bytes"], 0);
+            assert_eq!(absent["fetch_cache"]["count"], 0);
+            assert!(
+                absent["cache"]["db_path"]
+                    .as_str()
+                    .unwrap()
+                    .ends_with("cache.db")
+            );
+            assert!(!root.path().join("store").exists());
+            let cache = Cache::configured(&cfg, "").unwrap();
+            cache.set("key", "pool", "answer").unwrap();
+            clear(&cfg).unwrap();
+            assert_eq!(stats(&cfg, verbose, 20).unwrap()["cache"], absent["cache"]);
+            std::fs::remove_dir_all(root.path().join("store")).unwrap();
+        }
     }
 
     #[test]

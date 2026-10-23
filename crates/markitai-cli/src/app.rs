@@ -3069,7 +3069,7 @@ fn cache_command(command: &CacheCommand, cfg: &Value) -> CliResult<i32> {
                         &text!("LLM cache: {llm}", "LLM 缓存：{llm}")
                     )
                 );
-                if *verbose && !stats["cache"].is_null() && stats["cache"].get("error").is_none() {
+                if *verbose && stats["cache"].get("error").is_none() {
                     println!(
                         "{}",
                         serde_json::to_string_pretty(&stats["cache"]).map_err(runtime)?

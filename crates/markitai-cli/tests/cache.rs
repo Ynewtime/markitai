@@ -248,12 +248,29 @@ fn stats_clear_and_incomplete_store_preflight_preserve_entries() {
     let root = tempfile::tempdir().unwrap();
     let server = ModelServer::start();
     setup(root.path(), &server);
+    // A fresh home reports empty stores of the usual shape, not null, and
+    // inspecting them creates neither.
     let empty = json_output(invoke(root.path(), &["cache", "stats", "--json"]));
-    assert_eq!(
-        empty,
-        json!({"cache":null,"enabled":true,"fetch_cache":null})
-    );
-    assert!(!root.path().join("home/cache.db").exists());
+    assert_eq!(empty["enabled"], true);
+    for (name, file) in [("cache", "cache.db"), ("fetch_cache", "fetch_cache.db")] {
+        assert_eq!(empty[name]["count"], 0, "{name}");
+        assert_eq!(empty[name]["size_bytes"], 0, "{name}");
+        assert_eq!(empty[name]["size_mb"], 0.0, "{name}");
+        assert!(empty[name]["max_size_mb"].as_f64().unwrap() > 0.0, "{name}");
+        assert!(
+            empty[name]["db_path"].as_str().unwrap().ends_with(file),
+            "{name}"
+        );
+        assert!(!root.path().join("home").join(file).exists());
+    }
+    let verbose = json_output(invoke(root.path(), &["cache", "stats", "--json", "-v"]));
+    assert_eq!(verbose["cache"]["by_model"], json!({}));
+    assert_eq!(verbose["cache"]["entries"], json!([]));
+    let text = invoke(root.path(), &["cache", "stats"]);
+    assert!(text.status.success());
+    let text = String::from_utf8_lossy(&text.stdout);
+    assert!(text.contains("LLM cache: 0 entries (0 B)"), "{text}");
+    assert!(text.contains("URL fetch cache: 0 entries (0 B)"), "{text}");
     convert(root.path(), "source.md", &[]);
     let stats = json_output(invoke(
         root.path(),

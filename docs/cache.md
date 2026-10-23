@@ -173,7 +173,8 @@ limits; persistent cache capacity and SQLite size are unchanged.
 ## Inspection
 
 `cache stats --json` retains the existing `cache`, `enabled` and `fetch_cache`
-envelope. An absent LLM database yields `cache: null` without creating a database.
+envelope. An absent database reads as an empty one (zero counts and sizes, its
+capacity and path) and inspection does not create it.
 An unreadable one yields a sanitized `cache.error` and the CLI reports failure.
 Normal details include entry count, logical bytes/MiB, configured capacity/MiB
 and the database path. Verbose details add model-group statistics and recent
