@@ -137,6 +137,13 @@ is sure of, the verdict, or why a reading failed). A forced language cannot make
 an unsupported Vision language available.
 OS versions and installed language support can change the result.
 
+Known issue: on macOS 15, Vision under the default language may label
+Japanese text `zh-Hans` and read it with the Chinese recognizer (the readings
+above were recorded on macOS 27). Set the language (`ocr.lang: ja`, or
+`--config-json '{"ocr":{"lang":"ja"}}'`) for Japanese images there. Vision is
+opt-in (`MARKITAI_OCR_BACKEND=vision` or the fallback); the default portable
+engine does not use Vision's language detection.
+
 ## Bounds and reading order
 
 Encoded image input is limited to 64 MiB, decoded images to 32 million pixels,

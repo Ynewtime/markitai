@@ -2800,6 +2800,8 @@ pub(crate) mod tests {
             lines.concat()
         );
         if vision_recorded_on_a_later_macos() {
+            let larger = recognize_rgb(system_font_lines("Hiragino Sans", &lines, 17), &config);
+            log_vision_reading("Hiragino Sans 17 px, ocr.lang ja", &lines, &larger);
             return;
         }
         // At 17 pixels per em the lines are read once and 環 is recovered.
@@ -2827,7 +2829,11 @@ pub(crate) mod tests {
         let missed = system_font_lines("Arial Unicode MS", &lines, 16);
         let (width, height) = missed.dimensions();
         let missed = recognize_rgb(missed, &config);
-        if vision_unavailable_under_rosetta(&missed) || vision_recorded_on_a_later_macos() {
+        if vision_unavailable_under_rosetta(&missed) {
+            return;
+        }
+        if vision_recorded_on_a_later_macos() {
+            log_vision_reading("Arial Unicode MS 16 px, ocr.lang ko", &lines, &missed);
             return;
         }
         let missed = missed.unwrap();
@@ -2906,21 +2912,42 @@ pub(crate) mod tests {
         // Small and ordinary text, with the enlarged second reading.
         default_reads("Hiragino Sans GB", &chinese, 13, "zh-Hans", "zh");
         default_reads("Hiragino Sans GB", &chinese, 25, "zh-Hans", "zh");
-        if vision_recorded_on_a_later_macos() {
-            return;
-        }
         let japanese = [
             "キャッシュの保存先は環境変数で変更できます。テストの際",
             "には一時ディレクトリを指定してください。",
         ];
-        // Kana: Japanese is read once more, with its own aids.
-        default_reads("Hiragino Sans", &japanese, 16, "ja-JP", "ja");
-        default_reads("Hiragino Sans", &japanese, 24, "ja-JP", "ja");
         let korean = [
             "오늘 아침은 조금 쌀쌀해서 역 앞 카페에서 따뜻한 라테를",
             "주문했습니다. 직원이 새로운 메뉴도 있다고 알려 주어서",
             "다음에는 유자차를 마셔 볼 생각입니다.",
         ];
+        if vision_recorded_on_a_later_macos() {
+            // What this release reads instead, under the default and the written language.
+            for (font, lines, size, explicit) in [
+                ("Hiragino Sans", &japanese[..], 16, "ja"),
+                ("Hiragino Sans", &japanese[..], 24, "ja"),
+                ("Arial Unicode MS", &korean[..], 24, "ko"),
+                ("Arial Unicode MS", &korean[..], 16, "ko"),
+            ] {
+                let image = system_font_lines(font, lines, size);
+                let default = recognize_rgb(image.clone(), &json!({"ocr":{"enabled":true}}));
+                log_vision_reading(
+                    &format!("{font} {size} px, default language"),
+                    lines,
+                    &default,
+                );
+                let written = recognize_rgb(image, &json!({"ocr":{"lang":explicit}}));
+                log_vision_reading(
+                    &format!("{font} {size} px, ocr.lang {explicit}"),
+                    lines,
+                    &written,
+                );
+            }
+            return;
+        }
+        // Kana: Japanese is read once more, with its own aids.
+        default_reads("Hiragino Sans", &japanese, 16, "ja-JP", "ja");
+        default_reads("Hiragino Sans", &japanese, 24, "ja-JP", "ja");
         // Vision's Chinese recognizer makes Han of Hangul; Korean is read too.
         default_reads("Arial Unicode MS", &korean, 24, "ko-KR", "ko");
         default_reads("Arial Unicode MS", &korean, 16, "ko-KR", "ko");
@@ -3768,6 +3795,31 @@ pub(crate) mod tests {
     #[cfg(target_os = "macos")]
     const VISION_RECORDED_ON_MACOS: u32 = 27;
 
+    /// A line in the test log even when the test passes: cargo captures
+    /// `eprintln!` in a passing test, not a direct write to standard error.
+    #[cfg(target_os = "macos")]
+    fn vision_log(message: std::fmt::Arguments) {
+        use std::io::Write;
+        let _ = writeln!(std::io::stderr(), "{message}");
+    }
+
+    /// What Vision read where the recorded reading is skipped: the language it
+    /// settled on, the scale, the text and whether it equals `lines`, so a
+    /// CI log shows an older release's behaviour.
+    #[cfg(target_os = "macos")]
+    fn log_vision_reading(what: &str, lines: &[&str], result: &Result<OcrResult>) {
+        match result {
+            Ok(result) => vision_log(format_args!(
+                "Vision on this macOS, {what}: language {} scale {} exact {} text {:?}",
+                result.language,
+                result.scale,
+                squeezed(&result.text) == squeezed(&lines.concat()),
+                result.text
+            )),
+            Err(error) => vision_log(format_args!("Vision on this macOS, {what}: {error}")),
+        }
+    }
+
     /// True, after saying why, on a macOS release older than the one the
     /// exact Vision readings were recorded on.
     #[cfg(target_os = "macos")]
@@ -3783,9 +3835,9 @@ pub(crate) mod tests {
             .and_then(|major| major.parse::<u32>().ok());
         let older = major.is_some_and(|major| major < VISION_RECORDED_ON_MACOS);
         if older {
-            eprintln!(
+            vision_log(format_args!(
                 "skipping readings recorded with macOS {VISION_RECORDED_ON_MACOS}'s Vision: this is macOS {version}"
-            );
+            ));
         }
         older
     }
