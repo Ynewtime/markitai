@@ -90,10 +90,16 @@ fn no_model_with_its_key_fails_before_converting_and_names_the_variable() {
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert_eq!(output.status.code(), Some(1), "{stderr}");
+    // This system's shell: `export` here, PowerShell's `$env:` on Windows.
+    let set = if cfg!(windows) {
+        "$env:DEEPSEEK_API_KEY=\"your_key\""
+    } else {
+        "export DEEPSEEK_API_KEY=your_key"
+    };
     assert!(
-        stderr.contains(
-            "DEEPSEEK_API_KEY is not set, and deepseek/deepseek-flash needs it; set it with: export DEEPSEEK_API_KEY=your_key"
-        ),
+        stderr.contains(&format!(
+            "DEEPSEEK_API_KEY is not set, and deepseek/deepseek-flash needs it; set it with: {set} (or add DEEPSEEK_API_KEY=your_key to "
+        )),
         "{stderr}"
     );
     assert!(!root.path().join("out").exists());
