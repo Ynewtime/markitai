@@ -213,6 +213,16 @@ maturin's sdist omits the crates the workspace patches in from `vendor/`
 (`[patch.crates-io]`), so `release_build.py sdist` adds them and the
 attribution files to it.
 
+If a tag run fails, fix the cause and use **Re-run failed jobs** on that same
+run, within the artifacts' 14 days: the re-run reuses the built artifacts, a
+published Release with the same `SHA256SUMS` passes, and PyPI skips files it
+already has. Do not start a new run (`gh workflow run release.yml --ref vX.Y.Z
+-f dry_run=false`) after anything was published: it rebuilds every artifact,
+the archives and wheels are not byte-reproducible, and `github-release` then
+stops with "already published with other assets", so PyPI and the MCP Registry
+are never reached. A failure before `github-release` published nothing; a fix
+that needs a new commit needs a new release commit and tag.
+
 A user checks a download with `sha256sum -c SHA256SUMS --ignore-missing` and
 its origin with `gh attestation verify <file> --repo Ynewtime/markitai`.
 
