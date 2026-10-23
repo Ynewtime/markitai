@@ -12,7 +12,8 @@ use std::collections::{BTreeMap, HashSet};
 
 /// Lines further apart than this baseline difference are different lines.
 const SAME_LINE: f32 = 2.0;
-/// The fewest letters the line above an image must leave to be found again.
+/// The fewest letters the line above an image must leave to be found again;
+/// a Han, kana or Hangul character counts as two.
 const MIN_ANCHOR: usize = 12;
 /// The letters of that line's end looked for in the page's Markdown.
 const ANCHOR: usize = 40;
@@ -160,9 +161,25 @@ pub(super) fn places(
 }
 
 /// Letters and digits only: what a line keeps through the Markdown's
-/// emphasis, escapes, joined hyphenation and spacing.
+/// emphasis, escapes, joined hyphenation and spacing. A radical form that
+/// stands for an ideograph (Chrome's 同⼀套) is that ideograph.
+fn letter(ch: char) -> Option<char> {
+    super::radicals::ideograph(ch).or_else(|| ch.is_alphanumeric().then_some(ch))
+}
+
 fn letters(text: &str) -> impl Iterator<Item = char> + '_ {
-    text.chars().filter(|ch| ch.is_alphanumeric())
+    text.chars().filter_map(letter)
+}
+
+/// How much of an anchor `letters` make: an ideograph, kana or Hangul
+/// syllable says about as much as two Latin letters, so a short CJK heading
+/// ("同一套转换内核") is found again as surely as "One conversion core".
+fn weight(letters: &[char]) -> usize {
+    letters.iter().map(|&ch| if wide(ch) { 2 } else { 1 }).sum()
+}
+
+fn wide(ch: char) -> bool {
+    matches!(ch as u32, 0x3040..=0x30FF | 0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xAC00..=0xD7AF | 0xF900..=0xFAFF | 0x20000..=0x3FFFD)
 }
 
 /// Whether a Markdown line starts a list item (`- `, `* `, `+ `, `1. `,
@@ -186,14 +203,13 @@ fn list_item(line: &str) -> bool {
 /// exactly once in it.
 pub(super) fn after_paragraph(section: &str, line: &str) -> Option<usize> {
     let wanted: Vec<char> = letters(line).collect();
-    if wanted.len() < MIN_ANCHOR {
+    if weight(&wanted) < MIN_ANCHOR {
         return None;
     }
     let wanted = &wanted[wanted.len().saturating_sub(ANCHOR)..];
     let (chars, ends): (Vec<char>, Vec<usize>) = section
         .char_indices()
-        .filter(|(_, ch)| ch.is_alphanumeric())
-        .map(|(at, ch)| (ch, at + ch.len_utf8()))
+        .filter_map(|(at, ch)| letter(ch).map(|letter| (letter, at + ch.len_utf8())))
         .unzip();
     let mut found = chars
         .windows(wanted.len())
@@ -241,6 +257,19 @@ mod tests {
             after_paragraph("repeated line\n\nrepeated line", "repeated line"),
             None
         );
+    }
+
+    #[test]
+    fn a_short_cjk_line_is_an_anchor_through_radical_forms() {
+        // Seven ideographs, one of them Chrome's radical form ⼀ (U+2F00)
+        let section =
+            "# 文件和网页转成 Markdown\n\n## 同⼀套转换内核\n\n图 1. 命令⾏和 MCP 服务共⽤⼀条流程";
+        let at = after_paragraph(section, "同⼀套转换内核").unwrap();
+        assert!(section[at..].starts_with("\n\n图 1."));
+        assert_eq!(after_paragraph(section, "同一套转换内核"), Some(at));
+        // Still too short: three ideographs, or six Latin letters
+        assert_eq!(after_paragraph("## 能转什么\n\nOffice", "能转什么"), None);
+        assert_eq!(after_paragraph("## Office\n\nPDF", "Office"), None);
     }
 
     #[test]

@@ -66,7 +66,8 @@ const SUPPLEMENT: [(char, char); 30] = [
     ('\u{2EF3}', '龟'),
 ];
 
-fn ideograph(c: char) -> Option<char> {
+/// The ideograph a radical form stands for, if it stands for one.
+pub(super) fn ideograph(c: char) -> Option<char> {
     match c {
         '\u{2F00}'..='\u{2FD5}' => Some(KANGXI[c as usize - 0x2F00]),
         '\u{2E80}'..='\u{2EFF}' => SUPPLEMENT
