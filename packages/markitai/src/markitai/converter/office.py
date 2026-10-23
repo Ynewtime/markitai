@@ -648,6 +648,8 @@ class PptxConverter(OfficeConverter):
                         ],
                         capture_output=True,
                         text=True,
+                        encoding="utf-8",
+                        errors="replace",
                         timeout=600,
                     )
                     lo_time = time.perf_counter() - lo_start

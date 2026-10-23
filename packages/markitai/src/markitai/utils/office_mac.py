@@ -313,6 +313,8 @@ def _run_applescript(script: str, *, timeout: int, app: str) -> None:
             ["osascript", "-e", wrapped],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout + 30,
         )
     except subprocess.TimeoutExpired:

@@ -95,6 +95,8 @@ def _get_linux_system_proxy() -> tuple[str, str]:
             args,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             stdin=subprocess.DEVNULL,
             timeout=remaining,
         )
@@ -316,6 +318,8 @@ def _get_system_proxy() -> tuple[str, str]:
                 ["scutil", "--proxy"],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=5,
             )
             if result.returncode == 0:

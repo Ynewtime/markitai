@@ -122,7 +122,7 @@ def _get_total_ram_bytes() -> int | None:
 
     # Method 2: /proc/meminfo (Linux)
     try:
-        with open("/proc/meminfo") as f:
+        with open("/proc/meminfo", encoding="utf-8") as f:
             for line in f:
                 if line.startswith("MemTotal:"):
                     # Format: "MemTotal:       16384000 kB"

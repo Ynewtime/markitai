@@ -303,6 +303,8 @@ def _claude_cli_auth_status() -> dict[str, Any] | None:
             [cli_path, "auth", "status"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=10,
             env=env,
         )
@@ -396,6 +398,8 @@ def _claude_oauth_credentials() -> dict[str, Any] | None:
             ],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=3,
         )
         if proc.returncode != 0:
@@ -440,6 +444,8 @@ def _store_claude_oauth_credentials(credentials: dict[str, Any]) -> bool:
             ],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=3,
         )
         return proc.returncode == 0

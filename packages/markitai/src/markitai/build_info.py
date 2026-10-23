@@ -31,6 +31,8 @@ def _git(root: Path, *args: str) -> str | None:
             ["git", "-C", str(root), *args],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=2,
             check=True,
             # Read-only: never refresh the index (no index.lock)

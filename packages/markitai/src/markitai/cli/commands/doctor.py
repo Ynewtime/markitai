@@ -312,6 +312,11 @@ def _smoke_test_playwright_browser(*, remembered: bool = True) -> tuple[bool, st
                     [sys.executable, "-c", _PLAYWRIGHT_LAUNCH_SMOKE],
                     capture_output=True,
                     text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    # A Python child writes redirected output in the ANSI code page
+                    # (cp936 on Chinese Windows) unless told otherwise
+                    env={**os.environ, "PYTHONIOENCODING": "utf-8"},
                     timeout=timeout,
                     cwd=workdir,
                 )
@@ -413,6 +418,11 @@ def _install_component(component: str, *, package_missing: bool = False) -> bool
                     [sys.executable, "-m", "playwright", "install", "chromium"],
                     capture_output=True,
                     text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    # A Python child writes redirected output in the ANSI code page
+                    # (cp936 on Chinese Windows) unless told otherwise
+                    env={**os.environ, "PYTHONIOENCODING": "utf-8"},
                     timeout=300,
                     cwd=workdir,
                 )
