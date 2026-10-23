@@ -237,6 +237,8 @@ struct Original {
     capture: Option<PathBuf>,
     /// A URL item's `blocks.json`.
     blocks: Option<PathBuf>,
+    /// The job's folder.
+    folder: PathBuf,
 }
 
 fn version(metadata: &fs::Metadata) -> String {
@@ -353,6 +355,7 @@ fn resolve(job: &Job, item_id: &str) -> ApiResult<Original> {
         reason,
         capture,
         blocks,
+        folder: job.folder.clone(),
     })
 }
 
@@ -943,9 +946,14 @@ pub(super) async fn page_text(
         (Kind::Pdf, Some(stored)) => stored,
         _ => return Err(unavailable()),
     };
+    // A page local OCR read answers with the recognizer's lines.
+    let ocr = snapshots::ocr_version(&original.folder, &original.item_id);
     let key = format!(
-        "{}\u{0}{}\u{0}{}\u{0}text\u{0}{number}",
-        id, original.item_id, stored.version
+        "{}\u{0}{}\u{0}{}\u{0}text\u{0}{number}\u{0}{}",
+        id,
+        original.item_id,
+        stored.version,
+        ocr.as_deref().unwrap_or("")
     );
     let filename = format!("page-{number}.json");
     let respond = |bytes: Bytes| {
@@ -959,8 +967,15 @@ pub(super) async fn page_text(
     let Some(slot) = state.previews.slot() else {
         return Ok(busy());
     };
+    let (folder, item_id) = (original.folder.clone(), original.item_id.clone());
     let text = crate::task::blocking(move || -> ApiResult<Vec<u8>> {
         let _slot = slot;
+        if ocr.is_some()
+            && let Some(mut page) = snapshots::ocr_page(&folder, &item_id, number)
+        {
+            page["source"] = json!("ocr");
+            return serde_json::to_vec(&page).map_err(ApiError::internal);
+        }
         let bytes = read(&stored.path, MAX_READ)?;
         let pdf = preview::PdfPreview::open(&bytes).map_err(render_failed)?;
         if number > pdf.page_count() {
@@ -982,6 +997,7 @@ pub(super) async fn page_text(
             "page": number,
             "width": size.width,
             "height": size.height,
+            "source": "text",
             "lines": lines,
             "images": images,
         }))

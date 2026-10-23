@@ -449,7 +449,7 @@
         "tags": ["jobs"],
         "operationId": "getOriginalPageText",
         "summary": "A PDF page's text as positioned lines, and its pictures' boxes",
-        "description": "Only for `pdf` originals (404 `original_unavailable` otherwise). Text runs on one baseline that follow each other within an em form a line, so a table row may be several lines, one per cell. Lines are in reading order, at most 5000, with boxes in points from the page's top-left corner. `images` lists the boxes the page's pictures are drawn in (same frame, drawing order, at most 500, clipped to the page; none under 4 points on a side). Drawn under the same two-at-a-time limit as page images (429 `render_busy`).",
+        "description": "Only for `pdf` originals (404 `original_unavailable` otherwise). A page local OCR read (`source` `ocr`) answers with the recognizer's lines in the order its Markdown reads them, one per recognized line (a table row's cells are separate lines), and with the boxes of the pictures it cut out of the page in the order the Markdown places them. Otherwise (`source` `text`) text runs on one baseline that follow each other within an em form a line, so a table row may be several lines, one per cell. Lines are in reading order, at most 5000, with boxes in points from the page's top-left corner. `images` lists the boxes the page's pictures are drawn in (same frame, drawing order, at most 500, clipped to the page; none under 4 points on a side). Drawn under the same two-at-a-time limit as page images (429 `render_busy`).",
         "parameters": [
           { "$ref": "#/components/parameters/JobId" },
           { "$ref": "#/components/parameters/ItemId" },
@@ -1358,6 +1358,7 @@
           "page": { "type": "integer" },
           "width": { "type": "number", "description": "Points; the descriptor's box of this page" },
           "height": { "type": "number" },
+          "source": { "type": "string", "enum": ["text", "ocr"], "description": "Where the lines come from: the PDF's text layer, or local OCR of the page during the conversion; absent from a server that does not report it" },
           "lines": { "type": "array", "items": { "type": "object", "required": ["text", "bbox"], "properties": { "text": { "type": "string" }, "bbox": { "type": "array", "items": { "type": "number" }, "minItems": 4, "maxItems": 4, "description": "[x0, y0, x1, y1] in points from the page's top-left corner, y growing down" } } } },
           "images": { "type": "array", "description": "The boxes the page's pictures are drawn in, in drawing order; absent from a server that does not report them", "items": { "type": "object", "required": ["bbox"], "properties": { "bbox": { "type": "array", "items": { "type": "number" }, "minItems": 4, "maxItems": 4, "description": "[x0, y0, x1, y1] in points from the page's top-left corner, y growing down" } } } }
         }

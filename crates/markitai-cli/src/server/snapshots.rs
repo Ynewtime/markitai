@@ -4,6 +4,8 @@
 //! they were captured (`<item>.capture.json`), where the screenshots show the
 //! page's blocks (`<item>.blocks.json`) and, when the conversion saved no
 //! screenshots of its own, compare screenshots (`<item>.shots/<n>.jpg`).
+//! A PDF item that local OCR read keeps where its recognized lines and cut
+//! out pictures are (`<item>.ocr.json`), for the Compare view of its pages.
 //! None of them is a result file: they are not listed in a result, not
 //! archived and never sent to a model; they go with the item.
 use super::store;
@@ -27,6 +29,7 @@ pub(super) struct Names {
     pub capture: String,
     pub blocks: String,
     pub shots: String,
+    pub ocr: String,
 }
 
 pub(super) fn names(item_id: &str) -> Option<Names> {
@@ -40,6 +43,7 @@ pub(super) fn names(item_id: &str) -> Option<Names> {
         capture: format!("{item_id}.capture.json"),
         blocks: format!("{item_id}.blocks.json"),
         shots: format!("{item_id}.shots"),
+        ocr: format!("{item_id}.ocr.json"),
     })
 }
 
@@ -136,7 +140,7 @@ pub(super) fn files(job: &Path, item_id: &str) -> Vec<String> {
         return Vec::new();
     };
     let snapshots = job.join("snapshots");
-    let mut found: Vec<String> = [&names.html, &names.capture, &names.blocks]
+    let mut found: Vec<String> = [&names.html, &names.capture, &names.blocks, &names.ocr]
         .into_iter()
         .filter(|name| store::safe_file(&snapshots, name).is_ok())
         .map(|name| format!("snapshots/{name}"))
@@ -154,6 +158,66 @@ pub(super) fn files(job: &Path, item_id: &str) -> Vec<String> {
     }
     found.sort();
     found
+}
+
+/// The largest `ocr.json` kept and read.
+const MAX_OCR_LAYOUT: u64 = 32 * 1024 * 1024;
+
+/// Keep where an OCR'd PDF's recognized lines and pictures are
+/// ([`markitai_core::ConversionOutput::ocr_layout`]) in `job`'s
+/// `snapshots/`, replacing what an earlier attempt kept; a result without
+/// one removes it. A layout that cannot be written is only missing.
+pub(super) fn keep_ocr(job: &Path, item_id: &str, layout: Option<&Value>) {
+    let Some(names) = names(item_id) else {
+        return;
+    };
+    let folder = job.join("snapshots");
+    let path = folder.join(&names.ocr);
+    let bytes = layout
+        .and_then(|layout| serde_json::to_vec(layout).ok())
+        .filter(|bytes| bytes.len() as u64 <= MAX_OCR_LAYOUT);
+    match bytes {
+        Some(bytes) if markitai_core::output::create_private_dir(&folder).is_ok() => {
+            write(&path, &bytes);
+        }
+        _ => {
+            if store::safe_file(&folder, &names.ocr).is_ok() {
+                let _ = fs::remove_file(&path);
+            }
+        }
+    }
+}
+
+/// A version of an item's kept OCR layout (its size and modification time),
+/// for caching what is read from it; `None` without one.
+pub(super) fn ocr_version(job: &Path, item_id: &str) -> Option<String> {
+    let metadata = fs::metadata(kept(job, item_id, |names| &names.ocr)?).ok()?;
+    let modified = metadata
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |time| time.as_nanos());
+    Some(format!("{}-{modified}", metadata.len()))
+}
+
+/// The kept OCR layout of an item's page `number`: `{"page", "width",
+/// "height", "lines", "images"}`; `None` when the page was not OCR'd.
+pub(super) fn ocr_page(job: &Path, item_id: &str, number: usize) -> Option<Value> {
+    let file = fs::File::open(kept(job, item_id, |names| &names.ocr)?).ok()?;
+    let mut bytes = Vec::new();
+    file.take(MAX_OCR_LAYOUT + 1).read_to_end(&mut bytes).ok()?;
+    if bytes.len() as u64 > MAX_OCR_LAYOUT {
+        return None;
+    }
+    let mut layout: Value = serde_json::from_slice(&bytes).ok()?;
+    if layout["version"] != 1 {
+        return None;
+    }
+    let pages = layout.get_mut("pages")?.as_array_mut()?;
+    let index = pages
+        .iter()
+        .position(|page| page["page"].as_u64() == Some(number as u64))?;
+    Some(pages.swap_remove(index))
 }
 
 /// Remove an item's shots folder once its files are gone (an empty folder
@@ -196,6 +260,29 @@ mod tests {
             title: Some("Invented".into()),
             reason: None,
         }
+    }
+
+    #[test]
+    fn an_ocr_layout_is_kept_replaced_listed_and_read_by_page() {
+        let job = tempfile::tempdir().unwrap();
+        let layout = json!({"version":1,"pages":[
+            {"page":2,"width":595.0,"height":842.0,"lines":[{"text":"Read","bbox":[1.0,2.0,3.0,4.0]}],"images":[]},
+            {"page":3,"width":595.0,"height":842.0,"lines":[],"images":[{"bbox":[5.0,6.0,7.0,8.0]}]}]});
+        keep_ocr(job.path(), "i1", Some(&layout));
+        assert_eq!(files(job.path(), "i1"), ["snapshots/i1.ocr.json"]);
+        assert!(ocr_version(job.path(), "i1").is_some());
+        assert_eq!(ocr_page(job.path(), "i1", 3).unwrap(), layout["pages"][1]);
+        assert!(ocr_page(job.path(), "i1", 1).is_none());
+        // A retry that read no page by OCR leaves none behind.
+        keep_ocr(job.path(), "i1", None);
+        assert!(files(job.path(), "i1").is_empty() && ocr_version(job.path(), "i1").is_none());
+        // Another version is not read.
+        keep_ocr(
+            job.path(),
+            "i1",
+            Some(&json!({"version":2,"pages":layout["pages"]})),
+        );
+        assert!(ocr_page(job.path(), "i1", 2).is_none());
     }
 
     #[test]

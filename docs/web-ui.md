@@ -270,7 +270,8 @@ the zoom is kept per conversion for the session, and the page being read stays
 in place). Pages are drawn at the zoom's width near the view only. The outline
 panel (beside the pages, over them in a narrow pane, a sheet on a phone) shows
 the PDF's own bookmarks, else the Markdown's headings, else page thumbnails, and
-says which. Blocks link at every zoom; the page text of a long PDF is read in
+says which. Blocks link at every zoom, on scanned pages too (by the lines OCR
+read there, when the server reports them); the page text of a long PDF is read in
 the background, the first 40 pages first, so linking reaches its last page. A web page shows the page
 the server kept, else its screenshot, with Screenshot | Page when both are
 usable: the server says when either was a verification or captcha page, only a

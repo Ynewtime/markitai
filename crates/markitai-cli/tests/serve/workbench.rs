@@ -543,6 +543,27 @@ fn an_uploaded_pdf_is_described_drawn_and_read_by_line() {
         picture[0] < picture[2] && picture[1] < picture[3] && picture[2] - picture[0] > 300.0,
         "{picture:?}"
     );
+    assert_eq!(text["source"], "text");
+    assert_eq!(scanned["source"], "text");
+    // A page local OCR read answers with the lines the conversion kept.
+    let kept = json!({"version":1,"pages":[{"page":2,"width":612.0,"height":792.0,
+        "lines":[{"text":"Recognized heading","bbox":[72.0,80.0,300.0,96.0]}],
+        "images":[{"bbox":[72.0,120.0,400.0,300.0]}]}]});
+    let snapshots = server.jobdir(&id).join("snapshots");
+    std::fs::create_dir_all(&snapshots).unwrap();
+    std::fs::write(snapshots.join("i1.ocr.json"), kept.to_string()).unwrap();
+    let read = server.json(&format!("{base}/pages/2/text"));
+    assert_eq!(
+        read,
+        json!({"page":2,"width":612.0,"height":792.0,"source":"ocr",
+            "lines":[{"text":"Recognized heading","bbox":[72.0,80.0,300.0,96.0]}],
+            "images":[{"bbox":[72.0,120.0,400.0,300.0]}]})
+    );
+    assert_eq!(
+        server.json(&format!("{base}/pages/1/text"))["source"],
+        "text"
+    );
+    std::fs::remove_file(snapshots.join("i1.ocr.json")).unwrap();
     for (path, status, reason) in [
         (format!("{base}/pages/4"), 404, "page_not_found"),
         (format!("{base}/pages/0"), 404, "page_not_found"),

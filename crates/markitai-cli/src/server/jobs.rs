@@ -388,6 +388,7 @@ async fn convert_one(
     item.finished_at = Some(now());
     match result {
         Ok(Ok(result)) => {
+            super::snapshots::keep_ocr(&job.folder, &item.item_id, result.ocr_layout());
             super::documents::keep(
                 &job.folder,
                 &item.item_id,

@@ -555,6 +555,10 @@ export interface PageText {
   page: number;
   width: number;   // points, same box as the descriptor's pages[n-1]
   height: number;
+  /** "text": the PDF's text layer; "ocr": the lines local OCR read from the page during the conversion (one
+   *  per recognized line, a table's cells apart, in the order its Markdown reads them), with `images` the
+   *  pictures it cut out of the page in the order the Markdown places them. Absent from older servers. */
+  source?: "text" | "ocr";
   /** Reading-order lines; bbox = [x0, y0, x1, y1] in points from the page's TOP-left corner, y growing down. */
   lines: { text: string; bbox: [number, number, number, number] }[];
   /** Where the page's pictures are drawn, same frame, in drawing order (absent from servers that do not report them). */
