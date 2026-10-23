@@ -13,7 +13,7 @@ use std::collections::{BTreeMap, HashSet};
 /// Lines further apart than this baseline difference are different lines.
 const SAME_LINE: f32 = 2.0;
 /// The fewest letters the line above an image must leave to be found again;
-/// a Han, kana or Hangul character counts as two.
+/// a Han, kana or Hangul character counts as three.
 const MIN_ANCHOR: usize = 12;
 /// The letters of that line's end looked for in the page's Markdown.
 const ANCHOR: usize = 40;
@@ -172,10 +172,11 @@ fn letters(text: &str) -> impl Iterator<Item = char> + '_ {
 }
 
 /// How much of an anchor `letters` make: an ideograph, kana or Hangul
-/// syllable says about as much as two Latin letters, so a short CJK heading
-/// ("同一套转换内核") is found again as surely as "One conversion core".
+/// syllable says about as much as a short Latin word, three letters, so a
+/// short CJK heading ("同一套转换内核", "1.2.0 对比 1.1.0") is found again as
+/// surely as "One conversion core".
 fn weight(letters: &[char]) -> usize {
-    letters.iter().map(|&ch| if wide(ch) { 2 } else { 1 }).sum()
+    letters.iter().map(|&ch| if wide(ch) { 3 } else { 1 }).sum()
 }
 
 fn wide(ch: char) -> bool {
@@ -267,8 +268,12 @@ mod tests {
         let at = after_paragraph(section, "同⼀套转换内核").unwrap();
         assert!(section[at..].starts_with("\n\n图 1."));
         assert_eq!(after_paragraph(section, "同一套转换内核"), Some(at));
+        // Six digits and two ideographs: a version heading over its figure
+        let section = "## 1.2.0 对比 1.1.0\n\n图 1. 冷启动运行";
+        let at = after_paragraph(section, "1.2.0 对比 1.1.0").unwrap();
+        assert!(section[at..].starts_with("\n\n图 1."));
         // Still too short: three ideographs, or six Latin letters
-        assert_eq!(after_paragraph("## 能转什么\n\nOffice", "能转什么"), None);
+        assert_eq!(after_paragraph("## 转什么\n\nOffice", "转什么"), None);
         assert_eq!(after_paragraph("## Office\n\nPDF", "Office"), None);
     }
 
