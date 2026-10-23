@@ -8,6 +8,17 @@ markitai 可以通过你的 ChatGPT 订阅（Codex 登录）发送请求，不�
 markitai auth chatgpt login
 ```
 
+```mermaid
+sequenceDiagram
+  participant M as markitai
+  participant Y as 你（浏览器）
+  participant O as OpenAI 登录
+  M->>Y: 网址和验证码
+  Y->>O: 输入验证码并确认
+  M->>O: 等待确认
+  O-->>M: 已登录
+```
+
 它会显示一个网址和一个验证码（OAuth 设备码流程）：在任意浏览器里打开网址，输入验证码并确认。如果还没登录，第一次发出 `chatgpt/` 请求时也会启动登录。`markitai auth chatgpt status` 显示当前账号；之后请在工作台里重新加载模型列表。
 
 如果已经登录过，工作台仍提示 ChatGPT“尚未登录”，说明登录已过期：再运行一次上面的命令。

@@ -1,22 +1,48 @@
 # Getting Started
 
-## One-Click Setup (Recommended)
+## Install
 
-One command installs Python (if missing), uv and markitai:
+One command installs uv, Python 3.13 (when no 3.11 to 3.13 is found) and markitai, then asks about the optional parts:
 
-::: code-group
-```bash [Linux/macOS]
-curl -fsSL https://markitai.dev/setup.sh | sh
+<!--@include: ../snippets/setup.md-->
+
+| Part | Enables | Default |
+|------|---------|---------|
+| markitai with the `browser`, `extra-fetch`, `svg`, `heif`, `legacy` and `mcp` extras | the core and the small extras | always |
+| Web workspace (`serve`) | [`markitai serve`](/guide/serve) | yes |
+| Local OCR (`ocr`, about 150 MB) | `--ocr` on scans and images | yes |
+| Playwright Chromium, plus its system libraries on Linux | JavaScript pages, URL screenshots | yes |
+| Claude Code CLI and the `claude-agent` extra | a [Claude subscription](/guide/subscriptions) | no |
+| Copilot CLI and the `copilot` extra | a [Copilot subscription](/guide/subscriptions) | no |
+
+It then writes a default config (`markitai init --yes`) if there is none and loads the libraries conversions use, so the first conversion does not wait. Run it again to add a part you declined: the extras already installed are kept.
+
+Without a terminal (CI, Dockerfile) it installs only the core. Environment variables:
+
+| Variable | Effect |
+|----------|--------|
+| `MARKITAI_INSTALL_OPTIONAL=1` | install every optional part without asking (both CLIs included) |
+| `MARKITAI_VERSION=X.Y.Z` | pin a markitai release |
+| `MARKITAI_USE_MIRROR=1` / `0` | always pick / never offer a PyPI mirror (offered only when PyPI answers slowly) |
+| `MARKITAI_SETUP_LOG=PATH` | where the full log of a failure goes |
+| `NO_COLOR=1` | no colours |
+
+::: details Manual install
+With Python 3.11 to 3.13 already installed:
+
+```bash
+uv tool install markitai                 # recommended
+uv tool install "markitai[all]" --force  # with every extra
+pipx install markitai
+uv pip install markitai                  # into the active virtual environment
 ```
 
-```powershell [Windows]
-powershell -ExecutionPolicy ByPass -c "irm https://markitai.dev/setup.ps1 | iex"
-```
+Add one extra later with `uv tool install "markitai[ocr]" --force`; the extras are `markitai[browser]`, `markitai[ocr]`, `markitai[serve]`, `markitai[mcp]`, `markitai[claude-agent]`, `markitai[copilot]`, `markitai[legacy]`, `markitai[heif]`, `markitai[svg]`, `markitai[extra-fetch]` and `markitai[all]`. After the browser extra, `markitai doctor --fix` installs Chromium.
+
+After installing, upgrading or adding an extra, run `markitai doctor` once: it loads the libraries for the first time (seconds on macOS, up to a minute with OCR, while the system checks each new library). Otherwise the first conversion waits for it and says so; `markitai serve` does it in the background at start.
+
+markitai 1.3.0 requires `litellm>=1.83.0,!=1.92.0,<1.105` and `anthropic>=1.0.0,<2`: newer LiteLLM releases change model prices and OpenRouter limits markitai relies on, and Anthropic SDK 2 sends the API key as a Bearer token, which gateways that read `X-Api-Key` refuse for `--llm-batch`. An environment that needs newer versions of either package is not supported.
 :::
-
-The script asks before installing optional pieces. The Playwright browser, the web workspace and OCR default to yes; the Claude and Copilot CLIs default to no.
-
-Without an interactive terminal it installs only the core. Set `MARKITAI_INSTALL_OPTIONAL=1` to add the optional pieces in automation, and `MARKITAI_VERSION=X.Y.Z` to pin a release.
 
 ## Your First Conversion
 
@@ -26,12 +52,19 @@ Convert a real page, this very guide:
 mkai https://markitai.dev/guide/getting-started --pure
 ```
 
-`mkai` is a short alias for `markitai`. `--pure` prints plain Markdown to the terminal. To save files instead, give an output directory:
+`mkai` is a short alias for `markitai`; `--pure` prints plain Markdown. To write files, give an output directory:
 
 ```bash
 markitai document.docx -o output/
 markitai https://example.com/article -o output/
-markitai ./docs -o output/
+markitai ./docs -o output/                # a batch, with --resume after an interruption
+```
+
+```mermaid
+flowchart LR
+  I[File, folder or URL] --> C[markitai]
+  C --> M[name.md]
+  C -. --llm .-> L[name.llm.md]
 ```
 
 ### Turning on LLM enhancement
@@ -43,68 +76,16 @@ export GEMINI_API_KEY=...    # or OPENAI_ / ANTHROPIC_ / DEEPSEEK_ / OPENROUTER_
 markitai report.pdf -o output/ --llm
 ```
 
-markitai picks a model from the key it finds. To choose one yourself, set `MODEL=provider/model`.
-
-For a config file, a subscription provider (ChatGPT, Claude Code, Copilot) or several models with fallback, run the guided setup:
+markitai picks a model from the key it finds; `MODEL=provider/model` chooses one. For a config file, a subscription (ChatGPT, Claude Code, Copilot) or several models with fallback, run the guided setup, then check it:
 
 ```bash
 markitai init
-markitai doctor     # shows what is installed and configured
+markitai doctor     # what is installed and configured
 ```
 
-## Optional Capabilities
+**Presets** bundle the common flags: `minimal` converts, `standard` adds LLM cleanup and image analysis, `rich` adds page screenshots. Turn a part off with `--no-*`, for example `--preset rich --no-desc`.
 
-The core install converts documents on its own. Add an extra only when you need it:
-
-```bash
-uv tool install 'markitai[browser]' --force
-```
-
-| Extra | Enables |
-|-------|---------|
-| `markitai[browser]` | Browser rendering (`-s playwright`) for JavaScript-heavy pages and URL screenshots |
-| `markitai[ocr]` | Local OCR (`--ocr`) for scanned PDFs and images |
-| `markitai[serve]` | The [web workspace](/guide/serve) and its REST API |
-| `markitai[mcp]` | The [MCP server](/guide/mcp) for AI agents |
-| `markitai[claude-agent]` | Claude Code subscription as an LLM provider |
-| `markitai[copilot]` | GitHub Copilot subscription as an LLM provider |
-| `markitai[legacy]` | Legacy Office `.doc` and `.ppt` files |
-| `markitai[heif]` | HEIC, HEIF and AVIF images |
-| `markitai[svg]` | High-quality SVG rendering |
-| `markitai[extra-fetch]` | curl-cffi client for sites with TLS fingerprint checks |
-| `markitai[all]` | Everything above |
-
-Two remote fetch strategies need credentials instead of an extra: `-s jina` reads `JINA_API_KEY`, and `-s cloudflare` reads `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`.
-
-After adding the browser extra, install Chromium once:
-
-```bash
-markitai doctor --fix
-```
-
-After installing or upgrading markitai (or adding an extra), run `markitai doctor` once: it loads the libraries conversions use for the first time, which takes several seconds on macOS and up to a minute with the OCR extra (the system checks each newly installed library once). Otherwise the first conversion (in the CLI or in `markitai serve`) waits for it and says so. The setup scripts do it for you, and `markitai serve` does it in the background when it starts.
-
-## Manual Installation
-
-If Python 3.11 to 3.13 is already installed:
-
-```bash
-uv tool install markitai     # recommended
-pipx install markitai
-uv pip install markitai      # into the active virtual environment
-```
-
-A manual install has no optional pieces. Run `markitai doctor` to see what is available, and `markitai init` to set up an LLM provider.
-
-markitai 1.3.0 requires `litellm>=1.83.0,!=1.92.0,<1.105` and `anthropic>=1.0.0,<2`: newer LiteLLM releases change model prices and OpenRouter limits markitai relies on, and Anthropic SDK 2 sends the API key as a Bearer token, which gateways that read `X-Api-Key` refuse for `--llm-batch`. Installing markitai into an environment that needs newer versions of either package is not supported.
-
-## Feature Notes
-
-**Presets** bundle the common flags. `minimal` does plain conversion, `standard` adds LLM cleanup and image analysis, `rich` adds page screenshots. Turn any part off with `--no-*`, for example `--preset rich --no-desc`.
-
-**URLs** fetch locally first. When that fails on a public page, markitai may fall back to a remote reader (Defuddle, Jina or Cloudflare) and says so once on stderr. Private, intranet and credential-bearing URLs never leave your machine. `MARKITAI_NO_REMOTE_FETCH=1` keeps everything local.
-
-**Directories** convert as a batch with a progress display and a JSON report. If a run is interrupted, add `--resume` to pick it up.
+**URLs** are fetched on your machine first. When that fails on a public page, markitai may fall back to a remote reader (Defuddle, Jina or Cloudflare) and says so once on stderr; private, intranet and credential-bearing URLs never leave your machine, and `MARKITAI_NO_REMOTE_FETCH=1` keeps everything local ([Fetch Policy](/guide/fetch-policy)). `-s jina` reads `JINA_API_KEY`; `-s cloudflare` reads `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`.
 
 ## Output Structure
 
@@ -132,16 +113,25 @@ The output name is the full input name plus `.md`, so `report.pdf` and `report.d
 | Other documents | `.epub`, `.eml`, `.msg`, `.ipynb` |
 | URLs | `http://`, `https://` |
 
-## Platform-Specific Features
+Legacy `.doc` and `.ppt` need `markitai[legacy]` and no Office install.
 
-Everything works on Windows, Linux and macOS, with three things to know:
+## Platform Notes
 
-- **EMF/WMF images** only convert on Windows, because the format itself is Windows-only.
-- **PPTX slide screenshots** need a renderer. Windows uses Microsoft Office or LibreOffice. Linux needs LibreOffice (`apt-get install libreoffice`). macOS prefers LibreOffice (`brew install --cask libreoffice`) and otherwise drives an installed PowerPoint, which pops a one-time permission dialog and needs a desktop session. Recent macOS versions also refuse the terminal's writes to PowerPoint's container (`Operation not permitted`, with no dialog): give the terminal app Full Disk Access in System Settings → Privacy & Security, or install LibreOffice. Set `"office": { "macos_fallback": false }` in the config to disable that on headless Macs.
+Everything works on Windows, Linux and macOS, except:
 
-- **Windows on Arm** (Snapdragon and other ARM64 PCs): markitai runs on an x64 Python, which Windows emulates. Some libraries it needs have no ARM64 build yet: pymupdf-layout, used for every PDF, has none at all, and the LLM library needs packages that would have to be compiled with Rust. `setup.ps1` picks an x64 Python, or installs one with uv, and says so. With uv directly, ask for one: `uv tool install markitai --python cpython-3.13-windows-x86_64`. On a native ARM64 Python the install stops with `pymupdf-layout ... has no wheels with a matching platform tag (e.g., win_arm64)`. Emulation makes markitai slower than on an x64 PC.
+| Platform | Note |
+|----------|------|
+| EMF/WMF images | convert only on Windows (the format is Windows-only) |
+| PPTX slide screenshots | need a renderer: Office or LibreOffice on Windows, LibreOffice on Linux (`apt-get install libreoffice`); see below for macOS |
+| Windows on Arm | markitai runs on an emulated x64 Python, which the setup script picks or installs; slower than on an x64 PC |
 
-Legacy `.doc` and `.ppt` files need `markitai[legacy]` and no Office install on any platform.
+::: details macOS slide screenshots
+macOS prefers LibreOffice (`brew install --cask libreoffice`) and otherwise drives an installed PowerPoint, which asks for permission once and needs a desktop session. Recent macOS versions refuse the terminal's writes to PowerPoint's container (`Operation not permitted`, no dialog): give the terminal app Full Disk Access in System Settings → Privacy & Security, or install LibreOffice. On a headless Mac set `"office": { "macos_fallback": false }`.
+:::
+
+::: details Windows on Arm
+Some libraries markitai needs have no ARM64 build: pymupdf-layout, used for every PDF, has none, and the LLM library needs packages that would have to be compiled with Rust. `setup.ps1` picks an x64 Python or installs one with uv, and says so. With uv directly, ask for one: `uv tool install markitai --python cpython-3.13-windows-x86_64`. On a native ARM64 Python the install stops with `pymupdf-layout ... has no wheels with a matching platform tag (e.g., win_arm64)`.
+:::
 
 ## Next Steps
 
