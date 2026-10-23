@@ -351,8 +351,10 @@ See [browser installation](browser-installation.md).
 of Word, PowerPoint and spreadsheet files are exported through an installed
 LibreOffice and the selected PDF renderer (CoreGraphics on macOS by default,
 built-in hayro on Windows/Linux). Without it the document's own text is
-still converted and this one warning appears; install LibreOffice (macOS:
-`brew install --cask libreoffice`) to get the pages, or pass `--no-screenshot`
+still converted and this one warning appears; install LibreOffice (the
+warning names this system's command: `brew install --cask libreoffice` on
+macOS, `winget install --id TheDocumentFoundation.LibreOffice --exact` on
+Windows) to get the pages, or pass `--no-screenshot`
 / `--no-ocr` (also for presets such as `rich`) to silence it. Only
 `--screenshot-only` fails, with `Office screenshots require an installed
 LibreOffice (soffice on PATH) …`, because nothing else would be written. See

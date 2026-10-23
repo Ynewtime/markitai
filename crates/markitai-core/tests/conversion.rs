@@ -1004,11 +1004,49 @@ mod bounded_fixture_io {
     ));
 }
 
+/// This system's LibreOffice install command, as the Office notices give it.
+const INSTALL_LIBREOFFICE: &str = if cfg!(target_os = "macos") {
+    "brew install --cask libreoffice"
+} else if cfg!(windows) {
+    "winget install --id TheDocumentFoundation.LibreOffice --exact"
+} else {
+    "Install LibreOffice with your distribution's package manager"
+};
+
+/// Runs the test `name` again in a child process whose PATH holds no
+/// LibreOffice, where PATH is the only place it is looked for (Linux and the
+/// other Unix systems). True when the caller should return: the child ran the
+/// test, or LibreOffice is installed where it cannot be hidden.
+fn rerun_without_libreoffice(name: &str) -> bool {
+    const CHILD: &str = "MARKITAI_TEST_WITHOUT_LIBREOFFICE";
+    if std::env::var_os(CHILD).is_some() || !markitai_core::office_render_available() {
+        return false;
+    }
+    if cfg!(any(target_os = "macos", windows)) {
+        // Its fixed install locations are searched too.
+        return true;
+    }
+    let empty = tempfile::tempdir().unwrap();
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", name, "--nocapture"])
+        .env(CHILD, "1")
+        .env("PATH", empty.path())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success() && stdout.contains("1 passed"),
+        "{name}: {stdout}\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    true
+}
+
 #[test]
 fn office_ocr_without_a_renderer_keeps_the_documents_own_text() {
     // OCR over a folder must not fail its Office files where LibreOffice is
     // absent; explicitly requested screenshots still do.
-    if markitai_core::office_render_available() {
+    if rerun_without_libreoffice("office_ocr_without_a_renderer_keeps_the_documents_own_text") {
         return;
     }
     let dir = tempfile::tempdir().unwrap();
@@ -1049,7 +1087,7 @@ fn office_ocr_without_a_renderer_keeps_the_documents_own_text() {
         result
             .warnings
             .iter()
-            .any(|w| w.contains("brew install --cask libreoffice") && w.contains("--no-ocr")),
+            .any(|w| w.contains(INSTALL_LIBREOFFICE) && w.contains("--no-ocr")),
         "{:?}",
         result.warnings
     );
@@ -1081,7 +1119,7 @@ fn office_ocr_without_a_renderer_keeps_the_documents_own_text() {
     assert_eq!(capture.len(), 1, "{:?}", result.warnings);
     assert!(
         capture[0].starts_with("Page screenshots of Office documents need LibreOffice")
-            && capture[0].contains("brew install --cask libreoffice")
+            && capture[0].contains(INSTALL_LIBREOFFICE)
             && capture[0].contains("--no-screenshot"),
         "{capture:?}"
     );
@@ -1123,7 +1161,7 @@ fn office_ocr_without_a_renderer_keeps_the_documents_own_text() {
     .unwrap_err()
     .to_string();
     assert!(
-        error.contains("LibreOffice") && error.contains("brew install --cask libreoffice"),
+        error.contains("LibreOffice") && error.contains(INSTALL_LIBREOFFICE),
         "{error}"
     );
     assert!(!dir.path().join("out4").join("report.docx.md").exists());

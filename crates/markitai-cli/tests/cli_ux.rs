@@ -625,13 +625,32 @@ fn an_image_that_is_not_one_is_an_error_and_a_real_one_is_skipped_by_name() {
 
 // ---- Office documents without LibreOffice -------------------------------------
 
+/// This system's LibreOffice install command, as the Office notices give it.
+const INSTALL_LIBREOFFICE: &str = if cfg!(target_os = "macos") {
+    "brew install --cask libreoffice"
+} else if cfg!(windows) {
+    "winget install --id TheDocumentFoundation.LibreOffice --exact"
+} else {
+    "Install LibreOffice with your distribution's package manager"
+};
+
 #[test]
 fn screenshots_without_libreoffice_still_publish_the_text_with_one_warning() {
-    if markitai_core::office_render_available() {
+    let setup = Setup::new();
+    // Off macOS and Windows LibreOffice is looked for on PATH alone, so an
+    // empty one hides an installed copy; their fixed install locations cannot
+    // be hidden.
+    std::fs::create_dir(setup.path("bin")).unwrap();
+    let bin = setup.path("bin");
+    let hidden = [("PATH", bin.to_str().unwrap())];
+    let env: &[(&str, &str)] = if !cfg!(any(target_os = "macos", windows)) {
+        &hidden
+    } else if markitai_core::office_render_available() {
         // The renderer is installed here; the degraded path cannot be reached.
         return;
-    }
-    let setup = Setup::new();
+    } else {
+        &[]
+    };
     setup.write("a.docx", DOCX);
     setup.write("in/a.docx", DOCX);
     setup.write("in/b.docx", DOCX);
@@ -640,7 +659,7 @@ fn screenshots_without_libreoffice_still_publish_the_text_with_one_warning() {
         // The rich preset implies screenshots; --no-llm keeps the model out of it.
         vec!["a.docx", "-p", "rich", "--no-llm", "-o", "out"],
     ] {
-        let output = setup.run(&args);
+        let output = setup.run_env(&args, env);
         assert!(output.status.success(), "{args:?}: {}", stderr(&output));
         let text = stderr(&output);
         let warnings: Vec<_> = text
@@ -649,8 +668,7 @@ fn screenshots_without_libreoffice_still_publish_the_text_with_one_warning() {
             .collect();
         assert_eq!(warnings.len(), 1, "{args:?}: {text}");
         assert!(
-            warnings[0].contains("brew install --cask libreoffice")
-                && warnings[0].contains("--no-screenshot"),
+            warnings[0].contains(INSTALL_LIBREOFFICE) && warnings[0].contains("--no-screenshot"),
             "{text}"
         );
         let markdown = std::fs::read_to_string(setup.path("out/a.docx.md")).unwrap();
@@ -658,7 +676,7 @@ fn screenshots_without_libreoffice_still_publish_the_text_with_one_warning() {
         std::fs::remove_dir_all(setup.path("out")).unwrap();
     }
     // A folder of Office files: the shared warning is written once.
-    let batch = setup.run(&["in", "--screenshot", "-o", "batch-out"]);
+    let batch = setup.run_env(&["in", "--screenshot", "-o", "batch-out"], env);
     assert!(batch.status.success(), "{}", stderr(&batch));
     let text = stderr(&batch);
     assert_eq!(
@@ -672,10 +690,10 @@ fn screenshots_without_libreoffice_still_publish_the_text_with_one_warning() {
     );
     assert!(text.contains("Done: 2 files ("), "{text}");
     // Only screenshots as the whole output keep failing, and say what to do.
-    let only = setup.run(&["a.docx", "--screenshot-only", "-o", "only"]);
+    let only = setup.run_env(&["a.docx", "--screenshot-only", "-o", "only"], env);
     assert_eq!(only.status.code(), Some(1));
     assert!(
-        stderr(&only).contains("brew install --cask libreoffice"),
+        stderr(&only).contains(INSTALL_LIBREOFFICE),
         "{}",
         stderr(&only)
     );

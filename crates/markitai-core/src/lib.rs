@@ -459,9 +459,10 @@ fn convert_inner(
         && config::enabled(&cfg, "/screenshot/enabled")
         && config::enabled(&cfg, "/screenshot/screenshot_only")
     {
-        return Err(Error::Unsupported(
-            "Office screenshots require an installed LibreOffice (soffice on PATH) and the native PDF page renderer, and --screenshot-only publishes nothing else. Install LibreOffice (macOS: brew install --cask libreoffice), or drop --screenshot-only to convert the document's text".into(),
-        ));
+        return Err(Error::Unsupported(format!(
+            "Office screenshots require an installed LibreOffice (soffice on PATH) and the native PDF page renderer, and --screenshot-only publishes nothing else. {}, or drop --screenshot-only to convert the document's text",
+            install_libreoffice()
+        )));
     }
     // `-b cloudflare` (fetch.cloudflare.convert_enabled): Workers AI converts
     // the formats it reads into text. OCR and screenshots need the native
@@ -650,13 +651,7 @@ fn convert_inner(
     if office_ocr_without_renderer {
         // The page renderer is built in; LibreOffice alone decides this, so
         // the notice names only it, with this system's install command.
-        let install = if cfg!(target_os = "macos") {
-            "Install LibreOffice (brew install --cask libreoffice)"
-        } else if cfg!(windows) {
-            "Install LibreOffice (winget install --id TheDocumentFoundation.LibreOffice --exact)"
-        } else {
-            "Install LibreOffice with your distribution's package manager"
-        };
+        let install = install_libreoffice();
         let warning = match (
             config::enabled(&cfg, "/screenshot/enabled"),
             config::enabled(&cfg, "/ocr/enabled"),
@@ -1239,6 +1234,17 @@ fn convert_inner(
     }
     result.duration = start.elapsed().as_secs_f64();
     Ok(result)
+}
+
+/// How to install LibreOffice on this system, for the Office page notices.
+fn install_libreoffice() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "Install LibreOffice (brew install --cask libreoffice)"
+    } else if cfg!(windows) {
+        "Install LibreOffice (winget install --id TheDocumentFoundation.LibreOffice --exact)"
+    } else {
+        "Install LibreOffice with your distribution's package manager"
+    }
 }
 
 fn prepare_pdf_media(
