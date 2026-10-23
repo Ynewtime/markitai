@@ -175,12 +175,14 @@ Two workflows serve markitai.dev from `website/` (see
 [development](development.md#website)); neither builds or publishes packages.
 
 - `deploy-website.yml` builds the site and deploys it to GitHub Pages on a push
-  to `main` that changes `website/**` or the workflow, and when started by hand
-  on `main` (a run on another branch skips both jobs).
+  to `main` that changes `website/**`, `scripts/install/**` (served as
+  `/setup.sh` and `/setup.ps1`) or the workflow, and when started by hand on
+  `main` (a run on another branch skips both jobs).
 - `website-check.yml` runs on pushes to `main` and pull requests that change
-  `website/**` or the workflow, and by hand. It fails on a release-notes section
-  without its `vX.Y.Z` tag, runs `website/tests` against a checkout of the
-  `python` branch, and builds the site for pull requests and manual runs.
+  `website/**`, `scripts/install/**`, the CLI or core crates, `Cargo.lock` or the
+  workflow, and by hand. It fails on a release-notes section without its
+  `vX.Y.Z` tag, builds the CLI (debug) and runs `website/tests` against it, and
+  builds the site for pull requests and manual runs.
 
 ## Releases
 

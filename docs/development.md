@@ -67,8 +67,8 @@ installation checks. Configuring a runner is separate from executing it.
 ## Website
 
 `website/` is markitai.dev (VitePress, English at the root, Chinese under
-`zh/`). It still documents the Python markitai 1.x line, whose source is the
-`python` branch, until the site is rewritten for 2.0. With Bun 1.4:
+`zh/`). It documents markitai 2.x, the code on `main`; the Python markitai 1.x
+line lives on the `python` branch. With Bun 1.4:
 
 ```sh
 cd website
@@ -79,11 +79,20 @@ bun run docs:build    # output in website/.vitepress/dist
 The changelog pages come from `website/changelog/python-1.x*.md`, not from the
 repository's `CHANGELOG*.md`; `bun scripts/changelog.mjs --check` fails when a
 section there has no `vX.Y.Z` tag, and the build leaves such a section off the
-site. `website/public/setup.sh` and `setup.ps1` are the installers served as
-`https://markitai.dev/setup.sh` and `/setup.ps1`. The contract tests in
-`website/tests` compare the pages with the Python CLI; their docstring shows how
-to run them against a checkout of the `python` branch. The website workflows
-are described in [native CI](ci.md#website).
+site. The installers served as `https://markitai.dev/setup.sh` and
+`/setup.ps1` are `scripts/install/setup.sh` and `setup.ps1`:
+`website/scripts/setup-scripts.mjs` copies them into `website/public/`
+(git-ignored) on every build, so the site has no copy of its own. The contract
+tests in `website/tests` compare the pages with the CLI built from this
+checkout (`--help`, `config list`/`config get`, presets, the models
+`init --yes` picks):
+
+```sh
+cargo build --locked -p markitai-cli
+MARKITAI_BIN=target/debug/markitai uv run --no-project --with 'pytest==9.1.1' pytest website/tests
+```
+
+The website workflows are described in [native CI](ci.md#website).
 
 The workbench screenshots on the home page and the serve guide are
 `website/images/workbench[.zh][.dark].{png,webp}`, referenced by relative path

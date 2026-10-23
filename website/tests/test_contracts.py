@@ -1,61 +1,76 @@
 """Keep markitai.dev honest about the markitai it documents.
 
-The site documents the Python markitai 1.x line, whose source is the `python`
-branch. These guards compare the pages with that code, so they run in the
-Python checkout's environment, pointed at it by MARKITAI_PYTHON_CHECKOUT:
+The site documents markitai 2.x, the Rust CLI on `main`. These guards compare
+the pages with that CLI: its `--help` text, its configuration schema
+(`markitai config list` / `config get`), its presets and the models
+`markitai init` picks. Point MARKITAI_BIN at a built `markitai`:
 
-    git worktree add --detach ../markitai-python origin/python
-    (cd ../markitai-python && uv sync --frozen --all-groups)
-    MARKITAI_PYTHON_CHECKOUT=../markitai-python \\
-        uv run --project ../markitai-python --no-sync pytest website/tests
+    cargo build --locked -p markitai-cli
+    MARKITAI_BIN=target/debug/markitai uv run --no-project --with pytest \\
+        pytest website/tests
 
-Without the variable the checks that read the code skip, except in CI, where
-they fail. The site-only checks always run.
+Without the variable the checks that run the CLI skip, except in CI, where
+they fail. The site-only checks always run. Every CLI call gets a private
+HOME and MARKITAI_HOME and no provider keys, so a test never reads your
+configuration or sends a request.
 
-The rot this module exists to prevent: one fact (an option name, a dependency,
-a consent rule) is copied by hand into the CLI, `website/guide/*.md`, and
-`website/zh/guide/*.md`. Nothing linked those copies, so when six deprecated
-backend aliases were deleted from click, both language guides kept advertising
-them, including a mutual-exclusion table for flags that no longer parse.
+The rot this module exists to prevent: one fact (an option name, a default, a
+preset) is copied by hand into the CLI, `website/guide/*.md`, and
+`website/zh/guide/*.md`. Nothing links those copies, so a renamed flag or a
+changed default stays advertised in both languages until a reader trips on it.
 
-* **Fails** when a guide documents a `--flag` the CLI does not define, or
-  names a removed flag outside a section that says it was removed.
+* **Fails** when a guide documents a `--flag` the CLI does not accept, or names
+  a removed flag outside a section that says it was removed.
 * **Fails** when the English and Chinese CLI guides document different option
   sets, which is how half-finished bilingual edits show up.
-* **Fails** when the CLI defines an option no page mentions at all, and when a
+* **Fails** when the CLI shows an option no page mentions at all, and when a
   top-level command has no reference section.
+* **Fails** when a page names a configuration key the schema does not have, or
+  a reference table gives a key a default the CLI does not use.
+* **Fails** when a preset table disagrees with `markitai --help`.
 * **Ignores fenced code blocks** when scanning headings: a shell comment such
-  as `# removed in 1.0` inside a snippet must not excuse any rule.
+  as `# removed in 2.0` inside a snippet must not excuse any rule.
 
-What it cannot catch: wrong descriptions, stale defaults, wrong values for a
-`Choice` option, or prose that contradicts behavior. Those still need review.
+What it cannot catch: wrong descriptions, wrong values for a `Choice` option
+in prose, or prose that contradicts behavior. Those still need review.
 """
 
 from __future__ import annotations
 
+import functools
+import json
 import os
 import re
-import tomllib
+import subprocess
+import tempfile
 from pathlib import Path
 from urllib.parse import unquote
 
 import pytest
 
 _WEBSITE = Path(__file__).resolve().parents[1]
+_REPO = _WEBSITE.parent
 _EN_GUIDE = _WEBSITE / "guide"
 _ZH_GUIDE = _WEBSITE / "zh" / "guide"
+_GUIDES = (_EN_GUIDE, _ZH_GUIDE)
 _CHANGELOGS = sorted((_WEBSITE / "changelog").glob("*.md"))
-_PYTHON_ENV = "MARKITAI_PYTHON_CHECKOUT"
+_BIN_ENV = "MARKITAI_BIN"
 
 # `--flag`. Trailing-hyphen matches are prose globs (`--no-*`), not options.
 _FLAG_RE = re.compile(r"(?<![\w-])--[a-zA-Z][\w-]*")
 
-# Flags that belong to other tools and legitimately appear in install snippets.
+# Flags of other tools that legitimately appear in install and setup snippets.
 _FOREIGN_FLAGS = frozenset(
     {
-        "--force",  # uv tool install / pipx install
-        "--help",  # click's built-in, not a declared param
-        "--from",  # uvx --from "markitai[mcp]" in MCP client setup snippets
+        "--help",  # every command's built-in; not an option to document
+        "--version",  # likewise
+        "--from",  # uvx --from markitai markitai-mcp
+        "--uninstall",  # setup.sh -s -- --uninstall
+        "--release",  # cargo build --release --locked -p markitai-cli
+        "--locked",  # likewise
+        "--ignore-missing",  # sha256sum -c SHA256SUMS --ignore-missing
+        "--repo",  # gh attestation verify FILE --repo Ynewtime/markitai
+        "--prefix",  # npm --prefix bindings/node run build
     }
 )
 
@@ -65,28 +80,170 @@ _HEADING_RE = re.compile(r"^#{1,6}\s")
 # A removed flag may only be named under a heading that says it is removed.
 _REMOVAL_MARKERS = ("removed", "已移除")
 
+# Top-level configuration sections; a backticked `section.key` names a key.
+_CONFIG_SECTIONS = (
+    "batch",
+    "cache",
+    "fetch",
+    "history",
+    "image",
+    "llm",
+    "log",
+    "ocr",
+    "office",
+    "output",
+    "presets",
+    "prompts",
+    "screenshot",
+    "security",
+)
 
-def _python_checkout() -> Path:
-    """The `python` branch checkout whose code the pages describe."""
-    value = os.environ.get(_PYTHON_ENV)
+
+# ============================================================
+# The CLI under test
+# ============================================================
+
+
+@functools.cache
+def _binary() -> Path:
+    """The built markitai 2.x the pages describe."""
+    value = os.environ.get(_BIN_ENV)
     if not value:
-        message = f"{_PYTHON_ENV} names no checkout of the python branch"
+        message = f"{_BIN_ENV} names no built markitai (cargo build -p markitai-cli)"
         if os.environ.get("CI"):
             pytest.fail(message)
         pytest.skip(message)
-    root = Path(value).resolve()
-    import markitai
-
-    # The guards are worthless against another installed markitai.
-    assert root in Path(markitai.__file__).resolve().parents, (
-        f"markitai is imported from {markitai.__file__}, not from {root}; run "
-        f"pytest with `uv run --project {value} --no-sync`"
+    path = Path(value).resolve()
+    assert path.is_file(), f"{_BIN_ENV}={value} is not a file"
+    version = _run_at(path, "--version").stdout.strip()
+    assert version.startswith("markitai 2."), (
+        f"{path} reports {version!r}; these guards are for markitai 2.x"
     )
-    return root
+    return path
 
 
-def _package(root: Path) -> Path:
-    return root / "packages" / "markitai"
+@functools.cache
+def _state() -> Path:
+    """One private HOME/MARKITAI_HOME root for every CLI call of this run."""
+    return Path(tempfile.mkdtemp(prefix="markitai-site-tests-"))
+
+
+def _env(**extra: str) -> dict[str, str]:
+    """A clean environment: no provider keys, no user configuration."""
+    root = _state()
+    env = {
+        "PATH": os.environ.get("PATH", ""),
+        "HOME": str(root / "home"),
+        "USERPROFILE": str(root / "home"),
+        "MARKITAI_HOME": str(root / "markitai-home"),
+        "MARKITAI_LANG": "en",
+        "NO_COLOR": "1",
+        "COLUMNS": "200",
+    }
+    for name in ("SYSTEMROOT", "TEMP", "TMP"):  # Windows needs these to start
+        if name in os.environ:
+            env[name] = os.environ[name]
+    env.update(extra)
+    return env
+
+
+def _run_at(binary: Path, *args: str, **env: str) -> subprocess.CompletedProcess[str]:
+    (_state() / "home").mkdir(exist_ok=True)
+    (_state() / "markitai-home").mkdir(exist_ok=True)
+    return subprocess.run(
+        [str(binary), *args],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        env=_env(**env),
+        cwd=_state(),
+        timeout=120,
+        check=False,
+    )
+
+
+def _run(*args: str, **env: str) -> subprocess.CompletedProcess[str]:
+    return _run_at(_binary(), *args, **env)
+
+
+@functools.cache
+def _help(*command: str) -> str:
+    result = _run(*command, "--help")
+    assert result.returncode == 0, f"markitai {' '.join(command)} --help: {result.stderr}"
+    return result.stdout
+
+
+def _subcommands(text: str) -> list[str]:
+    """Names listed under a help text's `Commands:` heading."""
+    match = re.search(r"^Commands:\n((?:  \S.*\n)+)", text, re.MULTILINE)
+    if not match:
+        return []
+    return [line.split()[0] for line in match.group(1).splitlines() if line.split()[0] != "help"]
+
+
+@functools.cache
+def _command_tree() -> tuple[tuple[str, ...], ...]:
+    """Every command path, the root `()` included."""
+    paths: list[tuple[str, ...]] = []
+    pending: list[tuple[str, ...]] = [()]
+    while pending:
+        path = pending.pop()
+        paths.append(path)
+        pending.extend((*path, name) for name in _subcommands(_help(*path)))
+    return tuple(sorted(paths))
+
+
+@functools.cache
+def _cli_option_names() -> frozenset[str]:
+    """Every long option some `--help` names, `--no-*` partners included."""
+    names: set[str] = set()
+    for path in _command_tree():
+        names |= set(_FLAG_RE.findall(_help(*path)))
+    return frozenset(name for name in names if not name.endswith("-"))
+
+
+@functools.cache
+def _flag_verdict(flag: str) -> str:
+    """`known`, `removed` or `unknown`, from the CLI itself.
+
+    `--help` names an option's hidden partner only in prose (`--no-llm
+    disables`), and not always, so a flag the help texts miss is put to the
+    parser: `markitai FLAG --help` prints help for an accepted switch and
+    fails for an unknown or removed one.
+    """
+    if flag in _cli_option_names():
+        return "known"
+    result = _run(flag, "--help")
+    if result.returncode == 0:
+        return "known"
+    if "has been removed" in result.stderr:
+        return "removed"
+    return "unknown"
+
+
+@functools.cache
+def _config_value(key: str) -> object:
+    """`markitai config get KEY` as JSON; KeyError for a key the schema lacks."""
+    result = _run("config", "get", key)
+    if result.returncode != 0:
+        raise KeyError(f"{key}: {result.stderr.strip()}")
+    text = result.stdout.strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return text  # plain strings print without quotes
+
+
+@functools.cache
+def _config_defaults() -> dict:
+    result = _run("config", "list")
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout)
+
+
+# ============================================================
+# Reading the pages
+# ============================================================
 
 
 def _iter_docs() -> list[Path]:
@@ -102,38 +259,6 @@ def _iter_docs() -> list[Path]:
         and "changelog" not in path.relative_to(_WEBSITE).parts[:-1]
         and "node_modules" not in path.parts
     )
-
-
-def _cli_option_names() -> set[str]:
-    """Reflect every long option name out of the click command tree."""
-    _python_checkout()
-    import click
-    from markitai.cli import app
-
-    def walk(command: click.Command) -> set[str]:
-        names = {
-            option
-            for param in command.params
-            for option in (*param.opts, *param.secondary_opts)
-            if option.startswith("--")
-        }
-        if isinstance(command, click.Group):
-            ctx = click.Context(command)
-            for name in command.list_commands(ctx):
-                sub = command.get_command(ctx, name)
-                if sub is not None:
-                    names |= walk(sub)
-        return names
-
-    return walk(app)
-
-
-def _removed_option_names() -> dict[str, str | None]:
-    """The CLI's own removed-option table: removed name -> replacement."""
-    _python_checkout()
-    from markitai.cli.framework import _REMOVED_OPTIONS
-
-    return dict(_REMOVED_OPTIONS)
 
 
 def _prose_lines(text: str) -> list[str]:
@@ -160,11 +285,10 @@ def _flags_in(path: Path) -> set[str]:
 
 def _sectioned_lines(path: Path) -> list[tuple[str, str]]:
     """(nearest preceding prose heading, line) for every line."""
-    raw_lines = path.read_text(encoding="utf-8").splitlines()
-    prose_lines = _prose_lines(path.read_text(encoding="utf-8"))
+    text = path.read_text(encoding="utf-8")
     heading = ""
     out: list[tuple[str, str]] = []
-    for raw_line, prose_line in zip(raw_lines, prose_lines):
+    for raw_line, prose_line in zip(text.splitlines(), _prose_lines(text)):
         if _HEADING_RE.match(prose_line):
             heading = prose_line
         out.append((heading, raw_line))
@@ -172,7 +296,11 @@ def _sectioned_lines(path: Path) -> list[tuple[str, str]]:
 
 
 def _relative(path: Path) -> str:
-    return path.relative_to(_WEBSITE.parent).as_posix()
+    return path.relative_to(_REPO).as_posix()
+
+
+def _upgrade_page(path: Path) -> bool:
+    return path.name == "upgrading.md"
 
 
 # ============================================================
@@ -180,15 +308,32 @@ def _relative(path: Path) -> str:
 # ============================================================
 
 
-@pytest.mark.parametrize("guide", ("en", "zh"))
-def test_cli_guide_documents_only_real_options(guide: str) -> None:
-    """Every `--flag` in the CLI reference must be a flag the CLI defines."""
-    page = (_EN_GUIDE if guide == "en" else _ZH_GUIDE) / "cli.md"
-    known = _cli_option_names() | set(_removed_option_names()) | _FOREIGN_FLAGS
-    unknown = sorted(_flags_in(page) - known)
+@pytest.mark.parametrize("guide", _GUIDES, ids=("en", "zh"))
+def test_cli_guide_documents_only_real_options(guide: Path) -> None:
+    """Every `--flag` in the CLI reference must be a flag the CLI accepts."""
+    page = guide / "cli.md"
+    unknown = sorted(
+        flag
+        for flag in _flags_in(page) - _FOREIGN_FLAGS
+        if _flag_verdict(flag) == "unknown"
+    )
     assert not unknown, (
-        f"{_relative(page)} documents options the CLI does not define: "
+        f"{_relative(page)} documents options the CLI does not accept: "
         f"{unknown}. Either the docs are stale or the flag was renamed."
+    )
+
+
+def test_no_page_names_an_unknown_option() -> None:
+    """Outside the CLI reference too: a flag a reader copies must parse."""
+    offenders = sorted(
+        f"{_relative(path)}: {flag}"
+        for path in _iter_docs()
+        if not _upgrade_page(path)  # names 1.x options that are gone, on purpose
+        for flag in _flags_in(path) - _FOREIGN_FLAGS
+        if _flag_verdict(flag) == "unknown"
+    )
+    assert not offenders, "pages name options markitai does not accept:\n" + "\n".join(
+        offenders
     )
 
 
@@ -207,10 +352,14 @@ def test_en_and_zh_cli_guides_document_the_same_options() -> None:
 
 
 def test_removed_flags_are_only_named_in_removal_notes() -> None:
-    """Removed aliases may be named in migration notes, nowhere else."""
-    removed = set(_removed_option_names())
+    """Removed spellings may be named in migration notes, nowhere else."""
     offenders: list[str] = []
     for path in _iter_docs():
+        removed = {
+            flag for flag in _flags_in(path) if _flag_verdict(flag) == "removed"
+        }
+        if not removed:
+            continue
         for number, (heading, line) in enumerate(_sectioned_lines(path), start=1):
             if not any(flag in line for flag in removed):
                 continue
@@ -232,45 +381,8 @@ def test_every_cli_option_is_documented() -> None:
     assert not missing, f"CLI options not mentioned anywhere under website/: {missing}"
 
 
-@pytest.mark.parametrize("guide", (_EN_GUIDE, _ZH_GUIDE), ids=("en", "zh"))
-def test_optional_capability_extras_are_documented(guide: Path) -> None:
-    """Both guides must name the extras a reader has to install by hand."""
-    metadata = tomllib.loads(
-        (_package(_python_checkout()) / "pyproject.toml").read_text(encoding="utf-8")
-    )
-    text = (guide / "getting-started.md").read_text(encoding="utf-8")
-    for extra in sorted(metadata["project"]["optional-dependencies"]):
-        assert f"markitai[{extra}]" in text, (
-            f"{_relative(guide / 'getting-started.md')} never tells the reader "
-            f"how to install the {extra!r} extra"
-        )
-
-
-def test_docs_name_every_model_the_code_defaults_to() -> None:
-    """A reader must be able to tell which model markitai picks by default."""
-    _python_checkout()
-    from markitai.constants import PROVIDER_DEFAULT_MODELS
-
-    corpus = "".join(path.read_text(encoding="utf-8") for path in _iter_docs())
-    missing = sorted(
-        f"{provider} -> {model}"
-        for provider, model in PROVIDER_DEFAULT_MODELS.items()
-        if model not in corpus
-    )
-    assert not missing, "defaults the docs never name:\n" + "\n".join(missing)
-
-
-def _top_level_commands() -> set[str]:
-    """Every subcommand the CLI group actually exposes."""
-    _python_checkout()
-    import click
-    from markitai.cli import app
-
-    return set(app.list_commands(click.Context(app)))
-
-
-@pytest.mark.parametrize("guide", (_EN_GUIDE, _ZH_GUIDE), ids=("en", "zh"))
-def test_cli_reference_covers_every_top_level_command(guide: Path) -> None:
+@pytest.mark.parametrize("guide", _GUIDES, ids=("en", "zh"))
+def test_cli_reference_covers_every_command(guide: Path) -> None:
     """A command nobody documents is a command nobody finds."""
     page = guide / "cli.md"
     headings = [
@@ -280,58 +392,258 @@ def test_cli_reference_covers_every_top_level_command(guide: Path) -> None:
     ]
     missing = sorted(
         name
-        for name in _top_level_commands()
+        for name in _subcommands(_help())
         if not any(f"markitai {name}" in heading for heading in headings)
     )
     assert not missing, f"{_relative(page)} has no section for: {missing}"
+    text = page.read_text(encoding="utf-8")
+    unnamed = sorted(
+        " ".join(path)
+        for path in _command_tree()
+        if len(path) > 1 and " ".join(path[1:]) not in text
+    )
+    assert not unnamed, f"{_relative(page)} never names the subcommands: {unnamed}"
 
 
-def test_docs_do_not_describe_the_project_as_pre_1_0() -> None:
-    """markitai is 1.x; a stale "0.x" makes a stable API look provisional."""
-    init = _package(_python_checkout()) / "src" / "markitai" / "__init__.py"
-    version = re.search(
-        r'^__version__\s*=\s*["\']([^"\']+)', init.read_text(encoding="utf-8"), re.M
-    )
-    assert version and not version[1].startswith("0."), (
-        "this guard exists for the 1.x era; update it with the version bump"
-    )
-    offenders = [
-        f"{_relative(path)}:{number}: {line.strip()}"
-        for path in _iter_docs()
-        for number, line in enumerate(
-            path.read_text(encoding="utf-8").splitlines(), start=1
-        )
-        if re.search(r"\b0\.x\b", line)
-    ]
-    assert not offenders, "docs still describe the project as 0.x:\n" + "\n".join(
+def test_docs_name_every_model_init_picks() -> None:
+    """A reader must be able to tell which model each API key selects.
+
+    `markitai init --yes` with one provider key set writes that provider's
+    default model; it sends no request and saves no key.
+    """
+    corpus = "".join(path.read_text(encoding="utf-8") for path in _iter_docs())
+    missing: list[str] = []
+    for variable in (
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "GEMINI_API_KEY",
+        "DEEPSEEK_API_KEY",
+        "OPENROUTER_API_KEY",
+    ):
+        home = Path(tempfile.mkdtemp(dir=_state()))
+        result = _run("init", "--yes", MARKITAI_HOME=str(home), **{variable: "test-key"})
+        assert result.returncode == 0, f"init with {variable}: {result.stderr}"
+        config = json.loads((home / "config.json").read_text(encoding="utf-8"))
+        for entry in config["llm"]["model_list"]:
+            model = entry["litellm_params"]["model"]
+            if model not in corpus:
+                missing.append(f"{variable} -> {model}")
+    assert not missing, "defaults the docs never name:\n" + "\n".join(missing)
+
+
+# ============================================================
+# Presets and configuration
+# ============================================================
+
+
+def _help_presets() -> dict[str, set[str]]:
+    """`Presets (-p):` in `markitai --help`: name -> the flags it turns on."""
+    block = re.search(r"^Presets \(-p\):\n((?:  \S.*\n)+)", _help(), re.MULTILINE)
+    assert block, "markitai --help lists no presets"
+    presets: dict[str, set[str]] = {}
+    for line in block.group(1).splitlines():
+        name, _, rest = line.strip().partition(" ")
+        presets[name] = {flag[2:] for flag in _FLAG_RE.findall(rest)}
+    return presets
+
+
+def _preset_tables(path: Path) -> list[tuple[list[str], list[list[str]]]]:
+    """(header, rows) of every table whose first column lists `minimal`."""
+    tables: list[tuple[list[str], list[list[str]]]] = []
+    lines = _prose_lines(path.read_text(encoding="utf-8"))
+    for index, line in enumerate(lines):
+        if not line.startswith("| `minimal`"):
+            continue
+        if index < 2 or not lines[index - 1].startswith("|-") and not lines[index - 1].startswith("| -"):
+            continue
+        header = [cell.strip() for cell in lines[index - 2].strip("|").split("|")]
+        rows = []
+        for row in lines[index:]:
+            if not row.startswith("|"):
+                break
+            rows.append([cell.strip() for cell in row.strip().strip("|").split("|")])
+        tables.append((header, rows))
+    return tables
+
+
+_PRESET_COLUMNS = {
+    "llm": "llm",
+    "alt": "alt",
+    "desc": "desc",
+    "screenshot": "screenshot",
+    "截图": "screenshot",
+    "ocr": "ocr",
+}
+
+
+def test_preset_tables_match_the_cli() -> None:
+    """Every preset table shows what `markitai --help` says each preset turns on."""
+    presets = _help_presets()
+    seen = 0
+    offenders: list[str] = []
+    for path in _iter_docs():
+        for header, rows in _preset_tables(path):
+            seen += 1
+            columns = {
+                position: _PRESET_COLUMNS[cell.lower()]
+                for position, cell in enumerate(header)
+                if cell.lower() in _PRESET_COLUMNS
+            }
+            for row in rows:
+                name = row[0].strip("`")
+                if name not in presets:
+                    continue
+                for position, feature in columns.items():
+                    shown = row[position] == "✓"
+                    if shown != (feature in presets[name]):
+                        offenders.append(f"{_relative(path)}: {name} {feature} shows {row[position]!r}")
+    assert seen, "no page carries a preset table"
+    assert not offenders, "preset tables disagree with markitai --help:\n" + "\n".join(offenders)
+
+
+# `llm.model_list[0].litellm_params.model`, `fetch.domain_profiles.<host>` and
+# keys inside a map are names of entries, not schema keys.
+_KEY_RE = re.compile(r"`((?:" + "|".join(_CONFIG_SECTIONS) + r")(?:\.[a-z_]+)+)`")
+
+
+def test_configuration_keys_exist() -> None:
+    """A backticked `section.key` on any page is a key the schema has."""
+    offenders: list[str] = []
+    for path in _iter_docs():
+        if _upgrade_page(path):
+            continue  # names keys 2.0 no longer reads, on purpose
+        for key in sorted(set(_KEY_RE.findall(path.read_text(encoding="utf-8")))):
+            if key.startswith(("presets.", "fetch.domain_profiles.")):
+                continue
+            if key.endswith((".db", ".json", ".md")):
+                continue  # a file name such as `cache.db`, not a key
+            try:
+                _config_value(key)
+            except KeyError as error:
+                offenders.append(f"{_relative(path)}: {error}")
+    assert not offenders, "pages name configuration keys the CLI does not know:\n" + "\n".join(
         offenders
     )
 
 
+# | `section.key` | `default` | ...
+_DEFAULT_ROW_RE = re.compile(r"^\| `([a-z_]+(?:\.[a-z_]+)+)` \| `([^`]*)` \|")
+
+
+@pytest.mark.parametrize("guide", _GUIDES, ids=("en", "zh"))
+def test_configuration_reference_defaults_match_the_cli(guide: Path) -> None:
+    """A reference row `| key | default |` gives the default the CLI uses."""
+    page = guide / "configuration.md"
+    offenders: list[str] = []
+    rows = 0
+    for line in _prose_lines(page.read_text(encoding="utf-8")):
+        match = _DEFAULT_ROW_RE.match(line)
+        if not match or not match.group(1).startswith(_CONFIG_SECTIONS):
+            continue
+        rows += 1
+        key, shown = match.groups()
+        actual = _config_value(key)
+        expected = json.dumps(actual) if not isinstance(actual, str) else actual
+        if shown not in (expected, json.dumps(actual)) and not _same_number(shown, actual):
+            offenders.append(f"{key}: page {shown!r}, CLI {expected!r}")
+    assert rows >= 40, f"{_relative(page)} lost its key/default reference tables"
+    assert not offenders, f"{_relative(page)} defaults differ from the CLI:\n" + "\n".join(offenders)
+
+
+def _same_number(shown: str, actual: object) -> bool:
+    try:
+        return isinstance(actual, (int, float)) and float(shown) == float(actual)
+    except ValueError:
+        return False
+
+
+@pytest.mark.parametrize("guide", _GUIDES, ids=("en", "zh"))
+def test_full_configuration_example_is_the_cli_default(guide: Path) -> None:
+    """The page's `markitai.json with all defaults` is `markitai config list`."""
+    text = (guide / "configuration.md").read_text(encoding="utf-8")
+    blocks = re.findall(r"```json\n(\{\n  \"batch\".*?)\n```", text, re.DOTALL)
+    assert blocks, "the configuration page lost its full default configuration"
+    page = _drop_nulls(json.loads(blocks[0]))
+    assert page == _config_defaults(), (
+        "the full configuration example differs from `markitai config list`"
+    )
+
+
+def _drop_nulls(value: object) -> object:
+    if isinstance(value, dict):
+        return {key: _drop_nulls(item) for key, item in value.items() if item is not None}
+    return value
+
+
 # ============================================================
-# Stale prose that outlived the behavior it described
+# Install, setup scripts and stale 1.x wording
 # ============================================================
 
 
-def test_docs_do_not_advertise_ffmpeg() -> None:
-    """No audio/video extension is registered; FFmpeg is not a capability."""
-    offenders = [
-        f"{_relative(path)}:{number}: {line.strip()}"
-        for path in _iter_docs()
-        for number, line in enumerate(
-            path.read_text(encoding="utf-8").splitlines(), start=1
+def test_setup_scripts_have_one_source() -> None:
+    """markitai.dev serves scripts/install/, copied at build time, never a fork."""
+    tracked = subprocess.run(
+        ["git", "ls-files", "website/public"],
+        capture_output=True,
+        text=True,
+        cwd=_REPO,
+        check=True,
+    ).stdout.split()
+    assert "website/public/setup.sh" not in tracked
+    assert "website/public/setup.ps1" not in tracked
+    for name in ("setup.sh", "setup.ps1"):
+        assert (_REPO / "scripts" / "install" / name).is_file()
+    package = json.loads((_WEBSITE / "package.json").read_text(encoding="utf-8"))
+    for script in ("docs:build", "docs:dev"):
+        assert "scripts/setup-scripts.mjs" in package["scripts"][script], (
+            f"{script} no longer copies the setup scripts into the site"
         )
-        if "ffmpeg" in line.lower()
-    ]
-    assert not offenders, "docs still mention FFmpeg:\n" + "\n".join(offenders)
+
+
+def test_built_site_serves_the_tested_setup_scripts() -> None:
+    """After `docs:build`, /setup.sh and /setup.ps1 are scripts/install/ byte for byte."""
+    dist = _WEBSITE / ".vitepress" / "dist"
+    if not dist.is_dir():
+        pytest.skip("the site is not built (bun run docs:build)")
+    for name in ("setup.sh", "setup.ps1"):
+        served = dist / name
+        assert served.is_file(), f"the built site has no /{name}"
+        assert served.read_bytes() == (_REPO / "scripts" / "install" / name).read_bytes(), (
+            f"the built /{name} is not scripts/install/{name}"
+        )
+
+
+def _script_usage(name: str, marker: str) -> str:
+    """The install command a setup script documents in its own header."""
+    text = (_REPO / "scripts" / "install" / name).read_text(encoding="utf-8")
+    for line in text.splitlines():
+        if marker in line:
+            return line.lstrip("# ").split("  #")[0].strip()
+    raise AssertionError(f"scripts/install/{name} documents no install command")
+
+
+def test_pages_install_with_the_scripts_own_commands() -> None:
+    """The install commands on the site are the ones the scripts document."""
+    unix = _script_usage("setup.sh", "markitai.dev/setup.sh | sh  ")
+    windows = _script_usage("setup.ps1", "markitai.dev/setup.ps1 | iex\"")
+    snippet = (_WEBSITE / "snippets" / "setup.md").read_text(encoding="utf-8")
+    home = (_WEBSITE / "index.md").read_text(encoding="utf-8")
+    for text, where in ((snippet, "snippets/setup.md"), (home, "index.md")):
+        assert unix in text, f"website/{where} does not show `{unix}`"
+        assert windows in text, f"website/{where} does not show `{windows}`"
+    for guide in _GUIDES:
+        page = guide / "getting-started.md"
+        assert "snippets/setup.md" in page.read_text(encoding="utf-8"), (
+            f"{_relative(page)} does not start with the setup script"
+        )
 
 
 def test_getting_started_pins_no_literal_version() -> None:
     """A version baked into a doc example rots on the next release."""
-    for guide in (_EN_GUIDE, _ZH_GUIDE):
+    for guide in _GUIDES:
         page = guide / "getting-started.md"
         literals = re.findall(
-            r"MARKITAI_VERSION\s*=?\s*\"?(\d+\.\d+\.\d+)",
+            r"MARKITAI_VERSION\s*=?\s*[\"']?(\d+\.\d+\.\d+)",
             page.read_text(encoding="utf-8"),
         )
         assert not literals, (
@@ -340,48 +652,53 @@ def test_getting_started_pins_no_literal_version() -> None:
         )
 
 
-def test_consent_docs_no_longer_exempt_the_x_twitter_path() -> None:
-    """`ask` covers FxTwitter/oEmbed through the shared process decision."""
-    stale = {
-        _EN_GUIDE: (
-            "This public-URL enrichment does not open its own `ask` prompt",
-            "It does not open its own prompt under `ask`",
-            "only discloses",
-        ),
-        _ZH_GUIDE: (
-            "不会单独弹出 `ask` 确认",
-            "不会为 `ask` 单独弹出确认",
-            "例外只揭露、不询问",
-        ),
-    }
-    for guide, phrases in stale.items():
-        for name in ("fetch-policy.md", "configuration.md"):
-            text = (guide / name).read_text(encoding="utf-8")
-            for phrase in phrases:
-                assert phrase not in text, (
-                    f"{_relative(guide / name)} still describes the old "
-                    f"X/Twitter consent exemption: {phrase!r}"
-                )
+# Python markitai 1.x names that only the upgrade page may still mention.
+_PYTHON_ONLY = (
+    "markitai[",
+    "RapidOCR",
+    "PyMuPDF",
+    "pymupdf",
+    "LiteLLM library",
+    "loguru",
+    "enable_worker_processes",
+    "MARKITAI_PDF_WORKERS",
+    "MARKITAI_STATIC_HTTP",
+    "MARKITAI_USE_MIRROR",
+    "MARKITAI_SETUP_LOG",
+    "playwright install",
+    "uv tool install \"markitai[",
+)
 
 
-def test_doctor_docs_treat_ocr_as_optional() -> None:
-    """OCR left the core install, so no page may call RapidOCR required."""
-    stale = (
-        "Core requirement: RapidOCR",
-        "核心要求：RapidOCR",
-        "core RapidOCR dependency",
-        "核心 RapidOCR 检查",
-        "Required Dependencies\n  ✓ RapidOCR",
-        "必需依赖\n  ✓ RapidOCR",
-        "RapidOCR is included as a dependency and works out of the box",
-        "RapidOCR 已作为依赖包含，开箱即用",
-    )
-    for path in _iter_docs():
-        text = path.read_text(encoding="utf-8")
-        for phrase in stale:
-            assert phrase not in text, (
-                f"{_relative(path)} still calls OCR a core requirement: {phrase!r}"
-            )
+def test_python_only_names_stay_on_the_upgrade_page() -> None:
+    """1.x extras, engines and knobs are history, told once on Upgrading."""
+    offenders = [
+        f"{_relative(path)}:{number}: {line.strip()}"
+        for path in _iter_docs()
+        if not _upgrade_page(path)
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1)
+        for name in _PYTHON_ONLY
+        if name in line
+    ]
+    assert not offenders, "pages still describe Python markitai 1.x:\n" + "\n".join(offenders)
+
+
+def test_upgrade_page_is_linked_from_getting_started() -> None:
+    for guide in _GUIDES:
+        assert (guide / "upgrading.md").is_file(), f"{_relative(guide)} has no upgrading.md"
+        text = (guide / "getting-started.md").read_text(encoding="utf-8")
+        assert "upgrading" in text, f"{_relative(guide / 'getting-started.md')} does not link Upgrading"
+
+
+def test_docs_do_not_advertise_ffmpeg() -> None:
+    """No audio/video reader exists; FFmpeg is not a capability."""
+    offenders = [
+        f"{_relative(path)}:{number}: {line.strip()}"
+        for path in _iter_docs()
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1)
+        if "ffmpeg" in line.lower()
+    ]
+    assert not offenders, "docs still mention FFmpeg:\n" + "\n".join(offenders)
 
 
 # ============================================================
@@ -416,7 +733,7 @@ def _heading_slugs(path: Path) -> set[str]:
     return slugs
 
 
-@pytest.mark.parametrize("guide", (_EN_GUIDE, _ZH_GUIDE), ids=("en", "zh"))
+@pytest.mark.parametrize("guide", _GUIDES, ids=("en", "zh"))
 def test_internal_anchors_resolve(guide: Path) -> None:
     """A guide link must resolve to a page, and to a heading when it has one.
 
@@ -447,16 +764,28 @@ def test_internal_anchors_resolve(guide: Path) -> None:
     assert not offenders, "broken internal anchors:\n" + "\n".join(offenders)
 
 
-def test_llms_txt_states_the_licence_accurately() -> None:
-    """`llms.txt` is what AI agents quote for compliance; it cannot say "MIT"."""
+def test_both_locales_have_the_same_pages() -> None:
+    english = sorted(path.name for path in _EN_GUIDE.glob("*.md"))
+    chinese = sorted(path.name for path in _ZH_GUIDE.glob("*.md"))
+    assert english == chinese, f"guide pages differ: en {english}, zh {chinese}"
+
+
+def test_every_page_has_a_description_and_a_sidebar_entry() -> None:
+    """config.ts: a page without a description shares the site's one."""
+    config = (_WEBSITE / ".vitepress" / "config.ts").read_text(encoding="utf-8")
+    for guide, prefix in ((_EN_GUIDE, "/guide/"), (_ZH_GUIDE, "/zh/guide/")):
+        for page in sorted(guide.glob("*.md")):
+            route = prefix + page.stem
+            assert f"'{route}':" in config, f"config.ts has no description for {route}"
+            assert f"link: '{route}'" in config, f"config.ts has no sidebar entry for {route}"
+
+
+def test_llms_txt_points_at_the_licences() -> None:
+    """`llms.txt` is what AI agents quote for compliance."""
     text = (_WEBSITE / "public" / "llms.txt").read_text(encoding="utf-8")
-    assert "MIT licensed" not in text, (
-        "llms.txt claims the whole project is MIT licensed; name the AGPL "
-        "PyMuPDF components and point at NOTICE instead"
-    )
-    assert "AGPL" in text or "NOTICE" in text, (
-        "llms.txt must explain the AGPL/commercial PyMuPDF component"
-    )
+    assert "NOTICE" in text, "llms.txt must point at NOTICE for third-party licences"
+    for stale in ("AGPL", "PyMuPDF", "uv tool install", "markitai["):
+        assert stale not in text, f"llms.txt still describes Python markitai 1.x: {stale!r}"
 
 
 def _comparison_table(text: str) -> list[str]:
@@ -477,9 +806,7 @@ def _comparison_table(text: str) -> list[str]:
 
 def test_both_comparison_pages_carry_the_same_table() -> None:
     site = _comparison_table((_EN_GUIDE / "comparison.md").read_text(encoding="utf-8"))
-    zh_site = _comparison_table(
-        (_ZH_GUIDE / "comparison.md").read_text(encoding="utf-8")
-    )
+    zh_site = _comparison_table((_ZH_GUIDE / "comparison.md").read_text(encoding="utf-8"))
     assert len(site) >= 2, "website/guide/comparison.md lost its comparison table"
     assert len(zh_site) == len(site), (
         "the Chinese comparison page has a different number of table rows"
@@ -492,9 +819,7 @@ def test_home_feature_cards_stay_bilingual_and_grid_aligned() -> None:
     VitePress picks `grid-6` for a multiple of three cards and `grid-4`
     otherwise, so five cards leave one alone in a four-wide row.
     """
-    features = (_WEBSITE / ".vitepress" / "theme" / "features.ts").read_text(
-        encoding="utf-8"
-    )
+    features = (_WEBSITE / ".vitepress" / "theme" / "features.ts").read_text(encoding="utf-8")
     cards = len(re.findall(r"icon: svg\(", features))
     assert cards >= 3 and cards % 3 == 0, (
         f"{cards} home feature cards do not fill the default theme's grid "
@@ -513,8 +838,6 @@ def test_notice_names_every_website_dependency() -> None:
     Pele arrived to draw the Mermaid diagrams; a dependency added to
     `website/package.json` must be credited in `website/NOTICE` too.
     """
-    import json
-
     package = json.loads((_WEBSITE / "package.json").read_text(encoding="utf-8"))
     names = {
         *package.get("dependencies", {}),
@@ -552,9 +875,7 @@ def test_changelog_has_no_bare_angle_bracket_tags(changelog: Path) -> None:
     """A bare `<word>` is an unclosed element to Vue and fails the whole build."""
     offenders: list[str] = []
     in_fence = False
-    for lineno, line in enumerate(
-        changelog.read_text(encoding="utf-8").splitlines(), 1
-    ):
+    for lineno, line in enumerate(changelog.read_text(encoding="utf-8").splitlines(), 1):
         if line.lstrip().startswith("```"):
             in_fence = not in_fence
             continue
