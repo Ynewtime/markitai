@@ -53,6 +53,9 @@ mod text_trust_tests;
 #[cfg(test)]
 #[path = "pdf/title_tests.rs"]
 mod title_tests;
+#[cfg(test)]
+#[path = "pdf/two_column_tests.rs"]
+mod two_column_tests;
 
 const MAX_STREAM_BYTES: usize = 64 * 1024 * 1024;
 /// Operators one decoded content stream may hold before inspection or

@@ -949,11 +949,22 @@ fn cjk_line_breaks(lines: &[TextLine]) -> (HashSet<usize>, HashSet<usize>) {
                 // page of one- and two-line paragraphs makes the paragraph
                 // gap the common one, which the gap threshold reads as
                 // leading.
+                // Its column is the lines starting at its left edge: on a
+                // page of two columns, a centred title across both reaches
+                // past the left column's edge, and every sentence ending a
+                // line of that column would end its paragraph.
+                let own_column = extents
+                    .iter()
+                    .filter(|(other_left, other_right)| {
+                        (*other_left - left).abs() <= size * 1.5 && *other_right > left
+                    })
+                    .map(|&(_, other_right)| other_right)
+                    .fold(right, f32::max);
                 let opens = lines[start..end]
                     .get(offset + 1)
                     .and_then(|next| next.text().trim_start().chars().next())
                     .is_some_and(|c| !c.is_lowercase());
-                if matches!(last, '.' | '!' | '?') && opens && right < column - size * 4.0 {
+                if matches!(last, '.' | '!' | '?') && opens && right < own_column - size * 4.0 {
                     ends.insert(start + offset);
                 }
                 continue;
@@ -2408,6 +2419,33 @@ mod tests {
             positions.windows(2).all(|pair| pair[0] < pair[1]),
             "blocks must follow the logical chart-page stream: {md}"
         );
+    }
+
+    /// markitai: a sentence ending a line of the left column of two is
+    /// measured against that column, not against a centred title across
+    /// both columns: the next line continues its paragraph. A sentence
+    /// ending well short of its own column still ends it.
+    #[test]
+    fn a_sentence_end_is_measured_against_its_own_column() {
+        let line = |text: &str, x: f32, y: f32, width: f32| {
+            let mut item = make_item(text, 1, None);
+            (item.x, item.y, item.width, item.font_size) = (x, y, width, 10.0);
+            make_line(vec![item])
+        };
+        let lines: Vec<TextLine> = [
+            ("Harbour Gazette", 220.0, 757.9, 155.0),
+            ("Lights on the pier failed.", 56.0, 641.9, 208.4),
+            ("Several lamps will be replaced by", 56.0, 629.9, 217.9),
+            ("the board this spring with lower", 56.0, 617.9, 230.6),
+            ("energy fittings. It ends here.", 56.0, 605.9, 150.0),
+            ("Another paragraph starts here", 56.0, 593.9, 228.0),
+        ]
+        .into_iter()
+        .map(|(text, x, y, width)| line(text, x, y, width))
+        .collect();
+        let (ends, _) = cjk_line_breaks(&lines);
+        assert!(!ends.contains(&1), "{ends:?}");
+        assert!(ends.contains(&4), "{ends:?}");
     }
 
     #[test]

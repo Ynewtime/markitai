@@ -905,3 +905,15 @@ failed by name as the 1.25.1 copy (1,727 passed).
 
   Run in the isolated copy (as above), the crate's unit tests give 1,744
   passed (3 added) and the same 21 failed by name.
+
+## Sentence ends in a column of two (2.0 parity, Q2)
+
+- `src/markdown/convert.rs`: `cjk_line_breaks` measures a line of other text
+  ending a sentence against the lines starting at its own left edge, not
+  against every line overlapping it: a title centred across two columns
+  reached past the left column's edge, so a wrapped line of that column
+  ending in a full stop ended its paragraph although the next word could not
+  have fitted on it. CJK lines keep the old measure.
+
+  Run in the isolated copy (as above), the crate's unit tests give 1,745
+  passed (1 added) and the same 21 failed by name.

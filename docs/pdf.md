@@ -630,8 +630,9 @@ above or below it, no line ending in a colon leading into it) stays a
 paragraph with its number, `2、…`, as Python markitai 1.3.0 writes it. A line
 ending in CJK text more than four em short of its column (the
 farthest any line beside or under it reaches) ends its paragraph, as does a
-line of other text ending a sentence (`.`, `!`, `?`) that far short when the
-next line does not go on in lower case (a short page of one- and two-line
+line of other text ending a sentence (`.`, `!`, `?`) that far short of the lines
+starting at its own left edge (a title centred across two columns does not widen
+the left column) when the next line does not go on in lower case (a short page of one- and two-line
 paragraphs makes the paragraph gap its most common one), and a line
 holding runs four em or more apart (a row of fields) is a paragraph of its own.
 A line ending in CJK text other than a sentence end (`。！？；：`) within an em

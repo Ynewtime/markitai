@@ -1,0 +1,9 @@
+{
+  "file": "two-column.pdf",
+  "bytes": 2400,
+  "sha256": "ab7aedb5c22b5b925586bfef858960f5713306155c223b439fa10df358b71494",
+  "content": "invented newsletter page, no real data",
+  "authored": "written for these tests in markitai-rust",
+  "generator": "make.py: ReportLab 5.1.0 BaseDocTemplate with a full-width title frame above two column frames, a running header and a `Page N` footer",
+  "purpose": "wrapped lines of the left column ending in a full stop short of its edge, under a centred title wider than the column: one paragraph each, not split after the full stop"
+}
