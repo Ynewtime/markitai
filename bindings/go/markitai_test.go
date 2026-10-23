@@ -434,7 +434,7 @@ func TestNumbersPackagesKeepOtherDirectoriesXMLAndVisualModesExplicit(t *testing
 	if err := os.WriteFile(filepath.Join(legacy, "index.xml"), []byte("<document><table>OLD_XML_MUST_NOT_BE_BATCHED</table></document>"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	for _, mode := range []string{"directory", "xml", "ocr", "screenshot"} {
+	for _, mode := range []string{"directory", "xml", "screenshot"} {
 		options := numbersOptions(dir)
 		source := bundle
 		switch mode {
@@ -442,8 +442,6 @@ func TestNumbersPackagesKeepOtherDirectoriesXMLAndVisualModesExplicit(t *testing
 			source = ordinary
 		case "xml":
 			source = legacy
-		case "ocr":
-			options.OCR = Bool(true)
 		case "screenshot":
 			options.Screenshot = Bool(true)
 		}
@@ -460,12 +458,23 @@ func TestNumbersPackagesKeepOtherDirectoriesXMLAndVisualModesExplicit(t *testing
 			if typed.Code != "is_directory" {
 				t.Fatalf("ordinary directory category changed: %s", typed.Code)
 			}
-		} else if mode == "ocr" || mode == "screenshot" {
+		} else if mode == "screenshot" {
 			if typed.Code != "unsupported" || typed.Message != "Numbers complete-sheet screenshots are not supported by this LibreOffice adapter; native Numbers table reading remains available without screenshot or OCR options" {
 				t.Fatalf("%s: Numbers visual-mode rejection changed: %+v", mode, typed)
 			}
 		} else if !strings.Contains(typed.Message, "Numbers") || typed.Code != "unsupported" {
 			t.Fatalf("%s: not an explicit Numbers rejection: %+v", mode, typed)
 		}
+	}
+	// Local OCR reads the tables as without it: there are no pages to recognize.
+	plain, err := Convert(bundle, numbersOptions(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	options := numbersOptions(dir)
+	options.OCR = Bool(true)
+	recognized, err := Convert(bundle, options)
+	if err != nil || recognized.Markdown != plain.Markdown {
+		t.Fatalf("Numbers with local OCR differs from the plain reading: %v", err)
 	}
 }

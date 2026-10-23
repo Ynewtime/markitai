@@ -87,7 +87,7 @@ class NumbersTests(unittest.TestCase):
         ordinary.mkdir()
         old.mkdir()
         (old / "index.xml").write_text("<document><table>OLD_XML_MUST_NOT_BE_BATCHED</table></document>")
-        for source, overrides in [(ordinary, {}), (old, {}), (bundle, {"ocr": True}), (bundle, {"screenshot": True})]:
+        for source, overrides in [(ordinary, {}), (old, {}), (bundle, {"screenshot": True})]:
             with self.subTest(source=source, overrides=overrides):
                 options = dict(self.options, **overrides)
                 expected = IsADirectoryError if source == ordinary else markitai.ConversionError
@@ -99,11 +99,16 @@ class NumbersTests(unittest.TestCase):
                         invoke()
                     self.assertIsNone(caught.exception.usage)
                     if source != ordinary:
-                        if overrides.get("ocr") or overrides.get("screenshot"):
+                        if overrides.get("screenshot"):
                             self.assertEqual(str(caught.exception), "Numbers complete-sheet screenshots are not supported by this LibreOffice adapter; native Numbers table reading remains available without screenshot or OCR options")
                         else:
                             self.assertIn("Numbers", str(caught.exception))
                         self.assertEqual(caught.exception.code, "unsupported")
+        # Local OCR reads the tables as without it: there are no pages to recognize.
+        plain = markitai.convert(bundle, **self.options)
+        options = dict(self.options, ocr=True)
+        self.assertEqual(markitai.convert(bundle, **options).markdown, plain.markdown)
+        self.assertEqual(asyncio.run(markitai.aconvert(bundle, **options)).markdown, plain.markdown)
 
 
 if __name__ == "__main__":

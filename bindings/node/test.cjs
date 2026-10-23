@@ -122,7 +122,8 @@ test('paid native failures retain separate document accounting including zero to
       }
       const [input, output] = { TERMALPHA: [11, 3], TERMBETA: [29, 7], TERMZERO: [0, 0] }[name];
       response.writeHead(401, { 'Content-Type': 'application/json' });
-      response.end(JSON.stringify({ error: { message: 'PRIVATE RESPONSE SECRET' }, model: name, usage: { prompt_tokens: input, completion_tokens: output } }));
+      // The provider's words are shown, but not the key it echoes.
+      response.end(JSON.stringify({ error: { message: 'Incorrect API key provided: synthetic-key' }, model: name, usage: { prompt_tokens: input, completion_tokens: output } }));
     } catch (error) {
       errors.push(String(error));
       response.writeHead(500).end();
@@ -153,7 +154,8 @@ test('paid native failures retain separate document accounting including zero to
       assert.ok(error instanceof markitai.ConversionError);
       assert.equal(error.code, 'conversion_error');
       assert.match(error.message, /HTTP 401/);
-      assert.ok(!error.message.includes('PRIVATE RESPONSE SECRET'));
+      assert.match(error.message, /Provider message: Incorrect API key provided: \[REDACTED\]/);
+      assert.ok(!error.message.includes('synthetic-key'));
       assert.ok(error.usage);
       assert.deepEqual([error.usage.requests, error.usage.input_tokens, error.usage.output_tokens], [1, input, output]);
       assert.deepEqual(Object.keys(error.usage.by_model), [name]);
@@ -300,14 +302,13 @@ test('Numbers package support leaves ordinary directories, XML and visual modes 
     for (const [source, override, codes] of [
       [ordinary, {}, ['is_directory']],
       [legacy, {}, ['unsupported']],
-      [bundle, { ocr: true }, ['unsupported']],
       [bundle, { screenshot: true }, ['unsupported']],
     ]) {
       const verify = (error) => {
         assert.ok(error instanceof markitai.ConversionError);
         assert.ok(codes.includes(error.code), `${error.code}: ${error.message}`);
         assert.equal(error.usage, undefined);
-        if (override.ocr || override.screenshot) {
+        if (override.screenshot) {
           assert.equal(error.message, 'Numbers complete-sheet screenshots are not supported by this LibreOffice adapter; native Numbers table reading remains available without screenshot or OCR options');
         } else if (source !== ordinary) assert.match(error.message, /Numbers/i);
         return true;
@@ -315,6 +316,10 @@ test('Numbers package support leaves ordinary directories, XML and visual modes 
       assert.throws(() => markitai.convertSync(source, { ...options, ...override }), verify);
       await assert.rejects(markitai.convert(source, { ...options, ...override }), verify);
     }
+    // Local OCR reads the tables as without it: there are no pages to recognize.
+    const plain = markitai.convertSync(bundle, options);
+    assert.equal(markitai.convertSync(bundle, { ...options, ocr: true }).markdown, plain.markdown);
+    assert.equal((await markitai.convert(bundle, { ...options, ocr: true })).markdown, plain.markdown);
   } finally {
     process.chdir(cwd);
   }
