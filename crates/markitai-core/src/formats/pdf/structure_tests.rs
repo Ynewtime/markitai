@@ -174,6 +174,40 @@ fn text_beside_a_floated_figure_keeps_its_paragraph() {
 }
 
 #[test]
+fn one_line_paragraphs_set_a_little_apart_stay_apart() {
+    // A paragraph wrapped at a 15.75pt pitch, then one-line paragraphs of
+    // similar length 18.75pt apart (3pt of paragraph spacing): they end
+    // within an em of each other but are no measure of their own.
+    let markdown = flowed(vec![
+        body(
+            "The harbour office converts tide tables, berth logs and",
+            40.,
+            700.,
+        ),
+        body(
+            "supplier invoices every week, and the clerks check each",
+            40.,
+            684.25,
+        ),
+        body("one against the ledger before filing it.", 40., 668.5),
+        body("The first paragraph covers the morning shift.", 40., 649.75),
+        body("The second paragraph covers the evening shift.", 40., 631.),
+        body(
+            "Forty fixed cases were checked with three runs each.",
+            40.,
+            612.25,
+        ),
+    ]);
+    assert!(
+        markdown.contains(
+            "filing it.\n\nThe first paragraph covers the morning shift.\n\n\
+             The second paragraph covers the evening shift.\n\nForty fixed cases"
+        ),
+        "{markdown}"
+    );
+}
+
+#[test]
 fn lines_starting_with_the_same_symbol_are_list_items_keeping_it() {
     let markdown = flowed(vec![
         body("A good purifier should ideally have:", 40., 700.),

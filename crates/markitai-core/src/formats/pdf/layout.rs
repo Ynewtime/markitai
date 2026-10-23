@@ -1029,10 +1029,12 @@ fn column_rights(lines: &[Line]) -> Vec<f32> {
 /// do a label of its own (four characters at most, no letter: a footnote's
 /// number), a line followed by one starting in lower case, and a line of five
 /// words or more ending within an em of where a neighbouring line of its
-/// paragraph ends (the line below, or the line above at the text's pitch
-/// from the same left edge): those lines keep a measure of their own, as
-/// text beside a floated figure or in a narrower box does.
-fn ended_early(lines: &[Line], above: usize, below: usize, right: f32) -> bool {
+/// paragraph ends (the line below, or the line above from the same left
+/// edge, each at the text's line pitch `pitch` when the flow shows one):
+/// those lines keep a measure of their own, as text beside a floated figure
+/// or in a narrower box does. One-line paragraphs of similar length set
+/// a little further apart than that pitch are no such measure.
+fn ended_early(lines: &[Line], above: usize, below: usize, right: f32, pitch: Option<f32>) -> bool {
     let (upper, lower) = (&lines[above], &lines[below]);
     let (Some(last), Some(first)) = (upper.items.last(), lower.items.first()) else {
         return false;
@@ -1054,6 +1056,12 @@ fn ended_early(lines: &[Line], above: usize, below: usize, right: f32) -> bool {
     };
     let start = |line: &Line| line.items.first().map_or(0., |i| i.x);
     let close = |other: &Line| (end(other) - end(upper)).abs() <= upper.size;
+    // Two lines of one paragraph: at the text's pitch, when it is known.
+    let leading = |top: &Line, bottom: &Line| {
+        let gap = top.y - bottom.y;
+        gap <= top.size.max(bottom.size) * NEW_BLOCK
+            && pitch.is_none_or(|pitch| gap <= pitch + (top.size.max(bottom.size) * 0.1).max(1.))
+    };
     // Only a line of running text keeps a measure: a short line (a link,
     // a name, a label) ends where its words do.
     let words: usize = upper
@@ -1061,12 +1069,12 @@ fn ended_early(lines: &[Line], above: usize, below: usize, right: f32) -> bool {
         .iter()
         .map(|i| i.text.split_whitespace().count())
         .sum();
-    if words >= 5 && close(lower) {
+    if words >= 5 && close(lower) && leading(upper, lower) {
         return false;
     }
     if words >= 5
         && let Some(before) = above.checked_sub(1).map(|i| &lines[i])
-        && before.y - upper.y <= before.size.max(upper.size) * NEW_BLOCK
+        && leading(before, upper)
         && (start(before) - start(upper)).abs() <= 1.5
         && close(before)
     {
@@ -1090,6 +1098,31 @@ fn ended_early(lines: &[Line], above: usize, below: usize, right: f32) -> bool {
     };
     let word_width = first.width * word as f32 / chars as f32;
     right - end(upper) > word_width + lower.size.max(upper.size) * 1.25
+}
+
+/// The line pitch of the flow's text, in points, when two pairs of lines
+/// or more show it: the lower quartile of the baseline distances between
+/// consecutive lines of one size starting at one left edge, within one and
+/// [`NEW_BLOCK`] ems (paragraph spacing widens some of them).
+fn line_pitch(lines: &[Line]) -> Option<f32> {
+    let mut gaps: Vec<f32> = lines
+        .windows(2)
+        .filter_map(|pair| {
+            let (upper, lower) = (&pair[0], &pair[1]);
+            let (first, next) = (upper.items.first()?, lower.items.first()?);
+            let gap = upper.y - lower.y;
+            ((upper.size - lower.size).abs() <= 0.5
+                && (first.x - next.x).abs() <= 1.5
+                && gap >= upper.size
+                && gap <= upper.size * NEW_BLOCK)
+                .then_some(gap)
+        })
+        .collect();
+    if gaps.len() < 2 {
+        return None;
+    }
+    gaps.sort_by(f32::total_cmp);
+    Some(gaps[(gaps.len() - 1) / 4])
 }
 
 /// Whether `below` continues the CJK line `above` wrapped, however widely
@@ -1369,6 +1402,7 @@ fn flow(lines: &[Line], headings: &[f32], faces: &Faces, bullets: &Bullets) -> O
     let mut previous_index = 0;
     let same_size = same_size_headings(lines, headings, faces);
     let rights = column_rights(lines);
+    let pitch = line_pitch(lines);
     // The right edge of the flow's text, which a wrapped CJK line reaches
     // (a centred title reaches only its own).
     let flow_right = lines
@@ -1589,7 +1623,7 @@ fn flow(lines: &[Line], headings: &[f32], faces: &Faces, bullets: &Bullets) -> O
             level != previous_level
                 || is_list
                 || (gap > prev.size.max(line.size) * NEW_BLOCK && !wrapped)
-                || ended_early(lines, previous_index, index, rights[previous_index])
+                || ended_early(lines, previous_index, index, rights[previous_index], pitch)
                 || (in_list && line.items[0].x + 2. < prev.items[0].x)
                 || (level == 0
                     && !in_list
