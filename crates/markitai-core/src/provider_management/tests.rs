@@ -849,6 +849,45 @@ fn subscription_runtimes_say_why_they_list_no_models() {
 }
 
 #[test]
+fn a_runtime_answering_in_a_code_page_fails_only_its_own_discovery() {
+    // `--version` printed in GBK (code page 936), as a program writing the
+    // ANSI code page on a Chinese Windows would: "已就绪" is not UTF-8.
+    let gbk = |prefix: &str| {
+        let mut bytes = prefix.as_bytes().to_vec();
+        bytes.extend_from_slice(&[0xd2, 0xd1, 0xbe, 0xcd, 0xd0, 0xf7, b'\r', b'\n']);
+        json!(bytes)
+    };
+    let (_home, env) = fake_runtime_env(
+        "CLAUDE_CLI_PATH",
+        "CLAUDE_CONFIG_DIR",
+        json!({"mode":"ok","version_bytes":gbk("2.1.284 (Claude Code) ")}),
+    );
+    let claude = runtime::discover("claude-agent", &env);
+    assert_eq!(claude["status"], "unavailable", "{claude}");
+    assert_eq!(claude["reason"], "runtime_failed", "{claude}");
+    let (_home, env) = fake_runtime_env(
+        "CODEX_CLI_PATH",
+        "CODEX_HOME",
+        json!({"name":"ok","version_bytes":gbk("codex-cli 0.159.0 ")}),
+    );
+    let codex = runtime::discover("chatgpt", &env);
+    assert_eq!(codex["status"], "unavailable", "{codex}");
+    assert_eq!(codex["reason"], "runtime_unsupported", "{codex}");
+    for result in [&claude, &codex] {
+        // No undecoded bytes or replacement characters reach the message.
+        assert!(!result.to_string().contains('\u{fffd}'), "{result}");
+        assert_eq!(result["models"], json!([]), "{result}");
+    }
+
+    // The same runtimes answering in UTF-8 list their models.
+    let (_home, env) =
+        fake_runtime_env("CLAUDE_CLI_PATH", "CLAUDE_CONFIG_DIR", json!({"mode":"ok"}));
+    assert_eq!(runtime::discover("claude-agent", &env)["status"], "ok");
+    let (_home, env) = fake_runtime_env("CODEX_CLI_PATH", "CODEX_HOME", json!({"name":"ok"}));
+    assert_eq!(runtime::discover("chatgpt", &env)["status"], "ok");
+}
+
+#[test]
 fn the_catalog_offers_every_routed_prefix_once_in_picker_groups() {
     let catalog = catalog();
     let names: Vec<_> = catalog.iter().map(|entry| entry.provider).collect();

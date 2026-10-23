@@ -161,6 +161,23 @@ fn stderr(text: &str) {
     let _ = err.flush();
 }
 
+/// Answer `--version` with the scenario's `version_bytes` exactly as given,
+/// as a runtime writing another encoding than UTF-8 (a code page) would;
+/// false when the scenario has none.
+fn raw_version(scenario: &Value) -> bool {
+    let Some(bytes) = scenario["version_bytes"].as_array() else {
+        return false;
+    };
+    let bytes: Vec<u8> = bytes
+        .iter()
+        .map(|byte| u8::try_from(byte.as_u64().unwrap()).unwrap())
+        .collect();
+    let mut out = std::io::stdout().lock();
+    out.write_all(&bytes).unwrap();
+    out.flush().unwrap();
+    true
+}
+
 /// Start a descendant that inherits this runtime's output pipes and sleeps,
 /// as a tool subprocess would; returns its process id.
 fn sleeper(detached_input: bool) -> u32 {
@@ -567,6 +584,9 @@ fn claude(home: &Path, scenario: &Value) -> i32 {
     #[cfg(unix)]
     assert_eq!(permissions(&cwd), 0o700);
     if args == ["--version"] {
+        if raw_version(scenario) {
+            return 0;
+        }
         let version = scenario["version"]
             .as_str()
             .unwrap_or(if mode == "wrong-version" {
@@ -813,6 +833,9 @@ fn codex(home: &Path, scenario: &Value) -> i32 {
         &json!({"args":args,"cwd":cwd.to_string_lossy(),"home":env("HOME"),"env_names":names}),
     );
     if args == ["--version"] {
+        if raw_version(scenario) {
+            return 0;
+        }
         println!(
             "codex-cli {}",
             scenario["version"]
