@@ -719,7 +719,7 @@ fn clipped_vector_chart_becomes_an_asset_without_the_screenshot_option() {
             .pixels()
             .any(|p| i16::from(p[2]) > i16::from(p[0]) + 50)
     );
-    let reference = format!("![Chart](.markitai/assets/{})", asset.name);
+    let reference = format!("![Chart on page 1](.markitai/assets/{})", asset.name);
     assert!(
         document.markdown.contains(&reference),
         "{}",
@@ -809,10 +809,32 @@ fn unclipped_bar_and_line_charts_become_assets_under_their_headings() {
             .unwrap_or_else(|| panic!("{text}: {markdown}"))
     };
     assert!(at("opening paragraph") < at("Water used"));
-    assert!(at("Water used") < at(&format!("![Chart](.markitai/assets/{})", charts[0])));
+    assert!(
+        at("Water used")
+            < at(&format!(
+                "![Chart on page 1](.markitai/assets/{})",
+                charts[0]
+            ))
+    );
     assert!(at(charts[0]) < at("between the charts"));
     assert!(at("between the charts") < at(charts[1]));
     assert!(at(charts[1]) < at("after the charts"));
+    // Where they are, from the page's top-left corner, for Compare.
+    let figures = &document.metadata[FIGURES];
+    assert_eq!(figures["pages"][0]["page"], 1, "{figures}");
+    let boxes: Vec<Vec<f64>> = figures["pages"][0]["images"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|image| serde_json::from_value(image["bbox"].clone()).unwrap())
+        .collect();
+    assert_eq!(boxes.len(), 2, "{figures}");
+    // The bar chart under the heading, the framed line chart below it.
+    assert!(
+        boxes[0][1] > 792. - 700. - 10. && boxes[0][3] < 792. - 520.,
+        "{boxes:?}"
+    );
+    assert_eq!(boxes[1], [40., 302., 460., 492.]);
 }
 
 #[test]

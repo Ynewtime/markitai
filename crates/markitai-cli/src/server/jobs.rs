@@ -390,6 +390,7 @@ async fn convert_one(
     match result {
         Ok(Ok(result)) => {
             super::snapshots::keep_ocr(&job.folder, &item.item_id, result.ocr_layout());
+            super::snapshots::keep_figures(&job.folder, &item.item_id, result.pdf_figures());
             let out = job.folder.join("out");
             let document = super::documents::render(
                 &item.name,

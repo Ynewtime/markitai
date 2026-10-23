@@ -946,14 +946,18 @@ pub(super) async fn page_text(
         (Kind::Pdf, Some(stored)) => stored,
         _ => return Err(unavailable()),
     };
-    // A page local OCR read answers with the recognizer's lines.
+    // A page local OCR read answers with the recognizer's lines; a page
+    // whose vector charts the conversion kept as pictures adds where they are
+    // to its pictures.
     let ocr = snapshots::ocr_version(&original.folder, &original.item_id);
+    let figures = snapshots::figures_version(&original.folder, &original.item_id);
     let key = format!(
-        "{}\u{0}{}\u{0}{}\u{0}text\u{0}{number}\u{0}{}",
+        "{}\u{0}{}\u{0}{}\u{0}text\u{0}{number}\u{0}{}\u{0}{}",
         id,
         original.item_id,
         stored.version,
-        ocr.as_deref().unwrap_or("")
+        ocr.as_deref().unwrap_or(""),
+        figures.as_deref().unwrap_or("")
     );
     let filename = format!("page-{number}.json");
     let respond = |bytes: Bytes| {
@@ -988,11 +992,14 @@ pub(super) async fn page_text(
             .into_iter()
             .map(|line| json!({"text":line.text,"bbox":line.bbox}))
             .collect();
-        let images: Vec<Value> = layout
+        let mut images: Vec<Value> = layout
             .images
             .into_iter()
             .map(|bbox| json!({"bbox":bbox}))
             .collect();
+        if figures.is_some() {
+            images.extend(snapshots::figures_page(&folder, &item_id, number).unwrap_or_default());
+        }
         serde_json::to_vec(&json!({
             "page": number,
             "width": size.width,

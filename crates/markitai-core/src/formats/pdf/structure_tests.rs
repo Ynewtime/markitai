@@ -375,6 +375,7 @@ fn chart_pixels_replace_only_the_validated_band_and_preserve_repeated_prose() {
     let figure = super::super::figures::Figure {
         bounds: chart,
         name: "chart.png".into(),
+        page: 1,
     };
     let figures = [figure];
     let mut pitch = None;
@@ -402,7 +403,7 @@ fn chart_pixels_replace_only_the_validated_band_and_preserve_repeated_prose() {
     .unwrap();
     let image = result
         .markdown
-        .find("![Chart](.markitai/assets/chart.png)")
+        .find("![Chart on page 1](.markitai/assets/chart.png)")
         .unwrap();
     assert!(result.markdown.find("Before the chart Row One").unwrap() < image);
     assert!(result.markdown.find("After the chart").unwrap() > image);

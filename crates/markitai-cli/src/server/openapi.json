@@ -1373,7 +1373,7 @@
           "height": { "type": "number" },
           "source": { "type": "string", "enum": ["text", "ocr"], "description": "Where the lines come from: the PDF's text layer, or local OCR of the page during the conversion; absent from a server that does not report it" },
           "lines": { "type": "array", "items": { "type": "object", "required": ["text", "bbox"], "properties": { "text": { "type": "string" }, "bbox": { "type": "array", "items": { "type": "number" }, "minItems": 4, "maxItems": 4, "description": "[x0, y0, x1, y1] in points from the page's top-left corner, y growing down" } } } },
-          "images": { "type": "array", "description": "The boxes the page's pictures are drawn in, in drawing order; absent from a server that does not report them", "items": { "type": "object", "required": ["bbox"], "properties": { "bbox": { "type": "array", "items": { "type": "number" }, "minItems": 4, "maxItems": 4, "description": "[x0, y0, x1, y1] in points from the page's top-left corner, y growing down" } } } }
+          "images": { "type": "array", "description": "The boxes the page's pictures are drawn in, in drawing order, then those of the vector charts the conversion kept as pictures, in the order its Markdown places them; absent from a server that does not report them", "items": { "type": "object", "required": ["bbox"], "properties": { "bbox": { "type": "array", "items": { "type": "number" }, "minItems": 4, "maxItems": 4, "description": "[x0, y0, x1, y1] in points from the page's top-left corner, y growing down" } } } }
         }
       },
       "PdfOutline": {

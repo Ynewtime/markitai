@@ -318,8 +318,9 @@ header has no download button (the kept page is in Files). Live frames of the re
 refuse them. Hovering a heading, table, paragraph, list item, code block or
 picture on either side outlines it on both, in the one accent colour. PDF
 positions come from the page's text layer, and a picture's from where its page
-draws pictures (when the page draws as many as the Markdown places on it, and
-the server reports them); a framed web page pairs by words as above (a backend
+draws pictures, a vector chart the conversion kept as a picture included
+(when the page draws as many as the Markdown places on it, and the server
+reports them); a framed web page pairs by words as above (a backend
 whose frame policy is still opaque shows the page without outlines); an
 uploaded HTML original pairs its headings and tables, a text
 file its headings. A block the original side cannot show (nothing pairs it, or the

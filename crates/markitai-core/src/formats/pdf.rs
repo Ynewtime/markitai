@@ -1217,6 +1217,25 @@ fn unrecovered_reason(page: &PdfPage) -> Option<&str> {
 /// Metadata key listing the pages whose text no reader recovered.
 pub(crate) const UNREAD_PAGES: &str = "unread_pages";
 
+/// Metadata key of where the vector charts kept as pictures are on their
+/// pages: `{"version": 1, "pages": [{"page", "images": [{"bbox"}]}]}`, boxes
+/// `[x0, y0, x1, y1]` in points from the page's top-left corner, in the
+/// order the page's Markdown places them. The output moves it out of the
+/// metadata ([`crate::ConversionOutput::pdf_figures`]).
+pub(crate) const FIGURES: &str = "pdf_figures";
+
+/// A chart's box ([`geometry::Chart`], from the frame's bottom-left corner)
+/// from the page's top-left corner, to a hundredth of a point.
+fn figure_box(chart: geometry::Chart, frame: geometry::Frame) -> [f64; 4] {
+    let round = |value: f32| (f64::from(value) * 100.).round() / 100.;
+    [
+        round(chart.x0),
+        round(frame.height - chart.y1),
+        round(chart.x1),
+        round(frame.height - chart.y0),
+    ]
+}
+
 /// Metadata key of where each page's text came from (see
 /// [`PdfPage::source`]): `{"page", "source", "reason"}` in page order. The
 /// output moves it out of the metadata into the result's `page_sources`.
@@ -1934,6 +1953,8 @@ fn extract_pages_inner(
     let mut image_names = BTreeMap::<ObjectId, Option<String>>::new();
     let mut total_asset_bytes: usize = 0;
     let mut chart_raster = figures::Raster::default();
+    // Where each placed chart is on its page ([`FIGURES`]).
+    let mut chart_pages: Vec<serde_json::Value> = Vec::new();
     let mut extracted_pages = Vec::with_capacity(page_ids.len());
     for &number in page_ids.keys() {
         let mut page = pages
@@ -1957,6 +1978,7 @@ fn extract_pages_inner(
             && let Some(layout) = layout.as_mut()
         {
             let mut chart_assets = Vec::new();
+            let mut chart_boxes = Vec::new();
             if let Some(candidates) = chart_candidates.remove(&number) {
                 let regions = layout.chart_regions(number, &candidates);
                 if regions.len() != candidates.len() {
@@ -1967,6 +1989,7 @@ fn extract_pages_inner(
                         Ok(rendered) if rendered.iter().map(|(_, a)| a.bytes.len()).sum::<usize>()
                             <= MAX_ASSET_BYTES.saturating_sub(total_asset_bytes) => {
                             let (figures, assets): (Vec<_>, Vec<_>) = rendered.into_iter().unzip();
+                            chart_boxes = figures.iter().map(|figure| figure_box(figure.bounds, frame)).collect();
                             layout.set_figures(figures);
                             chart_assets = assets;
                         }
@@ -1981,6 +2004,13 @@ fn extract_pages_inner(
                 page.markdown = refined;
                 continues_table = continues;
                 total_asset_bytes += chart_assets.iter().map(|a| a.bytes.len()).sum::<usize>();
+                if !chart_assets.is_empty() {
+                    let images: Vec<serde_json::Value> = chart_boxes
+                        .iter()
+                        .map(|bbox| serde_json::json!({ "bbox": bbox }))
+                        .collect();
+                    chart_pages.push(serde_json::json!({ "page": number, "images": images }));
+                }
                 document.assets.extend(chart_assets);
             } else if !chart_assets.is_empty() {
                 document.warnings.push(format!("PDF page {number}: chart placement could not be verified; original text is retained."));
@@ -2152,6 +2182,12 @@ fn extract_pages_inner(
         .and_then(|title| crate::titles::usable_title(&title, true));
     if let Some(title) = info_title.or(prominent_title) {
         document.metadata.insert("title".into(), title.into());
+    }
+    if !chart_pages.is_empty() {
+        document.metadata.insert(
+            FIGURES.into(),
+            serde_json::json!({ "version": 1, "pages": chart_pages }),
+        );
     }
     let ocr_layer_producer = extracted_pages
         .iter()

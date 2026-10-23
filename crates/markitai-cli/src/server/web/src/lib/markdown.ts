@@ -505,10 +505,11 @@ export function swapFailedPicture(event: Event): void {
 if (typeof document !== "undefined") document.addEventListener("error", swapFailedPicture, true);
 
 /** The page a PDF's extracted picture came from: Markitai's Rust converter
- * writes `![Image on page 3](…)`, the Python one names the file
+ * writes `![Image on page 3](…)` (a vector chart kept as a picture
+ * `![Chart on page 3](…)`), the Python one names the file
  * `<name>.pdf-0003-01.png`; null for any other picture. */
 export function pdfImagePage(alt: string, path: string): number | null {
-  const found = /^Image on page (\d{1,5})$/.exec(alt.trim()) ?? /\.pdf-(\d{1,5})-\d+\.[a-z0-9]+$/i.exec(path);
+  const found = /^(?:Image|Chart) on page (\d{1,5})$/.exec(alt.trim()) ?? /\.pdf-(\d{1,5})-\d+\.[a-z0-9]+$/i.exec(path);
   const page = found ? Number(found[1]) : 0;
   return page >= 1 ? page : null;
 }

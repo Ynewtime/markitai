@@ -30,6 +30,7 @@ pub(super) struct Names {
     pub blocks: String,
     pub shots: String,
     pub ocr: String,
+    pub figures: String,
 }
 
 pub(super) fn names(item_id: &str) -> Option<Names> {
@@ -44,6 +45,7 @@ pub(super) fn names(item_id: &str) -> Option<Names> {
         blocks: format!("{item_id}.blocks.json"),
         shots: format!("{item_id}.shots"),
         ocr: format!("{item_id}.ocr.json"),
+        figures: format!("{item_id}.figures.json"),
     })
 }
 
@@ -140,11 +142,17 @@ pub(super) fn files(job: &Path, item_id: &str) -> Vec<String> {
         return Vec::new();
     };
     let snapshots = job.join("snapshots");
-    let mut found: Vec<String> = [&names.html, &names.capture, &names.blocks, &names.ocr]
-        .into_iter()
-        .filter(|name| store::safe_file(&snapshots, name).is_ok())
-        .map(|name| format!("snapshots/{name}"))
-        .collect();
+    let mut found: Vec<String> = [
+        &names.html,
+        &names.capture,
+        &names.blocks,
+        &names.ocr,
+        &names.figures,
+    ]
+    .into_iter()
+    .filter(|name| store::safe_file(&snapshots, name).is_ok())
+    .map(|name| format!("snapshots/{name}"))
+    .collect();
     let directory = snapshots.join(&names.shots);
     if markitai_core::output::check_path(&directory, false).is_ok()
         && fs::symlink_metadata(&directory).is_ok_and(|meta| meta.is_dir())
@@ -160,7 +168,7 @@ pub(super) fn files(job: &Path, item_id: &str) -> Vec<String> {
     found
 }
 
-/// The largest `ocr.json` kept and read.
+/// The largest `ocr.json` or `figures.json` kept and read.
 const MAX_OCR_LAYOUT: u64 = 32 * 1024 * 1024;
 
 /// Keep where an OCR'd PDF's recognized lines and pictures are
@@ -168,11 +176,22 @@ const MAX_OCR_LAYOUT: u64 = 32 * 1024 * 1024;
 /// `snapshots/`, replacing what an earlier attempt kept; a result without
 /// one removes it. A layout that cannot be written is only missing.
 pub(super) fn keep_ocr(job: &Path, item_id: &str, layout: Option<&Value>) {
+    keep_layout(job, item_id, |names| &names.ocr, layout);
+}
+
+/// Keep where a PDF's vector charts kept as pictures are
+/// ([`markitai_core::ConversionOutput::pdf_figures`]), as [`keep_ocr`].
+pub(super) fn keep_figures(job: &Path, item_id: &str, layout: Option<&Value>) {
+    keep_layout(job, item_id, |names| &names.figures, layout);
+}
+
+fn keep_layout(job: &Path, item_id: &str, pick: fn(&Names) -> &String, layout: Option<&Value>) {
     let Some(names) = names(item_id) else {
         return;
     };
+    let name = pick(&names);
     let folder = job.join("snapshots");
-    let path = folder.join(&names.ocr);
+    let path = folder.join(name);
     let bytes = layout
         .and_then(|layout| serde_json::to_vec(layout).ok())
         .filter(|bytes| bytes.len() as u64 <= MAX_OCR_LAYOUT);
@@ -181,7 +200,7 @@ pub(super) fn keep_ocr(job: &Path, item_id: &str, layout: Option<&Value>) {
             write(&path, &bytes);
         }
         _ => {
-            if store::safe_file(&folder, &names.ocr).is_ok() {
+            if store::safe_file(&folder, name).is_ok() {
                 let _ = fs::remove_file(&path);
             }
         }
@@ -191,7 +210,16 @@ pub(super) fn keep_ocr(job: &Path, item_id: &str, layout: Option<&Value>) {
 /// A version of an item's kept OCR layout (its size and modification time),
 /// for caching what is read from it; `None` without one.
 pub(super) fn ocr_version(job: &Path, item_id: &str) -> Option<String> {
-    let metadata = fs::metadata(kept(job, item_id, |names| &names.ocr)?).ok()?;
+    layout_version(job, item_id, |names| &names.ocr)
+}
+
+/// A version of an item's kept chart boxes, as [`ocr_version`].
+pub(super) fn figures_version(job: &Path, item_id: &str) -> Option<String> {
+    layout_version(job, item_id, |names| &names.figures)
+}
+
+fn layout_version(job: &Path, item_id: &str, pick: fn(&Names) -> &String) -> Option<String> {
+    let metadata = fs::metadata(kept(job, item_id, pick)?).ok()?;
     let modified = metadata
         .modified()
         .ok()
@@ -203,7 +231,27 @@ pub(super) fn ocr_version(job: &Path, item_id: &str) -> Option<String> {
 /// The kept OCR layout of an item's page `number`: `{"page", "width",
 /// "height", "lines", "images"}`; `None` when the page was not OCR'd.
 pub(super) fn ocr_page(job: &Path, item_id: &str, number: usize) -> Option<Value> {
-    let file = fs::File::open(kept(job, item_id, |names| &names.ocr)?).ok()?;
+    layout_page(job, item_id, |names| &names.ocr, number)
+}
+
+/// The boxes of the vector charts an item's page `number` keeps as
+/// pictures, in the order its Markdown places them: `[{"bbox"}]`; `None`
+/// when it keeps none.
+pub(super) fn figures_page(job: &Path, item_id: &str, number: usize) -> Option<Vec<Value>> {
+    let mut page = layout_page(job, item_id, |names| &names.figures, number)?;
+    match page.get_mut("images")?.take() {
+        Value::Array(images) => Some(images),
+        _ => None,
+    }
+}
+
+fn layout_page(
+    job: &Path,
+    item_id: &str,
+    pick: fn(&Names) -> &String,
+    number: usize,
+) -> Option<Value> {
+    let file = fs::File::open(kept(job, item_id, pick)?).ok()?;
     let mut bytes = Vec::new();
     file.take(MAX_OCR_LAYOUT + 1).read_to_end(&mut bytes).ok()?;
     if bytes.len() as u64 > MAX_OCR_LAYOUT {
@@ -283,6 +331,27 @@ mod tests {
             Some(&json!({"version":2,"pages":layout["pages"]})),
         );
         assert!(ocr_page(job.path(), "i1", 2).is_none());
+    }
+
+    #[test]
+    fn chart_boxes_are_kept_beside_the_ocr_layout_and_read_by_page() {
+        let job = tempfile::tempdir().unwrap();
+        let figures =
+            json!({"version":1,"pages":[{"page":2,"images":[{"bbox":[40.0,50.0,300.0,200.0]}]}]});
+        keep_figures(job.path(), "i1", Some(&figures));
+        assert_eq!(files(job.path(), "i1"), ["snapshots/i1.figures.json"]);
+        assert!(
+            figures_version(job.path(), "i1").is_some() && ocr_version(job.path(), "i1").is_none()
+        );
+        assert_eq!(
+            figures_page(job.path(), "i1", 2).unwrap(),
+            [json!({"bbox":[40.0,50.0,300.0,200.0]})]
+        );
+        assert!(
+            figures_page(job.path(), "i1", 1).is_none() && ocr_page(job.path(), "i1", 2).is_none()
+        );
+        keep_figures(job.path(), "i1", None);
+        assert!(files(job.path(), "i1").is_empty());
     }
 
     #[test]

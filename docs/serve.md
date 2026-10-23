@@ -209,8 +209,11 @@ kept in memory (32 MiB). `…/original/pages/{n}/text` returns a PDF page's text
 as up to 5,000 lines in reading order, each a run of text on one baseline, with
 `bbox` `[x0, y0, x1, y1]` in points from the page's top-left corner, and
 `images`, the boxes its pictures are drawn in (same frame, drawing order, at
-most 500, clipped to the page, none under 4 points on a side), with `source`
-`text`. A page local OCR read during the conversion answers instead with
+most 500, clipped to the page, none under 4 points on a side), then those of
+the vector charts the conversion kept as pictures, in the order the Markdown
+places them (kept beside the result in `snapshots/<item>.figures.json`, as the
+OCR layout below), with `source` `text`. A page local OCR read during the
+conversion answers instead with
 `source` `ocr`: the recognized lines in the order its Markdown reads them (a
 table's cells separately) and the boxes of the pictures cut out of it, in the
 order the Markdown places them, same frame; the job keeps them beside the

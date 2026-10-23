@@ -452,6 +452,7 @@ pub fn prepare(source: &str, name: &str, doc: &mut Document, cfg: &Value) -> Con
         .map(|value| crate::PageSource::list_from(&value))
         .unwrap_or_default();
     let ocr_layout = doc.metadata.remove(crate::pdf_media::OCR_LAYOUT);
+    let pdf_figures = doc.metadata.remove(crate::formats::PDF_FIGURES);
     let pure = config::enabled(cfg, "/llm/pure");
     let (mut meta, markdown, pure_prefix) = if pure {
         let (meta, body) = split_frontmatter(&doc.markdown);
@@ -557,6 +558,7 @@ pub fn prepare(source: &str, name: &str, doc: &mut Document, cfg: &Value) -> Con
         warnings: std::mem::take(&mut doc.warnings),
         page_sources,
         ocr_layout,
+        pdf_figures,
         ..Default::default()
     }
 }

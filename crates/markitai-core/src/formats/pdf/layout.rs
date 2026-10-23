@@ -2199,7 +2199,10 @@ fn render_figures(
             }
         }
         if let Some(figure) = figure {
-            blocks.push(format!("![Chart](.markitai/assets/{})", figure.name));
+            blocks.push(format!(
+                "![Chart on page {}](.markitai/assets/{})",
+                figure.page, figure.name
+            ));
             ending = None;
         }
     }

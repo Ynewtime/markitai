@@ -567,6 +567,24 @@ fn an_uploaded_pdf_is_described_drawn_and_read_by_line() {
         "text"
     );
     std::fs::remove_file(snapshots.join("i1.ocr.json")).unwrap();
+    // A page whose vector charts the conversion kept as pictures adds where
+    // they are to the pictures its text layer reports.
+    let charts =
+        json!({"version":1,"pages":[{"page":1,"images":[{"bbox":[72.0,420.0,500.0,640.0]}]}]});
+    std::fs::write(snapshots.join("i1.figures.json"), charts.to_string()).unwrap();
+    let charted = server.json(&format!("{base}/pages/1/text"));
+    assert_eq!(charted["source"], "text");
+    assert_eq!(
+        charted["images"],
+        json!([{"bbox":[72.0,420.0,500.0,640.0]}]),
+        "{charted}"
+    );
+    assert_eq!(charted["lines"], text["lines"]);
+    std::fs::remove_file(snapshots.join("i1.figures.json")).unwrap();
+    assert_eq!(
+        server.json(&format!("{base}/pages/1/text"))["images"],
+        json!([])
+    );
     for (path, status, reason) in [
         (format!("{base}/pages/4"), 404, "page_not_found"),
         (format!("{base}/pages/0"), 404, "page_not_found"),

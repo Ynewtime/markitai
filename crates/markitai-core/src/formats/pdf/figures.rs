@@ -6,6 +6,8 @@ use pdf_inspector::{TextItem, types::ItemType};
 pub(super) struct Figure {
     pub bounds: Chart,
     pub name: String,
+    /// Its page's number.
+    pub page: u32,
 }
 
 /// Only isolated horizontal bands can replace text without changing its order.
@@ -204,6 +206,7 @@ impl Raster {
                 Figure {
                     bounds: *chart,
                     name: name.clone(),
+                    page: number,
                 },
                 Asset { name, bytes: png },
             ));

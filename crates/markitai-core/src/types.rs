@@ -409,6 +409,12 @@ pub struct ConversionOutput {
     /// the page's top-left corner. Not serialized: the workbench keeps it.
     #[serde(skip)]
     pub(crate) ocr_layout: Option<Value>,
+    /// For a PDF, where the vector charts kept as pictures are on each page
+    /// with one: `{"version": 1, "pages": [{"page", "images": [{"bbox"}]}]}`,
+    /// boxes as in `ocr_layout`, in the order the page's Markdown places
+    /// them. Not serialized: the workbench keeps it.
+    #[serde(skip)]
+    pub(crate) pdf_figures: Option<Value>,
     /// Original YAML bytes retained for writing pure input without reformatting.
     #[serde(skip)]
     pub(crate) pure_prefix: Option<String>,
@@ -448,6 +454,12 @@ impl ConversionOutput {
     /// by page (see the field); `None` when local OCR read no page.
     pub fn ocr_layout(&self) -> Option<&Value> {
         self.ocr_layout.as_ref()
+    }
+
+    /// Where a PDF's vector charts kept as pictures are, page by page (see
+    /// the field); `None` when it kept none.
+    pub fn pdf_figures(&self) -> Option<&Value> {
+        self.pdf_figures.as_ref()
     }
 
     /// Whether this conversion reused an existing document enhancement.

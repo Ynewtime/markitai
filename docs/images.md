@@ -296,7 +296,7 @@ Markdown opens with its pictures after the process exits. The following example
 uses the fictional account `example-user`:
 
 ```text
-![Chart](file:///Users/example-user/.markitai/assets/blobs/7416822bd6078af29cc72e66.jpg)
+![Chart on page 1](file:///Users/example-user/.markitai/assets/blobs/7416822bd6078af29cc72e66.jpg)
 <!-- ![Page 1](file:///Users/example-user/.markitai/assets/blobs/336f4a11bd5d2a0c50ade34e.jpg) -->
 ```
 

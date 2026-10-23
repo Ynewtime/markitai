@@ -581,7 +581,9 @@ export interface PageText {
   source?: "text" | "ocr";
   /** Reading-order lines; bbox = [x0, y0, x1, y1] in points from the page's TOP-left corner, y growing down. */
   lines: { text: string; bbox: [number, number, number, number] }[];
-  /** Where the page's pictures are drawn, same frame, in drawing order (absent from servers that do not report them). */
+  /** Where the page's pictures are drawn, same frame, in drawing order, then the vector charts the conversion kept
+   *  as pictures (`![Chart on page N]`) in the order its Markdown places them (absent from servers that do not
+   *  report them). */
   images?: { bbox: [number, number, number, number] }[];
 }
 

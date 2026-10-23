@@ -713,7 +713,8 @@ data table next to a spreadsheet's chart) keeps the page on the text path. A
 band of text between charts that the layout reader declines is written as the
 page reader writes text. Only a successfully rendered and placed crop replaces
 the scattered labels; otherwise the text remains. The crop does not provide an
-inferred data table.
+inferred data table. It is written as `![Chart on page N](…)`, and the web
+workbench's Compare outlines it on the page, where the conversion found it.
 
 This uses the existing CoreGraphics/hayro renderer at 144 DPI, opened only when
 needed, once per document and once per candidate page. Limits are four charts per

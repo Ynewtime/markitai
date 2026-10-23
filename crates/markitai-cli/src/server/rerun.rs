@@ -499,6 +499,11 @@ async fn run(state: Arc<State>, job: Arc<Job>, work: Work) {
                 super::snapshots::prune(&worker.folder, &work.prior.item_id);
             }
             super::snapshots::keep_ocr(&worker.folder, &work.prior.item_id, converted.ocr_layout());
+            super::snapshots::keep_figures(
+                &worker.folder,
+                &work.prior.item_id,
+                converted.pdf_figures(),
+            );
             super::documents::keep(&worker.folder, &work.prior.item_id, &document);
             let assets = beside
                 .into_iter()

@@ -106,6 +106,7 @@ test("Compare locates paragraphs and list items too: across lines, inside a line
 test("a PDF's pictures are found on their page, in reading order, when the page has as many", () => {
   assert.equal(pdfImagePage("Image on page 3", ".markitai/assets/0a1b2c.jpg"), 3);
   assert.equal(pdfImagePage("", ".markitai/assets/report.pdf-0012-01.png"), 12);
+  assert.equal(pdfImagePage("Chart on page 4", ".markitai/assets/9f0e1d.jpg"), 4);
   assert.equal(pdfImagePage("A chart", "assets/chart.png"), null);
   assert.equal(pdfImagePage("Image on page 0", "x.png"), null);
   const pages: PageLines[] = [
