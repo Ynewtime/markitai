@@ -133,12 +133,21 @@ fn package_admission_preserves_regular_directory_and_unsupported_visual_errors()
         include_bytes!("../../src/formats/numbers/fixtures/test-1.numbers"),
         &package,
     );
-    for feature in ["ocr", "screenshot"] {
-        let mut options = package_options();
-        options.config.as_mut().unwrap()[feature]["enabled"] = json!(true);
-        let error = convert(package.to_str().unwrap(), options).unwrap_err();
-        assert!(matches!(error, Error::Unsupported(_)), "{feature}: {error}");
-    }
+    let mut options = package_options();
+    options.config.as_mut().unwrap()["screenshot"]["enabled"] = json!(true);
+    let error = convert(package.to_str().unwrap(), options).unwrap_err();
+    assert!(matches!(error, Error::Unsupported(_)), "{error}");
+    // Local OCR renders no Office pages, so it reads the tables as without it.
+    let mut options = package_options();
+    options.config.as_mut().unwrap()["ocr"]["enabled"] = json!(true);
+    assert_eq!(
+        convert(package.to_str().unwrap(), options)
+            .unwrap()
+            .markdown,
+        convert(package.to_str().unwrap(), package_options())
+            .unwrap()
+            .markdown
+    );
     let legacy = temp.path().join("old.numbers");
     std::fs::create_dir(&legacy).unwrap();
     std::fs::write(legacy.join("index.xml"), "<document />").unwrap();

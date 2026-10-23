@@ -86,7 +86,8 @@ models. Prepare them before going offline; never bypass an unsafe-path error.
 HEIF/HEIC and AVIF decode on every platform (macOS ImageIO; on Windows/Linux
 built-in decoders: heifer for HEVC, rav1d for AV1).
 JavaScript pages and browser screenshots need Chrome/Chromium. Office page
-images and OCR supplements need LibreOffice; native text readers do not.
+images (and vision OCR with an LLM) need LibreOffice; native text readers do
+not, and `--ocr` alone adds no OCR of Office pages.
 Spreadsheet screenshots include hidden and empty sheets, one page per sheet,
 ignoring print areas and manual pagination. Oversized sheets fail the pixel
 budget rather than being cropped. Numbers text extraction is supported;

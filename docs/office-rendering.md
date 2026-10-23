@@ -11,9 +11,13 @@ using selected authored Word, presentation and workbook fixtures. These checks
 do not establish every accepted format on every platform or Microsoft Office
 layout parity; current findings and source boundaries are described below.
 
-When page OCR or page screenshots are requested (`--ocr`, `--screenshot`, or a
-preset that implies them such as `rich`) and LibreOffice is missing (the page
-renderer is built in), an Office document is converted from its own text with one
+`--ocr` alone does not render an Office document, as in Python markitai: its
+pages show its own text, which is already extracted, so there is no local OCR
+of them. With an LLM, `--ocr` sends the rendered pages to the vision model.
+
+When page screenshots or vision OCR are requested (`--screenshot`, a preset
+that implies it such as `rich`, or `--ocr` with an LLM) and LibreOffice is
+missing (the page renderer is built in), an Office document is converted from its own text with one
 warning instead of failing, so a folder of mixed documents still converts; a batch
 names the files sharing it on one line. The warning names what was skipped and
 how to get it: install LibreOffice (with this system's command: `brew install
@@ -53,7 +57,6 @@ reliable source paragraph-to-page mapping. These export options are described by
 
 ```sh
 markitai report.docx --screenshot --no-llm -o out/
-markitai scan.docx --ocr --no-llm -o out/
 markitai workbook.xlsx --screenshot-only --no-llm -o out/
 ```
 
@@ -65,7 +68,7 @@ its page images. For portable OCR model problems, follow [OCR model repair](ocr.
 
 If export times out or exceeds a page/pixel/output budget, it fails rather than
 returning an incomplete set of screenshots. Retry without `--screenshot-only`
-and with `--no-screenshot --no-ocr` when native text alone is sufficient, or split
+and with `--no-screenshot` (and `--no-ocr` with an LLM) when native text alone is sufficient, or split
 the source document before requesting full capture again. Preserve the original
 file; the exporter's temporary normalization never edits it.
 
@@ -127,11 +130,7 @@ does not establish legibility after a user-requested reduction of a large sheet.
 The existing document body is preserved. Ordered Slide/Page screenshot comments
 are appended in an explicit appendix, rather than inventing a correspondence
 between native paragraphs and rendered pages. Root conversion integration applies
-the existing screenshot, local OCR, pure, VLM opt-out and model-page budgets.
-Local OCR supplements native text; it does not replace it with PDF extraction.
-Rendered pages where it finds no text are left out of the supplement and named
-in one warning (`Office pages 2, 5 (2 of 9): OCR found no text; the OCR
-supplement leaves them out.`).
+the existing screenshot, pure, VLM opt-out and model-page budgets.
 See [PDF rendering](pdf-rendering.md) for page pixel and encoding limits.
 
 ## Execution and limits

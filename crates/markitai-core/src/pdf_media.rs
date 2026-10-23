@@ -486,23 +486,21 @@ struct OcrCounts {
     blank_pages: Vec<usize>,
 }
 
-/// The one warning for the rendered pages of a `kind` document ("PDF",
-/// "Office") of `total` pages that local OCR read without finding text,
-/// their numbers as ranges; none when there are none. A PDF page is blank in
-/// the output; an Office page keeps its native text without an OCR supplement.
-fn no_text_warning(kind: &str, pages: &[usize], total: usize) -> Option<String> {
+/// The one warning for the rendered pages of a PDF of `total` pages that
+/// local OCR read without finding text, their numbers as ranges; none when
+/// there are none. Such a page is blank in the output.
+fn no_text_warning(pages: &[usize], total: usize) -> Option<String> {
     if pages.is_empty() {
         return None;
     }
     let one = pages.len() == 1;
-    let outcome = match (kind, one) {
-        ("PDF", true) => "it is blank in the output",
-        ("PDF", false) => "they are blank in the output",
-        (_, true) => "the OCR supplement leaves it out",
-        (_, false) => "the OCR supplement leaves them out",
+    let outcome = if one {
+        "it is blank in the output"
+    } else {
+        "they are blank in the output"
     };
     Some(format!(
-        "{kind} {} {} ({} of {}): OCR found no text; {outcome}.",
+        "PDF {} {} ({} of {}): OCR found no text; {outcome}.",
         if one { "page" } else { "pages" },
         crate::formats::page_ranges(pages),
         pages.len(),
@@ -626,18 +624,17 @@ fn recognize_native_pictures(
 
 pub(crate) struct CapturedPages {
     pub screenshots: Vec<Asset>,
-    pub ocr: Vec<String>,
     pub warnings: Vec<String>,
 }
 
-/// Rasterize an already validated Office export without replacing its native text.
+/// Rasterize an already validated Office export without replacing its native
+/// text. Its pages are not OCR'd: the document's own text is what they show.
 pub(crate) fn capture_external_pdf(
     bytes: &[u8],
     count: usize,
     prefix: &str,
     cfg: &Value,
     screenshots: bool,
-    local_ocr: bool,
     repaired_min_widths_pt: &[Option<f64>],
 ) -> Result<CapturedPages> {
     validate_name(prefix)?;
@@ -660,10 +657,9 @@ pub(crate) fn capture_external_pdf(
     }
     let mut captured = CapturedPages {
         screenshots: Vec::new(),
-        ocr: Vec::new(),
         warnings: Vec::new(),
     };
-    if !screenshots && !local_ocr {
+    if !screenshots {
         return Ok(captured);
     }
     let session = PdfRasterSession::open(bytes)?;
@@ -671,7 +667,6 @@ pub(crate) fn capture_external_pdf(
         return Err(failure("renderer and Office export disagree on page count"));
     }
     let mut budget = Budget::default();
-    let mut blank_pages = Vec::new();
     let mut sizes = Vec::with_capacity(count);
     for page in 1..=count {
         let dpi = session.fitting_dpi(page, DPI)?;
@@ -687,48 +682,28 @@ pub(crate) fn capture_external_pdf(
                 "rendered dimensions changed after budget validation",
             ));
         }
-        if screenshots {
-            let encoded = encode_screenshot(
-                &pixels,
-                cfg,
-                MAX_SHOT_BYTES,
-                screenshot_floor(repaired_min_widths_pt.get(index).copied().flatten()),
-            )?;
-            budget.screenshot(encoded.bytes.len())?;
-            if encoded.fallback {
-                captured.warnings.push(format!(
-                    "Office page {page}: screenshot size required JPEG compression fallback."
-                ));
-            } else if encoded.format == Encoding::Webp && captured.screenshots.is_empty() {
-                captured.warnings.push("Office screenshots use lossless WebP; image.quality does not affect this encoder.".into());
-            }
-            captured.screenshots.push(Asset {
-                name: format!("{prefix}.page{page:04}.{}", encoded.format.extension()),
-                bytes: encoded.bytes,
-            });
+        let encoded = encode_screenshot(
+            &pixels,
+            cfg,
+            MAX_SHOT_BYTES,
+            screenshot_floor(repaired_min_widths_pt.get(index).copied().flatten()),
+        )?;
+        budget.screenshot(encoded.bytes.len())?;
+        if encoded.fallback {
+            captured.warnings.push(format!(
+                "Office page {page}: screenshot size required JPEG compression fallback."
+            ));
+        } else if encoded.format == Encoding::Webp && captured.screenshots.is_empty() {
+            captured.warnings.push(
+                "Office screenshots use lossless WebP; image.quality does not affect this encoder."
+                    .into(),
+            );
         }
-        if local_ocr {
-            let recognized = ocr::recognize_rgb(pixels, cfg)?;
-            if recognized.unread {
-                captured
-                    .warnings
-                    .push(ocr::unread_warning(&format!("Office page {page}")));
-            }
-            if recognized.capped {
-                captured
-                    .warnings
-                    .push(ocr::capped_warning(&format!("Office page {page}")));
-            }
-            let text = recognized.text;
-            if text.trim().is_empty() {
-                blank_pages.push(page);
-            }
-            captured.ocr.push(text);
-        }
+        captured.screenshots.push(Asset {
+            name: format!("{prefix}.page{page:04}.{}", encoded.format.extension()),
+            bytes: encoded.bytes,
+        });
     }
-    captured
-        .warnings
-        .extend(no_text_warning("Office", &blank_pages, count));
     Ok(captured)
 }
 
@@ -1151,7 +1126,7 @@ fn prepare_with(
     pages
         .document
         .warnings
-        .extend(no_text_warning("PDF", &counts.blank_pages, total));
+        .extend(no_text_warning(&counts.blank_pages, total));
     let picture_counts = if plan.local_ocr {
         recognize_native_pictures(&mut pages, &plan, cfg, &mut budget)?
     } else {
@@ -2011,26 +1986,18 @@ mod tests {
 
     #[test]
     fn pages_without_text_are_one_warning_with_ranges_and_the_page_count() {
-        assert_eq!(no_text_warning("PDF", &[], 10), None);
+        assert_eq!(no_text_warning(&[], 10), None);
         assert_eq!(
-            no_text_warning("PDF", &[57], 318).unwrap(),
+            no_text_warning(&[57], 318).unwrap(),
             "PDF page 57 (1 of 318): OCR found no text; it is blank in the output."
         );
         assert_eq!(
-            no_text_warning("PDF", &[57, 212], 318).unwrap(),
+            no_text_warning(&[57, 212], 318).unwrap(),
             "PDF pages 57, 212 (2 of 318): OCR found no text; they are blank in the output."
         );
         assert_eq!(
-            no_text_warning("PDF", &[3, 4, 5, 9, 40, 41, 42, 43, 44], 120).unwrap(),
+            no_text_warning(&[3, 4, 5, 9, 40, 41, 42, 43, 44], 120).unwrap(),
             "PDF pages 3\u{2013}5, 9, 40\u{2013}44 (9 of 120): OCR found no text; they are blank in the output."
-        );
-        assert_eq!(
-            no_text_warning("Office", &[2], 3).unwrap(),
-            "Office page 2 (1 of 3): OCR found no text; the OCR supplement leaves it out."
-        );
-        assert_eq!(
-            no_text_warning("Office", &[2, 3], 3).unwrap(),
-            "Office pages 2\u{2013}3 (2 of 3): OCR found no text; the OCR supplement leaves them out."
         );
     }
 

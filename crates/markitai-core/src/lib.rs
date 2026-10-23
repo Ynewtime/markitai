@@ -405,9 +405,18 @@ fn convert_inner(
     } else {
         office_render::kind(document_extension)
     };
-    let office_media_wanted = office_kind.is_some()
-        && (config::enabled(&cfg, "/ocr/enabled") || config::enabled(&cfg, "/screenshot/enabled"));
-    // Page screenshots and page OCR render the document through LibreOffice.
+    let vlm_disabled = config::environment()
+        .get("MARKITAI_NO_VLM_OCR")
+        .is_some_and(|value| config::env_opt_out(value));
+    // An Office document's pages are rendered for screenshots, and with OCR
+    // only for a vision model: as in Python markitai, `--ocr` adds no local
+    // OCR of pages that show the document's own text.
+    let office_vlm_ocr = config::enabled(&cfg, "/ocr/enabled")
+        && config::enabled(&cfg, "/llm/enabled")
+        && !vlm_disabled;
+    let office_media_wanted =
+        office_kind.is_some() && (office_vlm_ocr || config::enabled(&cfg, "/screenshot/enabled"));
+    // Page screenshots and vision OCR render the document through LibreOffice.
     // Without it the document's own text is converted and the missing page
     // capture is one warning, so a preset such as `rich`, or OCR over a folder,
     // still converts its Office files. Only `screenshot_only`, where the
@@ -523,9 +532,6 @@ fn convert_inner(
     let mut screenshots = Vec::new();
     let mut fetch_cache_hit = false;
     let mut pdf_has_reliable_text = true;
-    let vlm_disabled = config::environment()
-        .get("MARKITAI_NO_VLM_OCR")
-        .is_some_and(|value| config::env_opt_out(value));
     let local_ocr = image_input
         && config::enabled(&cfg, "/ocr/enabled")
         && (!config::enabled(&cfg, "/llm/enabled") || vlm_disabled);
@@ -652,10 +658,7 @@ fn convert_inner(
         // The page renderer is built in; LibreOffice alone decides this, so
         // the notice names only it, with this system's install command.
         let install = install_libreoffice();
-        let warning = match (
-            config::enabled(&cfg, "/screenshot/enabled"),
-            config::enabled(&cfg, "/ocr/enabled"),
-        ) {
+        let warning = match (config::enabled(&cfg, "/screenshot/enabled"), office_vlm_ocr) {
             (true, true) => format!(
                 "Page screenshots and OCR of Office pages need LibreOffice (soffice on PATH); the document's own text was converted without them. {install}, or pass --no-screenshot and --no-ocr to skip them."
             ),

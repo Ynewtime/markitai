@@ -18,8 +18,9 @@ explicit language when the automatic reading is incomplete. Both share bounded
 image preparation and reading-order handling.
 This page covers image inputs, including every page
 of a multi-page TIFF and HEIF/HEIC and AVIF images; scanned PDF pages use the same
-recognizer as described in [PDF page OCR](pdf-ocr.md), and Office page images in
-[Office rendering](office-rendering.md).
+recognizer as described in [PDF page OCR](pdf-ocr.md). Office documents keep
+their own text; `--ocr` does not read their pages locally (see
+[Office rendering](office-rendering.md)).
 
 ```sh
 markitai scan.png --ocr --no-llm

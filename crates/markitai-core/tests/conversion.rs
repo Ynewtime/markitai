@@ -1045,7 +1045,7 @@ fn rerun_without_libreoffice(name: &str) -> bool {
 #[test]
 fn office_ocr_without_a_renderer_keeps_the_documents_own_text() {
     // OCR over a folder must not fail its Office files where LibreOffice is
-    // absent; explicitly requested screenshots still do.
+    // absent; explicitly requested screenshots-only output still does.
     if rerun_without_libreoffice("office_ocr_without_a_renderer_keeps_the_documents_own_text") {
         return;
     }
@@ -1074,23 +1074,13 @@ fn office_ocr_without_a_renderer_keeps_the_documents_own_text() {
         "{}",
         result.markdown
     );
+    // Local OCR does not render Office pages, so it needs no LibreOffice.
     assert!(
-        result
-            .warnings
-            .iter()
-            .any(|w| w.starts_with("OCR of Office pages needs LibreOffice")),
+        !result.warnings.iter().any(|w| w.contains("LibreOffice")),
         "{:?}",
         result.warnings
     );
     assert!(result.screenshots.is_empty());
-    assert!(
-        result
-            .warnings
-            .iter()
-            .any(|w| w.contains(INSTALL_LIBREOFFICE) && w.contains("--no-ocr")),
-        "{:?}",
-        result.warnings
-    );
 
     // Screenshots degrade the same way: the text is published with one warning
     // that says how to get the pages or how to stop asking for them.
@@ -1123,7 +1113,7 @@ fn office_ocr_without_a_renderer_keeps_the_documents_own_text() {
             && capture[0].contains("--no-screenshot"),
         "{capture:?}"
     );
-    // Screenshots with OCR are still one warning, naming both.
+    // Screenshots with local OCR are one warning, naming only screenshots.
     screenshots["ocr"] = json!({"enabled": true});
     let result = convert(
         input.to_str().unwrap(),
@@ -1141,7 +1131,7 @@ fn office_ocr_without_a_renderer_keeps_the_documents_own_text() {
         .collect();
     assert_eq!(capture.len(), 1, "{:?}", result.warnings);
     assert!(
-        capture[0].starts_with("Page screenshots and OCR of Office pages"),
+        capture[0].starts_with("Page screenshots of Office documents need LibreOffice"),
         "{capture:?}"
     );
 
@@ -1165,6 +1155,61 @@ fn office_ocr_without_a_renderer_keeps_the_documents_own_text() {
         "{error}"
     );
     assert!(!dir.path().join("out4").join("report.docx.md").exists());
+}
+
+#[test]
+fn office_ocr_adds_no_rendered_page_supplement() {
+    // As in Python markitai, `--ocr` does not OCR an Office document's
+    // rendered pages: they show its own text, which a supplement would only
+    // repeat. Explicit screenshots are still captured, without OCR text.
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("report.docx");
+    std::fs::write(
+        &input,
+        include_bytes!("../src/office_render/fixtures/blank-middle-three.docx"),
+    )
+    .unwrap();
+    let base =
+        json!({"cache":{"enabled":false},"history":{"record":false},"llm":{"enabled":false}});
+    let run = |cfg: Value, out: &str| {
+        convert(
+            input.to_str().unwrap(),
+            ConvertOptions {
+                config: Some(cfg),
+                output_dir: Some(dir.path().join(out)),
+                ..Default::default()
+            },
+        )
+        .unwrap()
+    };
+    let native = run(base.clone(), "native");
+    let mut ocr = base.clone();
+    ocr["ocr"] = json!({"enabled": true});
+    let result = run(ocr, "ocr");
+    assert_eq!(result.markdown, native.markdown);
+    assert_eq!(
+        result.frontmatter.get("title"),
+        native.frontmatter.get("title")
+    );
+    assert_eq!(result.warnings, native.warnings);
+    assert!(result.screenshots.is_empty());
+    assert!(!result.markdown.contains("OCR supplement"));
+    if !markitai_core::office_render_available() {
+        return;
+    }
+    let mut shots = base;
+    shots["screenshot"] = json!({"enabled": true});
+    shots["ocr"] = json!({"enabled": true});
+    let result = run(shots, "shots");
+    assert_eq!(result.screenshots.len(), 3, "{:?}", result.warnings);
+    assert!(result.markdown.starts_with(&native.markdown));
+    assert!(!result.markdown.contains("OCR supplement"));
+    assert!(
+        !result
+            .warnings
+            .iter()
+            .any(|w| w.contains("OCR found no text"))
+    );
 }
 
 #[test]

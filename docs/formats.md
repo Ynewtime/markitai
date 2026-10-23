@@ -758,7 +758,8 @@ cell uses it. Nothing in a notebook is executed or fetched.
 
 Numbers table decoding accepts modern single-file ZIP and directory packages with scoped limits in [Numbers](numbers.md). A `.numbers` directory is one document, including when its contents are invalid; ordinary directories keep their existing batch/API behavior.
 Office presentations and word-processing files can opt into complete page capture
-and local OCR supplements through [isolated LibreOffice export](office-rendering.md);
+through [isolated LibreOffice export](office-rendering.md) (`--ocr` alone adds
+no OCR of their pages, as in Python markitai);
 this optional installed program is separate from the CLI binary. Native text
 extraction does not launch it. Templates are captured as the documents they
 make. XLS, XLSX, XLSM, XLSB and ODS screenshots use

@@ -148,7 +148,7 @@ instead of silently renaming an already-referenced image.
 
 ## Recognition language
 
-Page, embedded-picture, TIFF-page and Office-page recognition share the selected
+Page, embedded-picture and TIFF-page recognition share the selected
 [image OCR engine's language policy](ocr.md#language-selection). With Vision,
 the default `ocr.lang=en` tries English first, then supported Chinese, Korean
 and Japanese readings when needed. With the portable engine, the default uses

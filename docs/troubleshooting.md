@@ -347,8 +347,9 @@ Install one, set `MARKITAI_BROWSER_EXECUTABLE` to its executable, or run
 points to a missing file is not replaced automatically; fix or unset it first.
 See [browser installation](browser-installation.md).
 
-**`! … need LibreOffice (soffice on PATH) …`.** Page images and page OCR
-of Word, PowerPoint and spreadsheet files are exported through an installed
+**`! … need LibreOffice (soffice on PATH) …`.** Page images (and, with an
+LLM, the pages `--ocr` sends to the vision model) of Word, PowerPoint and
+spreadsheet files are exported through an installed
 LibreOffice and the selected PDF renderer (CoreGraphics on macOS by default,
 built-in hayro on Windows/Linux). Without it the document's own text is
 still converted and this one warning appears; install LibreOffice (the

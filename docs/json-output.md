@@ -115,7 +115,7 @@ code keeps working when wording changes.
 | `llm.cost_incomplete` | warning | Some requests have no reviewed price |
 | `image.analysis_failed` | warning | A picture's analysis failed; `items` the picture |
 | `image.not_localized` | warning | A linked picture could not be saved |
-| `office.renderer_missing` | warning | Office page screenshots or OCR need LibreOffice |
+| `office.renderer_missing` | warning | Office page screenshots or vision OCR need LibreOffice |
 | `office.page` | warning | A note about rendered Office pages |
 | `office.screenshot_format`, `office.count_verified` | info | Office rendering notes |
 | `spreadsheet.hidden_sheet` | info | A hidden worksheet left out (older builds; hidden sheets are now converted under a marked heading); `items` the sheet |

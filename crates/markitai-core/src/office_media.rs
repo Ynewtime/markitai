@@ -24,9 +24,9 @@ pub(crate) fn prepare(
     vlm_disabled: bool,
 ) -> Result<(Vec<Asset>, bool)> {
     let llm = config::enabled(cfg, "/llm/enabled");
-    let ocr = config::enabled(cfg, "/ocr/enabled");
-    let local_ocr = ocr && (!llm || vlm_disabled);
-    let vlm_ocr = ocr && llm && !vlm_disabled;
+    // `--ocr` adds no OCR of the rendered pages, as in Python markitai: they
+    // show the document's own text. With a vision model it still sends them.
+    let vlm_ocr = config::enabled(cfg, "/ocr/enabled") && llm && !vlm_disabled;
     let screenshots = config::enabled(cfg, "/screenshot/enabled") || vlm_ocr;
     if screenshots
         && !llm
@@ -45,7 +45,6 @@ pub(crate) fn prepare(
         prefix,
         cfg,
         screenshots,
-        local_ocr,
         &exported.screenshot_min_widths_pt,
     )?;
     if let Some(dir) = output_dir {
@@ -53,55 +52,16 @@ pub(crate) fn prepare(
     }
     document.warnings.extend(exported.warnings);
     document.warnings.extend(media.warnings);
-    if local_ocr && llm && vlm_disabled {
+    if config::enabled(cfg, "/ocr/enabled") && llm && vlm_disabled {
         document.warnings.push(if screenshots && (!config::enabled(cfg, "/llm/pure")
             || config::enabled(cfg, "/screenshot/screenshot_only")) {
-            "VLM OCR is disabled; OCR stays local, but explicitly requested screenshot enhancement still sends page images to the model. Disable screenshots to keep page images local."
+            "VLM OCR is disabled; explicitly requested screenshot enhancement still sends page images to the model. Disable screenshots to keep page images local."
         } else {
-            "VLM OCR is disabled; only locally extracted text is used for Office LLM enhancement."
+            "VLM OCR is disabled; only the document's own text is used for Office LLM enhancement."
         }.into());
     }
-    let has_reliable_text = !document.markdown.trim().is_empty()
-        || media.ocr.iter().any(|text| !text.trim().is_empty());
-    let label = if kind == OfficeKind::Presentation {
-        "Slide"
-    } else {
-        "Page"
-    };
-    if local_ocr {
-        let nonempty = media
-            .ocr
-            .iter()
-            .filter(|text| !text.trim().is_empty())
-            .count();
-        document
-            .metadata
-            .insert("ocr_pages_attempted".into(), json!(media.ocr.len()));
-        document
-            .metadata
-            .insert("ocr_pages_nonempty".into(), json!(nonempty));
-        document
-            .metadata
-            .insert("ocr_pages_blank".into(), json!(media.ocr.len() - nonempty));
-        document.metadata.insert("ocr_used".into(), json!(true));
-        document
-            .metadata
-            .insert("ocr_path".into(), json!(crate::ocr::backend()));
-        if nonempty > 0 {
-            document
-                .markdown
-                .push_str("\n\n## Rendered-page OCR supplement\n");
-            for (index, text) in media.ocr.iter().enumerate() {
-                if !text.trim().is_empty() {
-                    document.markdown.push_str(&format!(
-                        "\n### {label} {}\n\n{}\n",
-                        index + 1,
-                        text.trim()
-                    ));
-                }
-            }
-        }
-    } else if vlm_ocr {
+    let has_reliable_text = !document.markdown.trim().is_empty();
+    if vlm_ocr {
         document.metadata.insert("ocr_path".into(), json!("vlm"));
     }
     document

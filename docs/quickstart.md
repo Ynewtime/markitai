@@ -130,7 +130,7 @@ untested. Consult [native CI](ci.md) for validation scope and
 | HEIF / HEIC decoding | System ImageIO | Built-in decoder | Built-in decoder |
 | AVIF decoding | System ImageIO | Built-in decoder | Built-in decoder |
 | JavaScript pages / web screenshots | Needs Chrome/Chromium | Needs Chrome/Chromium | Needs Chrome/Chromium |
-| Office page images / OCR | Needs LibreOffice | Needs LibreOffice | Needs LibreOffice |
+| Office page images / vision OCR | Needs LibreOffice | Needs LibreOffice | Needs LibreOffice |
 | Batch `--resume` | Available | Available | Available |
 
 macOS binaries declare a minimum of macOS 11.0; testing used newer macOS.
