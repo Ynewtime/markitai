@@ -90,6 +90,8 @@ def test_a_complete_wheel_passes(tmp_path: Path, check_wheel: ModuleType) -> Non
         "ui/math.css",
         "ui/KaTeX_Main-Regular.woff2",
         "LICENSES/KaTeX-LICENSE",
+        "ui/mermaid.js",
+        "LICENSES/pele-LICENSE",
     ],
 )
 def test_every_file_the_workbench_manifest_lists_is_required(

@@ -2189,6 +2189,45 @@ class TestVendoredBundle:
             assert serve["content_security_policy"] == CSP
             assert set(serve["page_paths"]) <= set(workbench.page_paths)
 
+    async def test_every_chunk_the_app_loads_later_is_served(
+        self, tmp_path: Path
+    ) -> None:
+        """Lazy chunks (KaTeX's math.js, Pele's mermaid.js, ...) by their URL.
+
+        The app imports them as ``/ui/<name>`` only when a page needs them, so
+        a name the server does not route would show up only as a blank
+        diagram or formula. Each is sent plain and gzipped, as its type, under
+        the page's unchanged policy.
+        """
+        from markitai.serve.workbench import BUNDLED_DIR, Workbench
+
+        workbench = Workbench.load(BUNDLED_DIR)
+        assert workbench is not None
+        app_js = workbench.assets["app.js"].plain.decode()
+        lazy = set(re.findall(r'import\("/ui/([^"]+)"\)', app_js))
+        assert {"math.js", "mermaid.js"} <= lazy
+        files = workbench.manifest.get("files")
+        assert isinstance(files, dict)
+        async with _client(_make_app(tmp_path, static_dir=BUNDLED_DIR)) as client:
+            for name in sorted(lazy):
+                plain = await client.get(
+                    f"/ui/{name}", headers={"Accept-Encoding": "identity"}
+                )
+                zipped = await client.get(
+                    f"/ui/{name}", headers={"Accept-Encoding": "gzip"}
+                )
+                for response in (plain, zipped):
+                    assert response.status_code == 200, name
+                    assert response.headers["content-type"] == (
+                        "text/javascript; charset=utf-8"
+                    ), name
+                    assert response.headers["content-security-policy"] == CSP
+                    assert response.headers["x-content-type-options"] == "nosniff"
+                assert "content-encoding" not in plain.headers, name
+                assert zipped.headers["content-encoding"] == "gzip", name
+                assert len(plain.content) == files[f"ui/{name}"]["bytes"], name
+                assert zipped.content == plain.content, name  # httpx decoded it
+
 
 class TestReviewFixes:
     """Compare's PDF work runs in killable workers; numbers are bounded."""

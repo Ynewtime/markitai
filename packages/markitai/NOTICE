@@ -307,3 +307,6 @@ markitai/serve/workbench/LICENSES/ (named after the dash):
 - KaTeX (MIT), Copyright (c) 2013-2020 Khan Academy and other contributors,
   and KaTeX/katex-fonts (MIT): the formula renderer and its fonts, loaded only
   for a document that holds a formula - KaTeX-LICENSE
+- Pele (MIT), Copyright (c) 2026 kepano: the Mermaid diagram renderer,
+  loaded only for a document that holds a diagram, with Lucide's rotate-ccw
+  icon (ISC), Copyright (c) 2026 Lucide Icons and Contributors - pele-LICENSE
