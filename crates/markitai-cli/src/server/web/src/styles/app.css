@@ -2121,6 +2121,26 @@ main:focus {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* The window's header line. Inter centres its capitals on the line box, so a
+   file name, mostly lowercase, sits 1.5 px under the arrows and the counter
+   (2 px before this rule: the header's 47 px puts the line on a half pixel,
+   and text is drawn from a whole one). The padding keeps the box centred and
+   lifts the name a pixel; on a 2x screen, where half a pixel is a whole
+   device pixel, the name moves the other half. Icons are drawn from a whole
+   pixel too: the header's are odd sizes so they centre on its half pixel. A
+   phone's rows are whole pixels and the name has its own. */
+.peek:not(.is-phone) .peek-title {
+  padding-bottom: 2px;
+}
+@media (min-resolution: 2dppx) {
+  .peek:not(.is-phone) .peek-title > .mid-name {
+    transform: translateY(-0.5px);
+  }
+}
+.peek:not(.is-phone) .peek-head .action-menu > .icon-btn > svg {
+  width: 17px;
+  height: 17px;
+}
 .peek-title > .mid-name {
   display: grid;
 }
