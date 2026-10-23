@@ -1,6 +1,6 @@
-# Rust CLI 开发版
+# Rust CLI
 
-`markitai` 与 `mkai` 使用同一个 Rust 核心。当前版本是 `2.0.0-dev`。
+`markitai` 与 `mkai` 使用同一个 Rust 核心，版本见 `markitai --version`。
 安装见[快速开始](quickstart.md#1-install)，完整参数以 `markitai --help` 和
 `markitai <子命令> --help` 为准；参考版差异见[兼容合同](compatibility.md)。
 
@@ -151,13 +151,13 @@ MARKITAI_LANG=zh markitai doctor
 - `.urls` 支持每行 `URL [output-name]` 或 JSON 列表，忽略空行和 `#` 注释；
   自定义名称只能是安全 basename。同批任务预留独立输出名称。
 - macOS/Linux/Windows 均支持批量恢复。用原命令加 `--resume`，保留兼容的完成项、
-  重试未完成项并发现新增输入。恢复比对保存的功能开关（LLM/OCR/截图/alt/desc）、
-  输入输出路径及目录扫描深度/glob，不比对文件并发（`-j`），也不是整个配置文件的比较。
-  找到的状态若以其他选项保存，`--resume` 以退出码 1 停止并列出各项不同选项的
-  保存值与当前值，保留已保存的进度，不会重新开始。改变输出的设置（`--profile`、
-  `--keep-base`、`--pure`、`--screenshot-only`、`-s`，以及 `-f json`、`--text-only`、
-  `output.page_markers`、`output.wikilinks`）不是默认值时也记入状态及其文件名，与 Python 版
-  markitai 一致：换一种设置续跑就是另一个批次，会重新转换各项；回到原设置仍找到原来的进度。
+  重试未完成项并发现新增输入。状态及其文件名记录功能开关（`--llm`、`--ocr`、
+  `--screenshot`、`--alt`、`--desc`）、输入输出路径及目录扫描深度/glob，以及不是默认值的
+  改变输出的设置（`--profile`、与 `--llm` 同用的 `--keep-base`/`--pure`、`--screenshot-only`、
+  `-s`，以及 `-f json`、`--text-only`、`output.page_markers`、`output.wikilinks`），与 Python 版
+  markitai 一致；不记录文件并发（`-j`），也不是整个配置文件的比较。换一种设置续跑找不到原来的
+  状态，就是另一个批次：退出码 0，重新转换各项（已有文件按 `output.on_conflict` 处理）；
+  回到原设置仍找到原来的进度。
   更换模型或 prompt 后要重新转换时，使用新的输出目录并省略 `--resume`。
   Unix 首次中断停止派发并等待在途工作，再次中断终止所启动的外部进程组。
   详见[恢复状态](state-storage.md)。

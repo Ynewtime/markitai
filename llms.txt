@@ -10,7 +10,7 @@ requests or use credentials. Use the caller's authorized inputs and settings.
 ## Start
 
 - [Overview](README.md): capabilities and first commands.
-- [Quick start](docs/quickstart.md): development archive installation, PATH, first tasks, formats and platform requirements.
+- [Quick start](docs/quickstart.md): setup scripts and release archives, PATH, first tasks, formats and platform requirements.
 - [Standalone Agent guide](llms-full.txt): CLI JSON, exit codes, MCP output handling, authenticated workbench requests and offline prerequisites.
 
 ## Contracts

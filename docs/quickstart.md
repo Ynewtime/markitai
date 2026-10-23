@@ -3,66 +3,107 @@
 Markitai converts documents, web pages and images to Markdown. One Rust core
 powers the `markitai` command (also installed as `mkai`), a local REST service
 with a browser workspace, an MCP server, and in-process Node.js, Python and Go
-bindings. This guide covers development version **2.0.0-dev**, the Rust rewrite of
-reference release 1.2.0. Stable 2.0.0 has not been published.
+bindings. This guide covers markitai 2.0, the Rust rewrite of Python markitai
+1.2.
 
 ## 1. Install
 
-Choose the development archive supplied for your machine. The names below
-describe project builds, not links to a published stable release.
+### Setup scripts
 
-| Platform | Development archive |
-|---|---|
-| macOS on Apple silicon | `markitai-2.0.0-dev-aarch64-apple-darwin-single-binary.tar.gz` |
-| macOS on Intel | `markitai-2.0.0-dev-x86_64-apple-darwin-single-binary.tar.gz` |
-| Linux x86-64 | `markitai-2.0.0-dev-x86_64-unknown-linux-gnu-single-binary.tar.gz` |
-| Windows x64 | `markitai-2.0.0-dev-x86_64-pc-windows-msvc.zip` |
-| Windows ARM64 | `markitai-2.0.0-dev-aarch64-pc-windows-msvc.zip` |
-
-On macOS or Linux, replace `Archive` with the path to your downloaded archive.
-Use a new installation directory; if `mkdir` reports that it exists, choose a
-new directory before continuing. Keeping the files together preserves both
-aliases and the offline documentation:
+macOS and Linux:
 
 ```sh
-Archive="/path/to/markitai-2.0.0-dev-aarch64-apple-darwin-single-binary.tar.gz"
-Install="$HOME/.local/share/markitai/2.0.0-dev"
-mkdir -p "$HOME/.local/share/markitai"
-mkdir "$Install" && tar -xzf "$Archive" -C "$Install"
-export PATH="$Install:$PATH"
-markitai --version                  # markitai 2.0.0-dev
-mkai --help
-markitai-mcp --help
+curl -fsSL https://markitai.dev/setup.sh | sh
 ```
 
-The `export` makes the commands available in this terminal immediately; it
-does not rely on `~/.local/bin` already being on `PATH`. To keep them available
-in new terminals, add `export PATH="$HOME/.local/share/markitai/2.0.0-dev:$PATH"`
-once to `~/.zshrc` for zsh or `~/.bashrc` for non-login bash terminals
-(`~/.bash_profile` for login bash terminals). Use the actual installation
-directory if you changed it. An MCP client can always use the
-absolute executable path, independent of shell profiles.
-
-On Windows, select the native system architecture (Settings → System → About
-→ System type): x64 for Intel/AMD PCs, ARM64 for ARM-based PCs. Use PowerShell.
-Replace `Archive` with your
-ZIP path; choose a new `Install` directory if it already exists:
+Windows (Windows PowerShell 5.1 or PowerShell 7):
 
 ```powershell
-$Archive = "C:\Downloads\markitai-2.0.0-dev-aarch64-pc-windows-msvc.zip"
-$Install = Join-Path $env:LOCALAPPDATA "Programs\Markitai-2.0.0-dev"
-if (Test-Path -LiteralPath $Install) { throw "Choose a new installation directory" }
-Expand-Archive -LiteralPath $Archive -DestinationPath $Install
-& "$Install\markitai.exe" --version
-$env:Path = "$Install;$env:Path"
-mkai.exe --help
-markitai-mcp.exe --help
+powershell -ExecutionPolicy ByPass -c "irm https://markitai.dev/setup.ps1 | iex"
 ```
 
-These are three direct EXE entries, with no `.cmd` wrapper or administrator
-installation. The PATH assignment applies to this terminal. For future
-terminals, add the installation directory to your **user** Path in Windows
-Environment Variables, then open a new terminal.
+The scripts download the latest release's archive for this machine from
+[GitHub Releases](https://github.com/Ynewtime/markitai/releases) together with
+its `SHA256SUMS`, refuse an archive whose SHA-256 differs, and install for the
+current user, without administrator rights:
+
+- macOS and Linux: `markitai` with its `mkai` and `markitai-mcp` links in
+  `~/.local/bin`, the notices and offline guides in
+  `~/.local/share/markitai/current`. No shell profile is edited; if
+  `~/.local/bin` is not on `PATH`, the script says what to add.
+- Windows: `markitai.exe`, `mkai.exe` and `markitai-mcp.exe` with the notices
+  and guides in `%LOCALAPPDATA%\Programs\markitai`, which is added to the user
+  Path (open a new terminal afterwards).
+
+`MARKITAI_VERSION=X.Y.Z` installs a given release, and `MARKITAI_INSTALL_DIR`
+another folder, which later runs reuse. On Windows use an empty or dedicated
+folder: setup.ps1 refuses one that already holds files of the names it
+installs. Setup records what it installed; an update or uninstall removes
+only those files. A markitai 1.x that `uv tool` installed is removed once the
+new one is in place; `~/.markitai` (configuration, caches, history) is kept. With a terminal, setup offers
+`markitai doctor --fix` for the optional components (local OCR models, a
+headless browser). Running the same command again updates. To uninstall, which
+also keeps `~/.markitai`:
+
+```sh
+curl -fsSL https://markitai.dev/setup.sh | sh -s -- --uninstall
+```
+
+```powershell
+& ([scriptblock]::Create((irm https://markitai.dev/setup.ps1))) -Uninstall
+```
+
+With `pip` or `uv` you can instead install the Python package, which carries
+the same program and commands: `pip install markitai` or
+`uv tool install markitai` (Python 3.10 or later; see
+[bindings](bindings.md#installation) for the platforms).
+
+### Release archives
+
+Each [release](https://github.com/Ynewtime/markitai/releases) has one archive
+per platform, `SHA256SUMS` and build provenance:
+
+| Platform | Archive |
+|---|---|
+| macOS on Apple silicon | `markitai-v<version>-aarch64-apple-darwin.tar.gz` |
+| macOS on Intel | `markitai-v<version>-x86_64-apple-darwin.tar.gz` |
+| Linux x86-64 | `markitai-v<version>-x86_64-unknown-linux-gnu.tar.gz` |
+| Linux ARM64 | `markitai-v<version>-aarch64-unknown-linux-gnu.tar.gz` |
+| Windows x64 | `markitai-v<version>-x86_64-pc-windows-msvc.zip` |
+| Windows ARM64 | `markitai-v<version>-aarch64-pc-windows-msvc.zip` |
+
+Check a download with `sha256sum -c SHA256SUMS --ignore-missing` (on macOS,
+`grep <archive> SHA256SUMS | shasum -a 256 -c`) and, with the GitHub CLI, its
+origin with `gh attestation verify <archive> --repo Ynewtime/markitai`. To
+install one by hand on macOS or Linux, extract it into a new folder and keep
+the files together, which preserves both aliases and the offline guides:
+
+```sh
+Archive="$HOME/Downloads/markitai-v2.0.0-aarch64-apple-darwin.tar.gz"
+Install="$HOME/.local/share/markitai/2.0.0"
+mkdir -p "$Install" && tar -xzf "$Archive" -C "$Install"
+export PATH="$Install:$PATH"
+markitai --version                  # markitai 2.0.0
+```
+
+The `export` applies to this terminal; for new terminals add the same line to
+`~/.zshrc` for zsh or `~/.bashrc` for bash (`~/.bash_profile` for login bash
+terminals). An MCP client can always use the absolute executable path.
+
+On Windows, choose the archive for the system architecture (Settings → System
+→ About → System type: x64 for Intel/AMD PCs, ARM64 for ARM-based PCs) and
+extract it in PowerShell:
+
+```powershell
+$Archive = "$HOME\Downloads\markitai-v2.0.0-aarch64-pc-windows-msvc.zip"
+$Install = Join-Path $env:LOCALAPPDATA "Programs\markitai-2.0.0"
+Expand-Archive -LiteralPath $Archive -DestinationPath $Install
+$env:Path = "$Install;$env:Path"
+markitai --version
+```
+
+For future terminals, add the folder to your **user** Path in Windows
+Environment Variables. The three EXEs need no `.cmd` wrapper.
 
 The CLI needs no Python, Node.js or Go runtime. Unix archives contain one
 executable and relative `mkai` / `markitai-mcp` links; Windows ZIPs contain
@@ -70,17 +111,27 @@ three EXE entries. License notices and selected offline Markdown guides are
 included; OCR models are not. Node.js, Python and Go bindings are separate
 packages with their own runtime requirements; see [bindings](bindings.md#installation).
 
-### Unsigned builds on macOS
+### Rolling back to 1.x
 
-The development executables and packages are not code-signed with an Apple
-Developer ID or notarized yet. macOS Gatekeeper therefore blocks a copy that a
-web browser downloaded (it carries the download "quarantine" mark) and reports
-that Apple cannot verify it; an archive fetched with `curl` or `wget` has no
-such mark. Once you are sure the archive came from the project and its checksum matches
-the supplied package record, remove the mark from that file before extracting it:
+To go back to Python markitai 1.2, uninstall as above, then install the 1.2.0
+tag with the PDF library version it was released with:
 
 ```sh
-xattr -d com.apple.quarantine markitai-2.0.0-dev-aarch64-apple-darwin-single-binary.tar.gz
+uv tool install "git+https://github.com/Ynewtime/markitai@v1.2.0#subdirectory=packages/markitai" --with "pymupdf4llm<2"
+```
+
+### Unsigned builds on macOS
+
+The release executables and wheels are not code-signed with an Apple
+Developer ID or notarized. macOS Gatekeeper therefore blocks a copy that a
+web browser downloaded (it carries the download "quarantine" mark) and reports
+that Apple cannot verify it; an archive fetched with `curl` or `wget` has no
+such mark, so the setup script is not affected. Once you are sure the archive
+came from the project and its checksum matches `SHA256SUMS`, remove the mark
+from that file before extracting it:
+
+```sh
+xattr -d com.apple.quarantine markitai-v2.0.0-aarch64-apple-darwin.tar.gz
 ```
 
 If you have already extracted it, run the same command on
@@ -122,7 +173,7 @@ the commit and package recorded in each run; physical Intel Macs remain
 untested. Consult [native CI](ci.md) for validation scope and
 [formats](formats.md) for reader gaps.
 
-| Capability | macOS | Linux x86-64 | Windows x64 / ARM64 |
+| Capability | macOS | Linux x86-64 / ARM64 | Windows x64 / ARM64 |
 |---|---|---|---|
 | Native text readers, `serve`, CLI and MCP | Available; x86-64 checked under Rosetta 2 | Available | Available |
 | Local OCR | Paddle by default; Vision with `MARKITAI_OCR_BACKEND=vision` | Paddle; models must be prepared | Paddle; models must be prepared |
@@ -134,8 +185,10 @@ untested. Consult [native CI](ci.md) for validation scope and
 | Batch `--resume` | Available | Available | Available |
 
 macOS binaries declare a minimum of macOS 11.0; testing used newer macOS.
-The Ubuntu 24.04 Linux archives require glibc 2.39 or later; another Linux
-build can have a different requirement. Windows CLI archives target MSVC x64
+The Linux archives and wheels are built in the manylinux_2_28 image and need
+glibc 2.28 or later (RHEL 8, Debian 10, Ubuntu 18.10 and newer); musl-based
+Linux (Alpine) is not supported. A Linux build from source can have a
+different requirement. Windows CLI archives target MSVC x64
 or ARM64 and statically link the MSVC runtime; they carry all three executable entries. This does not make optional
 LibreOffice, browser or OCR model installations part of the archive. Neither a
 CLI archive nor a passing version probe proves all Node/Python/Go bindings work; Windows Go/cgo

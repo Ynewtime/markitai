@@ -5,23 +5,35 @@ request and response contract. Neither an installed CLI nor a Python worker is
 used for conversion. Feature availability is therefore the same as the core;
 an installed binding does not add missing format, OCR, or browser capabilities.
 
-Local OCR uses Vision on macOS and Paddle on Windows/Linux; Paddle models
-are prepared separately. PDF page rendering uses CoreGraphics on macOS by
+Local OCR uses the portable Paddle engine on every platform (Vision on macOS
+when `MARKITAI_OCR_BACKEND=vision` chooses it); Paddle models are prepared
+separately. PDF page rendering uses CoreGraphics on macOS by
 default and built-in hayro on Windows/Linux. HEIF/HEIC and AVIF decode
 everywhere (ImageIO on macOS, built-in decoders elsewhere). Optional browser and Office backends still need their external
 applications; see [quick start](quickstart.md#platform-support).
 
 ## Installation
 
-This development version is distributed through platform artifacts or a local
-source build, not a universal PyPI/npm/Go install. Build bindings
-from a checkout with Rust 1.92 or later (development uses 1.99.1); each build
-compiles the Rust core once in the `release` profile and takes several minutes.
+The Python package is on PyPI, as an abi3 wheel (CPython 3.10 or later) for
+macOS 11+ (arm64, x86-64), Linux with glibc 2.28+ (x86-64, ARM64) and Windows
+(x64, ARM64):
+
+```sh
+pip install markitai                     # or: uv tool install markitai
+```
+
+PyPI carries no source distribution, so on any other platform pip installs or
+keeps markitai 1.x; the release's source archive (`markitai-<version>.tar.gz`
+on [GitHub Releases](https://github.com/Ynewtime/markitai/releases)) builds
+there with Rust. Node.js and Go are not published to npm or a Go module proxy:
+build them, or a wheel for another target, from a checkout with Rust 1.92 or
+later (development uses 1.99.1); each build compiles the Rust core once in the
+`release` profile and takes several minutes.
 
 | Language | Minimum | Build | Result |
 |---|---|---|---|
-| Python | CPython 3.10 (ABI3 wheel) | `maturin build --release --locked` in `bindings/python` | `markitai-2.0.0.dev0-cp310-abi3-<platform>.whl` |
-| Node.js | 18 (Node-API 8) | `npm --prefix bindings/node run build`, then `npm pack` | `markitai-2.0.0-dev.0.tgz` |
+| Python | CPython 3.10 (ABI3 wheel) | `maturin build --release --locked` in `bindings/python` | `markitai-<version>-cp310-abi3-<platform>.whl` |
+| Node.js | 18 (Node-API 8) | `npm --prefix bindings/node run build`, then `npm pack` | `markitai-<version>.tgz` |
 | Go (macOS/Linux) | 1.23 with cgo and a C linker | `cargo build --release --locked -p markitai-ffi` | `target/release/libmarkitai_ffi.{dylib,so}` |
 
 Building needs a native C/C++ toolchain/linker in addition to Rust; see
@@ -72,21 +84,22 @@ wheel needs no other Python package (Chromium and the subscription runtimes
 are installed as [browser installation](browser-installation.md) and
 [subscriptions](subscriptions.md) describe).
 
-Publish wheels only. A source distribution (`maturin sdist`) carries the
-workspace crates the extension needs (the command-line crate included),
-`vendor/rav1d`, `Cargo.lock` and the package's Python files, but not the
-vendored crates the workspace's `[patch.crates-io]` names (`anydoc`, `htmd`,
-`iwork`, `lopdf`, `pdf-inspector`): maturin copies path dependencies, not patches, and
-refuses include patterns outside `bindings/python`, so it does not build.
+A plain `maturin sdist` does not build: it carries the workspace crates the
+extension needs (the command-line crate included), `vendor/rav1d`, `Cargo.lock`
+and the package's Python files, but not the vendored crates the workspace's
+`[patch.crates-io]` names (`anydoc`, `htmd`, `iwork`, `lopdf`, `pdf-inspector`):
+maturin copies path dependencies, not patches, and refuses include patterns
+outside `bindings/python`. `scripts/release_build.py sdist` adds them, and the
+release's source archive is built that way ([releases](ci.md#releases)).
 
 ### Node.js
 
 ```sh
 npm --prefix bindings/node run build       # builds the addon as bindings/node/markitai.node
 mkdir -p dist/node
-(cd bindings/node && npm pack --pack-destination ../../dist/node)   # markitai-2.0.0-dev.0.tgz
+(cd bindings/node && npm pack --pack-destination ../../dist/node)   # markitai-<version>.tgz
 cd /path/to/your/project
-npm install /path/to/markitai/dist/node/markitai-2.0.0-dev.0.tgz
+npm install /path/to/markitai/dist/node/markitai-<version>.tgz
 node -e "console.log(require('markitai').version)"
 ```
 
@@ -114,11 +127,12 @@ self-contained static package.
 
 ## Version identifiers and adapter differences
 
-The development engine identifies itself as `2.0.0-dev`. Python's
-`markitai.__version__`, Node's exported `version`, Go's `Version()` and the C
-version function report that engine identifier. Distribution metadata uses the
-package manager's spelling: Python `2.0.0.dev0` and npm `2.0.0-dev.0`. These
-strings intentionally differ; compare installed distributions using
+The engine identifies itself with the Cargo version (`2.0.0`; between
+releases, for example, `2.1.0-dev`). Python's `markitai.__version__`, Node's
+exported `version`, Go's `Version()` and the C version function report that
+engine identifier. Distribution metadata uses the package manager's spelling:
+for a final release they agree; for `2.1.0-dev`, Python says `2.1.0.dev0` and
+npm `2.1.0-dev.0`. Those strings intentionally differ; compare installed distributions using
 `importlib.metadata.version("markitai")` or npm's package metadata, and use the
 engine identifier for diagnostics. Do not compare these strings for literal
 equality or assume their prerelease ordering is interchangeable.

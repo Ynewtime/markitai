@@ -26,8 +26,9 @@ With both LLM and OCR disabled, CLI image items are skipped with
 returns a conversion error explaining `llm=True` and `ocr=True`, matching the
 reference Python API. Missing files still report a missing-file error.
 
-`ocr=True` without LLM selects [local image OCR](ocr.md): Vision on macOS by
-default, or the portable engine with installed model weights on Windows/Linux. With LLM
+`ocr=True` without LLM selects [local image OCR](ocr.md): the portable engine
+with its model weights on every platform, or Vision on macOS when chosen with
+`MARKITAI_OCR_BACKEND=vision`. With LLM
 enabled, it selects image vision unless `MARKITAI_NO_VLM_OCR` disables that
 upload; then local OCR supplies text for enhancement without image blocks.
 [PDF page OCR and screenshots](pdf-rendering.md) use CoreGraphics on macOS and

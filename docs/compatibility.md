@@ -1,7 +1,8 @@
 # Compatibility and migration
 
-This is the Rust rewrite of Markitai 1.2.0, currently **2.0.0-dev**. The current
-handoff is for local validation; a stable release is not being published.
+Markitai 2.0 is the Rust rewrite of Markitai 1.2.0. It is released as
+executables with setup scripts on GitHub Releases and as wheels on PyPI for
+six platforms (see [bindings](bindings.md#installation)).
 Output quality takes precedence over byte-for-byte equality with the Python
 implementation. A supported extension or passing build is not a promise of
 complete format fidelity.

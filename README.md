@@ -6,17 +6,34 @@ browser workspace, an MCP server, and in-process Node.js, Python and Go
 bindings. The CLI executable needs no Python, Node.js or Go runtime; language
 bindings need their respective language runtime.
 
-This is **2.0.0-dev**, the Rust rewrite of reference release 1.2.0, available
-for local verification. Stable 2.0.0 is not published. See the
+Markitai 2.0 is the Rust rewrite of Python markitai 1.2. See the
 [changelog](CHANGELOG.md) and
 [compatibility contracts](docs/compatibility.md).
 
 ## Install
 
-Download the development archive for your operating system and architecture,
-then follow the [installation steps](docs/quickstart.md#1-install) for macOS,
-Linux or Windows. Keep the executable, aliases and bundled documentation together;
-no administrator installation is required.
+macOS and Linux:
+
+```sh
+curl -fsSL https://markitai.dev/setup.sh | sh
+```
+
+Windows (PowerShell):
+
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://markitai.dev/setup.ps1 | iex"
+```
+
+The setup scripts download the release archive for your machine from
+[GitHub Releases](https://github.com/Ynewtime/markitai/releases), check it
+against the release's `SHA256SUMS`, and install `markitai`, `mkai` and
+`markitai-mcp` for the current user, without administrator rights. Releases
+cover macOS 11+ (Apple silicon, Intel), Linux with glibc 2.28+ (x86-64,
+ARM64) and Windows (x64, ARM64). Python users can instead run
+`pip install markitai` or `uv tool install markitai`: PyPI has wheels for the
+same six platforms (Python 3.10+); elsewhere pip keeps markitai 1.x. Manual
+downloads, updates and uninstalling are in the
+[installation steps](docs/quickstart.md#1-install).
 
 The archives include license notices and selected Markdown guides for offline
 use. OCR models, Chromium and LibreOffice are optional separate components.
