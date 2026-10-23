@@ -1379,26 +1379,38 @@ async def run_job(
 
             await asyncio.to_thread(prestart)
 
-        # The first OCR job after an install waits for the OCR stack's first
-        # load (serve's start-up warm-up may be at it already): its items say
-        # so while they wait, not sit silent for a minute (macOS)
-        ocr_notice: str | None = None
-        if (
-            run_cfg.ocr.enabled
-            and not run_cfg.llm.enabled  # with a model, pages go to the model
-            and any(i.kind == "file" for i in targets)
-        ):
+        # The first job after an install waits for the start-up preparation
+        # (warmup.prepare, in a child) instead of loading the same libraries
+        # here at the same time, which doubled macOS's first-load checks
+        # (a PDF 10.9 s instead of 8.8 s): its items say why while they
+        # wait. A job that reads with the local OCR also waits for the OCR
+        # stack (a minute on macOS); any other only for the rest.
+        notice: str | None = None
+        if targets:
             from markitai.ocr import OCR_FIRST_USE_NOTICE, is_ocr_available
-            from markitai.warmup import prepare, prepared
+            from markitai.warmup import (
+                FIRST_CONVERSION_NOTICE,
+                prepare,
+                prepared,
+                wait_for_core,
+            )
 
-            if is_ocr_available() and not await asyncio.to_thread(prepared):
-                ocr_notice = OCR_FIRST_USE_NOTICE
+            local_ocr = (
+                run_cfg.ocr.enabled
+                and not run_cfg.llm.enabled  # with a model, pages go to the model
+                and any(i.kind == "file" for i in targets)
+                and is_ocr_available()
+            )
+            if not await asyncio.to_thread(prepared, local_ocr):
+                notice = OCR_FIRST_USE_NOTICE if local_ocr else FIRST_CONVERSION_NOTICE
                 for item in targets:
-                    if item.kind == "file":
-                        item.warnings = [ocr_notice]
-                        registry.publish_item(job, item)
+                    item.warnings = [notice]
+                    registry.publish_item(job, item)
                 try:
-                    await asyncio.to_thread(prepare, run_cfg.ocr)
+                    if local_ocr:
+                        await asyncio.to_thread(prepare, run_cfg.ocr, ocr=True)
+                    else:
+                        await asyncio.to_thread(wait_for_core, run_cfg.ocr)
                 except Exception:  # the conversion reports it where it matters
                     pass
 
@@ -1479,7 +1491,7 @@ async def run_job(
                                 shared_processor,
                                 url_ctx,
                                 require_llm=require_llm,
-                                notice=ocr_notice,
+                                notice=notice,
                             )
                     finally:
                         remote_services_refused.reset(refused)

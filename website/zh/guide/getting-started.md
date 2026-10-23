@@ -82,7 +82,7 @@ uv tool install 'markitai[browser]' --force
 markitai doctor --fix
 ```
 
-安装或升级 markitai（或添加 extra）之后，运行一次 `markitai doctor`：它会首次加载转换所需的库，在 macOS 上需要数秒，装了 OCR extra 时最多一分钟（系统会对每个新装的库检查一次）。否则第一次转换会承担这部分耗时；第一次 `--ocr` 转换或 `markitai serve` 里的第一个 OCR 任务会在等待时给出提示。安装脚本会自动完成这一步，`markitai serve` 启动时也会在后台完成。
+安装或升级 markitai（或添加 extra）之后，运行一次 `markitai doctor`：它会首次加载转换所需的库，在 macOS 上需要数秒，装了 OCR extra 时最多一分钟（系统会对每个新装的库检查一次）。否则第一次转换（命令行或 `markitai serve` 中）会等待这一步，并给出提示。安装脚本会自动完成这一步，`markitai serve` 启动时也会在后台完成。
 
 ## 手动安装
 

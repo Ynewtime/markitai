@@ -35,6 +35,20 @@ TEXTS: dict[str, dict[str, str]] = {
     "total": {"en": "Total", "zh": "总计"},
     # Doctor command
     "doctor.title": {"en": "System Check", "zh": "系统检查"},
+    "first_load.general": {
+        "en": (
+            "First conversion since installing: loading the libraries "
+            "conversions use once (several seconds on macOS)"
+        ),
+        "zh": "安装后首次转换：首次加载转换所需的库（在 macOS 上需要数秒）",
+    },
+    "first_load.ocr": {
+        "en": (
+            "Preparing OCR (first time only): its libraries and models load "
+            "once, up to a minute on macOS"
+        ),
+        "zh": "首次准备 OCR（仅首次）：加载其库和模型，在 macOS 上最多一分钟",
+    },
     "doctor.optional": {"en": "Optional Capabilities", "zh": "可选能力"},
     "doctor.auth": {"en": "Authentication", "zh": "认证状态"},
     "doctor.not_ready": {

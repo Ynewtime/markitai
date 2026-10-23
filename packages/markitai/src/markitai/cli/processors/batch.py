@@ -949,10 +949,10 @@ async def process_batch(
     )
 
     if not dry_run and files:
-        from markitai.cli.processors.file import prepare_ocr_first_use
+        from markitai.cli.processors.file import prepare_first_conversion
         from markitai.utils.term import get_stderr_console
 
-        prepare_ocr_first_use(cfg, console=get_stderr_console(), quiet=quiet)
+        prepare_first_conversion(cfg, console=get_stderr_console(), quiet=quiet)
 
     if not dry_run and sum(f.suffix.lower() == ".pdf" for f in files) > 1:
         # Several PDFs: the extraction workers load their models while the

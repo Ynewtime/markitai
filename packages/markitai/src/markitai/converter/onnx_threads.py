@@ -120,9 +120,11 @@ def warm_up_in_background(ocr_config: OCRConfig | None = None) -> None:
     once (``warmup.prepare``: the first load after an install took 8 s for
     the PDF and office libraries and 40 s for OCR on macOS), a child process
     does that first, so this process is not held up loading its own
-    meanwhile; then the imports here take a moment. Once per process. As
-    for serve's LiteLLM prewarm, the thread imports only third-party
-    modules: the markitai modules it calls are imported here first.
+    meanwhile; the imports here start once it has loaded all but OCR (the
+    OCR stack goes on in the child) and then take a moment. Once per
+    process. As for serve's LiteLLM prewarm, the thread imports only
+    third-party modules: the markitai modules it calls are imported here
+    first.
     """
     global _warm_started
     import importlib
@@ -132,13 +134,14 @@ def warm_up_in_background(ocr_config: OCRConfig | None = None) -> None:
             return
         _warm_started = True
     importlib.import_module("markitai.converter.pdf_parallel")
-    from markitai.warmup import prepare
+    from markitai.warmup import start_preparing, wait_for_core
+
+    # The child starts now; the imports here wait until it has loaded all
+    # but OCR (the OCR stack, a minute on macOS, goes on in the child)
+    start_preparing(ocr_config)
 
     def run() -> None:
-        try:
-            prepare(ocr_config)
-        except Exception:  # a conversion reports it where it matters
-            pass
+        wait_for_core(ocr_config)
         try:
             import_pymupdf4llm()
         except Exception:  # the conversion reports it where it matters

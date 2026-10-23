@@ -60,29 +60,27 @@ def _file_final_stage_text(active_key: str | None, input_name: str) -> str:
     return f"Converted {input_name}"
 
 
-def prepare_ocr_first_use(cfg: MarkitaiConfig, *, console: Any, quiet: bool) -> None:
-    """Load the local OCR stack before a run that reads with it, saying so,
-    the first time after an install (``warmup.prepare``: a minute on macOS,
-    during which the run would otherwise sit silent).
-
-    Only for the RapidOCR route: with the LLM on, ``--ocr`` reads pages
-    with the vision model.
+def prepare_first_conversion(cfg: MarkitaiConfig, *, console: Any, quiet: bool) -> None:
+    """Before the first conversion after an install, load the libraries it
+    uses once, saying so (``warmup.prepare``, in a child process: several
+    seconds on macOS, a minute with the OCR stack, during which the run would
+    otherwise sit silent). The OCR stack only for a run that reads with the
+    local OCR: with the LLM on, ``--ocr`` reads pages with the vision model.
     """
-    if not cfg.ocr.enabled or cfg.llm.enabled:
-        return
+    from markitai.cli.i18n import t
     from markitai.ocr import is_ocr_available
     from markitai.warmup import prepare, prepared
 
-    if not is_ocr_available() or prepared():
+    local_ocr = cfg.ocr.enabled and not cfg.llm.enabled and is_ocr_available()
+    if prepared(local_ocr):
         return
     if not quiet:
         ui.info(
-            "Preparing OCR (first time only): its libraries and models load "
-            "once, up to a minute on macOS",
-            console=console,
+            t("first_load.ocr" if local_ocr else "first_load.general"), console=console
         )
     try:
-        prepare(cfg.ocr)
+        # What this run uses; doctor, setup and serve load the rest
+        prepare(cfg.ocr, ocr=local_ocr, rest=False)
     except Exception:  # the conversion reports it where it matters
         pass
 
@@ -174,7 +172,7 @@ async def process_single_file(
         console.print(f"  Cache: {cache_status}")
         raise SystemExit(0)
 
-    prepare_ocr_first_use(cfg, console=diag_console, quiet=quiet)
+    prepare_first_conversion(cfg, console=diag_console, quiet=quiet)
 
     # Track timing
     start_time = time.time()

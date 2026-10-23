@@ -82,7 +82,7 @@ After adding the browser extra, install Chromium once:
 markitai doctor --fix
 ```
 
-After installing or upgrading markitai (or adding an extra), run `markitai doctor` once: it loads the libraries conversions use for the first time, which takes several seconds on macOS and up to a minute with the OCR extra (the system checks each newly installed library once). Otherwise the first conversion pays for it; the first `--ocr` conversion, or the first OCR job in `markitai serve`, says so while it waits. The setup scripts do it for you, and `markitai serve` does it in the background when it starts.
+After installing or upgrading markitai (or adding an extra), run `markitai doctor` once: it loads the libraries conversions use for the first time, which takes several seconds on macOS and up to a minute with the OCR extra (the system checks each newly installed library once). Otherwise the first conversion (in the CLI or in `markitai serve`) waits for it and says so. The setup scripts do it for you, and `markitai serve` does it in the background when it starts.
 
 ## Manual Installation
 

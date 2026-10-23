@@ -1678,7 +1678,7 @@ class TestOcrFirstUse:
         release = threading.Event()
         calls: list[Any] = []
 
-        def prepare(config: Any = None) -> float:
+        def prepare(config: Any = None, **_kwargs: Any) -> float:
             calls.append(config)
             release.wait(20)
             return 40.0
@@ -1686,7 +1686,8 @@ class TestOcrFirstUse:
         from markitai import warmup
 
         monkeypatch.setattr(ocr, "is_ocr_available", lambda: True)
-        monkeypatch.setattr(warmup, "prepared", lambda: False)
+        monkeypatch.setattr(warmup, "prepared", lambda *_a: release.is_set())
+        monkeypatch.setattr(warmup, "wait_for_core", lambda *_a: None)
         monkeypatch.setattr(warmup, "prepare", prepare)
         monkeypatch.setattr("markitai.serve.jobs.process_file_item", _converter())
         async with _client(_make_app(tmp_path)) as client:
@@ -1713,6 +1714,46 @@ class TestOcrFirstUse:
         assert plain["items"][0]["warnings"] == []
         # The job's own wait (serve's start-up warm-up may call it too)
         assert [config.enabled for config in calls].count(True) == 1
+
+    async def test_a_first_job_without_ocr_waits_for_the_libraries(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """serve's start-up child is loading the conversion libraries: the
+        first job waits for it rather than load them here at the same time
+        (which doubled macOS's checks), and its items say why."""
+        import threading
+
+        from markitai import warmup
+
+        release = threading.Event()
+        loaded = {"done": False}
+
+        def wait_for_core(_config: Any = None) -> None:
+            release.wait(20)
+            loaded["done"] = True
+
+        monkeypatch.setattr(warmup, "prepared", lambda *_a: loaded["done"])
+        monkeypatch.setattr(warmup, "wait_for_core", wait_for_core)
+        monkeypatch.setattr("markitai.serve.jobs.process_file_item", _converter())
+        async with _client(_make_app(tmp_path)) as client:
+            created = await client.post(
+                "/api/jobs", files=_form(files=[("doc.pdf", _pdf_bytes(1))])
+            )
+            job_id = created.json()["job_id"]
+            waiting: dict[str, Any] = {}
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                waiting = (await client.get(f"/api/jobs/{job_id}")).json()
+                if waiting["items"][0]["warnings"]:
+                    break
+                await asyncio.sleep(0.02)
+            release.set()
+            done = await _done(client, job_id)
+            _, later = await _job(client, files=[("doc.pdf", _pdf_bytes(1))])
+        assert waiting["items"][0]["status"] == "queued"
+        assert waiting["items"][0]["warnings"] == [warmup.FIRST_CONVERSION_NOTICE]
+        assert done["items"][0]["warnings"] == [warmup.FIRST_CONVERSION_NOTICE]
+        assert later["items"][0]["warnings"] == []
 
 
 class TestOriginals:

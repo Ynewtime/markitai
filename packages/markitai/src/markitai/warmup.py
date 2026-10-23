@@ -250,8 +250,40 @@ _NATIVE_PACKAGES = (
 #: the slowest machine measured) before it is given up.
 _PREPARE_TIMEOUT = 600
 
+#: What a document conversion loads (PDF, office files, images): the child
+#: loads these first and then says so, so a conversion waiting for it starts
+#: before the LLM stack, the browser and the OCR stack have loaded.
+_CONVERSION_MODULES = (
+    "numpy",
+    "PIL.Image",
+    "lxml.etree",
+    "pymupdf",
+    "psutil",
+    "charset_normalizer",
+    "pptx",
+    "openpyxl",
+    "docx",
+    "mammoth",
+)
+#: Top-level packages only OCR uses: the last phase of the child.
+_OCR_PACKAGES = frozenset({"rapidocr", "cv2", "shapely", "pyclipper"})
+#: The line the child prints once everything but OCR is loaded.
+_CORE_READY = "markitai-core-ready"
+
+#: Said on a conversion that waits for the first load (the workbench shows
+#: it on the job's items while they wait, and after; the CLI prints its own).
+FIRST_CONVERSION_NOTICE = (
+    "First conversion since installing: the libraries conversions use load "
+    "once (several seconds on macOS); later conversions start right away."
+)
+
 _prepare_lock = threading.Lock()
-_prepared_here = False
+_state = threading.Condition()
+#: What this process knows: everything but OCR loaded (or given up on),
+#: OCR loaded too, a child running now.
+_core_here = False
+_ocr_here = False
+_running = False
 
 
 def prepared_record() -> Path:
@@ -286,86 +318,225 @@ def _fingerprint() -> dict[str, object]:
     }
 
 
-def prepared() -> bool:
-    """Whether this installation's native libraries have loaded once
-    (:func:`prepare` ran since it was installed or changed)."""
-    if _prepared_here:
-        return True
+def _record() -> dict[str, Any] | None:
     try:
         record = json.loads(prepared_record().read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return False
-    return record == _fingerprint()
+        return None
+    if not isinstance(record, dict) or record.get("installation") != _fingerprint():
+        return None
+    return record
 
 
-def _load_in_child(ocr_config: Any = None) -> None:
-    """Run :func:`_load_everything` in a child process of this interpreter.
+def prepared(ocr: bool = False) -> bool:
+    """Whether this installation's native libraries have loaded once
+    (:func:`prepare` ran since it was installed or changed), the OCR stack's
+    too when *ocr*."""
+    if _ocr_here or (_core_here and not ocr):
+        return True
+    record = _record()
+    return record is not None and (bool(record.get("ocr")) or not ocr)
+
+
+def _write_record(ocr: bool) -> None:
+    record = prepared_record()
+    try:
+        record.parent.mkdir(parents=True, exist_ok=True)
+        record.write_text(
+            json.dumps({"installation": _fingerprint(), "ocr": ocr}), encoding="utf-8"
+        )
+    except OSError:  # asked again next time; nothing breaks
+        pass
+
+
+def _core_loaded() -> None:
+    global _core_here
+    with _state:
+        _core_here = True
+        _state.notify_all()
+
+
+def _load_in_child(
+    ocr_config: Any = None, *, ocr: bool = False, rest: bool = True, on_core: Any = None
+) -> None:
+    """Run :func:`_load_everything` in a child process of this interpreter:
+    what conversions use, then (*rest*) the other libraries, then (*ocr*) the
+    OCR stack. *on_core* is called once the first part is loaded, while the
+    child goes on.
 
     Raises:
         RuntimeError: The child failed (its last line of error output).
+        subprocess.TimeoutExpired: It took over ten minutes.
     """
     command = [sys.executable, "-P", "-m", "markitai.warmup", "--native"]
-    if ocr_config is not None:
-        command += ["--ocr-config", ocr_config.model_dump_json()]
-    run = subprocess.run(  # noqa: S603 - this interpreter, this module
+    if not rest:
+        command.append("--core-only")
+    if ocr:
+        command.append("--with-ocr")
+        if ocr_config is not None:
+            command += ["--ocr-config", ocr_config.model_dump_json()]
+    child = subprocess.Popen(  # noqa: S603 - this interpreter, this module
         command,
         stdin=subprocess.DEVNULL,
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
         encoding="utf-8",
         errors="replace",
-        timeout=_PREPARE_TIMEOUT,
-        check=False,
     )
-    if run.returncode != 0:
-        lines = [line for line in run.stderr.splitlines() if line.strip()]
-        raise RuntimeError(lines[-1] if lines else f"exit status {run.returncode}")
+    killed: list[bool] = []
+
+    def kill() -> None:
+        killed.append(True)
+        child.kill()
+
+    timer = threading.Timer(_PREPARE_TIMEOUT, kill)
+    timer.start()
+    errors: list[str] = []
+    drain = threading.Thread(
+        target=lambda: errors.extend(child.stderr or []), daemon=True
+    )
+    drain.start()
+    try:
+        for line in child.stdout or []:
+            if line.strip() == _CORE_READY and on_core is not None:
+                on_core()
+        code = child.wait()
+        drain.join()
+    finally:
+        timer.cancel()
+    if code != 0:
+        lines = [line.strip() for line in errors if line.strip()]
+        if killed:
+            raise subprocess.TimeoutExpired(command, _PREPARE_TIMEOUT)
+        raise RuntimeError(lines[-1] if lines else f"exit status {code}")
 
 
-def prepare(ocr_config: Any = None) -> float | None:
+def prepare(
+    ocr_config: Any = None, *, ocr: bool | None = None, rest: bool = True
+) -> float | None:
     """Load every native library a conversion may use once, in a child
     process, and record it (see :func:`prepared`).
 
     The child imports every installed module markitai's sources name,
-    builds the PDF layout models' sessions, loads Pillow's codecs and, with
-    the ``ocr`` extra, builds an OCR engine (with *ocr_config*'s language).
-    Threads calling it at once wait for the one that loads.
+    builds the PDF layout models' sessions and loads Pillow's codecs, the
+    document conversion libraries first; without *rest*, only those (a
+    conversion waiting for it). Then, with *ocr* (default: when the ``ocr``
+    extra is installed), it imports the OCR stack and builds an engine with
+    *ocr_config*'s language. Once the conversion libraries are loaded,
+    :func:`wait_for_core` lets conversions without OCR go on. Calls at once wait for the one that loads; a child that failed
+    is not run again in this process (each conversion would wait for it).
 
     Returns:
-        The seconds it took, or None when this installation was prepared.
+        The seconds it took, or None when there was nothing to do.
 
     Raises:
-        RuntimeError: The child failed (an OCR engine the configuration
-            cannot build; the conversion reports it in its own words).
-        subprocess.TimeoutExpired: The child took over ten minutes.
+        RuntimeError, subprocess.TimeoutExpired: The child failed.
     """
-    global _prepared_here
+    global _ocr_here, _running
+    if ocr is None:
+        from markitai.ocr import is_ocr_available
+
+        ocr = is_ocr_available()
     with _prepare_lock:
-        if _prepared_here:
+        if prepared(ocr):
             return None
-        if prepared():
-            _prepared_here = True
-            return None
+        record = _record()
+        core_done = record is not None
+        if core_done:
+            _core_loaded()
+        with _state:
+            _running = True
         started = time.perf_counter()
-        _load_in_child(ocr_config)
-        _prepared_here = True
-        record = prepared_record()
+
+        def on_core() -> None:
+            if not core_done:
+                _write_record(False)
+            _core_loaded()
+
         try:
-            record.parent.mkdir(parents=True, exist_ok=True)
-            record.write_text(json.dumps(_fingerprint()), encoding="utf-8")
-        except OSError:  # asked again next time; nothing breaks
-            pass
+            _load_in_child(ocr_config, ocr=ocr, rest=rest, on_core=on_core)
+        except BaseException:
+            # Given up on in this process: nothing waits for it again
+            _core_loaded()
+            if ocr:
+                _ocr_here = True
+            raise
+        finally:
+            with _state:
+                _running = False
+                _state.notify_all()
+        _write_record(ocr)
+        _core_loaded()
+        if ocr:
+            _ocr_here = True
         return time.perf_counter() - started
 
 
-def _load_everything(ocr_config_json: str | None) -> int:
-    """The child of :func:`prepare`: load, then exit."""
+def start_preparing(ocr_config: Any = None) -> threading.Thread | None:
+    """:func:`prepare` in a daemon thread (``markitai serve``'s start),
+    counted as under way from now on, so :func:`wait_for_core` waits for it
+    instead of starting another; None when there is nothing to do."""
+    global _running
+    from markitai.ocr import is_ocr_available
+
+    ocr = is_ocr_available()
+    if prepared(ocr):
+        return None
+    with _state:
+        _running = True
+
+    def run() -> None:
+        global _running
+        try:
+            prepare(ocr_config, ocr=ocr)
+        except Exception:  # a conversion reports it where it matters
+            pass
+        finally:
+            with _state:
+                _running = False
+                _state.notify_all()
+
+    thread = threading.Thread(target=run, name="markitai-first-load", daemon=True)
+    thread.start()
+    return thread
+
+
+def wait_for_core(ocr_config: Any = None) -> None:
+    """Return once everything but OCR has loaded once: at once when it has,
+    else when the preparation under way gets there, else after preparing
+    it here (without OCR)."""
+    if prepared():
+        return
+    with _state:
+        if _running:
+            _state.wait_for(lambda: _core_here or not _running, _PREPARE_TIMEOUT)
+            if _core_here:
+                return
+    try:
+        prepare(ocr_config, ocr=False, rest=False)
+    except Exception:  # the conversion loads what it needs itself
+        _core_loaded()
+
+
+def _load_everything(
+    ocr_config_json: str | None, ocr: bool = True, rest: bool = True
+) -> int:
+    """The child of :func:`prepare`: load what document conversions use
+    and say so, then the other libraries markitai uses, then (*ocr*) the OCR
+    stack, building an engine; then exit."""
     import contextlib
     import io
 
-    names = [name for name in module_names() if not name.startswith("markitai")]
+    names = [
+        name
+        for name in module_names()
+        if not name.startswith("markitai") and name.split(".")[0] not in _OCR_PACKAGES
+    ]
     with contextlib.redirect_stdout(io.StringIO()):
-        _import_all(names)
+        _import_all(
+            [name for name in _CONVERSION_MODULES if _installed(name.split(".")[0])]
+        )
         from markitai.converter.onnx_threads import import_pymupdf4llm
 
         try:
@@ -379,15 +550,21 @@ def _load_everything(ocr_config_json: str | None) -> int:
                 features.check(feature)
         except Exception:  # noqa: BLE001 - optional codecs
             pass
+    print(_CORE_READY, flush=True)
+    if rest:
+        with contextlib.redirect_stdout(io.StringIO()):
+            # The LLM stack, the browser, the optional extras
+            _import_all(names)
     from markitai.ocr import OCRProcessor, is_ocr_available
 
-    if is_ocr_available():
+    if ocr and is_ocr_available():
         config = None
         if ocr_config_json:
             from markitai.config import OCRConfig
 
             config = OCRConfig.model_validate_json(ocr_config_json)
-        OCRProcessor._create_engine_impl(config, threads=1)
+        with contextlib.redirect_stdout(io.StringIO()):
+            OCRProcessor._create_engine_impl(config, threads=1)
     return 0
 
 
@@ -402,10 +579,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--only-browser", action="store_true")
     parser.add_argument("--worker", default=None, help=argparse.SUPPRESS)
     parser.add_argument("--native", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--with-ocr", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--core-only", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--ocr-config", default=None, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     if args.native:
-        return _load_everything(args.ocr_config)
+        return _load_everything(
+            args.ocr_config, ocr=args.with_ocr, rest=not args.core_only
+        )
     if args.worker is not None:
         return _worker([name for name in args.worker.split(",") if name])
     if args.only_browser:
