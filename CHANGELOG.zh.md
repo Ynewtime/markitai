@@ -57,6 +57,8 @@
 - 续跑的批处理会报告整批的费用，`--resume` 也能跨操作系统使用。
 - 保存历史失败时，`markitai serve` 会报告这个失败，而不是把任务标为 `done`。
 - 安装程序能在 Windows PowerShell 5.1 和 Windows on Arm 上运行，安装提示也会保留你已装的扩展。
+- 在中文 Windows 上，`markitai doctor` 和服务商检查能正确读取其他程序的 UTF-8 输出，不再出错。
+- 对没有管理员权限的 Windows 用户，标准输出模式保存的图片也能正常使用，即使资源库无法创建符号链接。
 
 ### 安全
 

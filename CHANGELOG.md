@@ -57,6 +57,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A resumed batch reports what the whole batch cost, and `--resume` works across operating systems.
 - `markitai serve` reports a history save that failed instead of calling the job `done`.
 - Setup works on Windows PowerShell 5.1 and on Windows on Arm, and install hints keep the extras you already have.
+- On a Chinese Windows, `markitai doctor` and provider checks read other programs' UTF-8 output correctly instead of failing.
+- Images kept for stdout output work for Windows users without administrator rights, where the asset store cannot make symlinks.
 
 ### Security
 
