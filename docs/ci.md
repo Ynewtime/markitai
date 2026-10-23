@@ -166,3 +166,16 @@ static-Go delivery in this workflow.
 `dependency-licenses.json`/`licenses.json` record mechanical attribution and
 any unresolved texts; they are not a legal review. None of these drivers signs,
 publishes, proves another architecture works, or tests every OS version.
+
+## Website
+
+Two workflows serve markitai.dev from `website/` (see
+[development](development.md#website)); neither builds or publishes packages.
+
+- `deploy-website.yml` builds the site and deploys it to GitHub Pages on a push
+  to `main` that changes `website/**` or the workflow, and when started by hand
+  on `main` (a run on another branch skips both jobs).
+- `website-check.yml` runs on pushes to `main` and pull requests that change
+  `website/**` or the workflow, and by hand. It fails on a release-notes section
+  without its `vX.Y.Z` tag, runs `website/tests` against a checkout of the
+  `python` branch, and builds the site for pull requests and manual runs.

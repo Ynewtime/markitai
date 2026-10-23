@@ -1,0 +1,83 @@
+name: Website Check
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'website/**'
+      - '.github/workflows/website-check.yml'
+  pull_request:
+    paths:
+      - 'website/**'
+      - '.github/workflows/website-check.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  docs:
+    name: Documentation contracts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          # The full history brings the tags the changelog guard reads.
+          fetch-depth: 0
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: '1.4.0'
+
+      # The release notes may correct a released section, never add one
+      # whose vX.Y.Z tag does not exist yet.
+      - name: Check the release notes have released versions only
+        run: bun scripts/changelog.mjs --check
+        working-directory: website
+
+      # The site documents the Python markitai 1.x line; its code is the
+      # python branch, which the contract tests import.
+      - name: Checkout the python branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          ref: python
+          path: python-branch
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: 'python-branch/uv.lock'
+          python-version: '3.13'
+
+      - name: Install the Python markitai
+        run: uv sync --frozen --all-groups
+        working-directory: python-branch
+
+      - name: Check documentation contracts
+        env:
+          MARKITAI_PYTHON_CHECKOUT: python-branch
+        run: uv run --project python-branch --no-sync pytest -p no:cacheprovider website/tests
+
+  build:
+    # Deploy Website already builds the site on pushes to main.
+    if: github.event_name != 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: '1.4.0'
+      - run: bun install --frozen-lockfile
+        working-directory: website
+      - run: bun run docs:build
+        working-directory: website

@@ -81,4 +81,5 @@ section there has no `vX.Y.Z` tag, and the build leaves such a section off the
 site. `website/public/setup.sh` and `setup.ps1` are the installers served as
 `https://markitai.dev/setup.sh` and `/setup.ps1`. The contract tests in
 `website/tests` compare the pages with the Python CLI; their docstring shows how
-to run them against a checkout of the `python` branch.
+to run them against a checkout of the `python` branch. The website workflows
+are described in [native CI](ci.md#website).
