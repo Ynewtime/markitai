@@ -74,7 +74,7 @@ const manifest = {
   version,
   source_commit: commit,
   build_command: "cd crates/markitai-cli/src/server/web && npm ci && node build.mjs && node scripts/package.mjs OUTDIR",
-  source: { repository: "Ynewtime/markitai-rust", commit, committed_at: new Date(committed * 1000).toISOString(), dirty: Boolean(dirty) },
+  source: { repository: "Ynewtime/markitai", commit, committed_at: new Date(committed * 1000).toISOString(), dirty: Boolean(dirty) },
   build: {
     command: "cd crates/markitai-cli/src/server/web && npm ci && node build.mjs && node scripts/package.mjs OUTDIR",
     source_digest: built.source_digest,

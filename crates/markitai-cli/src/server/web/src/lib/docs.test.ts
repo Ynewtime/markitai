@@ -3,9 +3,9 @@ import test from "node:test";
 import { docsPage } from "./docs.ts";
 
 test("an index.md docs address maps to the page beside it (Rust)", () => {
-  const rust = "https://github.com/Ynewtime/markitai-rust/blob/main/docs/index.md";
-  assert.equal(docsPage(rust, "pricing"), "https://github.com/Ynewtime/markitai-rust/blob/main/docs/pricing.md");
-  assert.equal(docsPage(rust, "subscription-chatgpt"), "https://github.com/Ynewtime/markitai-rust/blob/main/docs/subscription-chatgpt.md");
+  const rust = "https://github.com/Ynewtime/markitai/blob/main/docs/index.md";
+  assert.equal(docsPage(rust, "pricing"), "https://github.com/Ynewtime/markitai/blob/main/docs/pricing.md");
+  assert.equal(docsPage(rust, "subscription-chatgpt"), "https://github.com/Ynewtime/markitai/blob/main/docs/subscription-chatgpt.md");
 });
 
 test("a site root, with or without its slash, maps to its guide pages (Python)", () => {

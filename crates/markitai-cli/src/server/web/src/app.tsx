@@ -42,7 +42,7 @@ import { canRetry, waitingJobs, type SessionItem } from "./lib/session.ts";
 import { parseUrls } from "./lib/urls.ts";
 
 const DEFAULT_DOCS = "https://markitai.dev";
-const DEFAULT_SOURCE = "https://github.com/Ynewtime/markitai-rust";
+const DEFAULT_SOURCE = "https://github.com/Ynewtime/markitai";
 /** Below this width the inspector is a bottom sheet and the preview a full-screen view. */
 const PHONE = "(max-width: 960px)";
 

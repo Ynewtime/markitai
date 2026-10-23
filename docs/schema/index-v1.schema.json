@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/Ynewtime/markitai-rust/blob/main/docs/schema/index-v1.schema.json",
+  "$id": "https://github.com/Ynewtime/markitai/blob/main/docs/schema/index-v1.schema.json",
   "title": "markitai batch index (markitai.index.json), schema version 1",
   "description": "The items of a batch converted with --format json -o DIR. Every listed key is always present; null means not applicable. Later 1.x versions only add keys.",
   "type": "object",

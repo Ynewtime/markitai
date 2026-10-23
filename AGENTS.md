@@ -57,7 +57,7 @@ sh docs/validation/drivers/windows-check-round38/check-windows.sh clippy -- -D w
   both backends. Run `npm ci` and `node build.mjs`, commit generated `dist/`
   with the change, and package it for the other backend with
   `node scripts/package.mjs OUTDIR`.
-- Retrieve full CI logs with `gh api repos/Ynewtime/markitai-rust/actions/jobs/<id>/logs
+- Retrieve full CI logs with `gh api repos/Ynewtime/markitai/actions/jobs/<id>/logs
   --allow-escape-sequences`, never truncated `gh run view --log`. Verify the exact
   commit, attempt and expected jobs. Do not restart a watcher or dispatch another
   run merely because an observation timed out.

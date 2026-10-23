@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/Ynewtime/markitai-rust/blob/main/docs/schema/document-v1.schema.json",
+  "$id": "https://github.com/Ynewtime/markitai/blob/main/docs/schema/document-v1.schema.json",
   "title": "markitai document JSON, schema version 1",
   "description": "One converted document (markitai --format json). Every listed key is always present; null means not applicable or unknown. Later 1.x versions only add keys, so consumers ignore keys they do not know.",
   "type": "object",

@@ -86,7 +86,7 @@ npm --prefix bindings/node run build       # builds the addon as bindings/node/m
 mkdir -p dist/node
 (cd bindings/node && npm pack --pack-destination ../../dist/node)   # markitai-2.0.0-dev.0.tgz
 cd /path/to/your/project
-npm install /path/to/markitai-rust/dist/node/markitai-2.0.0-dev.0.tgz
+npm install /path/to/markitai/dist/node/markitai-2.0.0-dev.0.tgz
 node -e "console.log(require('markitai').version)"
 ```
 
@@ -100,7 +100,7 @@ In the consuming module, point the development module name at the checkout:
 
 ```text
 require markitai.local/go v0.0.0
-replace markitai.local/go => /path/to/markitai-rust/bindings/go
+replace markitai.local/go => /path/to/markitai/bindings/go
 ```
 
 ```go

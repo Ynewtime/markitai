@@ -116,8 +116,8 @@ fn build() -> Value {
         "dirty":build_info::DIRTY == "1"})
 }
 
-const DOCS_URL: &str = "https://github.com/Ynewtime/markitai-rust/blob/main/docs/index.md";
-const SOURCE_URL: &str = "https://github.com/Ynewtime/markitai-rust";
+const DOCS_URL: &str = "https://github.com/Ynewtime/markitai/blob/main/docs/index.md";
+const SOURCE_URL: &str = "https://github.com/Ynewtime/markitai";
 
 fn invalid_label() -> ApiError {
     ApiError::new(

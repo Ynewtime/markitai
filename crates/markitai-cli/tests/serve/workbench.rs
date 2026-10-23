@@ -448,8 +448,8 @@ fn an_uploaded_pdf_is_described_drawn_and_read_by_line() {
         ),
         (
             json!("rust"),
-            json!("https://github.com/Ynewtime/markitai-rust/blob/main/docs/index.md"),
-            json!("https://github.com/Ynewtime/markitai-rust")
+            json!("https://github.com/Ynewtime/markitai/blob/main/docs/index.md"),
+            json!("https://github.com/Ynewtime/markitai")
         )
     );
     assert_eq!(
