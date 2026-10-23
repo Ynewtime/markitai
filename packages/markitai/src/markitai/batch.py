@@ -668,6 +668,9 @@ class ProcessResult:
             this process fetched it (the web server keeps it for Compare)
         page_sources: For a PDF, where each page's text came from
             (``ConversionContext.page_sources``); empty otherwise
+        ocr_pages: For a PDF, its OCR'd pages' recognized lines and figure
+            boxes (``ConversionContext.ocr_pages``); the web server keeps
+            them for Compare
     """
 
     success: bool
@@ -684,6 +687,7 @@ class ProcessResult:
     error_code: str | None = None
     page_html: str | None = None
     page_sources: list[dict[str, Any]] = field(default_factory=list)
+    ocr_pages: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _count(n: int, noun: str) -> str:

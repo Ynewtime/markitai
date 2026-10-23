@@ -1288,6 +1288,11 @@ async def _run_item(
             result.error_code = "enhancement_failed"
     item.duration_ms = int((time.perf_counter() - start) * 1000)
     _apply_result(job, item, result)
+    if item.kind == "file" and item.status == "done" and not item.skipped:
+        from markitai.serve.originals import keep_ocr_layout
+
+        # What Compare matches an OCR'd page's blocks with
+        await asyncio.to_thread(keep_ocr_layout, job, item, result.ocr_pages)
     if item.kind == "url" and item.status == "done" and not item.skipped:
         await asyncio.to_thread(_keep_page_capture, job, item, result.page_html, sink)
     item.finished_at = now_iso()

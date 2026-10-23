@@ -93,6 +93,7 @@ from markitai.serve.originals import (
     kept_capture_files,
     kept_original,
     kept_upload,
+    ocr_page_text,
     pdf_outline,
     pdf_page_text,
     pdf_pages,
@@ -6499,12 +6500,23 @@ def create_app(
     async def get_item_original_page_text(
         request: Request, job_id: str, item_id: str, page: str
     ) -> dict[str, Any]:
-        """A PDF page's text as positioned lines (top-left origin, points)."""
+        """A PDF page's text as positioned lines (top-left origin, points):
+        its text layer, or the lines the conversion read on a page it OCR'd
+        (``source: "ocr"``)."""
         original, number = await _page_request(request, job_id, item_id, page)
         if not original.text_layer:
             raise ApiError(
                 404, "original_unavailable", "this original has no text layer"
             )
+        job = _get_job(request, job_id)
+        item = _get_item(job, item_id)
+        if any(
+            entry.get("page") == number and entry.get("source") == "ocr"
+            for entry in item.page_sources
+        ):
+            read = await asyncio.to_thread(ocr_page_text, job, item, number)
+            if read is not None:
+                return read
         try:
             workers: PdfWorkers = request.app.state.pdf_workers
             return await asyncio.to_thread(

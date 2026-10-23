@@ -1052,6 +1052,10 @@ class PageText(BaseModel):
     #: The page's pictures in drawing order (at most 500, none under 4
     #: points on a side), for Compare to outline them (contract v1.12).
     images: list[PageTextImage] = []
+    #: ``text``: the page's text layer; ``ocr``: the lines the conversion
+    #: read on a page it OCR'd, ``images`` the figures it cut out of it
+    #: (shared with markitai-rust since the owner's 2026-10-23 check).
+    source: Literal["text", "ocr"] = "text"
 
 
 class PdfOutlineEntry(BaseModel):

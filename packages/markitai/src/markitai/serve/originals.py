@@ -231,6 +231,14 @@ def blocks_path(job: Job, item: JobItem) -> Path | None:
     return None if name is None else job.job_dir / SNAPSHOTS_DIR / name
 
 
+def ocr_layout_path(job: Job, item: JobItem) -> Path | None:
+    """Where a PDF item's OCR'd pages (lines and figure boxes) are kept."""
+    item_id = item.item_id
+    if not item_id.isalnum() or not item_id.isascii():
+        return None
+    return job.job_dir / SNAPSHOTS_DIR / f"{item_id}.ocr.json"
+
+
 def compare_shots_dir(job: Job, item: JobItem) -> Path | None:
     """Where a URL item's compare screenshots are kept."""
     name = _kept_name(item, ".shots")
@@ -269,13 +277,14 @@ def compare_shots(job: Job, item: JobItem) -> list[Path]:
 
 
 def kept_capture_files(job: Job, item: JobItem) -> list[Path]:
-    """Every file a URL item keeps in ``snapshots/``, for deleting it."""
+    """Every file an item keeps in ``snapshots/``, for deleting it."""
     found = [
         path
         for path in (
             page_snapshot_path(job, item),
             capture_record_path(job, item),
             blocks_path(job, item),
+            ocr_layout_path(job, item),
         )
         if _plain_file(path) is not None
     ]
@@ -331,6 +340,121 @@ def keep_page_snapshot(job: Job, item: JobItem, html: str) -> bool:
     except OSError:
         return False
     return _write_private(path, data)
+
+
+#: The largest OCR layout kept for an item (a long scanned book's lines).
+MAX_OCR_LAYOUT_BYTES = 32 * 1024 * 1024
+
+
+def keep_ocr_layout(job: Job, item: JobItem, pages: list[dict[str, Any]]) -> None:
+    """Keep the item's OCR'd pages for Compare, replacing what an earlier
+    run kept; a run that OCR'd no page removes it.
+
+    Stored privately as ``snapshots/<item_id>.ocr.json`` =
+    ``{"version": 1, "pages": [{page, width, height, lines, images}]}``:
+    not a result file (not listed, archived or sent to a model).
+    """
+    path = ocr_layout_path(job, item)
+    if path is None or path.is_symlink():
+        return
+    data = json.dumps(
+        {"version": 1, "pages": pages}, ensure_ascii=False, separators=(",", ":")
+    ).encode("utf-8")
+    if not pages or len(data) > MAX_OCR_LAYOUT_BYTES:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:  # held open (Windows): Compare reads the page sources
+            pass
+        return
+    try:
+        _private_dir(path.parent)
+    except OSError:
+        return
+    _write_private(path, data)
+
+
+def _box(value: Any, width: float, height: float) -> list[float] | None:
+    """A kept ``[x0, y0, x1, y1]`` clipped to the page, or None."""
+    if not isinstance(value, list) or len(value) != 4:
+        return None
+    try:
+        x0, y0, x1, y1 = (float(v) for v in value)
+    except (TypeError, ValueError):
+        return None
+    if not all(math.isfinite(v) for v in (x0, y0, x1, y1)):
+        return None
+    x0, y0 = max(0.0, x0), max(0.0, y0)
+    x1, y1 = min(width, x1), min(height, y1)
+    if x1 <= x0 or y1 <= y0:
+        return None
+    return [round(x0, 2), round(y0, 2), round(x1, 2), round(y1, 2)]
+
+
+def ocr_page_text(job: Job, item: JobItem, page_number: int) -> dict[str, Any] | None:
+    """See :func:`_ocr_page_text`; None for a kept file of another shape."""
+    try:
+        return _ocr_page_text(job, item, page_number)
+    except (TypeError, ValueError, OverflowError, AttributeError):
+        return None
+
+
+def _ocr_page_text(job: Job, item: JobItem, page_number: int) -> dict[str, Any] | None:
+    """Page *page_number* as the conversion OCR'd it, in the shape of
+    :func:`pdf_page_text` with ``source: "ocr"``; None when no OCR'd page of
+    that number is kept (or the kept file is not one markitai wrote)."""
+    path = _plain_file(ocr_layout_path(job, item))
+    if path is None:
+        return None
+    try:
+        with path.open("rb") as fh:
+            raw = fh.read(MAX_OCR_LAYOUT_BYTES + 1)
+        if len(raw) > MAX_OCR_LAYOUT_BYTES:
+            return None
+        data = json.loads(raw)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict) or data.get("version") != 1:
+        return None
+    for entry in data.get("pages") or ():
+        if not isinstance(entry, dict) or entry.get("page") != page_number:
+            continue
+        try:
+            width, height = float(entry["width"]), float(entry["height"])
+        except (KeyError, TypeError, ValueError):
+            return None
+        if (
+            not (math.isfinite(width) and math.isfinite(height))
+            or width <= 0
+            or height <= 0
+        ):
+            return None
+        lines: list[dict[str, Any]] = []
+        for line in entry.get("lines") or ():
+            if not isinstance(line, dict) or not isinstance(line.get("text"), str):
+                continue
+            box = _box(line.get("bbox"), width, height)
+            if box is not None and line["text"].strip():
+                lines.append({"text": line["text"], "bbox": box})
+            if len(lines) >= MAX_TEXT_LINES:
+                break
+        images: list[dict[str, Any]] = []
+        for image in entry.get("images") or ():
+            box = _box(
+                image.get("bbox") if isinstance(image, dict) else None, width, height
+            )
+            if box is not None:
+                images.append({"bbox": box})
+            if len(images) >= MAX_PAGE_IMAGES:
+                break
+        return {
+            "page": page_number,
+            "width": round(width, 2),
+            "height": round(height, 2),
+            "lines": lines,
+            "images": images,
+            "source": "ocr",
+        }
+    return None
 
 
 @dataclass
@@ -963,6 +1087,7 @@ def pdf_page_text(path: Path, page_number: int) -> dict[str, Any]:
         "height": round(float(rect.height), 2),
         "lines": lines,
         "images": images,
+        "source": "text",
     }
 
 

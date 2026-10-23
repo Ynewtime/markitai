@@ -131,6 +131,16 @@ class ConversionContext:
         sources = self.conversion_result.metadata.get("page_sources")
         return [dict(entry) for entry in sources] if sources else []
 
+    @property
+    def ocr_pages(self) -> list[dict[str, Any]]:
+        """A PDF's OCR'd pages as read: ``{"page", "width", "height",
+        "lines": [{"text", "bbox"}], "images": [{"bbox"}]}`` in points from
+        the page's top-left corner. Empty when no page was OCR'd."""
+        if self.conversion_result is None:
+            return []
+        pages = self.conversion_result.metadata.get("ocr_pages")
+        return list(pages) if pages else []
+
 
 @dataclass
 class ConversionStepResult:

@@ -372,6 +372,9 @@ SHAPES: dict[str, dict[str, F]] = {
         "lines": F(["@PageTextLine"]),
         # v1.12: where the page draws its pictures (optional in the contract)
         "images": F(["@PageTextImage"]),
+        # 2026-10-23: "ocr" for the lines the conversion read on a page it
+        # OCR'd, "text" for the text layer (optional in the contract)
+        "source": opt("str"),
     },
     "PdfOutlineEntry": {"title": F("str"), "page": F("int"), "level": F("int")},
     "PdfOutline": {"items": F(["@PdfOutlineEntry"]), "truncated": F("bool")},
@@ -1676,6 +1679,79 @@ class TestOriginals:
         )
         job_id, _ = await _job(client, files=[(name, data)])
         return job_id
+
+    async def test_an_ocred_page_answers_with_its_recognized_lines(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A scanned page has no text layer: Compare matched nothing on it
+        (the owner's 2026-10-23 check). A page the conversion OCR'd answers
+        with the lines it read and the figures it cut out (``source: ocr``);
+        a page read from its text layer says so (``source: text``)."""
+        layout = {
+            "page": 1,
+            "width": 612.0,
+            "height": 792.0,
+            "lines": [
+                {"text": "Scanned heading", "bbox": [72.0, 80.0, 300.0, 104.0]},
+                {"text": "off the page", "bbox": [700.0, 80.0, 800.0, 104.0]},
+                {"text": "clipped", "bbox": [500.0, 700.0, 640.0, 720.0]},
+            ],
+            "images": [{"bbox": [100.0, 200.0, 300.0, 350.0]}],
+        }
+        base_converter = _converter()
+
+        async def fake(file_path: Path, cfg: Any, out_dir: Path, shared: Any) -> Any:
+            result = await base_converter(file_path, cfg, out_dir, shared)
+            result.page_sources = [
+                {"page": 1, "source": "ocr", "reason": "no text layer"},
+                {"page": 2, "source": "text", "reason": "text layer trusted"},
+            ]
+            result.ocr_pages = [layout]
+            return result
+
+        monkeypatch.setattr("markitai.serve.jobs.process_file_item", fake)
+        async with _client(_make_app(tmp_path)) as client:
+            job_id, _ = await _job(client, files=[("scan.pdf", _pdf_bytes(2))])
+            base = f"/api/jobs/{job_id}/items/i1/original"
+            ocr = (await client.get(f"{base}/pages/1/text")).json()
+            native = (await client.get(f"{base}/pages/2/text")).json()
+            kept = list((tmp_path).rglob("snapshots/i1.ocr.json"))
+            deleted = await client.delete(f"/api/jobs/{job_id}/items/i1")
+            gone = list((tmp_path).rglob("snapshots/i1.ocr.json"))
+        check_shape("PageText", ocr)
+        check_shape("PageText", native)
+        assert ocr["source"] == "ocr" and native["source"] == "text"
+        assert ocr["lines"] == [
+            {"text": "Scanned heading", "bbox": [72.0, 80.0, 300.0, 104.0]},
+            {"text": "clipped", "bbox": [500.0, 700.0, 612.0, 720.0]},
+        ]
+        assert ocr["images"] == [{"bbox": [100.0, 200.0, 300.0, 350.0]}]
+        assert [line["text"] for line in native["lines"]] == [
+            "Heading 2",
+            "Body text on the page.",
+        ]
+        assert len(kept) == 1 and deleted.status_code == 204 and not gone
+
+    @pytest.mark.parametrize(
+        "kept",
+        [
+            '{"version": 1, "pages": 5}',
+            '{"version": 1, "pages": [{"page": 1, "width": 1e400, "height": 9, "lines": 7}]}',
+            "not json",
+        ],
+    )
+    def test_a_kept_layout_of_another_shape_is_no_answer(
+        self, tmp_path: Path, kept: str
+    ) -> None:
+        from types import SimpleNamespace
+
+        from markitai.serve.originals import ocr_page_text
+
+        (tmp_path / "snapshots").mkdir()
+        (tmp_path / "snapshots" / "i1.ocr.json").write_text(kept)
+        job = SimpleNamespace(job_dir=tmp_path)
+        item = SimpleNamespace(item_id="i1")
+        assert ocr_page_text(job, item, 1) is None  # type: ignore[arg-type]
 
     async def test_pdf_pages_and_text_layer(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

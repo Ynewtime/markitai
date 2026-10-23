@@ -82,4 +82,5 @@ def document_process_result(
         llm_enhanced=ctx.llm_output_file is not None and not ctx.llm_fell_back,
         warnings=list(ctx.warnings),
         page_sources=ctx.page_sources,
+        ocr_pages=ctx.ocr_pages,
     )
