@@ -83,3 +83,9 @@ site. `website/public/setup.sh` and `setup.ps1` are the installers served as
 `website/tests` compare the pages with the Python CLI; their docstring shows how
 to run them against a checkout of the `python` branch. The website workflows
 are described in [native CI](ci.md#website).
+
+A ```` ```mermaid ```` block becomes SVG while the site builds
+(`website/.vitepress/mermaid.ts`, Pele); a diagram Pele cannot draw fails the
+build. `website/NOTICE` credits the site's build dependencies, separately from
+the packages' `NOTICE`; a contract test fails when a `package.json` dependency
+is missing from it.
