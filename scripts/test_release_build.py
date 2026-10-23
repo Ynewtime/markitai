@@ -12,7 +12,8 @@ import zipfile
 
 import release_build
 from release_build import (TARGETS, archive_name, check_versions, expected_assets, extract_release_archive,
-                           glibc_requirement, python_version, release_notes, server_errors, write_sums)
+                           github_anchor, glibc_requirement, python_version, release_body, release_notes,
+                           server_errors, write_sums)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -74,6 +75,40 @@ class NotesTests(unittest.TestCase):
             release_notes("# Changelog\n\n## [2.0.0]\n\n## [1.0.0]\n- x\n", "2.0.0")
         with self.assertRaises(SystemExit):
             release_notes("## [2.0.0-rc.1]\n- x\n", "2.0.0")
+
+    def test_anchor_matches_github(self):
+        self.assertEqual(github_anchor("## [2.0.0] - 2026-11-01"), "200---2026-11-01")
+        self.assertEqual(github_anchor("## [2.0.0-rc.1]"), "200-rc1")
+
+    def test_body_links_the_full_changelog(self):
+        changelog = "# Changelog\n\n## [2.0.0] - 2026-11-01\n\n### Added\n- a\n"
+        body = release_body(changelog, "2.0.0", "owner/repo")
+        self.assertTrue(body.startswith("### Added\n- a\n"))
+        self.assertIn("(https://github.com/owner/repo/blob/v2.0.0/CHANGELOG.md#200---2026-11-01)", body)
+        self.assertIn("(https://github.com/owner/repo/blob/v2.0.0/CHANGELOG.zh.md#200---2026-11-01)", body)
+
+    def test_a_long_section_is_represented_by_its_lead(self):
+        items = "".join(f"- change {index} " + "x" * 200 + "\n" for index in range(600))
+        long = f"## [2.0.0] - 2026-11-01\n\nThe summary.\n\n### Added\n{items}"
+        body = release_body(long, "2.0.0")
+        self.assertTrue(body.startswith("The summary.\n"))
+        self.assertNotIn("change 1 ", body)
+        self.assertIn("CHANGELOG.md#200---2026-11-01", body)
+        self.assertLess(len(body), release_build.NOTES_LIMIT)
+        # Without a lead, or with one over the limit, the notes fail before the tag's Release.
+        for text in [f"## [2.0.0]\n\n### Added\n{items}", f"## [2.0.0]\n\n{items}"]:
+            with self.assertRaises(SystemExit) as raised:
+                release_body(text, "2.0.0")
+            self.assertNotIsInstance(raised.exception, release_build.MissingNotes)
+            self.assertIn("summary", str(raised.exception))
+        self.assertLess(release_build.NOTES_LIMIT, 125_000)
+
+    def test_notes_command_exit_codes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "notes.md"
+            self.assertEqual(release_build.main(["notes", "--version", "0.0.1", "--output", str(output)]),
+                             release_build.NO_NOTES)
+            self.assertFalse(output.exists())
 
 
 class AssetTests(unittest.TestCase):

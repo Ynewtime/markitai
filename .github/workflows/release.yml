@@ -86,15 +86,20 @@ jobs:
           git fetch --no-tags origin main
           git merge-base --is-ancestor "$GITHUB_SHA" FETCH_HEAD || {
             echo "::error::$GITHUB_REF_NAME ($GITHUB_SHA) is not on main"; exit 1; }
+      # The section (or, when long, its lead) and a link to the full changelog;
+      # notes over the limit fail here, in a dry run too, not at the Release.
       - name: Release notes from CHANGELOG.md
         env:
           VERSION: ${{ steps.versions.outputs.version }}
           PUBLISH: ${{ steps.mode.outputs.publish }}
         run: |
-          if ! python scripts/release_build.py notes --version "$VERSION" --output notes.md; then
-            if [ "$PUBLISH" = true ]; then exit 1; fi
+          status=0
+          python scripts/release_build.py notes --version "$VERSION" --output notes.md || status=$?
+          if [ "$status" -eq 3 ] && [ "$PUBLISH" != true ]; then
             echo "::warning::CHANGELOG.md has no [$VERSION] section; a release would fail here."
             echo "Dry run of $VERSION: CHANGELOG.md has no section for it." > notes.md
+          elif [ "$status" -ne 0 ]; then
+            exit 1
           fi
           cat notes.md >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

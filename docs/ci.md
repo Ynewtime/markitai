@@ -191,7 +191,7 @@ a tag). It uses no caches and no stored secrets. Each step runs a subcommand of
 
 | Job | What it does |
 |---|---|
-| `prepare` | Checks the tag names the Cargo version and that `bindings/python/pyproject.toml` and `server.json` agree, that a published tag is on `main`, and takes the release notes from the tag's `## [X.Y.Z]` section of `CHANGELOG.md` (a release without one fails). |
+| `prepare` | Checks the tag names the Cargo version and that `bindings/python/pyproject.toml` and `server.json` agree, that a published tag is on `main`, and writes the release notes: the tag's `## [X.Y.Z]` section of `CHANGELOG.md` with a link to the full changelog (a release without one fails). A section over 100,000 characters is represented by its lead, the summary between the heading and its first `###`; without one, the run fails here, dry runs too (GitHub refuses a Release body over 125,000 characters). |
 | `test` | `scripts/check.py` on the six release platforms. |
 | `cli` | `markitai-v<version>-<target>.tar.gz` (`.zip` on Windows) for `aarch64-apple-darwin`, `x86_64-apple-darwin`, `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`, `x86_64-pc-windows-msvc` and `aarch64-pc-windows-msvc`, built natively, then extracted and run (version, aliases, Markdown round trip, MCP tools, `doctor --json`). |
 | `wheel` | One abi3 wheel per platform (`cp310-abi3`, `macosx_11_0`, `manylinux_2_28`, `win_amd64`, `win_arm64`), installed into a new venv: its three commands, the Python API and `bindings/python/tests`. |

@@ -3,7 +3,8 @@
 `.github/workflows/release.yml` runs every subcommand; each also runs locally:
 
   version   check the tag, Cargo, Python and server.json versions agree
-  notes     the tag's section of CHANGELOG.md, the GitHub Release notes
+  notes     the GitHub Release notes: the tag's section of CHANGELOG.md
+            (or its lead when long) and a link to the full changelog
   cli       build the CLI for one target and write its release archive
   wheel     build the Python wheel for one target (licenses supplemented)
   sdist     write the source distribution, with the vendored crates it needs
@@ -53,6 +54,12 @@ TARGETS = {
 GLIBC_FLOOR = (2, 28)
 MACOS_MINIMUM = "11.0"
 SERVER_NAME = "io.github.Ynewtime/markitai"
+REPOSITORY = "Ynewtime/markitai"
+# GitHub refuses a Release body over 125,000 characters; the notes stay well
+# under it.
+NOTES_LIMIT = 100_000
+# `notes` exits with this when the changelog has no section for the version.
+NO_NOTES = 3
 # What maturin's sdist leaves out but a build reads: the vendored crates the
 # workspace patches in (Cargo.toml [patch.crates-io]; maturin follows path
 # dependencies, not patches) and the files crates embed from outside their
@@ -129,8 +136,12 @@ def server_errors(server, version=None):
     return errors
 
 
-def release_notes(changelog, version):
-    """The body of `## [version]` up to the next version heading."""
+class MissingNotes(SystemExit):
+    """The changelog has no section for the version (a dry run may go on without one)."""
+
+
+def changelog_section(changelog, version):
+    """The heading of `## [version]` and its body, up to the next version heading."""
     lines = changelog.splitlines()
     heading = re.compile(r"^## \[" + re.escape(version) + r"\](?:\s|$)")
     for start, line in enumerate(lines):
@@ -139,9 +150,44 @@ def release_notes(changelog, version):
                        len(lines))
             body = "\n".join(lines[start + 1:end]).strip()
             if body:
-                return body + "\n"
+                return line, body + "\n"
             break
-    raise SystemExit(f"CHANGELOG.md has no section for {version}")
+    raise MissingNotes(f"CHANGELOG.md has no section for {version}")
+
+
+def release_notes(changelog, version):
+    """The body of `## [version]` up to the next version heading."""
+    return changelog_section(changelog, version)[1]
+
+
+def github_anchor(heading):
+    """The fragment GitHub gives a Markdown heading: `## [2.0.0] - 2026-11-01` -> `200---2026-11-01`."""
+    text = heading.lstrip("#").strip().lower()
+    return re.sub(r"[^\w\- ]", "", text).replace(" ", "-")
+
+
+def release_body(changelog, version, repository=REPOSITORY):
+    """The GitHub Release text: the version's section and a link to the full changelog.
+
+    GitHub refuses a Release body over 125,000 characters, after the tag is
+    pushed. A section longer than NOTES_LIMIT is represented by its lead, the
+    summary written between the version heading and its first `###`
+    subsection; without a lead short enough, this fails.
+    """
+    heading, body = changelog_section(changelog, version)
+    base = f"https://github.com/{repository}/blob/v{version}"
+    anchor = github_anchor(heading)
+    link = (f"\nFull changelog: [CHANGELOG.md]({base}/CHANGELOG.md#{anchor}) "
+            f"([中文]({base}/CHANGELOG.zh.md#{anchor}))\n")
+    if len(body) + len(link) <= NOTES_LIMIT:
+        return body + link
+    lead = re.split(r"^### ", body, maxsplit=1, flags=re.MULTILINE)[0].strip()
+    if not lead or len(lead) + len(link) + 1 > NOTES_LIMIT:
+        raise SystemExit(f"The {version} section of CHANGELOG.md is {len(body):,} characters; a GitHub Release "
+                         f"takes at most 125,000 and the release notes {NOTES_LIMIT:,}. Write a summary of "
+                         f"under {NOTES_LIMIT:,} characters between `{heading}` and its first `###` "
+                         "subsection: the Release shows it with a link to the full section.")
+    return lead + "\n" + link
 
 
 def archive_name(version, target):
@@ -527,8 +573,13 @@ def main(argv=None):
                 for key, value in result.items():
                     stream.write(f"{key}={str(value).lower() if isinstance(value, bool) else value}\n")
     elif args.command == "notes":
-        args.output.write_text(release_notes((ROOT / "CHANGELOG.md").read_text(encoding="utf-8"), args.version),
-                               encoding="utf-8")
+        try:
+            body = release_body((ROOT / "CHANGELOG.md").read_text(encoding="utf-8"), args.version,
+                                os.environ.get("GITHUB_REPOSITORY", REPOSITORY))
+        except MissingNotes as missing:
+            print(missing, file=sys.stderr)
+            return NO_NOTES
+        args.output.write_text(body, encoding="utf-8")
     elif args.command == "cli":
         build_cli(args.target, args.output.resolve())
     elif args.command == "wheel":
