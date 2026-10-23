@@ -1,0 +1,399 @@
+name: Release
+
+# One run builds, tests and publishes a release (docs/ci.md#releases).
+# Pushing a v2.* tag publishes it: CLI archives, SHA256SUMS and build
+# provenance in a GitHub Release, wheels and the sdist on PyPI (trusted
+# publishing from the `pypi` environment), then server.json on the MCP
+# Registry. Started by hand, it builds and tests everything and publishes
+# nothing unless dry_run is off and the run is on a tag. Nothing here needs a
+# stored secret; release builds use no caches.
+on:
+  push:
+    tags: ['v2.*']
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Build and test everything, publish nothing'
+        type: boolean
+        default: true
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: never
+  RUSTUP_TOOLCHAIN: 1.99.1
+  CARGO_INCREMENTAL: '0'
+  CARGO_PROFILE_DEV_DEBUG: '0'
+  CARGO_PROFILE_TEST_DEBUG: '0'
+  MATURIN_VERSION: 1.15.0  # bindings/python/pyproject.toml pins the same
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.versions.outputs.version }}
+      python_version: ${{ steps.versions.outputs.python_version }}
+      prerelease: ${{ steps.versions.outputs.prerelease }}
+      publish: ${{ steps.mode.outputs.publish }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.13'
+      - name: Decide whether this run publishes
+        id: mode
+        env:
+          EVENT: ${{ github.event_name }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          REF_TYPE: ${{ github.ref_type }}
+        run: |
+          publish=false
+          if [ "$EVENT" = push ] || [ "$DRY_RUN" = false ]; then publish=true; fi
+          if [ "$publish" = true ] && [ "$REF_TYPE" != tag ]; then
+            echo "::error::Only a v2.* tag publishes; start a dry run from a branch, or run on the tag."
+            exit 1
+          fi
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+          echo "Publishing: $publish"
+      # A tag must name the version Cargo, Python and server.json carry.
+      - name: Check versions
+        id: versions
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+        run: |
+          if [ "$REF_TYPE" = tag ]; then
+            python scripts/release_build.py version --tag "$GITHUB_REF_NAME" --github-output "$GITHUB_OUTPUT"
+          else
+            python scripts/release_build.py version --github-output "$GITHUB_OUTPUT"
+          fi
+      - name: The tagged commit is on main
+        if: steps.mode.outputs.publish == 'true'
+        run: |
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" FETCH_HEAD || {
+            echo "::error::$GITHUB_REF_NAME ($GITHUB_SHA) is not on main"; exit 1; }
+      - name: Release notes from CHANGELOG.md
+        env:
+          VERSION: ${{ steps.versions.outputs.version }}
+          PUBLISH: ${{ steps.mode.outputs.publish }}
+        run: |
+          if ! python scripts/release_build.py notes --version "$VERSION" --output notes.md; then
+            if [ "$PUBLISH" = true ]; then exit 1; fi
+            echo "::warning::CHANGELOG.md has no [$VERSION] section; a release would fail here."
+            echo "Dry run of $VERSION: CHANGELOG.md has no section for it." > notes.md
+          fi
+          cat notes.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: notes
+          path: notes.md
+          if-no-files-found: error
+          retention-days: 14
+
+  # The development gate (scripts/check.py) on every release platform.
+  test:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, macos-15-intel, ubuntu-24.04, ubuntu-24.04-arm, windows-2025, windows-11-arm]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Install Rust
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component rustfmt --component clippy
+      - name: Formatting, tests, lint and harness tests
+        run: python scripts/check.py
+
+  # CLI archives, built natively. Linux builds run in the manylinux_2_28 image
+  # so that the archive needs glibc 2.28 at most.
+  cli:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {target: aarch64-apple-darwin, os: macos-15}
+          - {target: x86_64-apple-darwin, os: macos-15-intel}
+          - {target: x86_64-unknown-linux-gnu, os: ubuntu-24.04, image: 'quay.io/pypa/manylinux_2_28_x86_64@sha256:076b19ef6e698f28649fa817c49d14443201e01da85240e8e52f93e8daa49bff'}
+          - {target: aarch64-unknown-linux-gnu, os: ubuntu-24.04-arm, image: 'quay.io/pypa/manylinux_2_28_aarch64@sha256:270a5e59af09f02dfc07fe4bb2cb2c5625c76d085cfa47f87dd93d9026eacc75'}
+          - {target: x86_64-pc-windows-msvc, os: windows-2025}
+          - {target: aarch64-pc-windows-msvc, os: windows-11-arm}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    env:
+      TARGET: ${{ matrix.target }}
+      IMAGE: ${{ matrix.image }}
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.13'
+      - name: Build the archive (manylinux_2_28)
+        if: matrix.image
+        run: |
+          docker run --rm -e RUSTUP_TOOLCHAIN -e CARGO_TERM_COLOR -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" \
+            -v "$GITHUB_WORKSPACE:/io" -w /io "$IMAGE" sh scripts/release_container.sh cli "$TARGET" dist
+      - name: Install Rust
+        if: '!matrix.image'
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+      - name: Build the archive
+        if: '!matrix.image'
+        run: python scripts/release_build.py cli --target "$TARGET" --output dist
+      - name: Install and exercise the archive
+        run: python scripts/release_build.py smoke --target "$TARGET" dist/markitai-v"$VERSION"-"$TARGET".*
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: cli-${{ matrix.target }}
+          path: dist/markitai-v*
+          if-no-files-found: error
+          retention-days: 14
+
+  # abi3 wheels (CPython 3.10+), one per platform. Each is installed into a
+  # new venv and runs its commands, the Python API and bindings/python/tests.
+  wheel:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {target: aarch64-apple-darwin, os: macos-15}
+          - {target: x86_64-apple-darwin, os: macos-15-intel}
+          - {target: x86_64-unknown-linux-gnu, os: ubuntu-24.04, image: 'quay.io/pypa/manylinux_2_28_x86_64@sha256:076b19ef6e698f28649fa817c49d14443201e01da85240e8e52f93e8daa49bff'}
+          - {target: aarch64-unknown-linux-gnu, os: ubuntu-24.04-arm, image: 'quay.io/pypa/manylinux_2_28_aarch64@sha256:270a5e59af09f02dfc07fe4bb2cb2c5625c76d085cfa47f87dd93d9026eacc75'}
+          - {target: x86_64-pc-windows-msvc, os: windows-2025}
+          - {target: aarch64-pc-windows-msvc, os: windows-11-arm}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    env:
+      TARGET: ${{ matrix.target }}
+      IMAGE: ${{ matrix.image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.13'
+      # The image also installs the wheel with Python 3.10 on glibc 2.28.
+      - name: Build the wheel (manylinux_2_28)
+        if: matrix.image
+        run: |
+          docker run --rm -e RUSTUP_TOOLCHAIN -e CARGO_TERM_COLOR -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" \
+            -v "$GITHUB_WORKSPACE:/io" -w /io "$IMAGE" sh scripts/release_container.sh wheel "$TARGET" dist
+      - name: Install Rust and maturin
+        if: '!matrix.image'
+        run: |
+          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+          python -m pip install "maturin==$MATURIN_VERSION"
+      - name: Build the wheel
+        if: '!matrix.image'
+        run: python scripts/release_build.py wheel --target "$TARGET" --output dist
+      - name: Install and exercise the wheel
+        run: python scripts/release_build.py smoke-wheel dist/*.whl
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: wheel-${{ matrix.target }}
+          path: dist/*.whl
+          if-no-files-found: error
+          retention-days: 14
+
+  # The source distribution, proven by building and installing it with pip.
+  sdist:
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.13'
+      - name: Install Rust and maturin
+        run: |
+          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+          python -m pip install "maturin==$MATURIN_VERSION"
+      - name: Build the sdist
+        run: python scripts/release_build.py sdist --output dist
+      - name: Build, install and exercise a wheel from the sdist
+        run: python scripts/release_build.py smoke-sdist dist/*.tar.gz
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+
+  github-release:
+    needs: [prepare, test, cli, wheel, sdist]
+    if: needs.prepare.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write      # create the Release and upload its assets
+      id-token: write      # sign the provenance attestations
+      attestations: write  # store them
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: assets
+          pattern: '{cli,wheel}-*'
+          merge-multiple: true
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: assets
+          name: sdist
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: notes
+          name: notes
+      - name: SHA256SUMS
+        run: python scripts/release_build.py sums --version "$VERSION" assets
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: assets/SHA256SUMS
+      # Created as a draft with every asset, then published, so the Release is
+      # never visible without them (and works with immutable releases).
+      - name: Create the GitHub Release
+        run: |
+          flags=()
+          if [ "$PRERELEASE" = true ]; then flags+=(--prerelease); else flags+=(--latest); fi
+          if state=$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft 2>/dev/null); then
+            if [ "$state" = false ]; then
+              gh release download "$GITHUB_REF_NAME" --pattern SHA256SUMS --output published-SHA256SUMS
+              if cmp -s published-SHA256SUMS assets/SHA256SUMS; then
+                echo "$GITHUB_REF_NAME is already published with these assets."
+                exit 0
+              fi
+              echo "::error::$GITHUB_REF_NAME is already published with other assets."
+              exit 1
+            fi
+            gh release upload "$GITHUB_REF_NAME" assets/* --clobber
+            gh release edit "$GITHUB_REF_NAME" --title "markitai $VERSION" --notes-file notes/notes.md
+          else
+            gh release create "$GITHUB_REF_NAME" --draft --verify-tag --title "markitai $VERSION" \
+              --notes-file notes/notes.md assets/*
+          fi
+          gh release edit "$GITHUB_REF_NAME" --draft=false "${flags[@]}"
+
+  pypi:
+    needs: [prepare, github-release]
+    if: needs.prepare.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment:
+      name: pypi
+      url: https://pypi.org/project/markitai/${{ needs.prepare.outputs.python_version }}/
+    permissions:
+      id-token: write  # trusted publishing; the action also attests each file
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: dist
+          pattern: wheel-*
+          merge-multiple: true
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: dist
+          name: sdist
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+        with:
+          packages-dir: dist/
+          skip-existing: true
+
+  # server.json points at the PyPI package: the registry reads that version's
+  # description for the `mcp-name:` marker, so this runs once PyPI has it.
+  # GitHub OIDC proves the io.github.Ynewtime namespace.
+  mcp-registry:
+    needs: [prepare, pypi]
+    if: needs.prepare.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write  # mcp-publisher login github-oidc
+    env:
+      VERSION: ${{ needs.prepare.outputs.python_version }}
+      SERVER_NAME: io.github.Ynewtime/markitai
+      REGISTRY: https://registry.modelcontextprotocol.io
+      # Pinned and checksummed (registry_<version>_checksums.txt); bump together.
+      MCP_PUBLISHER_VERSION: v1.8.1
+      MCP_PUBLISHER_SHA256: a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install mcp-publisher
+        run: |
+          curl -fsSL --retry 3 -o mcp-publisher.tar.gz \
+            "https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}/mcp-publisher_linux_amd64.tar.gz"
+          echo "${MCP_PUBLISHER_SHA256}  mcp-publisher.tar.gz" | sha256sum -c -
+          tar xzf mcp-publisher.tar.gz mcp-publisher
+          rm mcp-publisher.tar.gz
+      - name: Validate server.json
+        run: ./mcp-publisher validate server.json
+      - name: Log in to the MCP Registry
+        run: ./mcp-publisher login github-oidc
+      - name: Publish to the MCP Registry
+        run: |
+          entry="${REGISTRY}/v0/servers/${SERVER_NAME//\//%2F}/versions/${VERSION}"
+          if [ "$(curl -s -o /dev/null -w '%{http_code}' "$entry")" = 200 ]; then
+            echo "The MCP Registry already lists $SERVER_NAME $VERSION."
+            exit 0
+          fi
+          # PyPI's JSON API can lag the upload a little; the registry reads it.
+          for _ in $(seq 1 30); do
+            curl -fsS -o /dev/null "https://pypi.org/pypi/markitai/${VERSION}/json" && break
+            sleep 10
+          done
+          for attempt in 1 2 3; do
+            ./mcp-publisher publish server.json && exit 0
+            echo "Publish attempt $attempt failed; retrying in 30 s."
+            sleep 30
+          done
+          echo "::error::Could not publish $SERVER_NAME $VERSION; re-run this job once the cause is fixed."
+          exit 1

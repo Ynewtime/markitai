@@ -179,3 +179,53 @@ Two workflows serve markitai.dev from `website/` (see
   `website/**` or the workflow, and by hand. It fails on a release-notes section
   without its `vX.Y.Z` tag, runs `website/tests` against a checkout of the
   `python` branch, and builds the site for pull requests and manual runs.
+
+## Releases
+
+`.github/workflows/release.yml` builds, tests and publishes a release in one
+run on GitHub-hosted runners. Pushing a `v2.*` tag publishes; starting it by
+hand (`gh workflow run release.yml`) is a dry run that builds and tests
+everything and publishes nothing (`-f dry_run=false` publishes only when run on
+a tag). It uses no caches and no stored secrets. Each step runs a subcommand of
+`scripts/release_build.py`, which also runs locally:
+
+| Job | What it does |
+|---|---|
+| `prepare` | Checks the tag names the Cargo version and that `bindings/python/pyproject.toml` and `server.json` agree, that a published tag is on `main`, and takes the release notes from the tag's `## [X.Y.Z]` section of `CHANGELOG.md` (a release without one fails). |
+| `test` | `scripts/check.py` on the six release platforms. |
+| `cli` | `markitai-v<version>-<target>.tar.gz` (`.zip` on Windows) for `aarch64-apple-darwin`, `x86_64-apple-darwin`, `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`, `x86_64-pc-windows-msvc` and `aarch64-pc-windows-msvc`, built natively, then extracted and run (version, aliases, Markdown round trip, MCP tools, `doctor --json`). |
+| `wheel` | One abi3 wheel per platform (`cp310-abi3`, `macosx_11_0`, `manylinux_2_28`, `win_amd64`, `win_arm64`), installed into a new venv: its three commands, the Python API and `bindings/python/tests`. |
+| `sdist` | The source distribution, then a wheel pip builds from it alone. |
+| `github-release` | `SHA256SUMS` over every asset, build-provenance attestations, and the Release with the notes, created as a draft with all assets and then published. |
+| `pypi` | Wheels and sdist by trusted publishing from the `pypi` environment (the action also uploads PEP 740 attestations). |
+| `mcp-registry` | `server.json` (`io.github.Ynewtime/markitai`, pointing at the PyPI release) through `mcp-publisher` with GitHub OIDC, once PyPI lists the version. |
+
+The archives keep the package inventory above, at the archive root. macOS builds
+target macOS 11.0. Linux archives and wheels are built in the pinned
+`manylinux_2_28` image (`scripts/release_container.sh`), so they need glibc 2.28
+or later; the build refuses an executable that asks for more, and the image also
+installs the wheel with Python 3.10. musl (Alpine) is not a release target.
+Windows CLIs carry the static CRT. Nothing is signed or notarized.
+
+maturin's sdist omits the crates the workspace patches in from `vendor/`
+(`[patch.crates-io]`), so `release_build.py sdist` adds them and the
+attribution files to it.
+
+A user checks a download with `sha256sum -c SHA256SUMS --ignore-missing` and
+its origin with `gh attestation verify <file> --repo Ynewtime/markitai`.
+
+### Setup scripts
+
+`scripts/install/setup.sh` (macOS, Linux) and `scripts/install/setup.ps1`
+(Windows PowerShell 5.1 and PowerShell 7, x64 and ARM64) install the release
+archive for this machine: the latest release, or `MARKITAI_VERSION`. They read
+the asset names from the release's `SHA256SUMS`, verify the archive against it,
+and install `markitai`, `mkai` and `markitai-mcp` to `~/.local/bin` (notices and
+guides in `~/.local/share/markitai/current`) or to
+`%LOCALAPPDATA%\Programs\markitai`, which setup.ps1 adds to the user Path. A
+Python markitai 1.x that uv installed is uninstalled first. With a terminal
+they offer `markitai doctor --fix` (OCR models, a headless Chromium when no
+browser is found); `MARKITAI_INSTALL_OPTIONAL=1` runs it without one, `0` never.
+`--uninstall` (`MARKITAI_UNINSTALL=1`) removes what they installed and keeps
+`~/.markitai`. `MARKITAI_DOWNLOAD_URL` points them at another releases base, which
+`scripts/test_setup_scripts.py` uses with a local fake release.
