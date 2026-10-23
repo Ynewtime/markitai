@@ -15,7 +15,8 @@
 #
 # Environment:
 #   MARKITAI_VERSION=X.Y.Z       install this release (default: the latest)
-#   MARKITAI_INSTALL_DIR=DIR     install folder (default: %LOCALAPPDATA%\Programs\markitai)
+#   MARKITAI_INSTALL_DIR=DIR     install folder (default: the last install's, else
+#                                %LOCALAPPDATA%\Programs\markitai)
 #   MARKITAI_INSTALL_OPTIONAL=1  also prepare the optional components
 #                                (markitai doctor --fix: local OCR models and,
 #                                when no browser is found, a headless Chromium)
@@ -679,9 +680,43 @@ function Find-FirstMarkitai {
     return $null
 }
 
+function Get-DefaultFolder { return [IO.Path]::Combine($env:LOCALAPPDATA, "Programs", "markitai") }
+
+# A folder other than the default is recorded here, so a later update or
+# uninstall finds it without MARKITAI_INSTALL_DIR.
+function Get-LocationFile { return [IO.Path]::Combine($env:LOCALAPPDATA, "markitai", "install-location") }
+
+function Get-RecordedLocation {
+    $location = Get-LocationFile
+    if (-not (Test-Path -LiteralPath $location -PathType Leaf)) { return $null }
+    $recorded = ([IO.File]::ReadAllText($location)).Trim()
+    if ($recorded) { return $recorded }
+    return $null
+}
+
+# MARKITAI_INSTALL_DIR (as a full path), else the recorded folder, else the default.
 function Get-DefaultInstallDirectory {
-    if ($env:MARKITAI_INSTALL_DIR) { return $env:MARKITAI_INSTALL_DIR }
-    return (Join-Path $env:LOCALAPPDATA "Programs\markitai")
+    if ($env:MARKITAI_INSTALL_DIR) {
+        try { return $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($env:MARKITAI_INSTALL_DIR) } catch { return $env:MARKITAI_INSTALL_DIR }
+    }
+    $recorded = Get-RecordedLocation
+    if ($recorded) { return $recorded }
+    return (Get-DefaultFolder)
+}
+
+function Remove-RecordedLocation {
+    $location = Get-LocationFile
+    Remove-Item -LiteralPath $location -Force -ErrorAction SilentlyContinue
+    $folder = Split-Path -Parent $location
+    if ((Test-Path -LiteralPath $folder) -and -not @(Get-ChildItem -LiteralPath $folder -Force)) { Remove-Item -LiteralPath $folder -Force }
+}
+
+function Set-RecordedLocation {
+    param([string]$Directory)
+    if (Test-SamePath $Directory (Get-DefaultFolder)) { Remove-RecordedLocation; return }
+    $location = Get-LocationFile
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $location) | Out-Null
+    [IO.File]::WriteAllText($location, $Directory + "`n")
 }
 
 function Get-StateDirectory {
@@ -765,6 +800,8 @@ function Invoke-Uninstall {
     } else {
         Write-Info (Msg "nothing_installed")
     }
+    $recorded = Get-RecordedLocation
+    if ($recorded -and (Test-SamePath $recorded $directory)) { Remove-RecordedLocation }
     $state = Get-StateDirectory
     if (Test-Path -LiteralPath $state) { Write-Info "$(Msg 'state_kept'): $state" }
     Write-Outro "DarkGreen" (Msg "done_uninstall")
@@ -802,6 +839,7 @@ function Invoke-Install {
         }
         $directory = Get-DefaultInstallDirectory
         $receipt = Install-Release $unpacked $directory $release $target
+        Set-RecordedLocation $directory
         $markitai = [IO.Path]::Combine($directory, "markitai.exe")
         Write-Ok "$(Msg 'installed'): $markitai ($reported)"
         if (Add-ToUserPath $directory) {

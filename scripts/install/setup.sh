@@ -13,7 +13,7 @@
 #
 # Environment:
 #   MARKITAI_VERSION=X.Y.Z       install this release (default: the latest)
-#   MARKITAI_INSTALL_DIR=DIR     command folder (default: ~/.local/bin)
+#   MARKITAI_INSTALL_DIR=DIR     command folder (default: the last install's, else ~/.local/bin)
 #   MARKITAI_INSTALL_OPTIONAL=1  also prepare the optional components
 #                                (markitai doctor --fix: local OCR models and,
 #                                when no browser is found, a headless Chromium)
@@ -524,7 +524,8 @@ usage() {
 Install or update markitai: curl -fsSL $SCRIPT_URL | sh
 Remove it:                  curl -fsSL $SCRIPT_URL | sh -s -- --uninstall
 
-Environment: MARKITAI_VERSION=X.Y.Z, MARKITAI_INSTALL_DIR=DIR (default ~/.local/bin),
+Environment: MARKITAI_VERSION=X.Y.Z,
+MARKITAI_INSTALL_DIR=DIR (default: the last install's folder, else ~/.local/bin),
 MARKITAI_INSTALL_OPTIONAL=1|0 (markitai doctor --fix without asking, or never),
 MARKITAI_DOWNLOAD_URL=URL (releases base), MARKITAI_UNINSTALL=1, NO_COLOR=1
 EOF
@@ -541,8 +542,13 @@ main() {
     done
     ! truthy "${MARKITAI_UNINSTALL:-}" || MODE=uninstall
     : "${HOME:?HOME is not set}"
-    BIN_DIR=${MARKITAI_INSTALL_DIR:-$HOME/.local/bin}
     SHARE_ROOT=${XDG_DATA_HOME:-$HOME/.local/share}/markitai
+    # An update keeps the folder of the last install (the receipt's bin_dir).
+    BIN_DIR=${MARKITAI_INSTALL_DIR:-}
+    if [ -z "$BIN_DIR" ] && owned_current; then
+        BIN_DIR=$(sed -n 's/^bin_dir=//p' "$SHARE_ROOT/current/receipt" | head -n 1)
+    fi
+    [ -n "$BIN_DIR" ] || BIN_DIR=$HOME/.local/bin
     ORIGINAL_PATH=$PATH
     WARNINGS=false
     if [ "$MODE" = uninstall ]; then

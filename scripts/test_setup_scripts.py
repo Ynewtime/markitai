@@ -193,6 +193,16 @@ class SetupShTests(unittest.TestCase):
         self.assertIn("Needs sha256sum, shasum or openssl", result.stdout)
         self.assertIn("Setup failed", result.stdout)
 
+    def test_an_update_keeps_a_custom_folder(self):
+        custom = self.home / "opt/bin"
+        self.assertEqual(self.run_setup(MARKITAI_INSTALL_DIR=str(custom)).returncode, 0)
+        updated = self.run_setup(MARKITAI_VERSION="2.0.1")
+        self.assertEqual(updated.returncode, 0, updated.stdout + updated.stderr)
+        self.assertFalse((self.home / ".local/bin").exists())
+        self.assertEqual(subprocess.check_output([custom / "markitai", "--version"], text=True).strip(), "markitai 2.0.1")
+        self.assertEqual(self.run_setup("--uninstall").returncode, 0)
+        self.assertEqual(list(custom.iterdir()), [])
+
     def test_other_shells_and_chinese(self):
         for shell in ["dash", "bash", "zsh"]:
             if not shutil.which(shell):
@@ -418,6 +428,7 @@ New-Item -ItemType Directory -Path $env:MARKITAI_HOME | Out-Null
 Set-Content -LiteralPath (Join-Path $env:MARKITAI_HOME "config.json") -Value "{}"
 Invoke-Install
 $programs = Join-Path $env:LOCALAPPDATA "Programs/markitai"
+Assert (-not (Test-Path (Join-Path $env:LOCALAPPDATA "markitai"))) "the default folder needs no record"
 Assert ((Get-Content -Raw (Join-Path $programs "mkai.exe")) -eq "exe 2.0.0") "installed latest"
 Assert ($script:FakeUserPath.StartsWith("$programs;")) "on the user Path"
 Assert (@(Get-ChildItem ([IO.Path]::GetTempPath()) -Filter "markitai-setup-*").Count -eq 0) "work folder removed"
@@ -436,13 +447,17 @@ $script:InstallTo = $tools
 Invoke-Install
 Assert ($script:FakeUserPath -eq "$tools;C:\Tools") "the Path is left as it was"
 Assert ((Get-Content -Raw (Join-Path $tools "receipt")) -match "path_added=0") "the receipt says setup did not add it"
+$location = Join-Path $env:LOCALAPPDATA "markitai/install-location"
+Assert ((Get-Content -Raw $location).Trim() -eq $tools) "the custom folder is recorded"
+Remove-Item env:MARKITAI_INSTALL_DIR
+Assert ((Get-DefaultInstallDirectory) -eq $tools) "a later run without MARKITAI_INSTALL_DIR finds it"
 $script:Shown.Clear()
 Invoke-Uninstall
+Assert (-not (Test-Path (Join-Path $env:LOCALAPPDATA "markitai"))) "the record goes with it"
 Assert ($script:FakeUserPath -eq "$tools;C:\Tools") "uninstall leaves an entry setup did not add"
 Assert (@(Get-ChildItem -LiteralPath $tools -Force | ForEach-Object { $_.Name }) -join "," -eq "jq.exe") "only markitai's files go"
 $shown = $script:Shown -join "`n"
 Assert ($shown -match "the folder keeps its other files" -and $shown -match "setup did not add it" -and $shown -notmatch "Removed: ") "uninstall says what it did: $shown"
-Remove-Item env:MARKITAI_INSTALL_DIR
 
 $script:LANG_CODE = "zh"
 Assert ((Msg "verified") -eq ("$([char]0x5DF2)$([char]0x6821)$([char]0x9A8C) SHA-256")) "zh decoding"
