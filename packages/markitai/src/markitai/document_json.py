@@ -98,7 +98,22 @@ _FAMILIES: tuple[tuple[str, str, str, str, int], ...] = (
     (
         "pdf.page_without_text",
         "warning",
+        "PDF is scanned: ",
+        "",
+        _SUBJECT_PAGE,
+    ),
+    (
+        "pdf.page_without_text",
+        "warning",
         "PDF page ",
+        ": native text was not recovered",
+        _SUBJECT_PAGE,
+    ),
+    # The same sentences for several pages (`PDF pages 3–5, 9 (4 of 120): …`)
+    (
+        "pdf.page_without_text",
+        "warning",
+        "PDF pages ",
         ": native text was not recovered",
         _SUBJECT_PAGE,
     ),
@@ -110,6 +125,7 @@ _FAMILIES: tuple[tuple[str, str, str, str, int], ...] = (
         _SUBJECT_PAGE,
     ),
     ("pdf.page", "warning", "PDF page ", "", _SUBJECT_PAGE),
+    ("pdf.page", "warning", "PDF pages ", "", _SUBJECT_PAGE),
     (
         "pdf.images_after_text",
         "info",
@@ -349,6 +365,11 @@ _FAMILIES += (
 )
 
 _PAGE_SUBJECT = re.compile(r"\bpages? (\d+)(?:\s*[-–]\s*(\d+))?")
+#: A further entry of a page list (``, 15`` or ``, 20–31``), taken only when a
+#: list separator, `` (`` or the sentence's end follows it
+_MORE_PAGES = re.compile(r",\s*(\d+)(?:\s*[-–]\s*(\d+))?(?=[,);:.]| \(|\Z)")
+#: At most this many pages are named for one notice
+_MAX_PAGES = 10_000
 _QUOTED = re.compile(r'"((?:[^"\\]|\\.)*)"')
 
 
@@ -377,13 +398,7 @@ def classify_notice(message: str) -> Classified:
     rest = message[len(prefix) :]
     items: list[str] = []
     if subject == _SUBJECT_PAGE:
-        found = _PAGE_SUBJECT.search(message)
-        if found:
-            first = _ascii_int(found.group(1))
-            last = _ascii_int(found.group(2)) if found.group(2) else first
-            if last < first or last - first >= 10_000:
-                last = first
-            items = [str(page) for page in range(first, last + 1)]
+        items = _pages(message)
     elif subject == _SUBJECT_IMAGE_AFTER_FOR:
         name, separator, _ = rest.partition(": ")
         items = [name] if separator else []
@@ -395,6 +410,32 @@ def classify_notice(message: str) -> Classified:
         if found:
             items = [found.group(1).replace('\\"', '"').replace("\\\\", "\\")]
     return Classified(code, level, items)
+
+
+def _pages(message: str) -> list[str]:
+    """The pages a sentence names: its first ``page N`` or ``pages N–M``, and
+    the entries of the list that continues it (``pages 1–12, 15, 20–31``)."""
+    found = _PAGE_SUBJECT.search(message)
+    if found is None:
+        return []
+    items: list[str] = []
+
+    def add(first_text: str, last_text: str | None) -> None:
+        first = _ascii_int(first_text)
+        last = _ascii_int(last_text) if last_text else first
+        if last < first or last - first >= _MAX_PAGES:
+            last = first
+        for page in range(first, last + 1):
+            if len(items) >= _MAX_PAGES:
+                return
+            items.append(str(page))
+
+    add(found.group(1), found.group(2))
+    at = found.end()
+    while (more := _MORE_PAGES.match(message, at)) is not None:
+        add(more.group(1), more.group(2))
+        at = more.end()
+    return items
 
 
 def _ascii_int(text: str) -> int:

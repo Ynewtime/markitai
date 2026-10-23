@@ -383,6 +383,80 @@ def test_notices_get_markitai_rusts_codes(
     assert (found.code, found.level, found.items) == (code, level, items)
 
 
+def _pages(*spans: tuple[int, int]) -> list[str]:
+    return [str(page) for first, last in spans for page in range(first, last + 1)]
+
+
+@pytest.mark.parametrize(
+    ("message", "code", "items"),
+    [
+        (
+            "PDF is scanned: 3 of 3 pages have no readable text (pages 1\u20133); "
+            "run again with --ocr to read them.",
+            "pdf.page_without_text",
+            _pages((1, 3)),
+        ),
+        (
+            "PDF is scanned: 1 of 1 page has no readable text (page 1); run again "
+            "with --ocr to read it.",
+            "pdf.page_without_text",
+            _pages((1, 1)),
+        ),
+        (
+            "PDF is scanned: 26 of 28 pages have no readable text (pages "
+            "1\u201312, 15, 20\u201331, 40); run again with --ocr to read them.",
+            "pdf.page_without_text",
+            _pages((1, 12), (15, 15), (20, 31), (40, 40)),
+        ),
+        # The per-reason sentences list their pages the same way
+        (
+            "PDF pages 3\u20135, 9 (4 of 120): native text was not recovered "
+            "(scanned); OCR is required to read them. Run again with --ocr.",
+            "pdf.page_without_text",
+            _pages((3, 5), (9, 9)),
+        ),
+        ("PDF pages 2, 4: something else.", "pdf.page", ["2", "4"]),
+        # A number after a comma that is not a list entry is not a page
+        (
+            "Local OCR read only the first 1,000 text regions of PDF page 7, from "
+            "the top; the text below them is missing.",
+            "ocr.capped",
+            ["7"],
+        ),
+        ("Office page 2, 3 lines were cut.", "office.page", ["2"]),
+        # Python's own scanned sentence names every page of its list too
+        (
+            "[PDF] a.pdf: 4 of 9 pages look scanned/garbled (pages 1\u20133, 7); "
+            "consider re-running with --ocr",
+            "pdf.page_without_text",
+            _pages((1, 3), (7, 7)),
+        ),
+    ],
+    ids=[
+        "scanned",
+        "scanned-one",
+        "scanned-list",
+        "pages-native",
+        "pages",
+        "capped",
+        "office-comma",
+        "python-scanned",
+    ],
+)
+def test_a_notice_names_every_page_of_its_list(
+    message: str, code: str, items: list[str]
+) -> None:
+    """markitai-rust 9ee02be2's families and page lists."""
+    found = classify_notice(message)
+    assert (found.code, found.level, found.items) == (code, "warning", items)
+
+
+def test_a_page_list_stops_at_ten_thousand_pages() -> None:
+    found = classify_notice("PDF pages 1\u20139999, 10000\u201320000: too many.")
+    assert len(found.items) == 10_000
+    assert found.items[-1] == "10000"
+
+
 def test_a_url_loses_its_credentials_and_secret_values() -> None:
     assert document_url("https://u:p@example.test/a?token=x&page=2#k") == (
         "https://example.test/a?token=REDACTED&page=2#k"
