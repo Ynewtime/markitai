@@ -34,9 +34,7 @@ In non mauris justo. Duis vehicula mi vel mi pretium, a viverra erat efficitur. 
 
 In eleifend velit vitae libero sollicitudin euismod. Fusce vitae vestibulum velit. Pellentesque vulputate lectus quis pellentesque commodo. Aliquam erat volutpat. Vestibulum in egestas velit. Pellentesque fermentum nisl vitae fringilla venenatis. Etiam id mauris vitae orci maximus ultricies.
 
-## **Cras fringilla ipsum magna, in fringilla dui commodo**
-
-## **a.**
+## **Cras fringilla ipsum magna, in fringilla dui commodo a.**
 
 ||Lorem ipsum|Lorem ipsum|Lorem ipsum|
 |---|---|---|---|

@@ -568,3 +568,84 @@ class TestPdfConversion:
         )
         assert "# 会员享有的主要权利" in _headings(texts[0])
         assert not _private(texts[0])
+
+
+# --- headings wrapped onto a second line --------------------------------------
+
+
+def _two_line_heading(
+    path: Path, *, gap: float, second: str, size2: float = 18
+) -> Path:
+    """An 18 pt bold heading on two lines, ``gap`` points apart, then body text."""
+    doc = pymupdf.open()
+    page = doc.new_page()
+    page.insert_text(
+        (72, 100), "Quarterly results for the northern", fontname="hebo", fontsize=18
+    )
+    page.insert_text((60, 100 + 18 + gap), second, fontname="hebo", fontsize=size2)
+    page.insert_text(
+        (60, 200),
+        "Body text of the section follows here.",
+        fontname="helv",
+        fontsize=10,
+    )
+    doc.save(path)
+    return path
+
+
+class TestWrappedHeadings:
+    """A heading the layout model split at its line break is one heading
+    again (the owner's 1.2.1 check: ``## **Cras fringilla ... commodo**``
+    then ``## **a.**``)."""
+
+    PAGE = "## **Quarterly results for the northern**\n\n## **Region Office**\n\nBody."
+
+    def test_the_text_layer_shows_one_heading(self, tmp_path: Path) -> None:
+        path = _two_line_heading(tmp_path / "h.pdf", gap=2, second="Region Office")
+        from markitai.converter.pdf_markdown import wrapped_headings
+
+        (pairs,) = wrapped_headings(path, [1], [self.PAGE])
+        assert pairs == {("Quarterly results for the northern", "Region Office")}
+        assert repair_page_markdown(self.PAGE, wrapped=pairs).startswith(
+            "## **Quarterly results for the northern Region Office**\n\nBody."
+        )
+
+    @pytest.mark.parametrize(
+        ("gap", "size2"),
+        [(30, 18), (2, 12)],
+        ids=["a paragraph gap", "another size"],
+    )
+    def test_two_headings_stay_two(
+        self, tmp_path: Path, gap: float, size2: float
+    ) -> None:
+        path = _two_line_heading(
+            tmp_path / "h.pdf", gap=gap, second="Region Office", size2=size2
+        )
+        from markitai.converter.pdf_markdown import wrapped_headings
+
+        (pairs,) = wrapped_headings(path, [1], [self.PAGE])
+        assert pairs == frozenset()
+        assert "\n## **Region Office**" in repair_page_markdown(
+            self.PAGE, wrapped=pairs
+        )
+
+    def test_a_lower_case_line_continues_without_the_text_layer(self) -> None:
+        page = (
+            "## **Cras fringilla ipsum magna, in fringilla dui commodo**\n\n## **a.**\n"
+        )
+        assert repair_page_markdown(page).startswith(
+            "## **Cras fringilla ipsum magna, in fringilla dui commodo a.**"
+        )
+
+    def test_a_finished_heading_is_not_continued(self) -> None:
+        page = "## Results.\n\n## methods and data\n"
+        assert repair_page_markdown(page).count("## ") == 2
+
+    def test_the_sample_pdf_heading_is_one_line(self, tmp_path: Path) -> None:
+        source = Path(__file__).parents[1] / "fixtures" / "sample.pdf"
+        markdown = _convert(source, tmp_path)
+        headings = _headings(markdown)
+        assert (
+            "## **Cras fringilla ipsum magna, in fringilla dui commodo a.**" in headings
+        )
+        assert "## **a.**" not in headings

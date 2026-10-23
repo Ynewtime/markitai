@@ -40,6 +40,16 @@ LLM gets; :func:`plain_headings` cleans a model's headings in the
    most eight characters, ``利。``), is one paragraph; so is such a tail set
    as a heading after the paragraph it ends.
 
+4. **A heading wrapped onto a second line.** The layout model boxes each
+   line of a two-line heading on its own, so ``## Cras fringilla ipsum
+   magna, in fringilla dui commodo`` and ``## a.`` came out as two
+   headings. Two headings of one level in a row are one when the page's
+   text layer shows the second line right below the first (a gap under
+   half a line), in the same size (within 10 %) and weight, starting
+   before the first line ends, and the first does not end its sentence;
+   where the lines cannot be found in the text layer, when the second
+   starts with a lower-case letter.
+
 On the round-15 PDF corpus (31 documents and Rust's 8 CJK layout fixtures)
 only the documents with these shapes changed.
 """
@@ -321,6 +331,14 @@ _HEADING = re.compile(r"^(#{1,6})[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$")
 _FENCE = re.compile(r"^\s{0,3}(`{3,}|~{3,})")
 # Lines that are no paragraph text: headings, tables, quotes, comments, images, lists
 _NOT_PROSE = ("#", "|", ">", "<!--", "![", "- ", "* ", "+ ")
+#: A heading ending so is complete: the next heading line is no part of it.
+_HEADING_END = ".!?:;" + _SENTENCE_END + "："
+#: A heading's second line starts less than this many line heights below
+#: its first, in a font size within this share of the first's.
+_WRAP_GAP = 0.5
+_WRAP_SIZE = 0.1
+#: Two headings' plain texts, one right after the other.
+Pair = tuple[str, str]
 _LIST_MARKER = re.compile(r"^\s*(?:[-*+]|\d+[.)])[ \t]+")
 
 
@@ -542,8 +560,37 @@ def _ends_paragraph(out: list[str], line: _Line) -> bool:
     )
 
 
-def repair_page_markdown(markdown: str, glyphs: dict[str, Glyph] | None = None) -> str:
-    """One page's Markdown with its glyphs mapped and its headings plain."""
+def _join_heading(left: str, right: str) -> str:
+    """Two heading lines' inline text as one: ``**a** **b**`` is ``**a b**``."""
+    left, right = left.rstrip(), right.lstrip()
+    for mark in ("***", "**", "*", "__", "_"):
+        if left.endswith(mark) and right.startswith(mark):
+            return _join(left[: -len(mark)], right[len(mark) :])
+    return _join(left, right)
+
+
+def _continues(first: _Line, second: _Line, wrapped: frozenset[Pair] | None) -> bool:
+    """Whether heading *second* is the next line of heading *first*."""
+    if not first.text or not second.text or first.text[-1] in _HEADING_END:
+        return False
+    if wrapped is not None and (first.text, second.text) in wrapped:
+        return True
+    return second.text[0].islower()
+
+
+def repair_page_markdown(
+    markdown: str,
+    glyphs: dict[str, Glyph] | None = None,
+    wrapped: frozenset[Pair] | None = None,
+) -> str:
+    """One page's Markdown with its glyphs mapped and its headings plain.
+
+    Args:
+        markdown: The page's Markdown.
+        glyphs: What its private-use characters stand for.
+        wrapped: Pairs of heading texts the text layer shows as one heading
+            wrapped onto a second line (:func:`wrapped_headings`).
+    """
     glyphs = glyphs or {}
     lines = _lines(markdown, glyphs)
     out: list[str] = []
@@ -559,6 +606,13 @@ def repair_page_markdown(markdown: str, glyphs: dict[str, Glyph] | None = None) 
             index += 1
             continue
         following = _same_level_run(lines, index)
+        if following and _continues(line, lines[following[0]], wrapped):
+            # A heading wrapped onto a second line: one heading
+            title = lines[following[0]]
+            title.raw = _join_heading(line.raw, title.raw)
+            title.text = _join(line.text, title.text)
+            index = following[0]
+            continue
         if following and _SECTION_NUMBER.match(line.text):
             # "2.4" then "服务范围": one heading
             title = lines[following[0]]
@@ -592,14 +646,94 @@ def repair_page_markdown(markdown: str, glyphs: dict[str, Glyph] | None = None) 
     return "\n".join(out)
 
 
+def _heading_pairs(markdown: str) -> list[Pair]:
+    """Plain texts of each heading and the same-level heading right after it."""
+    lines = _lines(markdown, {})
+    return [
+        (line.text, lines[following[0]].text)
+        for index, line in enumerate(lines)
+        if line.level > 0 and (following := _same_level_run(lines, index))
+    ]
+
+
+def _layer_lines(page: Any) -> list[tuple[str, tuple[float, ...], float, bool]]:
+    """The page's text lines: (text, bbox, font size, bold), in reading order."""
+    import pymupdf
+
+    out: list[tuple[str, tuple[float, ...], float, bool]] = []
+    content: dict[str, Any] = page.get_text(  # type: ignore[assignment]
+        "dict", flags=pymupdf.TEXTFLAGS_TEXT, sort=True
+    )
+    for block in content.get("blocks", []):
+        for line in block.get("lines", []):
+            spans = [s for s in line.get("spans", []) if s["text"].strip()]
+            if not spans:
+                continue
+            text = " ".join("".join(s["text"] for s in spans).split())
+            size = max(s["size"] for s in spans)
+            bold = all(s["flags"] & 16 or "bold" in s["font"].lower() for s in spans)
+            out.append((text, tuple(line["bbox"]), size, bold))
+    return out
+
+
+def _wrapped_pairs(page: Any, pairs: list[Pair]) -> set[Pair]:
+    """The *pairs* the page draws as one heading on two lines."""
+    lines = _layer_lines(page)
+    found: set[Pair] = set()
+    for (text, box, size, bold), (text2, box2, size2, bold2) in zip(lines, lines[1:]):
+        pair = next((p for p in pairs if p == (_plain(text), _plain(text2))), None)
+        if pair is None:
+            continue
+        height = box[3] - box[1]
+        gap = box2[1] - box[3]
+        if (
+            -height / 2 < gap < height * _WRAP_GAP
+            and abs(size2 - size) <= size * _WRAP_SIZE
+            and bold == bold2
+            and box2[0] < box[2]
+        ):
+            found.add(pair)
+    return found
+
+
+def wrapped_headings(
+    input_path: Path, page_numbers: Sequence[int], page_texts: Sequence[str]
+) -> list[frozenset[Pair] | None]:
+    """For each page, the heading pairs its text layer shows as one heading.
+
+    Only pages with two headings of a level in a row are read; None for a
+    page whose text layer could not be read (the text rule decides there).
+    """
+    result: list[frozenset[Pair] | None] = [frozenset() for _ in page_texts]
+    wanted = {
+        i: pairs for i, t in enumerate(page_texts) if (pairs := _heading_pairs(t))
+    }
+    if not wanted:
+        return result
+    import pymupdf
+
+    try:
+        with pymupdf.open(input_path) as doc:
+            for index, pairs in wanted.items():
+                number = page_numbers[index]
+                result[index] = None
+                if 1 <= number <= doc.page_count:
+                    result[index] = frozenset(_wrapped_pairs(doc[number - 1], pairs))
+    except Exception as e:  # the text rule decides alone
+        logger.debug("[PDF] Heading lines not read for {}: {}", input_path.name, e)
+        result = [None if i in wanted else r for i, r in enumerate(result)]
+    return result
+
+
 def repair_pages(
     input_path: Path, page_numbers: Sequence[int], page_texts: Sequence[str]
 ) -> list[str]:
     """:func:`repair_page_markdown` for each page of *input_path*."""
     maps = page_glyph_maps(input_path, page_numbers, page_texts)
+    wrapped = wrapped_headings(input_path, page_numbers, page_texts)
     return [
-        repair_page_markdown(text, glyphs)
-        for text, glyphs in zip(page_texts, maps, strict=True)
+        repair_page_markdown(text, glyphs, pairs)
+        for text, glyphs, pairs in zip(page_texts, maps, wrapped, strict=True)
     ]
 
 
