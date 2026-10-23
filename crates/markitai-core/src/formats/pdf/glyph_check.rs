@@ -12,8 +12,9 @@
 //! [`MAX_BAD_LETTER_SHARE`] of its letters is read by OCR instead.
 //!
 //! As Python markitai 1.3.0's `converter/pdf_text_trust.py` `GlyphCheck`
-//! (8a757175). Never fatal: when drawing or reading fails, the check stops and
-//! every page keeps the verdict of the text-only checks.
+//! (python branch, `feat(pdf): under --ocr, compare the text layer with what
+//! its glyphs draw`). Never fatal: when drawing or reading fails, the check
+//! stops and every page keeps the verdict of the text-only checks.
 
 use super::text_trust::{self, Failure};
 use super::{PdfPage, PdfPages, geometry};

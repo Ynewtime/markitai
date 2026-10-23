@@ -311,11 +311,13 @@ it heads nothing); this representation does not establish that an untagged PDF
 declared it a semantic header.
 
 A tagged PDF's tables come from its structure tree on each page, as in the
-page reader's whole-document conversion (`8b9747d`): a table drawn without rules
+page reader's whole-document conversion (main branch, `fix: read a tagged PDF's
+borderless tables from its structure tree`): a table drawn without rules
 whose cells wrap and are vertically centred is otherwise read from its text's
 alignment alone, which splits it into broken rows. Text extraction keeps the
-runs of two structure-tree cells apart (`03deb93`): cells a few pixels apart,
-as in the browser's default table style, would otherwise merge into one item
+runs of two structure-tree cells apart (main branch, `fix: keep adjacent cells of
+a tagged PDF table apart`): cells a few pixels apart, as in the browser's
+default table style, would otherwise merge into one item
 that keeps only the first cell's marked content. A fully tagged table among
 long paragraphs is used when it holds 80% of the text inside its own bounds.
 
