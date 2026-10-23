@@ -181,6 +181,18 @@ class SetupShTests(unittest.TestCase):
         self.assertEqual(self.run_setup("--uninstall").returncode, 0)
         self.assertEqual((current / "notes.txt").read_text(), "mine")
 
+    def test_no_hash_tool_says_so(self):
+        tools = self.work / "no-hash-tools"
+        tools.mkdir()
+        for name in ["cat", "chmod", "cp", "curl", "cut", "env", "getconf", "grep", "gzip", "head", "id", "ln", "ls",
+                     "mkdir", "mktemp", "mv", "readlink", "rm", "sed", "sh", "tar", "tr", "uname", "wget"]:
+            if shutil.which(name):
+                (tools / name).symlink_to(shutil.which(name))
+        result = self.run_setup(PATH=str(tools))
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("Needs sha256sum, shasum or openssl", result.stdout)
+        self.assertIn("Setup failed", result.stdout)
+
     def test_other_shells_and_chinese(self):
         for shell in ["dash", "bash", "zsh"]:
             if not shutil.which(shell):

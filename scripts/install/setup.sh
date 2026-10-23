@@ -298,8 +298,14 @@ sha256_of() {
     elif command -v openssl >/dev/null 2>&1; then
         openssl dgst -sha256 "$1" | sed 's/^.*= *//'
     else
-        fail "$(msg error_hash_tool)"
+        return 1
     fi
+}
+
+# Checked up front: a fail inside $(sha256_of ...) would lose its message.
+check_hash_tool() {
+    command -v sha256sum >/dev/null 2>&1 || command -v shasum >/dev/null 2>&1 ||
+        command -v openssl >/dev/null 2>&1 || fail "$(msg error_hash_tool)"
 }
 
 # Sets VERSION and ARCHIVE from the release's SHA256SUMS (the latest
@@ -562,6 +568,7 @@ main() {
     detect_target
     info "$(msg platform): $TARGET"
     check_share_folder
+    check_hash_tool
     WORK=$(mktemp -d "${TMPDIR:-/tmp}/markitai-setup.XXXXXX")
     STAGED=""
     trap cleanup EXIT
@@ -571,7 +578,7 @@ main() {
     step "$(msg downloading) $ARCHIVE"
     _url="$BASE/download/v$VERSION/$ARCHIVE"
     download "$_url" "$WORK/$ARCHIVE" || fail "$(msg error_download)" "$_url"
-    _actual=$(sha256_of "$WORK/$ARCHIVE")
+    _actual=$(sha256_of "$WORK/$ARCHIVE") || fail "$(msg error_hash_tool)"
     if [ "$_actual" != "$EXPECTED_SHA256" ]; then
         rm -f "$WORK/$ARCHIVE"
         fail "$(msg error_checksum)" "$ARCHIVE: $_actual != $EXPECTED_SHA256"
