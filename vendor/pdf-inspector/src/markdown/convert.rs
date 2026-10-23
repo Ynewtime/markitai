@@ -3706,4 +3706,21 @@ mod tests {
         let md = reader_markdown(lines);
         assert!(!md.contains("# 本中心"), "{md}");
     }
+
+    #[test]
+    fn a_title_wrapped_over_three_lines_is_one_heading() {
+        // markitai: the third line was measured from the first, two
+        // leadings up, and became a heading of its own.
+        let mut lines = vec![
+            sized_line("A rather long harbour", 760.0, 18.0, "Title-Bold"),
+            sized_line("office title that wraps", 739.0, 18.0, "Title-Bold"),
+            sized_line("onto a third line here", 718.75, 18.0, "Title-Bold"),
+        ];
+        lines.extend(body_lines(690.0));
+        let md = reader_markdown(lines);
+        assert!(
+            md.contains("# A rather long harbour office title that wraps onto a third line here\n"),
+            "{md}"
+        );
+    }
 }

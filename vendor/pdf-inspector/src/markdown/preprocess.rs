@@ -69,6 +69,8 @@ pub(crate) fn merge_heading_lines(
     }
 
     let mut result: Vec<TextLine> = Vec::with_capacity(lines.len());
+    // markitai: the baseline of the lowest line merged into each of `result`.
+    let mut lowest: Vec<f32> = Vec::with_capacity(lines.len());
 
     for line in lines {
         let line_level = effective_heading_level(&line, base_size, heading_tiers, struct_roles);
@@ -79,7 +81,9 @@ pub(crate) fn merge_heading_lines(
             let prev_level = effective_heading_level(prev, base_size, heading_tiers, struct_roles);
             let same_page = prev.page == line.page;
             let same_level = prev_level == Some(curr_level);
-            let y_gap = prev.y - line.y;
+            // markitai: from the lowest line merged into it so far, not its
+            // first: a title wrapped over three lines is one heading.
+            let y_gap = lowest.last().copied().unwrap_or(prev.y) - line.y;
             // Merge if gap is within ~2x the font size (normal line wrap spacing)
             let close_enough = y_gap > 0.0 && y_gap < line_font * 2.0;
             // Don't merge if combined text would be too long — real headings are short.
@@ -108,7 +112,7 @@ pub(crate) fn merge_heading_lines(
                 let prev_trim = prev_text.trim_end();
                 let curr_text = line.text();
                 let curr_trim = curr_text.trim();
-                let y_gap = prev.y - line.y;
+                let y_gap = lowest.last().copied().unwrap_or(prev.y) - line.y;
                 // Both lines must be tier-less: a tiered/tagged bold heading
                 // followed by bold body text must not absorb it.
                 line_level.is_none()
@@ -128,6 +132,9 @@ pub(crate) fn merge_heading_lines(
             };
 
         if should_merge {
+            if let Some(last) = lowest.last_mut() {
+                *last = line.y;
+            }
             // Append this line's items to the previous line
             let prev = result.last_mut().unwrap();
             // Add a space-bearing TextItem to separate the merged text
@@ -156,6 +163,7 @@ pub(crate) fn merge_heading_lines(
                 prev.items.push(item);
             }
         } else {
+            lowest.push(line.y);
             result.push(line);
         }
     }
