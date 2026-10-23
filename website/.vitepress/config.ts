@@ -1,5 +1,5 @@
 import { defineConfig } from 'vitepress'
-import { mermaid } from './mermaid'
+import { mermaid } from './mermaid.ts'
 
 const SITE_URL = 'https://markitai.dev'
 const SITE_NAME = 'Markitai'

@@ -18,8 +18,8 @@
 import { PeleError, render } from 'pele'
 import type MarkdownIt from 'markdown-it'
 
-/** The doc column with the outline aside (VPDoc's `.content-container`). */
-const WIDE = 688
+/** The doc column beside the sidebar and outline from 960 to 1439 px (688 px from 1440). */
+const WIDE = 624
 /** A 390 px phone minus the doc's 24 px side padding. */
 const NARROW = 342
 /** Below this scale a wide drawing's labels get too small: draw it upright. */
