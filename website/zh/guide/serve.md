@@ -4,8 +4,8 @@
 
 一切都在本机运行。任务和历史保存在磁盘上，除了你配置的抓取策略和 LLM 提供商，不会向外发送任何内容。
 
-![markitai 网页工作台：一个已转换的 PDF 在窗口中打开，窗口居中于变暗的转换任务列表上方，位于「预览」标签，显示一张美国石油平衡表转成 Markdown 后的渲染效果。](/workbench.zh.png){.light-only}
-![markitai 网页工作台：一个已转换的 PDF 在窗口中打开，窗口居中于变暗的转换任务列表上方，位于「预览」标签，显示一张美国石油平衡表转成 Markdown 后的渲染效果。](/workbench.zh.dark.png){.dark-only}
+![markitai 网页工作台：一个已转换的单页 PDF 在窗口中打开，窗口居中于变暗的转换任务列表上方，位于「对照」标签。左侧的原件页面和右侧的 Markdown 同时框出同一张图：文件和网页、markitai、Markdown。](/workbench.zh.png){.light-only}
+![markitai 网页工作台：一个已转换的单页 PDF 在窗口中打开，窗口居中于变暗的转换任务列表上方，位于「对照」标签。左侧的原件页面和右侧的 Markdown 同时框出同一张图：文件和网页、markitai、Markdown。](/workbench.zh.dark.png){.dark-only}
 
 ## 启动服务
 

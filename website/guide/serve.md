@@ -4,8 +4,8 @@
 
 Everything runs on your machine. Jobs and history live on disk, and nothing leaves the host except what you send to the fetch strategies and LLM providers you configure.
 
-![The markitai web workbench: a converted PDF open in a window centred over the dimmed list of conversions, on its Preview tab, showing the rendered Markdown of a U.S. petroleum balance sheet table.](/workbench.png){.light-only}
-![The markitai web workbench: a converted PDF open in a window centred over the dimmed list of conversions, on its Preview tab, showing the rendered Markdown of a U.S. petroleum balance sheet table.](/workbench.dark.png){.dark-only}
+![The markitai web workbench: a converted one-page PDF open in a window centred over the dimmed list of conversions, on its Compare tab. The original page on the left and its Markdown on the right both outline the same diagram: Files and URLs, markitai, Markdown.](/workbench.png){.light-only}
+![The markitai web workbench: a converted one-page PDF open in a window centred over the dimmed list of conversions, on its Compare tab. The original page on the left and its Markdown on the right both outline the same diagram: Files and URLs, markitai, Markdown.](/workbench.dark.png){.dark-only}
 
 ## Starting the Server
 

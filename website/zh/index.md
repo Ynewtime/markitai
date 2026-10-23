@@ -21,11 +21,11 @@ hero:
   <p><code>markitai serve</code> 把同一套转换内核放进本地网页界面。拖入文件、粘贴 URL、看进度，对照原件逐条检查结果，再全部下载。</p>
   <picture class="home-shot-light">
     <source srcset="/workbench.zh.webp" type="image/webp" />
-    <img src="/workbench.zh.png" alt="markitai 网页工作台：一个已转换的 PDF 在窗口中打开，窗口居中于变暗的转换任务列表上方，位于「预览」标签，显示一张美国石油平衡表转成 Markdown 后的渲染效果。" width="1440" height="700" loading="lazy" />
+    <img src="/workbench.zh.png" alt="markitai 网页工作台：一个已转换的单页 PDF 在窗口中打开，窗口居中于变暗的转换任务列表上方，位于「对照」标签。左侧的原件页面和右侧的 Markdown 同时框出同一张图：文件和网页、markitai、Markdown。" width="1440" height="700" loading="lazy" />
   </picture>
   <picture class="home-shot-dark">
     <source srcset="/workbench.zh.dark.webp" type="image/webp" />
-    <img src="/workbench.zh.dark.png" alt="markitai 网页工作台：一个已转换的 PDF 在窗口中打开，窗口居中于变暗的转换任务列表上方，位于「预览」标签，显示一张美国石油平衡表转成 Markdown 后的渲染效果。" width="1440" height="700" loading="lazy" />
+    <img src="/workbench.zh.dark.png" alt="markitai 网页工作台：一个已转换的单页 PDF 在窗口中打开，窗口居中于变暗的转换任务列表上方，位于「对照」标签。左侧的原件页面和右侧的 Markdown 同时框出同一张图：文件和网页、markitai、Markdown。" width="1440" height="700" loading="lazy" />
   </picture>
   <p class="home-shot-link"><a href="/zh/guide/serve">了解网页工作台 <span aria-hidden="true">→</span></a></p>
 </section>
