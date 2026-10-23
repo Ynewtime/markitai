@@ -262,6 +262,26 @@ fn fractional_page_boxes_keep_the_size_their_decimals_give() {
 }
 
 #[test]
+fn a_poster_page_has_a_size_and_a_resolution_that_fits_the_limit() {
+    // 200 × 200 inches: past the pixel limit even at 72 dpi.
+    let mut poster = one_page(b"", dictionary! {}, [0, 0, 14_400, 14_400]);
+    let bytes = save(&mut poster);
+    for backend in Backend::compiled() {
+        let session = open(&bytes, backend);
+        assert_eq!(
+            session.page_size(1).unwrap(),
+            (14_400., 14_400.),
+            "{}",
+            backend.name()
+        );
+        let dpi = session.fitting_dpi(1, 150.).unwrap();
+        assert!((27.9..28.3).contains(&dpi), "{}: {dpi}", backend.name());
+        let (width, height) = session.dimensions(1, dpi).unwrap();
+        assert!(u64::from(width) * u64::from(height) <= MAX_PIXELS as u64);
+    }
+}
+
+#[test]
 fn malformed_locked_and_oversized_documents_fail_explicitly() {
     let mut huge = one_page(b"", dictionary! {}, [0, 0, 1_000_000, 1_000_000]);
     let huge_bytes = save(&mut huge);

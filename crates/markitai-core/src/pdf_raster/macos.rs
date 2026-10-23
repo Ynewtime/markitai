@@ -22,8 +22,6 @@ pub(crate) struct PdfRasterSession {
 struct PageFrame {
     page: CFRetained<CGPDFPage>,
     crop: CGRect,
-    /// The visible box after rotation, in points.
-    points: (f64, f64),
     size: RasterSize,
     target: CGRect,
     transform: CGAffineTransform,
@@ -110,7 +108,6 @@ impl PdfRasterSession {
         Ok(PageFrame {
             page,
             crop,
-            points: (width, height),
             size,
             target,
             transform,
@@ -141,9 +138,11 @@ impl PdfRasterSession {
         Ok((page, crop, points))
     }
 
-    /// The visible page box after rotation, in points.
+    /// The visible page box after rotation, in points. Unlike a frame, it
+    /// has no pixel limit: a poster page larger than the limit even at 72
+    /// dpi still has a size to fit a lower resolution to.
     pub(crate) fn page_size(&self, page_1_based: usize) -> Result<(f64, f64)> {
-        self.frame(page_1_based, 72.).map(|frame| frame.points)
+        self.page_box(page_1_based).map(|(_, _, points)| points)
     }
 
     /// Checks the complete page geometry without allocating its pixel buffers.
