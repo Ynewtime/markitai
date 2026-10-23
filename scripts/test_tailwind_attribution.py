@@ -63,11 +63,12 @@ class TailwindAttributionTests(unittest.TestCase):
             (self.embedded, lambda text: text.replace("const PALETTE", "const COLOURS")),
             (self.directory / "provenance.json", lambda text: text.replace('"embedded_in"', '"elsewhere"')),
         ]:
-            old = path.read_text()
-            path.write_text(change(old))
+            # Bytes, not text: a text write on Windows would restore LF files as CRLF.
+            old = path.read_bytes()
+            path.write_bytes(change(old.decode("utf-8")).encode("utf-8"))
             with self.assertRaises(RuntimeError):
                 tailwind_files(self.source)
-            path.write_text(old)
+            path.write_bytes(old)
         tailwind_files(self.source)
 
     @unittest.skipIf(os.name == "nt", "symlink privileges are host-dependent")
