@@ -114,6 +114,20 @@ class WebDistTest(unittest.TestCase):
             pinned = re.fullmatch(r"https://raw\.githubusercontent\.com/[\w.-]+/[\w.-]+/[0-9a-f]{40}/[\w./-]+", entry["source"])
             self.assertTrue(entry["source"].startswith("https://registry.npmjs.org/") or pinned, entry["file"])
 
+    def test_pele_licence_evidence_follows_the_locked_version(self):
+        # package.json takes any pele 1.x from 1.9.0, so `npm update pele` can move the lock: the licence copy,
+        # its provenance entry and the NOTICE line must then be refreshed to the version the build bundles.
+        locked = json.loads((WEB / "package-lock.json").read_text())["packages"]["node_modules/pele"]
+        entry = next(entry for entry in json.loads((VENDOR / "provenance.json").read_text()) if entry["file"] == "pele-LICENSE")
+        stale = "refresh vendor/web/pele-LICENSE, its provenance entry and NOTICE for the locked pele (see docs/web-ui.md)"
+        self.assertEqual(entry["version"], locked["version"], stale)
+        self.assertEqual(entry["package_integrity"], locked["integrity"], stale)
+        self.assertEqual(entry["source"], locked["resolved"], stale)
+        self.assertIn(f"Pele {locked['version']} (MIT", (ROOT / "NOTICE").read_text(), stale)
+        installed = WEB / "node_modules/pele"
+        if (installed / "LICENSE").is_file() and json.loads((installed / "package.json").read_text())["version"] == locked["version"]:
+            self.assertEqual((VENDOR / "pele-LICENSE").read_bytes(), (installed / "LICENSE").read_bytes(), stale)
+
     @unittest.skipUnless(shutil.which("node") and (WEB / "node_modules/esbuild").is_dir(), "Node or the pinned toolchain is not installed")
     def test_a_rebuild_reproduces_dist(self):
         result = subprocess.run(["node", "build.mjs", "--check"], cwd=WEB, capture_output=True, text=True, timeout=300)

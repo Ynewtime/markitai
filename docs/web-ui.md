@@ -219,7 +219,7 @@ and the woff2 fonts `/ui/KaTeX_*.woff2`, all vendored and served by the binary)
 fetched only when a preview holds one; they also draw in headings and in the
 Contents. A `$` follows Pandoc's rules, so `$5 and $6` stays text, and a formula
 that does not parse stays as its source. A fenced block marked `mermaid` is drawn
-as its diagram (every diagram type of Mermaid 12.1) by Pele 1.9.0 in a separate
+as its diagram (every diagram type of Mermaid 12.1) by Pele 1.x in a separate
 module (`/ui/mermaid.js`, about 260 KB compressed) fetched only when a preview
 holds one; Source, the downloads and the Markdown itself keep the code. The
 diagram's SVG is rebuilt from an allowlist of drawing elements and attributes,
@@ -699,6 +699,12 @@ The workbench is embedded in the CLI. End users do not need Node; contributors
 who change it run `npm ci && node build.mjs` in
 `crates/markitai-cli/src/server/web` and commit the generated `dist/` files.
 `npm test`, `npm run typecheck`, `npm run css` and `npm run contrast` check
-specific source properties. Browser interaction, focus, mobile layout and
+specific source properties. The other libraries are pinned exactly; Pele, the
+Mermaid renderer, takes any 1.x from 1.9.0 so it follows upstream fixes, and
+`package-lock.json` decides the version a build bundles. During dependency
+updates run `npm update pele`, then `node build.mjs` and the checks above. When the
+locked version changes, copy the new package's `LICENSE` to `vendor/web/pele-LICENSE`
+and update its `vendor/web/provenance.json` entry and the Pele line of `NOTICE`
+(`scripts/test_web_dist.py` fails until they match the lock). Browser interaction, focus, mobile layout and
 assistive-technology behavior require their own actual checks; passing a source
 test is not proof of those interactions. See [development](development.md).

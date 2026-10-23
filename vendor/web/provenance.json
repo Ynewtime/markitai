@@ -1208,6 +1208,6 @@
     "member": "package/LICENSE",
     "bytes": 1934,
     "sha256": "311bccc30de6f7b9cbfb64232bb0c911ccb2191abe316550813ae25b2c7925b9",
-    "obtained": "npm pack pele@1.9.0 from the official registry (MIT, with the ISC notice of the Lucide icon its zoom controls draw); the renderer itself is bundled from the pinned devDependency into dist/mermaid.js (package-lock.json)"
+    "obtained": "npm pack pele@1.9.0 from the official registry (MIT, with the ISC notice of the Lucide icon its zoom controls draw); the renderer itself is bundled into dist/mermaid.js from the devDependency (^1.9.0) at the version package-lock.json locks; refresh this entry, the licence copy and NOTICE when that version changes"
   }
 ]

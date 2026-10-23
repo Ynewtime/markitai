@@ -1,5 +1,5 @@
 // Mermaid diagrams: Pele's drawing read back through the allowlist, what falls back to code, and what never
-// reaches the page, against the pinned renderer the page loads as /ui/mermaid.js.
+// reaches the page, against the renderer version package-lock.json locks (the page loads it as /ui/mermaid.js).
 import assert from "node:assert/strict";
 import test from "node:test";
 // The vendored parser the page loads as /ui/marked.js.
