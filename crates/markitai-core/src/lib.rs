@@ -147,6 +147,8 @@ pub const BROWSER_ROOT_SANDBOX_REFUSED: &str = browser::ROOT_SANDBOX_REFUSED;
 /// a minute nor in half a minute more: installed, but slow to start.
 pub const BROWSER_SLOW_TO_START: &str = browser::SLOW_TO_START;
 
+/// A successful launch is remembered in `MARKITAI_HOME` for seven days, for
+/// the same browser executable and markitai, and stands for a new one.
 pub fn browser_diagnostic() -> Result<Option<PathBuf>> {
     browser::diagnostic()
 }

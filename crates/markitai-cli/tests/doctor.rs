@@ -172,6 +172,34 @@ fn executable_presence_is_not_browser_readiness_and_child_secrets_stay_private()
     assert!(!String::from_utf8_lossy(&output.stderr).contains("child-sensitive-token"));
 }
 
+/// Only a successful launch is remembered (for seven days): a browser that
+/// fails to start is launched again by the next doctor, and leaves no record.
+#[cfg(unix)]
+#[test]
+fn a_failed_browser_launch_is_tried_again_and_never_remembered() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let launches = dir.path().join("launches");
+    let browser = dir.path().join("fake-browser");
+    std::fs::write(
+        &browser,
+        format!("#!/bin/sh\necho x >> '{}'\nexit 9\n", launches.display()),
+    )
+    .unwrap();
+    std::fs::set_permissions(&browser, std::fs::Permissions::from_mode(0o700)).unwrap();
+    for run in 1..=2 {
+        let output = command(dir.path(), json!({}))
+            .env("MARKITAI_BROWSER_EXECUTABLE", &browser)
+            .arg("--json")
+            .output()
+            .unwrap();
+        assert_eq!(decode(&output)["playwright"]["status"], "warning");
+        let count = std::fs::read_to_string(&launches).unwrap().lines().count();
+        assert_eq!(count, run);
+    }
+    assert!(!dir.path().join("home/doctor-chromium-launch.json").exists());
+}
+
 #[test]
 fn vlm_optout_is_reported_without_contacting_the_configured_endpoint() {
     let dir = tempfile::tempdir().unwrap();

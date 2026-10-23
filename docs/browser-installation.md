@@ -9,6 +9,10 @@ launch after installing can be that slow on Windows while antivirus scans the
 new executable. A browser that starts in neither try is reported as installed
 but slow to start (a warning that blocks no browser workflow), with
 `markitai doctor` to run again in a minute; `--fix` installs nothing for it.
+A successful launch is remembered for seven days in `MARKITAI_HOME`
+(`doctor-chromium-launch.json`), for the same browser executable (path, size and
+modification time) and the same markitai, so later doctor runs do not start the
+browser again; delete the file to check a launch now.
 `markitai doctor --fix` installs the official Chrome for Testing headless shell
 when no discovered browser can start. A healthy browser needs no download.
 Normal conversions and diagnostics never install software implicitly.

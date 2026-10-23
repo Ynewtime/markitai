@@ -8,6 +8,7 @@ mod digest_tests;
 mod download;
 #[cfg(test)]
 mod download_tests;
+mod launch_record;
 mod options;
 pub(crate) mod pool;
 #[cfg(test)]
@@ -230,7 +231,13 @@ pub fn diagnostic() -> Result<Option<PathBuf>> {
     if diagnostic_leaves_app_untouched(&executable) {
         version_probe(&executable)?;
     } else {
-        diagnostic_with(&executable)?;
+        // A launch of this browser in the last seven days stands for one now.
+        let record = launch_record::path();
+        let now = std::time::SystemTime::now();
+        if !launch_record::remembered(&record, &executable, now) {
+            diagnostic_with(&executable)?;
+            launch_record::remember(&record, &executable, now);
+        }
     }
     Ok(Some(executable))
 }
