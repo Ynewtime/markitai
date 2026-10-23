@@ -663,11 +663,16 @@ function Find-FirstMarkitai {
     $machine = ""
     try { $machine = [Environment]::GetEnvironmentVariable("Path", "Machine") } catch {}
     foreach ($entry in @((Split-PathList $machine) + (Split-PathList (Get-UserPath)))) {
-        $folder = [Environment]::ExpandEnvironmentVariables($entry)
-        foreach ($name in @("markitai.exe", "markitai.cmd", "markitai.bat")) {
-            $candidate = Join-Path $folder $name
-            if (Test-Path -LiteralPath $candidate -PathType Leaf) { return $candidate }
-        }
+        # An entry can name a drive that is gone (a removed USB disk, an
+        # unmapped share) or be malformed: Join-Path would throw, so such
+        # entries are skipped.
+        try {
+            $folder = [Environment]::ExpandEnvironmentVariables($entry)
+            foreach ($name in @("markitai.exe", "markitai.cmd", "markitai.bat")) {
+                $candidate = [IO.Path]::Combine($folder, $name)
+                if (Test-Path -LiteralPath $candidate -PathType Leaf) { return $candidate }
+            }
+        } catch {}
     }
     return $null
 }
@@ -795,7 +800,7 @@ function Invoke-Install {
         }
         $directory = Get-DefaultInstallDirectory
         $receipt = Install-Release $unpacked $directory $release $target
-        $markitai = Join-Path $directory "markitai.exe"
+        $markitai = [IO.Path]::Combine($directory, "markitai.exe")
         Write-Ok "$(Msg 'installed'): $markitai ($reported)"
         if (Add-ToUserPath $directory) {
             $receipt.PathAdded = $true

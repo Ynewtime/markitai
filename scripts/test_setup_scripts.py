@@ -350,6 +350,9 @@ Assert (@(Get-ChildItem $install -Force | Where-Object { $_.Name -match '\.old-[
 Assert ((Get-Content -Raw (Join-Path $install "receipt")) -match "version=2.0.1") "receipt"
 Assert ((Read-Receipt $install).Names -contains "licenses") "receipt lists the folder's names"
 Assert ($script:UvRemoved -eq 1) "uv's markitai removed once installing"
+$script:FakeUserPath = "Z:\old-usb-tools;$install"
+Assert ((Find-FirstMarkitai) -eq [IO.Path]::Combine($install, "markitai.exe")) "a Path entry on a missing drive is skipped"
+$script:FakeUserPath = '%USERPROFILE%\bin;C:\Tools'
 
 $second = Join-Path $Work "second"
 New-Item -ItemType Directory -Path $second | Out-Null
