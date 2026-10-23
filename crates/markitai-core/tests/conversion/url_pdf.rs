@@ -11,6 +11,33 @@ use std::time::{Duration, Instant};
 
 const PDF: &[u8] = include_bytes!("../../src/pdf_raster/fixtures/mixed-native-scanned-blank.pdf");
 
+/// [`PDF`] with a figure under page 1's text. The scanned page 2's picture is
+/// left out once its screenshot is written (docs/pdf.md), so this figure is
+/// the picture a page capture must keep.
+#[cfg(unix)]
+fn pdf_with_figure() -> Vec<u8> {
+    use lopdf::{Stream, dictionary};
+    let mut document = lopdf::Document::load_mem(PDF).unwrap();
+    let page = document.page_iter().next().unwrap();
+    let pixels: Vec<u8> = (0..80 * 80)
+        .flat_map(|i| [(i % 80 * 3) as u8, 90, 160])
+        .collect();
+    let figure = document.add_object(Stream::new(
+        dictionary! {
+            "Type" => "XObject", "Subtype" => "Image", "Width" => 80, "Height" => 80,
+            "ColorSpace" => "DeviceRGB", "BitsPerComponent" => 8
+        },
+        pixels,
+    ));
+    document.add_xobject(page, "Fig", figure).unwrap();
+    let mut content = document.get_page_content(page);
+    content.extend_from_slice(b"\nq 128 0 0 128 48 300 cm /Fig Do Q\n");
+    document.change_page_content(page, content).unwrap();
+    let mut bytes = Vec::new();
+    document.save_to(&mut bytes).unwrap();
+    bytes
+}
+
 // A fresh test process isolates dotenv lookup and provider environment without
 // changing HOME or mutating process-global environment during parallel tests.
 fn isolated(name: &str) -> bool {
@@ -88,6 +115,10 @@ impl Reply {
     }
     fn pdf() -> Self {
         Self::data("application/pdf", PDF)
+    }
+    #[cfg(unix)]
+    fn pdf_with_figure() -> Self {
+        Self::data("application/pdf", &pdf_with_figure())
     }
     fn header(mut self, name: &str, value: &str) -> Self {
         self.headers.push((name.into(), value.into()));
@@ -340,12 +371,12 @@ fn url_pdf_redirect_preserves_original_identity_and_final_metadata() {
 }
 
 #[test]
-#[cfg(target_os = "macos")]
+#[cfg(unix)]
 fn url_pdf_auto_extensionless_capture_retains_body_and_published_names() {
     if isolated("url_pdf_auto_extensionless_capture_retains_body_and_published_names") {
         return;
     }
-    let server = Server::new(vec![Reply::pdf(), Reply::pdf()]);
+    let server = Server::new(vec![Reply::pdf_with_figure(), Reply::pdf_with_figure()]);
     let mut config = cfg();
     config["fetch"]["strategy"] = json!("auto");
     config["screenshot"] = json!({"enabled":true,"screenshot_only":true});
@@ -382,9 +413,23 @@ fn url_pdf_auto_extensionless_capture_retains_body_and_published_names() {
         );
     }
     assert_eq!(std::fs::read(previous).unwrap(), b"previous capture");
+    // Page 1's figure survives capture-only URL identity; the scan of page
+    // 2 is shown by its screenshot alone.
+    assert_eq!(
+        result.assets.len(),
+        1,
+        "PDF embedded pictures must survive capture-only URL identity: {:?}",
+        result.assets
+    );
+    assert!(result.assets[0].is_file());
+    assert!(result.markdown.contains(&format!(
+        "assets/{})",
+        result.assets[0].file_name().unwrap().to_str().unwrap()
+    )));
     assert!(
-        !result.assets.is_empty(),
-        "PDF embedded pictures must survive capture-only URL identity"
+        !result.markdown.contains("Image on page 2"),
+        "{}",
+        result.markdown
     );
     assert!(
         std::fs::read_to_string(result.output_path.as_ref().unwrap())
@@ -583,12 +628,12 @@ fn url_pdf_pure_keeps_url_text_precedence_even_with_only() {
 }
 
 #[test]
-#[cfg(target_os = "macos")]
+#[cfg(unix)]
 fn url_pdf_rag_profile_keeps_page_captures_and_relocates_embedded_assets() {
     if isolated("url_pdf_rag_profile_keeps_page_captures_and_relocates_embedded_assets") {
         return;
     }
-    let server = Server::new(vec![Reply::pdf()]);
+    let server = Server::new(vec![Reply::pdf_with_figure()]);
     let mut config = cfg();
     config["screenshot"] = json!({"enabled":true,"screenshot_only":true});
     config["output"]["profile"] = json!("rag");
@@ -598,7 +643,9 @@ fn url_pdf_rag_profile_keeps_page_captures_and_relocates_embedded_assets() {
     assert_eq!(result.markdown.matches("<!-- page:").count(), 3);
     assert_eq!(result.screenshots.len(), 3);
     assert_eq!(result.markdown.matches("<!-- ![Page ").count(), 3);
-    assert!(!result.assets.is_empty());
+    // Page 1's figure; the scan of page 2 is shown by its screenshot alone.
+    assert_eq!(result.assets.len(), 1, "{:?}", result.assets);
+    assert!(!result.markdown.contains("Image on page 2"));
     for asset in &result.assets {
         assert!(asset.starts_with(output.join("assets")));
         assert!(asset.is_file());
