@@ -1,4 +1,4 @@
-//! Batches Python markitai 1.2.1 left pending (real state directories in
+//! Batches Python markitai 1.3.0 left pending (real state directories in
 //! `tests/fixtures/python-batch`) are collected after upgrading: by ID or by
 //! `--llm-batch --resume`, from a loopback provider that answers the Python
 //! requests. Python's files are never modified.

@@ -119,7 +119,7 @@ export function pdfPageNotice(text: string): { pages: number[]; total: number | 
   return null;
 }
 
-/** Pages OCR read but found no text on: Python 1.2.1's `[OCR] No text found on N pages of <name> (pages …); they are
+/** Pages OCR read but found no text on: Python 1.3.0's `[OCR] No text found on N pages of <name> (pages …); they are
  * blank in the output` (and its later `[OCR] <name>: N of M pages have no text (pages …); …`), Rust's `PDF pages 2, 245–246 (3 of 490): OCR found no text; they are blank in the output.`
  * (`Office pages …: OCR found no text; the OCR supplement leaves them out.` for an Office document). */
 export function ocrBlankNotice(text: string): { pages: number[]; total: number | null; office: boolean } | null {
@@ -237,7 +237,7 @@ export function groupNotices(entries: NoticeEntry[]): NoticeGroup[] {
     const scanned =
       document.total !== null
         ? document.total > 0 && document.pages.size >= SCANNED_SHARE * document.total
-        : // Python 1.2.1 does not say how many pages the document has: an unbroken run from page 1 of at least
+        : // Python 1.3.0 does not say how many pages the document has: an unbroken run from page 1 of at least
           // SCANNED_RUN pages reads as a scan (the warning's own text, behind Details, names the pages).
           document.pages.size >= SCANNED_RUN && [...document.pages].reduce((top, page) => Math.max(top, page), 0) === document.pages.size;
     const kind: NoticeKind = scanned ? "pdf_scanned" : "pdf_ocr_pages";

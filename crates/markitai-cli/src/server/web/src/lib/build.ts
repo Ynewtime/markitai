@@ -1,4 +1,4 @@
-// The sidebar's version line (v1.16): `1.2.1 a1b2c3d 10-14 22:48`, the version,
+// The sidebar's version line (v1.16): `1.3.0 a1b2c3d 10-14 22:48`, the version,
 // the commit it was built from and when, in the viewer's own time zone. A build
 // from a tree with uncommitted changes marks its commit `-dirty` (git's own
 // word); a development version says `-dev` in the version itself. An older

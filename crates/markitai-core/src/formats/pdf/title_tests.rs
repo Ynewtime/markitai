@@ -1,6 +1,6 @@
 //! A PDF's title is what a reader sees as its title: its Info title when
 //! that names it, else the most prominent text of its first pages. The
-//! shapes of Python markitai 1.2.1's title tests (`test_document_titles.py`).
+//! shapes of Python markitai 1.3.0's title tests (`test_document_titles.py`).
 use super::*;
 use lopdf::dictionary;
 

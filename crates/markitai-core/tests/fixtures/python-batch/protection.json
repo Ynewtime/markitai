@@ -1,5 +1,5 @@
 {
- "generator": "markitai 1.2.1 DocumentEnhancer._protect_image_positions + llm.content.protect_content",
+ "generator": "markitai 1.3.0 DocumentEnhancer._protect_image_positions + llm.content.protect_content",
  "cases": [
   {
    "input": "# Plain\n\nNo protected content here.\n",

@@ -22,7 +22,7 @@ const MAX_FIELD: usize = 8192;
 
 /// The key a connection or deployment saved through the settings API stores
 /// when it has no key but names an address (the same word Python markitai
-/// 1.2.1 stores, so a configuration file means the same to both). It is no
+/// 1.3.0 stores, so a configuration file means the same to both). It is no
 /// credential: it is sent as written, which a server that checks no key
 /// accepts, and an entry holding it never uses the environment's
 /// credentials, so the server's own key variable cannot reach an address a

@@ -619,7 +619,7 @@ fn routability_and_cards_follow_what_a_connection_will_send() {
     let view = server.ok("GET", "/api/settings/llm", None);
     assert_eq!(view["routable"], false, "{view}");
     drop(server);
-    // Python markitai 1.2.1's keyless entry reads as no key, and routes.
+    // Python markitai 1.3.0's keyless entry reads as no key, and routes.
     configure(
         dir.path(),
         &operator.base,

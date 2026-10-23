@@ -79,8 +79,8 @@ class TargetPackagingTests(unittest.TestCase):
         self.assertFalse(validate_target("x86_64-apple-darwin", "aarch64-apple-darwin", "darwin"))
 
     def test_the_version_comes_from_the_workspace_package_section(self):
-        manifest = '[package]\nversion = "0.1.0"\n\n[workspace.package]\nedition = "2024"\nversion = "1.3.0-dev"\n'
-        self.assertEqual(workspace_version(manifest), "1.3.0-dev")
+        manifest = '[package]\nversion = "0.1.0"\n\n[workspace.package]\nedition = "2024"\nversion = "2.0.0-dev"\n'
+        self.assertEqual(workspace_version(manifest), "2.0.0-dev")
         with self.assertRaisesRegex(RuntimeError, "workspace.package"):
             workspace_version('[package]\nversion = "0.1.0"\n')
 

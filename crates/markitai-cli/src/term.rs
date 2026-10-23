@@ -1,5 +1,5 @@
 //! One terminal style for every line the CLI prints, shared with Python
-//! markitai 1.2.1 (`markitai.utils.term`) so both look and behave the same.
+//! markitai 1.3.0 (`markitai.utils.term`) so both look and behave the same.
 //!
 //! Colour means one thing: bold for structure (titles, section headers), cyan
 //! for the accent (the title mark, prompts, an action in progress, commands to

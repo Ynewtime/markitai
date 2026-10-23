@@ -3,8 +3,8 @@
 Markitai converts documents, web pages and images to Markdown. One Rust core
 powers the `markitai` command (also installed as `mkai`), a local REST service
 with a browser workspace, an MCP server, and in-process Node.js, Python and Go
-bindings. This guide covers development version **1.3.0-dev**, the Rust rewrite of
-reference release 1.2.0. Stable 1.3.0 has not been published.
+bindings. This guide covers development version **2.0.0-dev**, the Rust rewrite of
+reference release 1.2.0. Stable 2.0.0 has not been published.
 
 ## 1. Install
 
@@ -13,11 +13,11 @@ describe project builds, not links to a published stable release.
 
 | Platform | Development archive |
 |---|---|
-| macOS on Apple silicon | `markitai-1.3.0-dev-aarch64-apple-darwin-single-binary.tar.gz` |
-| macOS on Intel | `markitai-1.3.0-dev-x86_64-apple-darwin-single-binary.tar.gz` |
-| Linux x86-64 | `markitai-1.3.0-dev-x86_64-unknown-linux-gnu-single-binary.tar.gz` |
-| Windows x64 | `markitai-1.3.0-dev-x86_64-pc-windows-msvc.zip` |
-| Windows ARM64 | `markitai-1.3.0-dev-aarch64-pc-windows-msvc.zip` |
+| macOS on Apple silicon | `markitai-2.0.0-dev-aarch64-apple-darwin-single-binary.tar.gz` |
+| macOS on Intel | `markitai-2.0.0-dev-x86_64-apple-darwin-single-binary.tar.gz` |
+| Linux x86-64 | `markitai-2.0.0-dev-x86_64-unknown-linux-gnu-single-binary.tar.gz` |
+| Windows x64 | `markitai-2.0.0-dev-x86_64-pc-windows-msvc.zip` |
+| Windows ARM64 | `markitai-2.0.0-dev-aarch64-pc-windows-msvc.zip` |
 
 On macOS or Linux, replace `Archive` with the path to your downloaded archive.
 Use a new installation directory; if `mkdir` reports that it exists, choose a
@@ -25,19 +25,19 @@ new directory before continuing. Keeping the files together preserves both
 aliases and the offline documentation:
 
 ```sh
-Archive="/path/to/markitai-1.3.0-dev-aarch64-apple-darwin-single-binary.tar.gz"
-Install="$HOME/.local/share/markitai/1.3.0-dev"
+Archive="/path/to/markitai-2.0.0-dev-aarch64-apple-darwin-single-binary.tar.gz"
+Install="$HOME/.local/share/markitai/2.0.0-dev"
 mkdir -p "$HOME/.local/share/markitai"
 mkdir "$Install" && tar -xzf "$Archive" -C "$Install"
 export PATH="$Install:$PATH"
-markitai --version                  # markitai 1.3.0-dev
+markitai --version                  # markitai 2.0.0-dev
 mkai --help
 markitai-mcp --help
 ```
 
 The `export` makes the commands available in this terminal immediately; it
 does not rely on `~/.local/bin` already being on `PATH`. To keep them available
-in new terminals, add `export PATH="$HOME/.local/share/markitai/1.3.0-dev:$PATH"`
+in new terminals, add `export PATH="$HOME/.local/share/markitai/2.0.0-dev:$PATH"`
 once to `~/.zshrc` for zsh or `~/.bashrc` for non-login bash terminals
 (`~/.bash_profile` for login bash terminals). Use the actual installation
 directory if you changed it. An MCP client can always use the
@@ -49,8 +49,8 @@ Replace `Archive` with your
 ZIP path; choose a new `Install` directory if it already exists:
 
 ```powershell
-$Archive = "C:\Downloads\markitai-1.3.0-dev-aarch64-pc-windows-msvc.zip"
-$Install = Join-Path $env:LOCALAPPDATA "Programs\Markitai-1.3.0-dev"
+$Archive = "C:\Downloads\markitai-2.0.0-dev-aarch64-pc-windows-msvc.zip"
+$Install = Join-Path $env:LOCALAPPDATA "Programs\Markitai-2.0.0-dev"
 if (Test-Path -LiteralPath $Install) { throw "Choose a new installation directory" }
 Expand-Archive -LiteralPath $Archive -DestinationPath $Install
 & "$Install\markitai.exe" --version
@@ -80,7 +80,7 @@ such mark. Once you are sure the archive came from the project and its checksum 
 the supplied package record, remove the mark from that file before extracting it:
 
 ```sh
-xattr -d com.apple.quarantine markitai-1.3.0-dev-aarch64-apple-darwin-single-binary.tar.gz
+xattr -d com.apple.quarantine markitai-2.0.0-dev-aarch64-apple-darwin-single-binary.tar.gz
 ```
 
 If you have already extracted it, run the same command on

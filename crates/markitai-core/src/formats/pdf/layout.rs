@@ -276,7 +276,7 @@ fn join_title(parts: &[&str]) -> String {
 /// rejects (white on white, outside the page) and a candidate that is
 /// no name (`2025`, a page number, an id) are passed over for the next
 /// one. Text repeated atop every page is not: a policy prints its title
-/// atop each page. Python markitai 1.2.1 reads the same title
+/// atop each page. Python markitai 1.3.0 reads the same title
 /// (`converter/pdf_title.py`).
 pub(super) fn title(
     items: Vec<TextItem>,
@@ -872,7 +872,7 @@ const LARGER: f32 = 1.04;
 const SHORT_HEADING: usize = 24;
 
 /// CJK text that reads as a sentence or a field, not a title (the page
-/// reader's rules, Python markitai 1.2.1's too): it ends with, or holds
+/// reader's rules, Python markitai 1.3.0's too): it ends with, or holds
 /// within, `。！？；`, ends with `，`, `、` or `：`, runs on past `，` for a
 /// dozen characters, or is a `label：value` field with a label of at most
 /// twelve characters.
@@ -909,7 +909,7 @@ fn cjk_sentence_or_field(text: &str) -> bool {
 /// A face of its own a little larger than the body text (by [`LARGER`])
 /// is a heading face too, and a single short line in it, or in a bold face,
 /// may sit right above its paragraph (`特别说明` at 11 pt over 10.4 pt body
-/// text, as Python markitai 1.2.1 makes it a heading): it ends short of
+/// text, as Python markitai 1.3.0 makes it a heading): it ends short of
 /// the text's right edge and holds at most [`SHORT_HEADING`] characters.
 /// CJK text that reads as a sentence or a `label：value` field is no
 /// heading either way.
@@ -1947,7 +1947,7 @@ fn render(
     }
     // A large icon (a symbol font's pointing hand before a section's title)
     // decorates the text beside it and is left out, as Python markitai
-    // 1.2.1 drops a heading of glyphs only.
+    // 1.3.0 drops a heading of glyphs only.
     items.retain(|item| !icon(item, faces.body));
     if items.is_empty() {
         return None;

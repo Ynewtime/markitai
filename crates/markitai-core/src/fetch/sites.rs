@@ -1234,7 +1234,7 @@ mod tests {
         }
         // JSON that is content rather than an error.
         for json in [
-            r#"{"name":"markitai","version":"1.3.0"}"#,
+            r#"{"name":"markitai","version":"2.0.0"}"#,
             r#"{"message":"Hello, world"}"#,
             r#"{"code":0,"msg":"success","data":{"id":1}}"#,
             r#"{"code":200,"message":"OK"}"#,

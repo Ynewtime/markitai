@@ -6,8 +6,8 @@ browser workspace, an MCP server, and in-process Node.js, Python and Go
 bindings. The CLI executable needs no Python, Node.js or Go runtime; language
 bindings need their respective language runtime.
 
-This is **1.3.0-dev**, the Rust rewrite of reference release 1.2.0, available
-for local verification. Stable 1.3.0 is not published. See the
+This is **2.0.0-dev**, the Rust rewrite of reference release 1.2.0, available
+for local verification. Stable 2.0.0 is not published. See the
 [changelog](CHANGELOG.md) and
 [compatibility contracts](docs/compatibility.md).
 

@@ -60,18 +60,18 @@ test("the version line is the version, the commit and the build time, without th
   assert.equal(buildTime(built, now), "10-14 22:48");
   assert.equal(buildTime(new Date(2025, 0, 2, 3, 4).toISOString(), now), "2025-01-02");
   assert.equal(buildTime("not a time", now), null);
-  const line = versionLine({ version: "1.2.1", build: { version: "1.2.1", commit: "36583fe", built_at: built, dirty: false } }, now);
-  assert.equal(line?.text, "1.2.1 36583fe 10-14 22:48");
-  assert.equal(line?.short, "1.2.1 36583fe");
+  const line = versionLine({ version: "1.3.0", build: { version: "1.3.0", commit: "36583fe", built_at: built, dirty: false } }, now);
+  assert.equal(line?.text, "1.3.0 36583fe 10-14 22:48");
+  assert.equal(line?.short, "1.3.0 36583fe");
   assert.ok(!/markitai/i.test(line?.text ?? ""));
-  const dirty = versionLine({ version: "1.3.0-dev", build: { version: "1.3.0-dev", commit: "abc1234", built_at: built, dirty: true } }, now);
-  assert.equal(dirty?.text, "1.3.0-dev abc1234-dirty 10-14 22:48");
+  const dirty = versionLine({ version: "2.0.0-dev", build: { version: "2.0.0-dev", commit: "abc1234", built_at: built, dirty: true } }, now);
+  assert.equal(dirty?.text, "2.0.0-dev abc1234-dirty 10-14 22:48");
   // An older backend: the version alone.
-  assert.equal(versionLine({ version: "1.2.1" }, now)?.text, "1.2.1");
-  assert.equal(versionLine({ version: "1.2.1", build: { version: "1.2.1", commit: null, built_at: null } }, now)?.text, "1.2.1");
+  assert.equal(versionLine({ version: "1.3.0" }, now)?.text, "1.3.0");
+  assert.equal(versionLine({ version: "1.3.0", build: { version: "1.3.0", commit: null, built_at: null } }, now)?.text, "1.3.0");
   for (const dict of [en, zh, ja]) {
-    const title = dict.buildTitle({ version: "1.3.0-dev", commit: "abc1234", dirty: true, built: "2026-10-14 22:48:05 UTC+08:00" });
-    assert.match(title, /1\.3\.0-dev/);
+    const title = dict.buildTitle({ version: "2.0.0-dev", commit: "abc1234", dirty: true, built: "2026-10-14 22:48:05 UTC+08:00" });
+    assert.match(title, /2\.0\.0-dev/);
     assert.match(title, /abc1234/);
     assert.match(title, /2026-10-14 22:48:05/);
   }
@@ -92,7 +92,7 @@ const item = (text: string, key = "j/a", name = "atlas.pdf") => ({ itemKey: key,
 
 test("a scanned PDF is said plainly, with the one action, from either backend's wording", () => {
   const list = Array.from({ length: 491 }, (_, index) => index + 1).join(", ");
-  // Python 1.2.1 today (no total), Python with the v1.16 total, Rust's v1.16 wording.
+  // Python 1.3.0 today (no total), Python with the v1.16 total, Rust's v1.16 wording.
   const python = `[PDF] atlas.pdf: 491 pages look scanned/garbled (pages ${list}); consider re-running with --ocr`;
   assert.deepEqual(pdfPageNotice(python)?.pages.length, 491);
   assert.equal(pdfPageNotice(python)?.total, null);
@@ -105,7 +105,7 @@ test("a scanned PDF is said plainly, with the one action, from either backend's 
     assert.match(zh.noticeTitle(group!.kind, group!.count, group!.models, group!.sample, group!.pages), /扫描件.*OCR/);
     assert.match(ja.noticeTitle(group!.kind, group!.count, group!.models, group!.sample, group!.pages), /スキャン.*OCR/);
   }
-  // Without the document's page count, an unbroken run from page 1 reads as a scan too (Python 1.2.1's wording)…
+  // Without the document's page count, an unbroken run from page 1 reads as a scan too (Python 1.3.0's wording)…
   const [old] = groupNotices([item(python)]);
   assert.equal(old?.kind, "pdf_scanned");
   assert.ok(old!.samples.every((sample) => !sample.includes("1, 2, 3") && sample.includes("pages 1–491")));

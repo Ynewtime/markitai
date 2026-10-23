@@ -20,7 +20,7 @@ notice, so a changed palette cannot ship under it.
 Changes: only these values are used, written as a Rust table and match arms;
 `inherit` and the renamed-colour warnings (`lightBlue`, `warmGray`, `trueGray`,
 `coolGray`, `blueGray`) are not. No Tailwind CSS code is included. defuddle and
-Markitai 1.2.1, whose behaviour this reader follows, carry the same palette;
+Markitai 1.3.0, whose behaviour this reader follows, carry the same palette;
 the values here were checked against the Tailwind CSS source itself.
 
 This notice does not complete a legal review of the dependency bundle.

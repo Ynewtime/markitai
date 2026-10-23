@@ -1,6 +1,6 @@
 # Pending Python markitai batches
 
-Output directories that Python markitai 1.2.1 left with a pending Provider
+Output directories that Python markitai 1.3.0 left with a pending Provider
 Batch, used to test that this build collects them (`tests/python_batch.rs`).
 
 - `openai/`: `markitai inputs -o out --llm --llm-batch --alt` with
@@ -8,7 +8,8 @@ Batch, used to test that this build collects them (`tests/python_batch.rs`).
 - `anthropic/`: the same inputs without `--alt`, with
   `anthropic/claude-haiku-5-5` (Message Batches).
 
-Made on 2026-10-11 with the 1.2.1 wheel (sha256
+Made on 2026-10-11 with a pre-release wheel of Python markitai 1.3.0, then
+numbered 1.2.1 (sha256
 `5ac00c3665852bf99f012175d27a466c9e8e3c187327c0f886554093d24be196`) against a
 loopback stub of the OpenAI Files/Batches and Anthropic Message Batches APIs
 that accepted the create call and failed every status read, so Python kept

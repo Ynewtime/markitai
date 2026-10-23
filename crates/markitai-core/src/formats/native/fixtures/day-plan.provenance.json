@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "content": "invented for the Python markitai 1.2.1 round-17 spreadsheet fix (a fair's day plan); no real data",
+  "content": "invented for the Python markitai 1.3.0 round-17 spreadsheet fix (a fair's day plan); no real data",
   "purpose": "rows whose only value sits in a cell merged across the sheet (titles, a contact line, a section label inside the sheet), a header-less first column, empty cells",
   "files": {
     "day-plan.xlsx": {

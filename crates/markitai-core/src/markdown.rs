@@ -193,7 +193,7 @@ fn edge_indices(lines: &[&str]) -> Vec<usize> {
 
 /// Running headers and footers of the pages of marker-delimited output
 /// (`<!-- Page number: N -->`, `<!-- Slide number: N -->`), as Python
-/// markitai 1.2.1 removes them: a page's first and last two non-empty lines
+/// markitai 1.3.0 removes them: a page's first and last two non-empty lines
 /// are candidates when they are at most [`RUNNING_MAX_CHARS`] long and no
 /// heading or table row; one whose key ([`running_key`]) is at that edge on
 /// [`RUNNING_MIN_SHARE`] of the pages, and on [`RUNNING_MIN_COUNT`] or more,

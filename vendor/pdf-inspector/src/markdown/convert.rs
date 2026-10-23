@@ -968,7 +968,7 @@ fn cjk_line_breaks(lines: &[TextLine]) -> (HashSet<usize>, HashSet<usize>) {
 /// (`2、`, `3．`) standing alone: no list item within three of its lines'
 /// heights above or below it on its page, and no line leading into it
 /// (ending in a colon) right above. Such a step stays a paragraph
-/// with its number (`2、列表加载后…`), as Python markitai 1.2.1 writes it;
+/// with its number (`2、列表加载后…`), as Python markitai 1.3.0 writes it;
 /// an item next to others is a list item (`- 1．…`).
 fn lone_cjk_enumerator(lines: &[TextLine], index: usize) -> bool {
     let line = &lines[index];

@@ -20,8 +20,8 @@ compiles the Rust core once in the `release` profile and takes several minutes.
 
 | Language | Minimum | Build | Result |
 |---|---|---|---|
-| Python | CPython 3.10 (ABI3 wheel) | `maturin build --release --locked` in `bindings/python` | `markitai-1.3.0.dev0-cp310-abi3-<platform>.whl` |
-| Node.js | 18 (Node-API 8) | `npm --prefix bindings/node run build`, then `npm pack` | `markitai-1.3.0-dev.0.tgz` |
+| Python | CPython 3.10 (ABI3 wheel) | `maturin build --release --locked` in `bindings/python` | `markitai-2.0.0.dev0-cp310-abi3-<platform>.whl` |
+| Node.js | 18 (Node-API 8) | `npm --prefix bindings/node run build`, then `npm pack` | `markitai-2.0.0-dev.0.tgz` |
 | Go (macOS/Linux) | 1.23 with cgo and a C linker | `cargo build --release --locked -p markitai-ffi` | `target/release/libmarkitai_ffi.{dylib,so}` |
 
 Building needs a native C/C++ toolchain/linker in addition to Rust; see
@@ -84,9 +84,9 @@ refuses include patterns outside `bindings/python`, so it does not build.
 ```sh
 npm --prefix bindings/node run build       # builds the addon as bindings/node/markitai.node
 mkdir -p dist/node
-(cd bindings/node && npm pack --pack-destination ../../dist/node)   # markitai-1.3.0-dev.0.tgz
+(cd bindings/node && npm pack --pack-destination ../../dist/node)   # markitai-2.0.0-dev.0.tgz
 cd /path/to/your/project
-npm install /path/to/markitai-rust/dist/node/markitai-1.3.0-dev.0.tgz
+npm install /path/to/markitai-rust/dist/node/markitai-2.0.0-dev.0.tgz
 node -e "console.log(require('markitai').version)"
 ```
 
@@ -114,10 +114,10 @@ self-contained static package.
 
 ## Version identifiers and adapter differences
 
-The development engine identifies itself as `1.3.0-dev`. Python's
+The development engine identifies itself as `2.0.0-dev`. Python's
 `markitai.__version__`, Node's exported `version`, Go's `Version()` and the C
 version function report that engine identifier. Distribution metadata uses the
-package manager's spelling: Python `1.3.0.dev0` and npm `1.3.0-dev.0`. These
+package manager's spelling: Python `2.0.0.dev0` and npm `2.0.0-dev.0`. These
 strings intentionally differ; compare installed distributions using
 `importlib.metadata.version("markitai")` or npm's package metadata, and use the
 engine identifier for diagnostics. Do not compare these strings for literal

@@ -56,7 +56,7 @@ const card = (extra: Partial<ProviderCard> & Pick<ProviderCard, "id" | "provider
 });
 
 test("a provider is one saved row: the server's key folds into its connection at its own endpoint", () => {
-  // As Python 1.2.1 lists the owner's OpenAI: the environment card, the connection made from it, the Common tile.
+  // As Python 1.3.0 lists the owner's OpenAI: the environment card, the connection made from it, the Common tile.
   const environment = card({ id: "env:openai", provider: "openai", kind: "environment", source: "OPENAI_API_KEY", credential: "env:OPENAI_API_KEY" });
   const connection = card({ id: "provider:p1", provider_id: "p1", provider: "openai", kind: "configured", api_base: "https://api.openai.com", default_base: "https://api.openai.com/v1", model_count: 1 });
   const proxy = card({ id: "provider:p2", provider_id: "p2", provider: "openai", kind: "configured", api_base: "https://proxy.example", api_key_configured: true });

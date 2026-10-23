@@ -71,7 +71,7 @@ test("a saved connection is a row, and its provider stays offered through it", (
   assert.deepEqual(names(arrangeProviders(cards, { query: "groq", filter: "all", label }).all), ["groq"]);
 });
 
-test("without groups (Python 1.2.1) Common is inferred from the eight names and the rest has no filter", () => {
+test("without groups (Python 1.3.0) Common is inferred from the eight names and the rest has no filter", () => {
   const python = [
     card("openai", "OpenAI"),
     card("anthropic", "Anthropic"),
@@ -134,7 +134,7 @@ test("the add form sends no address for a provider that takes none", () => {
 });
 
 test("a provider without a model list takes model IDs by hand, even when a saved card claims a list", () => {
-  // Python 1.2.1 sends `supports_discovery: true` for every saved connection.
+  // Python 1.3.0 sends `supports_discovery: true` for every saved connection.
   const saved = { kind: "configured" as const, provider_id: "p1", supports_discovery: true };
   for (const provider of ["vertex_ai", "vertex_ai_beta", "bedrock", "perplexity", "zai", "fireworks_ai"]) {
     assert.equal(listsModels(card(provider, provider, saved)), false, provider);

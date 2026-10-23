@@ -115,7 +115,7 @@ test("a failed model test is named by its category, from the server's reason or 
   assert.equal(testFailure({ detail: "Model connection returned HTTP 500 (server_error)", reason: "provider_error" }).reason, "provider_error");
   // An unknown reason falls back to the text.
   assert.equal(testFailure({ detail: "RateLimitError: x", reason: "something_new" }).reason, "rate_limited");
-  // Python 1.2.1's LiteLLM texts, the owner's DeepSeek case first.
+  // Python 1.3.0's LiteLLM texts, the owner's DeepSeek case first.
   const cases: [string, string][] = [
     ["AuthenticationError: litellm.AuthenticationError: AuthenticationError: DeepseekException - Authentication Fails (governor)", "key_rejected"],
     ['BadRequestError: litellm.BadRequestError: DeepseekException - {"error": {"message": "Authentication Fails (governor)"}}', "key_rejected"],

@@ -56,9 +56,9 @@ test("the sidebar and the phone Settings list show the build's date and time in 
   assert.equal(buildDate(built), "20261017 19:54");
   assert.equal(buildDate(new Date(2025, 0, 2, 3, 4).toISOString()), "20250102 03:04");
   assert.equal(buildDate("not a time"), null);
-  const line = versionLine({ version: "1.3.0-dev", build: { version: "1.3.0-dev", commit: "3efaa92", built_at: built, dirty: false } });
+  const line = versionLine({ version: "2.0.0-dev", build: { version: "2.0.0-dev", commit: "3efaa92", built_at: built, dirty: false } });
   assert.equal(line?.parts.date, "20261017 19:54");
-  assert.equal(versionLine({ version: "1.3.0-dev" })?.parts.date, null);
+  assert.equal(versionLine({ version: "2.0.0-dev" })?.parts.date, null);
   const shell = readFileSync(new URL("../components/shell.tsx", import.meta.url), "utf8");
   const settings = readFileSync(new URL("../components/settings-page.tsx", import.meta.url), "utf8");
   // plain text "Build: 20261017 19:54" in every language (the label is not translated), not a row with an icon

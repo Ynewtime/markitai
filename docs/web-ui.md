@@ -1,7 +1,7 @@
 # Browser workbench
 
 `markitai serve` includes a browser workbench. It is the one frontend of both
-markitai backends: this Rust server embeds it, and Python markitai 1.2.1 serves
+markitai backends: this Rust server embeds it, and Python markitai 1.3.0 serves
 the same build (see [one frontend, two backends](#one-frontend-two-backends)).
 Every file it needs is compiled into the binary; running it needs no Node
 runtime, CDN or external font, and the page makes no request to another origin.
@@ -13,7 +13,7 @@ conversions and a grey pulsing dot while something converts, which turns green a
 everything is done and fades six seconds later), the Settings sections
 (Appearance, Models, Access token, Edit config; a user token sees Appearance,
 its own Models and Edit config for them, see [Access token](#access-token)), and Docs and GitHub at the bottom, with the version
-(`1.3.0-dev`) in small muted text beside Docs and the commit it was built from beside GitHub (`-dirty` after
+(`2.0.0-dev`) in small muted text beside Docs and the commit it was built from beside GitHub (`-dirty` after
 it when built with uncommitted changes), and under them, as small muted text centred rather than a row,
 `Build: 20261017 19:54`, the build's date and time in the viewer's time zone (the label stays `Build:` in every
 language; the full stamp with seconds and offset is the tooltip). The Settings list on a phone ends with the Docs
@@ -691,7 +691,7 @@ continue to describe recorded model work only.
 
 ## One frontend, two backends
 
-Python markitai 1.2.1 serves this workbench before Rust 1.3.0 replaces it, so the
+Python markitai 1.3.0 serves this workbench before Rust 2.0.0 replaces it, so the
 page depends only on a written API contract that both servers implement: the
 routes, payloads, event stream, authentication and error `reason` codes it
 reads, described by the server's [OpenAPI document](serve.md#machine-readable-api-description).

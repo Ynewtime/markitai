@@ -70,7 +70,7 @@ export function runtimeFailure(result: Pick<DiscoveryResult, "status" | "detail"
 export const addingIsBlocked = (failure: RuntimeFailure | null): boolean => failure !== null && failure.reason !== "runtime_failed";
 
 /** Why a model list could not be loaded, when the server says so (v1.11
- * `reason`) or its text is a failed request (Python 1.2.1's "model discovery
+ * `reason`) or its text is a failed request (Python 1.3.0's "model discovery
  * failed (…)"); null for a list that is only partial or that the provider does
  * not publish, which keep their own note. */
 export function listFailure(result: Pick<DiscoveryResult, "status" | "detail" | "reason" | "key_variable">): TestFailure | null {

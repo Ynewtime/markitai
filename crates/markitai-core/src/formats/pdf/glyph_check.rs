@@ -11,7 +11,7 @@
 //! grow with the page count. A page whose failing fonts carry
 //! [`MAX_BAD_LETTER_SHARE`] of its letters is read by OCR instead.
 //!
-//! As Python markitai 1.2.1's `converter/pdf_text_trust.py` `GlyphCheck`
+//! As Python markitai 1.3.0's `converter/pdf_text_trust.py` `GlyphCheck`
 //! (8a757175). Never fatal: when drawing or reading fails, the check stops and
 //! every page keeps the verdict of the text-only checks.
 

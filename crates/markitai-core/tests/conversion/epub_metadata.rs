@@ -1,5 +1,5 @@
 //! An EPUB's own metadata goes to the front matter, not into the body, with
-//! the keys and values Python markitai 1.2.1 writes. The real books are in
+//! the keys and values Python markitai 1.3.0 writes. The real books are in
 //! `tests/fixtures/epub` (see its `provenance.json`).
 
 use super::*;

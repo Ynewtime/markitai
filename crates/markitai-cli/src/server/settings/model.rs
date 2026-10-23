@@ -4,7 +4,7 @@ use serde_json::{Map, Value, json};
 use std::collections::HashMap;
 
 /// The refusal of a change that would leave a keyed connection keyless at
-/// another host; the same words as Python markitai 1.2.1's.
+/// another host; the same words as Python markitai 1.3.0's.
 /// Both ways out of a refused `env:` value, as Python markitai words them.
 pub(super) const ENV_REFERENCE: &str = "env: references cannot be sent from the web API; to use another variable or endpoint, enter the key itself or set the pair up in the config file (a provider's own key variable is offered in the provider list)";
 /// Both ways out of a saved key sent to another address or provider.
@@ -70,7 +70,7 @@ pub(super) fn server_machine(base: &str) -> bool {
 /// Refuse an entry the settings API writes or tests that would carry the
 /// server's own cloud login to an address: such a model may only use its
 /// cloud's own endpoint here (owner decision, contract v1.9). The detail is
-/// Python markitai 1.2.1's, which the workbench translates by its wording.
+/// Python markitai 1.3.0's, which the workbench translates by its wording.
 pub(super) fn refuse_ambient_login_address(model: &str, base: Option<&str>) -> ApiResult<()> {
     if base.is_none_or(|base| base.trim().is_empty()) {
         return Ok(());

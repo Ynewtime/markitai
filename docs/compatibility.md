@@ -1,6 +1,6 @@
 # Compatibility and migration
 
-This is the Rust rewrite of Markitai 1.2.0, currently **1.3.0-dev**. The current
+This is the Rust rewrite of Markitai 1.2.0, currently **2.0.0-dev**. The current
 handoff is for local validation; a stable release is not being published.
 Output quality takes precedence over byte-for-byte equality with the Python
 implementation. A supported extension or passing build is not a promise of
@@ -60,7 +60,7 @@ configuration or the process environment, not in task content or published logs.
   `fetch.remote_consent: always` in your configuration (`markitai config set
   fetch.remote_consent always`); a failure a remote reader could have repaired
   says so. A `serve` job a user token owns never uses a remote service, as in
-  Python 1.2.1. See [fetch](fetch.md#consent).
+  Python 1.3.0. See [fetch](fetch.md#consent).
 - **Output recovery:** the CLI verifies native ownership evidence before replacing
   earlier batch results. A matching filename or digest alone is insufficient.
   Current-user directory aliases can be accepted; linked document leaves are

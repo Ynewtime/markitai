@@ -302,7 +302,7 @@ test("API refusals are read by reason, then structured code, then status code", 
 });
 
 test("a cloud login refused an address is one template, label and credential filled in", () => {
-  // Python markitai 1.2.1's and Rust's detail, verbatim (contract v1.9).
+  // Python markitai 1.3.0's and Rust's detail, verbatim (contract v1.9).
   const refusal = (label: string, credential: string) =>
     `api_base: ${label} models send the server's own ${credential} to any address, so here they can only use ${label}'s own endpoint; set another address in the config file`;
   const body = (detail: string) => ({ detail, code: "invalid_request", reason: "invalid_settings_request" });

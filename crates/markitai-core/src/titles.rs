@@ -8,7 +8,7 @@
 //! candidate that names the document ([`meaningful_title`]): not an
 //! application's default name, not a number (`20240315000127`, `2025`), not
 //! a page number. A candidate that fails is passed over for the next source,
-//! down to the file name. These are Python markitai 1.2.1's rules
+//! down to the file name. These are Python markitai 1.3.0's rules
 //! (`utils/titles.py`), so both implementations title a document alike.
 
 use regex::Regex;

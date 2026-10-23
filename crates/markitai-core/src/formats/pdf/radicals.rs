@@ -5,7 +5,7 @@
 //! KANGXI RADICAL USE) and `右下⻆` (U+2EC6, a CJK Radicals Supplement form)
 //! for 使用 and 右下角, which look alike but do not search, sort or match.
 //! The mapping is the shared workbench's (`web/src/lib/compare.ts`, `norm`),
-//! as Python markitai 1.2.1 applies it to PDF output: NFKC for the Kangxi
+//! as Python markitai 1.3.0 applies it to PDF output: NFKC for the Kangxi
 //! Radicals (U+2F00–U+2FD5, all of which it maps) and the two supplement
 //! forms it maps (U+2E9F, U+2EF3), then compare.ts's `RADICALS` for the
 //! supplement forms NFKC leaves alone. Other supplement forms (component

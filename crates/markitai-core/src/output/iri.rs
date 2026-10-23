@@ -12,7 +12,7 @@
 //! their boundaries. Characters RFC 3987 leaves out of an IRI (bidirectional
 //! controls, spaces and other separators, control and private-use
 //! characters) and bytes that are not UTF-8 stay encoded too. The authority
-//! is left as written. Python markitai 1.2.1 writes the same
+//! is left as written. Python markitai 1.3.0 writes the same
 //! (`utils/iri.py`).
 
 use unicode_properties::{GeneralCategoryGroup, UnicodeGeneralCategory};

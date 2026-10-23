@@ -115,7 +115,7 @@ fallback unless the flag is explicitly false.
 
 A deployment or connection saved here without a key while it names an address
 (a local server, a gateway, an OpenAI-compatible endpoint) stores
-`"api_key": "markitai-no-key"`, the placeholder Python markitai 1.2.1 stores too,
+`"api_key": "markitai-no-key"`, the placeholder Python markitai 1.3.0 stores too,
 so neither backend sends the server's own key variable (`OPENAI_API_KEY`,
 `LM_STUDIO_API_KEY`, ...) to an address a settings caller chose. It is no
 credential: conversions and connection tests send it as written, which a server
@@ -140,7 +140,7 @@ model is refused an address on every write and on a draft connection test (422
 `invalid_settings_request`, detail `api_base: Vertex AI models send the server's
 own Google credentials to any address, so here they can only use Vertex AI's own
 endpoint; set another address in the config file`, the same words as Python
-markitai 1.2.1's; `watsonx/` and `gigachat/`, which only Python routes, name
+markitai 1.3.0's; `watsonx/` and `gigachat/`, which only Python routes, name
 their token). Another address for Vertex AI is set in the configuration file.
 Bedrock keeps its address: there it sends the placeholder as its Bedrock API key
 and never signs with the server's AWS credentials.

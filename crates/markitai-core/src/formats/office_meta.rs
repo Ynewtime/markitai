@@ -43,7 +43,7 @@ impl Metadata {
     /// `authors` (every `dc:creator`, a list), `language`, `publisher`,
     /// `date` and `description` as plain text. Calibre's `0101-01-01` ("no
     /// date") is left out and a timestamp at midnight is a date. The same
-    /// keys and values as Python markitai 1.2.1; the identifier (usually a
+    /// keys and values as Python markitai 1.3.0; the identifier (usually a
     /// UUID) is not written.
     pub fn document_meta(&self) -> serde_json::Map<String, serde_json::Value> {
         use std::sync::LazyLock;

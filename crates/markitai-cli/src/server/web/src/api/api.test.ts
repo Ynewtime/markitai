@@ -207,10 +207,10 @@ test("requests stay same-origin, refuse redirects and turn unreachable into Netw
   try {
     globalThis.fetch = (async (url: URL, init: RequestInit) => {
       seen.push({ url: String(url), init });
-      return new Response('{"version":"1.3.0"}', { status: 200, headers: { "content-type": "application/json" } });
+      return new Response('{"version":"2.0.0"}', { status: 200, headers: { "content-type": "application/json" } });
     }) as typeof fetch;
     const { fetchCapabilities, fetchSnapshot } = await import("./client.ts");
-    assert.equal((await fetchCapabilities()).version, "1.3.0");
+    assert.equal((await fetchCapabilities()).version, "2.0.0");
     assert.equal(seen[0]?.url, `${ORIGIN}/api/capabilities`);
     assert.equal(seen[0]?.init.redirect, "error");
     assert.equal(seen[0]?.init.credentials, "same-origin");

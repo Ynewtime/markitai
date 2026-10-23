@@ -869,7 +869,7 @@ failed by name as the 1.25.1 copy (1,727 passed).
   tag and style suffix aside) a U+F0xx code maps through
   `symbol_font_char` (the Adobe Symbol encoding less bracket and radical
   pieces; Wingdings bullets, check boxes and pointing hands, as Python
-  markitai 1.2.1 maps them) or is dropped, instead of reading as the Latin
+  markitai 1.3.0 maps them) or is dropped, instead of reading as the Latin
   letter of its byte (`C`, `v` for Word's icon bullets, `-` for a minus).
 - `src/markdown/classify.rs`: the dingbats those bullets map to
   (`❖ ◆ ◇ ■ ▪ ➢`) followed by a space open list items like `•`.

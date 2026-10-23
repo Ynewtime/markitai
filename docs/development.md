@@ -1,7 +1,7 @@
 # Development
 
 Read [AGENTS.md](../AGENTS.md) and inspect `git status --short --branch` before work.
-Development builds remain `1.3.0-dev`; publishing requires explicit authorization.
+Development builds remain `2.0.0-dev`; publishing requires explicit authorization.
 Package manifests set the floors: Rust 1.92 (workspace `rust-version`, the
 floor of the portable PDF renderer hayro), Python 3.10 (`bindings/python/pyproject.toml`),
 Node.js 18 (`bindings/node/package.json`) and Go 1.23 (`bindings/go/go.mod`).

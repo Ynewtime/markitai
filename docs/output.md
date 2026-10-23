@@ -48,7 +48,7 @@ footer cleanup and, outside fenced code, removal of a table's repeated delimiter
 
 Running headers and footers are found on the pages and slides of output with page
 or slide markers (PDF, Office and presentation pages, written or not), as Python
-markitai 1.2.1 finds them: from four pages on, the first and last two non-empty
+markitai 1.3.0 finds them: from four pages on, the first and last two non-empty
 lines of each page are candidates when they are at most 100 characters and no
 heading, table row, picture, HTML, quotation or code; one that is at that edge on
 60% of the pages, and three or more (white space, case and digits ignored, so

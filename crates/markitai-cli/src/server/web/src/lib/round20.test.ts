@@ -40,8 +40,8 @@ test("a list narrowed to some items shows exactly those, in their submissions", 
 });
 
 test("the commit beside GitHub is short, -dirty for local changes, and absent when unknown", () => {
-  const caps = (build: { version: string; commit: string | null; built_at: string | null; dirty: boolean } | undefined) => versionLine({ version: "1.3.0-dev", ...(build ? { build } : {}) } as never);
-  assert.equal(commitLabel(caps({ version: "1.3.0-dev", commit: "6fd85a1c0ffee00", built_at: null, dirty: false })!), "6fd85a1c0ffe");
-  assert.equal(commitLabel(caps({ version: "1.3.0-dev", commit: "6fd85a1", built_at: null, dirty: true })!), "6fd85a1-dirty");
+  const caps = (build: { version: string; commit: string | null; built_at: string | null; dirty: boolean } | undefined) => versionLine({ version: "2.0.0-dev", ...(build ? { build } : {}) } as never);
+  assert.equal(commitLabel(caps({ version: "2.0.0-dev", commit: "6fd85a1c0ffee00", built_at: null, dirty: false })!), "6fd85a1c0ffe");
+  assert.equal(commitLabel(caps({ version: "2.0.0-dev", commit: "6fd85a1", built_at: null, dirty: true })!), "6fd85a1-dirty");
   assert.equal(commitLabel(caps(undefined)!), null);
 });

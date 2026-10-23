@@ -1509,12 +1509,12 @@ mod tests {
         let mut frontmatter = Map::new();
         frontmatter.insert(
             "generated".into(),
-            json!({"at":"2026-10-22T10:49:28Z","by":"markitai/1.3.0","nested":{"mode":"yes","n":2}}),
+            json!({"at":"2026-10-22T10:49:28Z","by":"markitai/2.0.0","nested":{"mode":"yes","n":2}}),
         );
         let rendered = render(&frontmatter, "Body\n").unwrap();
         assert_eq!(
             rendered,
-            "---\ngenerated:\n  at: '2026-10-22T10:49:28Z'\n  by: markitai/1.3.0\n  nested:\n    mode: 'yes'\n    n: 2\n---\n\nBody\n"
+            "---\ngenerated:\n  at: '2026-10-22T10:49:28Z'\n  by: markitai/2.0.0\n  nested:\n    mode: 'yes'\n    n: 2\n---\n\nBody\n"
         );
         let (parsed, body) = split_frontmatter(&rendered);
         assert_eq!(Value::Object(parsed), Value::Object(frontmatter));

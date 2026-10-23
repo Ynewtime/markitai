@@ -1,6 +1,6 @@
 # Rust CLI 开发版
 
-`markitai` 与 `mkai` 使用同一个 Rust 核心。当前版本是 `1.3.0-dev`。
+`markitai` 与 `mkai` 使用同一个 Rust 核心。当前版本是 `2.0.0-dev`。
 安装见[快速开始](quickstart.md#1-install)，完整参数以 `markitai --help` 和
 `markitai <子命令> --help` 为准；参考版差异见[兼容合同](compatibility.md)。
 
@@ -107,7 +107,7 @@ MARKITAI_LANG=zh markitai doctor
 
 ## 终端样式
 
-终端输出与 Python markitai 1.2.1 使用同一套样式。标记说明每行的含义，颜色只是
+终端输出与 Python markitai 1.3.0 使用同一套样式。标记说明每行的含义，颜色只是
 重复它：`✓` 成功（绿）、`!` 警告（黄）、`✗` 错误（红）、`→` 下一步或正在进行
 的操作（青）、`•` 事实或列表项（灰）、`○` 有意跳过（灰）、`?` 等待输入（青）、
 `◆` 标题（青）；节标题加粗不着色，要复制的命令单独一行、青色、不折行。条目缩进

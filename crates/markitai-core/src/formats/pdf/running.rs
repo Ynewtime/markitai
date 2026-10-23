@@ -14,7 +14,7 @@ use std::sync::LazyLock;
 
 /// The band at the top or the foot of a page, as a fraction of its height,
 /// in which a running header or footer is printed (a fifth, as Python
-/// markitai 1.2.1 takes page chrome).
+/// markitai 1.3.0 takes page chrome).
 const BAND: f32 = 0.2;
 /// The baseline difference within which two pages' lines stand at the same
 /// height.

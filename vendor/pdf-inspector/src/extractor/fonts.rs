@@ -3740,7 +3740,7 @@ fn symbol_family(name: &str) -> Option<SymbolFamily> {
 }
 
 /// markitai: what byte `byte` of a symbol font draws, as Python markitai
-/// 1.2.1 maps it (`converter/pdf_markdown.py`): the Adobe Symbol encoding
+/// 1.3.0 maps it (`converter/pdf_markdown.py`): the Adobe Symbol encoding
 /// for Symbol, less the pieces of large brackets and radicals that only
 /// draw part of a sign; the Wingdings and Wingdings 2 glyphs documents use
 /// as bullets, check boxes and pointers. Anything else is `None`.

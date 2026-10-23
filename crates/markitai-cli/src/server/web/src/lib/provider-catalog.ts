@@ -3,7 +3,7 @@
 // group filter. A provider appears once among the saved rows: the server's
 // environment key folds into the provider's connection at its own endpoint,
 // and a provider with a saved row is marked as added in Common and All, where
-// choosing it opens that connection (contract v1.11). A server that sends no `group` (Python 1.2.1) still works:
+// choosing it opens that connection (contract v1.11). A server that sends no `group` (Python 1.3.0) still works:
 // Common is inferred from the eight names and everything else is listed
 // under All providers without a filter.
 import type { ProviderCard } from "../api/types.ts";
@@ -43,7 +43,7 @@ const OWN_ENDPOINT_LOGIN: Record<string, string> = {
 export const ownEndpointLogin = (card: Pick<ProviderCard, "provider">): string | null => OWN_ENDPOINT_LOGIN[card.provider] ?? null;
 
 /** Providers that publish no model list, by both backends' catalogues. A
- * saved connection's card may still claim a list (Python 1.2.1 sends
+ * saved connection's card may still claim a list (Python 1.3.0 sends
  * `supports_discovery: true` for every saved connection), so the page knows
  * these by name and offers model IDs by hand instead of a failed load. */
 const NO_MODEL_LIST = new Set(["bedrock", "vertex_ai", "vertex_ai_beta", "perplexity", "zai", "fireworks_ai"]);
@@ -52,7 +52,7 @@ const NO_MODEL_LIST = new Set(["bedrock", "vertex_ai", "vertex_ai_beta", "perple
 export const listsModels = (card: Pick<ProviderCard, "provider" | "supports_discovery">): boolean =>
   card.supports_discovery !== false && !NO_MODEL_LIST.has(card.provider);
 
-/** The brand mark a card names; a server that names none (Python 1.2.1) gets
+/** The brand mark a card names; a server that names none (Python 1.3.0) gets
  * the mark whose key is the provider's prefix, when there is one. */
 export const iconKey = (card: Pick<ProviderCard, "provider" | "icon">): string | null =>
   card.icon === undefined ? card.provider : card.icon;

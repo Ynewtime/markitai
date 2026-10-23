@@ -123,7 +123,7 @@ and at the same height on another page (a publication's title beside its page
 numbers). A printed line may keep the `Page N` the page reader already removed
 from its block (`Page 3 Publication 501 (2025)`). Page numbers in forms the page
 reader leaves (`3 / 9`, `— 3 —`, `第 3 页`, `第3页，共9页`, `共 9 页 第 3 页`) go
-from any page where they are that top or bottom line, as Python markitai 1.2.1
+from any page where they are that top or bottom line, as Python markitai 1.3.0
 drops page chrome. A one-off line, a body-sized line other pages end with at
 other heights, and anything below the top or above the bottom line stay.
 
@@ -564,7 +564,7 @@ set-off rules keep the common cases text. A face of its own at least 1.04
 times the body size counts as a heading face too, and one short line (up to
 24 characters, ending at least four em short of the flow's right edge) in
 such a face, or in a bold one, may sit right above its paragraph: `特别说明`
-at 11 pt over 10.4 pt body text is a heading, as in Python markitai 1.2.1.
+at 11 pt over 10.4 pt body text is a heading, as in Python markitai 1.3.0.
 CJK text that reads as a sentence or a `label：value` field (the page
 reader's rules below) is no such heading. Sizes are weighed by letters and
 digits only, so a large icon (a 26 pt pointing hand before a section's
@@ -616,7 +616,7 @@ before a full-width colon, a value after it). Items numbered `1．`, `1）`, `1�
 or `（1）` are list items, written `- 1）…` since Markdown does not read those
 markers; a step so numbered standing alone (no list item within three lines
 above or below it, no line ending in a colon leading into it) stays a
-paragraph with its number, `2、…`, as Python markitai 1.2.1 writes it. A line
+paragraph with its number, `2、…`, as Python markitai 1.3.0 writes it. A line
 ending in CJK text more than four em short of its column (the
 farthest any line beside or under it reaches) ends its paragraph, as does a
 line of other text ending a sentence (`.`, `!`, `?`) that far short when the
@@ -696,7 +696,7 @@ A candidate that is no name (`2025` on a cover, a page number) gives way to the
 next one. A large company name repeated in every page header still wins over a
 smaller title. Without either, the first heading that names the document, then
 the file name, titles it (see [output](output.md#ordinary-and-pure-output)).
-Python markitai 1.2.1 uses the same rules.
+Python markitai 1.3.0 uses the same rules.
 
 Clearly bounded vertical bar charts are preserved as PNG crops in their body
 position, including axes and legends, without `--screenshot`, OCR or an LLM.
@@ -900,7 +900,7 @@ byte-identically.
 Word writes the glyphs of its Symbol, Wingdings and Wingdings 2 fonts as the
 private-use code U+F000 plus the glyph's byte. In a font so named (a subset
 tag or style suffix aside: `ABCDEF+Wingdings-Regular`, `SymbolMT`) each code
-maps through that font's table, as Python markitai 1.2.1 maps them: the Adobe
+maps through that font's table, as Python markitai 1.3.0 maps them: the Adobe
 Symbol encoding (`−`, `α`, `≤`; the pieces of large brackets and radicals
 left out) and the Wingdings bullets, check boxes and pointing hands (`❖`,
 `■`, `☐`, `✓`, `☞`); any other glyph of those fonts, and of Wingdings 3 and
@@ -916,7 +916,7 @@ path (with or without OCR, screenshots or the LLM, which reads them) fold the
 Kangxi Radicals (U+2F00–U+2FD5) by NFKC and the supplement forms that stand for
 one ideograph (U+2E9F, U+2EF3 by NFKC, then the 28 forms of the workbench's
 Compare table) to those ideographs; component shapes such as `⺁` and `⺌` stay.
-Other formats are left as they are. Python markitai 1.2.1 uses the same mapping.
+Other formats are left as they are. Python markitai 1.3.0 uses the same mapping.
 
 ## Text layers that read wrong
 
@@ -964,7 +964,7 @@ checking a text layer by the script it shows comes from Indra OCR
 
 With `--ocr` (local OCR routing pages, `ocr.per_page_routing` on), a page the
 checks above trust is also compared with what its glyphs draw, as Python
-markitai 1.2.1 does: a legacy or custom-encoded font stores other codes than
+markitai 1.3.0 does: a legacy or custom-encoded font stores other codes than
 the letters it draws (a shifted alphabet, Latin codes for CJK or Devanagari
 glyphs), and only the image tells. Up to 20 characters at the start of a
 run, mostly letters (six at least) of a script the configured OCR reads, are

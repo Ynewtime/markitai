@@ -434,7 +434,7 @@ export interface ProviderCard {
    * cloud that reads its own credentials. */
   key_optional?: boolean;
   /** The picker group (`common`, `subscriptions`, `makers`, `clouds`,
-   * `inference`, `gateways`, `local`); a server without one (Python 1.2.1)
+   * `inference`, `gateways`, `local`); a server without one (Python 1.3.0)
    * leaves it out and the picker infers Common from the provider names. */
   group?: string;
   /** Key of a vendored brand mark; null for a monogram. */
