@@ -623,6 +623,12 @@ class OCRProcessor:
             # Empty first-pass detections are handled by the tiled fallback
             # below, so RapidOCR's warning would be noisy and misleading.
             "Global.log_level": "error",
+            # Each line recognized at its own width. In batches of six (the
+            # default) a line is stretched and padded to the batch's widest:
+            # on a scan of sample.pdf that glued 6 pairs of words
+            # ("faucibusodio", "liberoviverra") and cost 10 more word errors
+            # in 934, and took 4.0 s for three pages instead of 3.2 s.
+            "Rec.rec_batch_num": 1,
         }
 
         # Set language if configured. Validated before RapidOCR sees it: an
