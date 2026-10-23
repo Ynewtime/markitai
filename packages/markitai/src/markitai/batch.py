@@ -671,6 +671,9 @@ class ProcessResult:
         ocr_pages: For a PDF, its OCR'd pages' recognized lines and figure
             boxes (``ConversionContext.ocr_pages``); the web server keeps
             them for Compare
+        document: With ``-f json``, what the item's document JSON is built
+            from (``document_json.DocumentParts``); the caller adds the
+            item's final warnings and duration, then writes it
     """
 
     success: bool
@@ -688,6 +691,7 @@ class ProcessResult:
     page_html: str | None = None
     page_sources: list[dict[str, Any]] = field(default_factory=list)
     ocr_pages: list[dict[str, Any]] = field(default_factory=list)
+    document: Any = None
 
 
 def _count(n: int, noun: str) -> str:

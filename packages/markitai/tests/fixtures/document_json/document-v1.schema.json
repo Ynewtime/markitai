@@ -1,0 +1,131 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Ynewtime/markitai-rust/blob/main/docs/schema/document-v1.schema.json",
+  "title": "markitai document JSON, schema version 1",
+  "description": "One converted document (markitai --format json). Every listed key is always present; null means not applicable or unknown. Later 1.x versions only add keys, so consumers ignore keys they do not know.",
+  "type": "object",
+  "required": ["schema_version", "tool", "source", "status", "skip_reason", "title", "properties", "markdown", "text", "pages", "images", "tables", "notices", "usage", "timings", "outputs"],
+  "properties": {
+    "schema_version": {"type": "string", "pattern": "^1\\.[0-9]+$"},
+    "tool": {
+      "type": "object",
+      "required": ["name", "version", "commit"],
+      "properties": {
+        "name": {"const": "markitai"},
+        "version": {"type": "string"},
+        "commit": {"type": "string", "description": "Short commit of the build, or \"unknown\"."}
+      }
+    },
+    "source": {
+      "type": "object",
+      "required": ["kind", "path", "url", "name", "type", "size", "sha256"],
+      "properties": {
+        "kind": {"enum": ["file", "url"]},
+        "path": {"type": ["string", "null"], "description": "The file as given; null for a URL."},
+        "url": {"type": ["string", "null"], "description": "The URL without credentials or secret query values; null for a file."},
+        "name": {"type": "string"},
+        "type": {"type": ["string", "null"], "description": "Lower-case extension the content was read as (a PDF named .docx is \"pdf\"); null for a URL or a file without an extension."},
+        "size": {"type": ["integer", "null"], "minimum": 0},
+        "sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "status": {"enum": ["completed", "skipped"]},
+    "skip_reason": {"type": ["string", "null"]},
+    "title": {"type": ["string", "null"]},
+    "properties": {"type": "object", "description": "The front matter of the final document, in the order the Markdown writes it."},
+    "markdown": {
+      "type": "object",
+      "required": ["base", "llm"],
+      "properties": {
+        "base": {"type": "string"},
+        "llm": {"type": ["string", "null"]}
+      }
+    },
+    "text": {"type": "string"},
+    "pages": {"type": "array", "items": {"$ref": "#/$defs/page"}},
+    "images": {"type": "array", "items": {"$ref": "#/$defs/image"}},
+    "tables": {"type": "array", "items": {"$ref": "#/$defs/table"}},
+    "notices": {"type": "array", "items": {"$ref": "#/$defs/notice"}},
+    "usage": {
+      "type": "object",
+      "required": ["requests", "input_tokens", "output_tokens", "cost_usd", "cost_complete", "models"],
+      "properties": {
+        "requests": {"type": "integer", "minimum": 0},
+        "input_tokens": {"type": "integer", "minimum": 0},
+        "output_tokens": {"type": "integer", "minimum": 0},
+        "cost_usd": {"type": "number", "minimum": 0},
+        "cost_complete": {"type": "boolean"},
+        "models": {"type": "array", "items": {"$ref": "#/$defs/model_usage"}}
+      }
+    },
+    "timings": {
+      "type": "object",
+      "required": ["duration_s"],
+      "properties": {"duration_s": {"type": "number", "minimum": 0}}
+    },
+    "outputs": {
+      "type": "object",
+      "required": ["markdown", "llm_markdown", "assets", "screenshots"],
+      "properties": {
+        "markdown": {"type": ["string", "null"]},
+        "llm_markdown": {"type": ["string", "null"]},
+        "assets": {"type": "array", "items": {"type": "string"}},
+        "screenshots": {"type": "array", "items": {"type": "string"}}
+      }
+    }
+  },
+  "$defs": {
+    "page": {
+      "type": "object",
+      "required": ["number", "text", "markdown", "images", "screenshot"],
+      "properties": {
+        "number": {"type": "integer", "minimum": 1},
+        "text": {"type": "string"},
+        "markdown": {"type": "string"},
+        "images": {"type": "array", "items": {"type": "string"}},
+        "screenshot": {"type": ["string", "null"]}
+      }
+    },
+    "image": {
+      "type": "object",
+      "required": ["path", "alt", "description", "text", "page"],
+      "properties": {
+        "path": {"type": "string"},
+        "alt": {"type": "string"},
+        "description": {"type": ["string", "null"]},
+        "text": {"type": ["string", "null"]},
+        "page": {"type": ["integer", "null"], "minimum": 1}
+      }
+    },
+    "table": {
+      "type": "object",
+      "required": ["page", "header", "rows"],
+      "properties": {
+        "page": {"type": ["integer", "null"], "minimum": 1},
+        "header": {"type": "array", "items": {"type": "string"}},
+        "rows": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}}
+      }
+    },
+    "notice": {
+      "type": "object",
+      "required": ["code", "level", "message", "items"],
+      "properties": {
+        "code": {"type": "string", "pattern": "^(other|[a-z_]+\\.[a-z_]+)$"},
+        "level": {"enum": ["warning", "info"]},
+        "message": {"type": "string"},
+        "items": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "model_usage": {
+      "type": "object",
+      "required": ["model", "requests", "input_tokens", "output_tokens", "cost_usd"],
+      "properties": {
+        "model": {"type": "string"},
+        "requests": {"type": "integer", "minimum": 0},
+        "input_tokens": {"type": "integer", "minimum": 0},
+        "output_tokens": {"type": "integer", "minimum": 0},
+        "cost_usd": {"type": "number", "minimum": 0}
+      }
+    }
+  }
+}

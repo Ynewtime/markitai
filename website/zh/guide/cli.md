@@ -209,6 +209,21 @@ markitai document.pdf -o ./output --json | jq '.items[] | select(.status == "fai
 
 退出码含义不变（见[退出码](#退出码)）；部分失败的批量仍以 `10` 退出并打印 JSON，脚本要同时看 `ok`。用法错误只在 stderr 报，不输出 JSON。`--json` 不能和 `--dry-run` 或 `--llm-batch-collect` 一起用。
 
+### `-f, --format <markdown|json>` {#format}
+
+`json` 另把每个文档写成一个字段稳定、带版本号的 JSON 对象，供不想解析 Markdown 或 front matter 的脚本使用。它与 markitai-rust 写出的文档相同（`schema_version` 为 `1.0`；每个键始终存在，不适用时为 `null`）。
+
+```bash
+markitai report.pdf -f json                    # 文档输出到 stdout
+markitai report.pdf -f json -o out/            # out/report.pdf.json，写在 out/report.pdf.md 旁
+markitai report.pdf -f json -o out/result.json # 指定文件名：out/result.json 和 out/result.md
+markitai ./docs -f json -o out/                # 每个文件一个 JSON，另写 out/markitai.index.json
+```
+
+Markdown 文件照常写出：续跑、报告和历史都基于它们，JSON 里的图片路径指向同一批 `.markitai/assets/` 文件。`on_conflict: rename` 时，已存在的 JSON 也算占用了文件名。批量运行会写 `markitai.index.json`，列出每个条目（`source`、`status`、`document`、`markdown`、`error`、`skip_reason`）；之后再写入同一目录的运行会保留它没有转换的条目。`-f json` 不能和 `--llm-batch` 一起用。
+
+文档的键依次是 `schema_version`、`tool`、`source`（`kind`、`path`、去掉凭据的 `url`、`name`、`type`、`size`、`sha256`）、`status`、`skip_reason`、`title`、`properties`（front matter）、`markdown`（`base`、`llm`）、`text`（纯文本）、`pages[]`（每页或每张幻灯片：`number`、`text`、`markdown`、`images`、`screenshot`）、`images[]`（`path`、`alt`、`description`、`text`、`page`）、`tables[]`（`page`、`header`、`rows`）、`notices[]`（`code`、`level`、`message`、`items`）、`usage`、`timings` 和 `outputs`。`--json` 是另一回事（stdout 上的运行摘要），两者可以一起用：`-f json --json -o out/`。`markitai serve` 为每个完成的条目保留同样的文档（`GET /api/jobs/{job_id}/items/{item_id}/document`）。
+
 ### `--resume`
 
 继续被中断的批量。它跳过已完成的文件，重试失败和中断的，新增的文件也捡起来。重试的条目覆盖自己之前的输出，不会再多出一份 `.v2`；状态里没记下输出名的条目（在占用输出名之前就失败，或状态来自旧版本）和新条目一样按 `output.on_conflict` 处理，不会覆盖不是这次批量写的文件。目录和 `.urls` 列表都适用；按 Ctrl-C 中断时进度同样会保存。状态里记的是输出的绝对路径，所以换个工作目录也能继续（`markitai ../docs -o ../output --resume`）。输出设置不同的运行（`--llm`、`--ocr`、`--screenshot`、`--alt`、`--desc`、`--pure`、`--keep-base`、`--screenshot-only`、`output.profile` 或 `-s`）各有自己的状态，所以不会跳过在其他设置下完成的条目。

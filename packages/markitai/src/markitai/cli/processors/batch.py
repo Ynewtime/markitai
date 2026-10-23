@@ -15,7 +15,7 @@ import click
 from loguru import logger
 
 from markitai.cli import ui
-from markitai.cli.console import get_console
+from markitai.cli.console import get_console, get_stderr_console
 from markitai.cli.logging_config import restore_console_handler
 from markitai.config import MarkitaiConfig
 from markitai.constants import MAX_DOCUMENT_SIZE
@@ -33,6 +33,7 @@ from markitai.utils.output import (
 from markitai.utils.paths import ensure_dir, ensure_screenshots_dir
 from markitai.utils.text import format_error_message
 from markitai.utils.url_redaction import redact_url, redact_urls_in_text
+from markitai.workflow.document import wanted as document_wanted
 from markitai.workflow.helpers import (
     add_basic_frontmatter as _add_basic_frontmatter,
 )
@@ -121,6 +122,77 @@ def _url_state_to_outcome(url_state: UrlState) -> Outcome:
         earlier_run=url_state.earlier_run,
         usage_unknown=url_state.usage_unknown,
     )
+
+
+def _index_status(status: Any, skip_reason: str | None) -> str:
+    from markitai.batch import FileStatus
+
+    if status == FileStatus.FAILED:
+        return "failed"
+    if status == FileStatus.COMPLETED:
+        return "skipped" if skip_reason is not None else "completed"
+    return "pending"
+
+
+def write_document_index(
+    output_dir: Path,
+    input_dir: Path,
+    state: Any,
+    files: list[Path],
+    url_entries: list[tuple[Any, Any]],
+    cfg: MarkitaiConfig,
+) -> int:
+    """Write ``markitai.index.json`` for this run's items; 1 when it could
+    not be written (said on stderr), else 0."""
+    from markitai.batch import url_state_key
+    from markitai.workflow.document import (
+        INDEX_NAME,
+        IndexItem,
+        index_item,
+        write_index,
+    )
+
+    items: list[IndexItem] = []
+    for file_path in files:
+        file_state = state.files.get(str(file_path))
+        if file_state is None:
+            continue
+        outcome = _file_state_to_outcome(file_state, input_dir)
+        status = _index_status(file_state.status, file_state.skip_reason)
+        items.append(
+            index_item(
+                outcome.source,
+                status,
+                output_dir,
+                output=outcome.output_path,
+                error=file_state.error if status == "failed" else None,
+                skip_reason=file_state.skip_reason,
+            )
+        )
+    for _source_file, entry in url_entries:
+        url_state = state.urls.get(url_state_key(entry.url, entry.output_name))
+        if url_state is None:
+            continue
+        status = _index_status(url_state.status, None)
+        items.append(
+            index_item(
+                url_state.url,
+                status,
+                output_dir,
+                output=Path(url_state.output) if url_state.output else None,
+                error=url_state.error if status == "failed" else None,
+            )
+        )
+    try:
+        write_index(output_dir, items, allow_symlinks=cfg.output.allow_symlinks)
+    except OSError as e:
+        get_stderr_console().print(
+            f"Error: Cannot write the batch index {output_dir / INDEX_NAME}: {e}",
+            style="red",
+            markup=False,
+        )
+        return 1
+    return 0
 
 
 def batch_item_claim_scope(
@@ -663,6 +735,9 @@ def create_url_processor(
             # shared workflow cascade (the same code serve/api/CLI run).
             url_llm_usage: dict[str, dict[str, Any]] = {}
             llm_cost = 0.0
+            # The converted Markdown, for a document JSON whose base .md
+            # this run does not write (LLM mode without --keep-base)
+            json_base: str | None = None
             # The LLM step failed and llm.on_failure kept the base .md
             llm_fell_back = False
             img_analysis = None
@@ -708,6 +783,7 @@ def create_url_processor(
                 llm_cost = cascade.cost_usd
                 url_llm_usage = cascade.llm_usage
                 llm_fell_back = cascade.llm_error is not None
+                json_base = cascade.markdown
                 extra_info.setdefault("warnings", []).extend(cascade.warnings)
             else:
                 # Write base .md file (respect --llm, --pure, --keep-base).
@@ -745,6 +821,7 @@ def create_url_processor(
                         extra_meta=source_extra_meta,
                     )
                 should_write_base = not cfg.llm.enabled or cfg.llm.keep_base
+                json_base = base_content
                 if should_write_base:
                     atomic_write_text(output_file, base_content)
 
@@ -827,6 +904,20 @@ def create_url_processor(
                 f"({total_time:.2f}s)" + (" [cache]" if is_cache_hit else "")
             )
 
+            document = None
+            if document_wanted(cfg):
+                from markitai.workflow.document import url_parts
+
+                document = url_parts(
+                    url,
+                    cfg,
+                    output_file,
+                    llm_fell_back=llm_fell_back,
+                    base_markdown=json_base,
+                    analysis=img_analysis.assets if img_analysis is not None else (),
+                    screenshots=[screenshot_path, *screenshot_tiles],
+                    llm_usage=url_llm_usage,
+                )
             return ProcessResult(
                 success=True,
                 output_path=str(produced_file),
@@ -836,6 +927,7 @@ def create_url_processor(
                 llm_usage=url_llm_usage,
                 image_analysis_result=img_analysis,
                 cache_hit=is_cache_hit,
+                document=document,
             ), extra_info
 
         except Exception as e:
@@ -1265,6 +1357,24 @@ async def process_batch(
                     url_state.cost_usd = result.cost_usd
                     url_state.llm_usage = result.llm_usage
                     url_state.cache_hit = result.cache_hit
+                    if result.document is not None:
+                        # -f json asked for the document: an item without
+                        # it failed
+                        from markitai.workflow.document import publish
+
+                        try:
+                            await asyncio.to_thread(
+                                publish,
+                                result.document,
+                                warnings=url_state.warnings,
+                                duration_s=asyncio.get_running_loop().time()
+                                - start_time,
+                                llm_usage=result.llm_usage,
+                                allow_symlinks=cfg.output.allow_symlinks,
+                            )
+                        except OSError as e:
+                            url_state.status = FileStatus.FAILED
+                            url_state.error = str(e)
                     batch._dirty_keys.add(key)
                     # Collect image analysis for JSON output
                     if result.image_analysis_result is not None:
@@ -1372,6 +1482,23 @@ async def process_batch(
                     # Extract skip reason from ProcessResult error field
                     if result.error and result.error.startswith("skipped ("):
                         file_state.skip_reason = result.error[9:-1]
+                    elif result.document is not None:
+                        # -f json asked for the document: an item without
+                        # it failed
+                        from markitai.workflow.document import publish
+
+                        try:
+                            await asyncio.to_thread(
+                                publish,
+                                result.document,
+                                warnings=file_state.warnings,
+                                duration_s=asyncio.get_running_loop().time()
+                                - start_time,
+                                allow_symlinks=cfg.output.allow_symlinks,
+                            )
+                        except OSError as e:
+                            file_state.status = FileStatus.FAILED
+                            file_state.error = str(e)
                     batch._dirty_keys.add(file_key)
                     # Collect image analysis for JSON output
                     if result.image_analysis_result is not None:
@@ -1532,9 +1659,18 @@ async def process_batch(
             if url_state is not None:
                 history.append(_url_state_to_outcome(url_state))
 
+    # -f json: the batch index beside the per-file documents
+    index_failed = 0
+    if document_wanted(cfg) and state is not None:
+        index_failed = write_document_index(
+            output_dir, input_dir, state, files_to_process, url_entries_to_process, cfg
+        )
+
     # Exit with appropriate code
-    total_failed = (state.failed_count if state else 0) + (
-        state.failed_urls_count if state else 0
+    total_failed = (
+        (state.failed_count if state else 0)
+        + (state.failed_urls_count if state else 0)
+        + index_failed
     )
     exit_code = resolve_exit_code(total_failed, batch=True)
     if exit_code != 0:

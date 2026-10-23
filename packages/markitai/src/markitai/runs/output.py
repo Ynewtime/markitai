@@ -287,3 +287,53 @@ def resolve_asset_references(
         return f"![image: {filename}]()"
 
     return ASSET_REF_PATTERN.sub(_replace, markdown)
+
+
+def stdout_document(parts: Any, temp_dir: Path, cfg: Any, source_name: str) -> str:
+    """The document JSON of a stdout run (``-f json`` without ``-o``).
+
+    Its pictures are kept in the stdout asset store and linked by
+    ``file://`` URI, as for Markdown on stdout; nothing it names lives in
+    the run's temp directory, which is removed at exit.
+    """
+    from dataclasses import replace
+
+    from markitai.document_json import build_document, render
+    from markitai.utils.asset_store import AssetStore
+
+    store = None
+    if cfg.image.stdout_persist:
+        try:
+            store = AssetStore(Path(cfg.image.stdout_persist_dir))
+        except Exception as e:
+            logger.warning(f"Asset store init failed: {e}")
+
+    def resolve(body: str) -> str:
+        body = normalize_temp_asset_refs(body, temp_dir)
+        return resolve_asset_references(
+            body, temp_dir=temp_dir, asset_store=store, source_name=source_name
+        )
+
+    base = resolve(parts.base)
+    llm = resolve(parts.llm) if parts.llm is not None else None
+    if store is None and ASSET_REF_PATTERN.search(parts.llm or parts.base):
+        warn_ephemeral_links()
+    stored: list[Path] = []
+    for body in (base, llm or ""):
+        for found in re.finditer(r"\]\((file://[^)\s]+)\)", body):
+            from urllib.parse import urlsplit
+            from urllib.request import url2pathname
+
+            path = Path(url2pathname(urlsplit(found.group(1)).path))
+            if path not in stored:
+                stored.append(path)
+    stdout_parts = replace(
+        parts,
+        base=base,
+        llm=llm,
+        assets=stored,
+        screenshots=[],
+        output_path=None,
+        llm_output_path=None,
+    )
+    return render(build_document(stdout_parts, None))

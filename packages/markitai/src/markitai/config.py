@@ -216,6 +216,14 @@ class OutputConfig(BaseModel):
             "wikilink form (![[assets/x.png]]). Ignored by other profiles."
         ),
     )
+    format: Literal["markdown", "json"] = Field(
+        default="markdown",
+        description=(
+            "markdown, or json: also write each document as a versioned JSON "
+            "object (<name>.json beside its Markdown, the document on stdout "
+            "without -o, markitai.index.json for a batch)."
+        ),
+    )
 
 
 class LiteLLMParams(BaseModel):

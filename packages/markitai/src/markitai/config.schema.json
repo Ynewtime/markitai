@@ -1103,6 +1103,16 @@
           "description": "With the obsidian profile, rewrite local image references to wikilink form (![[assets/x.png]]). Ignored by other profiles.",
           "title": "Wikilinks",
           "type": "boolean"
+        },
+        "format": {
+          "default": "markdown",
+          "description": "markdown, or json: also write each document as a versioned JSON object (<name>.json beside its Markdown, the document on stdout without -o, markitai.index.json for a batch).",
+          "enum": [
+            "markdown",
+            "json"
+          ],
+          "title": "Format",
+          "type": "string"
         }
       },
       "title": "OutputConfig",

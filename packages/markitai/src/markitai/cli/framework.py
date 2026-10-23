@@ -204,6 +204,8 @@ class MarkitaiGroup(click.RichGroup):
     _OPTIONS_WITH_VALUES = {
         "-o",
         "--output",
+        "-f",
+        "--format",
         "-b",
         "--backend",
         "-c",

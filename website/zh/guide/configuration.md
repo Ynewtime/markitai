@@ -638,6 +638,7 @@ markitai urls.urls --no-cache-for "news.example.com"
 | `report` | `true`、`false`、`null` | `null` | 写 JSON 报告。`null` 只在批量运行时写 |
 | `profile` | `rag`、`obsidian`、`okf`、`null` | `null` | [输出 Profile](./output-profiles.md) |
 | `wikilinks` | `true`、`false` | `false` | 用 `obsidian` 时把图片链接写成 `![[assets/x.png]]` |
+| `format` | `markdown`、`json` | `markdown` | `json` 另写文档 JSON（等同 [`-f json`](/zh/guide/cli#format)） |
 
 ## 日志配置
 

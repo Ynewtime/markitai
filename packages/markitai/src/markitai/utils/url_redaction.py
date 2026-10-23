@@ -60,7 +60,8 @@ _MASK = "\u2026"
 _SECRET_NAME_PARTS = ("token", "key", "secret", "password", "signature", "credential")
 
 
-def _is_secret_parameter(name: str) -> bool:
+def secret_parameter(name: str) -> bool:
+    """Whether a query or fragment parameter named *name* carries a secret."""
     lowered = name.lower()
     return is_sensitive_query_key(name) or any(
         part in lowered for part in _SECRET_NAME_PARTS
@@ -71,7 +72,7 @@ def _mask_parameters(text: str) -> str:
     pairs = []
     for pair in text.split("&"):
         name = pair.partition("=")[0]
-        secret = _is_secret_parameter(unquote_plus(name))
+        secret = secret_parameter(unquote_plus(name))
         pairs.append(f"{name}={_MASK}" if secret else pair)
     return "&".join(pairs)
 
@@ -122,7 +123,7 @@ def url_credential_values(source: str) -> list[str]:
     for text in (query, fragment):
         for pair in text.split("&"):
             name, _, value = pair.partition("=")
-            if value and _is_secret_parameter(unquote_plus(name)):
+            if value and secret_parameter(unquote_plus(name)):
                 values += {value, unquote_plus(value)}
     return values
 

@@ -209,6 +209,21 @@ The document is `{version, ok, error, batch, items[], totals}`:
 
 The exit code keeps its usual meaning (see [Exit codes](#exit-codes)); a partial batch exits `10` while still printing JSON, so scripts should check `ok` too. Usage errors go to stderr without JSON. You cannot combine `--json` with `--dry-run` or `--llm-batch-collect`.
 
+### `-f, --format <markdown|json>` {#format}
+
+`json` also writes each document as one JSON object with stable, versioned fields, for scripts that should not parse Markdown or front matter. It is the same document markitai-rust writes (`schema_version` `1.0`; every key is always present, `null` when it does not apply).
+
+```bash
+markitai report.pdf -f json                    # the document on stdout
+markitai report.pdf -f json -o out/            # out/report.pdf.json beside out/report.pdf.md
+markitai report.pdf -f json -o out/result.json # exact name: out/result.json and out/result.md
+markitai ./docs -f json -o out/                # one JSON per file + out/markitai.index.json
+```
+
+The Markdown files stay: resume, reports and history work with them, and the JSON's picture paths point at the same `.markitai/assets/` files. Under `on_conflict: rename` an existing JSON also makes a name taken. A batch writes `markitai.index.json` listing every item (`source`, `status`, `document`, `markdown`, `error`, `skip_reason`); a later run into the same folder keeps the items it did not convert. `-f json` cannot be combined with `--llm-batch`.
+
+The document's keys are `schema_version`, `tool`, `source` (`kind`, `path`, `url` without credentials, `name`, `type`, `size`, `sha256`), `status`, `skip_reason`, `title`, `properties` (the front matter), `markdown` (`base`, `llm`), `text` (plain text), `pages[]` (each page or slide: `number`, `text`, `markdown`, `images`, `screenshot`), `images[]` (`path`, `alt`, `description`, `text`, `page`), `tables[]` (`page`, `header`, `rows`), `notices[]` (`code`, `level`, `message`, `items`), `usage`, `timings` and `outputs`. `--json` is a different thing (the run's summary on stdout); the two combine: `-f json --json -o out/`. `markitai serve` keeps the same document for every finished item (`GET /api/jobs/{job_id}/items/{item_id}/document`).
+
 ### `--resume`
 
 Resume an interrupted batch. It skips completed files, retries failed and interrupted ones, and picks up new files. Retried items overwrite their own earlier output instead of adding a `.v2` copy; an item with no recorded output name (it failed before claiming one, or the state comes from an older version) follows `output.on_conflict` like a new item, so it never overwrites a file the batch did not write. Works for a directory and for a `.urls` list; progress is saved on Ctrl-C too. The state records absolute output paths, so you can resume from another working directory (`markitai ../docs -o ../output --resume`). A run with other output settings (`--llm`, `--ocr`, `--screenshot`, `--alt`, `--desc`, `--pure`, `--keep-base`, `--screenshot-only`, `output.profile` or `-s`) keeps its own state, so it never skips items finished under different settings.

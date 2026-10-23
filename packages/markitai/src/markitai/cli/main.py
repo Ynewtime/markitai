@@ -56,6 +56,7 @@ click.rich_click.OPTION_GROUPS = {
             "options": [
                 "--output",
                 "--json",
+                "--format",
                 "--config",
                 "--config-json",
                 "--preset",
@@ -293,6 +294,18 @@ def run_interactive_mode(ctx: click.Context) -> None:
         "because stdout carries the JSON. Runtime failures appear in error; "
         "argument/usage errors exit on stderr without JSON. Incompatible with "
         "--dry-run and --llm-batch-collect."
+    ),
+)
+@click.option(
+    "--format",
+    "-f",
+    "output_format",
+    type=click.Choice(["markdown", "md", "json"], case_sensitive=False),
+    default=None,
+    help=(
+        "markdown (default), or json: one versioned document with stable "
+        "fields; on stdout, or beside each Markdown file with -o (plus "
+        "markitai.index.json for a batch)."
     ),
 )
 @click.option(
@@ -541,6 +554,7 @@ def app(
     ctx: Context,
     output: Path | None,
     json_output: bool,
+    output_format: str | None,
     config_path: Path | None,
     config_json: str | None,
     preset: str | None,
@@ -909,6 +923,29 @@ def app(
     if max_depth is not None:
         cfg.batch.scan_max_depth = max_depth
 
+    if output_format is not None:
+        cfg.output.format = "json" if output_format.lower() == "json" else "markdown"
+    if cfg.output.format == "json":
+        if llm_batch:
+            message = (
+                "-f json is not supported with --llm-batch: the enhanced "
+                "Markdown is written by a later --llm-batch-collect."
+            )
+            stderr_console.print(f"[red]Error: {message}[/red]")
+            abort_with_json(message)
+        # `-f json -o report.json` names the JSON: the Markdown beside it is
+        # report.md
+        if (
+            output is not None
+            and output.suffix.lower() == ".json"
+            and not output.is_dir()
+        ):
+            if not is_single_mode:
+                raise click.UsageError(
+                    "A batch requires an output directory, not a .json file"
+                )
+            output = output.with_suffix(".md")
+
     if pure is not None:
         cfg.llm.pure = pure
 
@@ -1102,6 +1139,13 @@ def app(
     run_started_at = datetime.now(UTC).astimezone()
 
     async def run_workflow() -> None:
+        if cfg.output.format == "json":
+            from markitai.utils.output import JSON_DOCUMENTS
+
+            # A <name>.json an earlier run left takes the name too (this
+            # run's context only: asyncio.run copies it)
+            JSON_DOCUMENTS.set(True)
+
         # Helper to get effective output directory (CLI -o or config fallback)
         def get_effective_output() -> Path | None:
             if output is not None:

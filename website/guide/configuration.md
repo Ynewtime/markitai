@@ -638,6 +638,7 @@ markitai urls.urls --no-cache-for "news.example.com"
 | `report` | `true`, `false`, `null` | `null` | Write a JSON report. `null` writes one for batch runs only |
 | `profile` | `rag`, `obsidian`, `okf`, `null` | `null` | [Output profile](./output-profiles.md) |
 | `wikilinks` | `true`, `false` | `false` | With `obsidian`, write image links as `![[assets/x.png]]` |
+| `format` | `markdown`, `json` | `markdown` | `json` also writes the document JSON (same as [`-f json`](/guide/cli#format)) |
 
 ## Log Configuration
 

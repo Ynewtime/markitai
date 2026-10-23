@@ -10,7 +10,7 @@ caller-specific side files (``images.json``) stay with the caller.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from markitai.batch import ProcessResult
@@ -83,4 +83,12 @@ def document_process_result(
         warnings=list(ctx.warnings),
         page_sources=ctx.page_sources,
         ocr_pages=ctx.ocr_pages,
+        document=_document_parts(ctx),
     )
+
+
+def _document_parts(ctx: ConversionContext) -> Any:
+    """With ``-f json``, what the document JSON is built from."""
+    from markitai.workflow.document import context_parts, wanted
+
+    return context_parts(ctx) if wanted(ctx.config) else None

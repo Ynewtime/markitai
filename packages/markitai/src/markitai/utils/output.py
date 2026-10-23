@@ -95,13 +95,20 @@ def _versioned_rename(base_path: Path) -> Callable[[int], Path]:
     return _rename
 
 
+#: Set while a run writes the document JSON beside its Markdown (``-f
+#: json``): a ``<name>.json`` an earlier run left then takes the name too.
+JSON_DOCUMENTS: ContextVar[bool] = ContextVar("markitai_json_documents", default=False)
+
+
 def _occupied_on_disk(path: Path) -> bool:
-    """Whether the output name is taken on disk by its ``.md`` or ``.llm.md``."""
+    """Whether the output name is taken on disk by its ``.md`` or ``.llm.md``
+    (or its ``.json`` under :data:`JSON_DOCUMENTS`)."""
     stem, _ = split_markdown_name(path.name)
     return (
         path.exists()
         or path.with_name(f"{stem}.md").exists()
         or path.with_name(f"{stem}.llm.md").exists()
+        or (JSON_DOCUMENTS.get() and path.with_name(f"{stem}.json").exists())
     )
 
 

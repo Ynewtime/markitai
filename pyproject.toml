@@ -118,6 +118,7 @@ source_modules = [
     "markitai.config",
     "markitai.constants",
     "markitai.converter",
+    "markitai.document_json",
     "markitai.domain_profiles",
     "markitai.fetch",
     "markitai.fetch_cache",

@@ -46,6 +46,7 @@ from markitai.utils.cli_helpers import compute_task_hash, get_report_file_path
 from markitai.utils.errors import CliInputRejection, ConversionError
 from markitai.utils.paths import derive_output_name
 from markitai.utils.text import format_error_message
+from markitai.workflow.document import wanted as document_wanted
 from markitai.workflow.helpers import write_images_json
 
 console = get_console()
@@ -265,6 +266,16 @@ async def process_single_file(
                 f"Use --llm or --ocr for content extraction.",
                 console=diag_console,
             )
+            if stdout_mode and document_wanted(cfg):
+                # A skip is a document too: its status says so
+                from markitai.document_json import build_document, render
+                from markitai.workflow.document import skipped_parts
+
+                parts = skipped_parts(
+                    str(input_path), "image_only", time.time() - start_time
+                )
+                sys.stdout.write(render(build_document(parts)))
+                sys.stdout.flush()
             raise SystemExit(1)
 
         # Finalize the last active stage (the loguru bridge may have advanced
@@ -355,6 +366,39 @@ async def process_single_file(
             ctx.output_file if output_file_name is not None else None,
         )
 
+        # -f json: the document beside the Markdown (or on stdout below)
+        document_parts = None
+        json_file: Path | None = None
+        if document_wanted(cfg):
+            from markitai.notices import merge_item_warnings, task_notices
+            from markitai.workflow.document import context_parts
+
+            if final_output_file != produced_file:
+                # The LLM output moved onto the explicit -o file
+                ctx.llm_output_file = final_output_file
+            document_parts = context_parts(
+                ctx,
+                warnings=merge_item_warnings(task_notices(), list(ctx.warnings)),
+                duration_s=time.time() - start_time,
+            )
+            if not stdout_mode:
+                from markitai.workflow.document import json_path_beside, write_beside
+
+                json_file = json_path_beside(
+                    document_parts.output_path, document_parts.llm_output_path
+                )
+                if json_file is not None:
+                    try:
+                        write_beside(
+                            document_parts,
+                            json_file,
+                            allow_symlinks=cfg.output.allow_symlinks,
+                        )
+                    except OSError as e:
+                        raise ConversionError(
+                            f"Cannot write the JSON document {json_file}: {e}"
+                        ) from e
+
         if history is not None:
             history.append(
                 Outcome(
@@ -384,7 +428,14 @@ async def process_single_file(
             # stdout mode: output markdown content
             temp_dir = target.temp_dir
             assert temp_dir is not None  # guaranteed when stdout_mode is True
-            if final_output_file and final_output_file.exists():
+            if document_parts is not None:
+                from markitai.runs.output import stdout_document
+
+                sys.stdout.write(
+                    stdout_document(document_parts, temp_dir, cfg, input_path.name)
+                )
+                sys.stdout.flush()
+            elif final_output_file and final_output_file.exists():
                 final_content = final_output_file.read_text(encoding="utf-8")
 
                 # Rewrite absolute temp-dir refs so they resolve below
@@ -446,7 +497,7 @@ async def process_single_file(
             # Always show output path when saving to file
             if final_output_file:
                 duration_str = f" ({duration:.1f}s)" if verbose else ""
-                ui.success(f"{final_output_file}{duration_str}")
+                ui.success(f"{json_file or final_output_file}{duration_str}")
 
     except Exception as e:
         error_msg = format_error_message(e)

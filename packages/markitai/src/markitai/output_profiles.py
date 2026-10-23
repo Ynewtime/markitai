@@ -435,3 +435,18 @@ def apply_profile_to_file(
     if new_content != content:
         atomic_write_text(md_file, new_content)
         logger.debug("[Profile:{}] Rewrote {}", profile, md_file.name)
+
+
+def profile_body(body: str, config: MarkitaiConfig) -> str:
+    """A Markdown body as the active profile would publish it, without
+    touching any file: what the document JSON reports for a base body this
+    run did not write (LLM mode without ``--keep-base``)."""
+    profile = config.output.profile
+    if profile in ASSET_VISIBLE_PROFILES:
+        body = body.replace(f"]({ASSETS_REL_PATH}/", f"]({VISIBLE_ASSETS_REL_PATH}/")
+        body = body.replace(f"]({ASSETS_REL_PATH}\\", f"]({VISIBLE_ASSETS_REL_PATH}\\")
+    if profile == "rag":
+        body = _rewrite_page_markers(body)
+    elif profile == "obsidian" and config.output.wikilinks:
+        body = _to_wikilinks(body)
+    return body

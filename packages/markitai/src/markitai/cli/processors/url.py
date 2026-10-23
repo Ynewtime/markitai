@@ -52,6 +52,8 @@ from markitai.utils.url_redaction import redact_url as _safe_url_for_display
 from markitai.utils.url_redaction import (
     redact_urls_in_text as _redact_urls_in_message,
 )
+from markitai.workflow.document import wanted as document_wanted
+from markitai.workflow.document import write_single
 from markitai.workflow.helpers import (
     add_basic_frontmatter as _add_basic_frontmatter,
 )
@@ -811,6 +813,22 @@ async def process_url(
             llm_cost = url_spend.cost
             llm_usage = copy.deepcopy(url_spend.usage)
 
+        # -f json: the document, on stdout or beside the Markdown
+        document_parts = _single_url_document(
+            url,
+            cfg,
+            output_file,
+            llm_fell_back=llm_fell_back,
+            base_markdown=base_content,
+            analysis=img_analysis,
+            screenshots=[screenshot_path, *screenshot_tiles],
+            warnings=url_warnings,
+            llm_usage=llm_usage,
+            duration_s=(datetime.now() - started_at).total_seconds(),
+        )
+
+        if _print_document(document_parts, temp_dir, cfg, url):
+            return
         if stdout_mode:
             assert temp_dir is not None  # guaranteed when stdout_mode is True
             stdout_content = final_content
@@ -939,9 +957,16 @@ async def process_url(
             # Explicit -o file target: the final content must land exactly
             # at the requested path (moves `.llm.md` onto the requested
             # `.md` path in LLM mode without --keep-base)
+            produced_file = final_output_file
             final_output_file = finalize_explicit_output(
                 final_output_file,
                 output_file if explicit_file_name is not None else None,
+            )
+            json_file = write_single(
+                document_parts,
+                produced_file,
+                final_output_file,
+                allow_symlinks=cfg.output.allow_symlinks,
             )
 
             if history is not None:
@@ -975,7 +1000,7 @@ async def process_url(
 
             if not quiet:
                 duration_str = f" ({duration:.1f}s)" if verbose else ""
-                ui.success(f"{final_output_file}{duration_str}")
+                ui.success(f"{_wrote(json_file, final_output_file)}{duration_str}")
 
     except SystemExit:
         raise
@@ -991,6 +1016,48 @@ async def process_url(
         stages.stop()
         # Cleanup temp directory for stdout mode
         target.cleanup()
+
+
+def _print_document(parts: Any, temp_dir: Path | None, cfg: Any, url: str) -> bool:
+    """Print a stdout run's document JSON (``-f json`` without ``-o``);
+    False when the run prints Markdown or writes files."""
+    if parts is None or temp_dir is None:
+        return False
+    from markitai.runs.output import stdout_document
+
+    sys.stdout.write(stdout_document(parts, temp_dir, cfg, url))
+    sys.stdout.flush()
+    return True
+
+
+def _wrote(json_file: Path | None, markdown_file: Path) -> Path:
+    """The file a run names as written: the JSON when it asked for one."""
+    return json_file if json_file is not None else markdown_file
+
+
+def _single_url_document(
+    url: str,
+    cfg: MarkitaiConfig,
+    output_file: Path,
+    *,
+    analysis: ImageAnalysisResult | None,
+    warnings: list[str],
+    **kwargs: Any,
+) -> Any:
+    """With ``-f json``, what a single URL's document is built from."""
+    if not document_wanted(cfg):
+        return None
+    from markitai.notices import task_notices
+    from markitai.workflow.document import url_parts
+
+    return url_parts(
+        url,
+        cfg,
+        output_file,
+        analysis=analysis.assets if analysis is not None else (),
+        warnings=merge_item_warnings(task_notices(), list(warnings)),
+        **kwargs,
+    )
 
 
 async def process_url_batch(
@@ -1415,6 +1482,33 @@ async def process_url_batch(
                     record_outcome("skipped", result)
                     return
 
+                if result.document is not None:
+                    # -f json asked for the document: a URL without it failed
+                    from markitai.workflow.document import publish
+
+                    try:
+                        await asyncio.to_thread(
+                            publish,
+                            result.document,
+                            warnings=merge_item_warnings(
+                                list(notices), list(extra_info.get("warnings") or [])
+                            ),
+                            duration_s=time.perf_counter() - item_start,
+                            llm_usage=result.llm_usage,
+                            allow_symlinks=cfg.output.allow_symlinks,
+                        )
+                    except OSError as e:
+                        result.success = False
+                        result.error = str(e)
+                        record_state(result)
+                        results[key] = {"status": "failed", "error": result.error}
+                        record_outcome("failed", result, error=result.error)
+                        _print_url_error(url, result.error, diag_console)
+                        failed += 1
+                        total_llm_cost += result.cost_usd
+                        _merge_llm_usage(total_llm_usage, result.llm_usage)
+                        return
+
                 total_llm_cost += result.cost_usd
                 _merge_llm_usage(total_llm_usage, result.llm_usage)
                 if result.image_analysis_result is not None:
@@ -1542,6 +1636,19 @@ async def process_url_batch(
         logger.debug("Report generation disabled (output.report=false)")
     if earlier is not None:
         earlier.extend(earlier_outcomes)
+
+    if document_wanted(cfg) and batch.state is not None:
+        # -f json: the batch index beside the per-URL documents
+        from markitai.cli.processors.batch import write_document_index
+
+        failed += write_document_index(
+            output_dir,
+            output_dir,
+            batch.state,
+            [],
+            [(None, entry) for entry in entries_to_process],
+            cfg,
+        )
 
     # Print informational results only when requested. Failures themselves are
     # emitted to stderr at the point they occur, including in quiet mode.
