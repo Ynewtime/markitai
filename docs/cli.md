@@ -216,8 +216,12 @@ Numbers 支持表格及目录包，完整画布、截图与 OCR 仍未支持。
 日志不进入 stdout，语言固定英文，URL 与已知凭据在诊断中脱敏。
 不记录正文、模型完整请求响应或全量配置。
 
-默认 `log.rotation="10 MB"`、`log.retention="7 days"`；按整条记录轮转，
-只清理本程序命名的过期普通日志。日志写入失败返回非零，但不删除已完成产物。
+默认 `log.rotation="10 MB"`、`log.retention="7 days"`；按整条记录轮转。
+`log.rotation` 可写大小（`10 MB`）、间隔（`1 week`）、本地时间（`00:00`、
+`monday at 12:00`、`sunday`）或 `hourly`/`daily`/`weekly`/`monthly`/`yearly`；
+`log.retention` 写时长（`7 days`、`1 month`、`1 week, 3 days`），与 Python 版写法相同，
+`config validate` 拒绝其他取值。每次运行仍各写自己的文件，轮转只切换该次运行的文件；
+保留期只清理本程序命名的过期普通日志。日志写入失败返回非零，但不删除已完成产物。
 报告的 `log_file` 指向本次日志；报告和 stdout JSON 保留自己的公开数据合同。
 
 ## Numbers 目录包

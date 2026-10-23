@@ -673,8 +673,10 @@ markitai urls.urls --no-cache-for "news.example.com"
 | `level` | `INFO` | `DEBUG`、`INFO`、`WARNING`、`ERROR` 或 `CRITICAL` |
 | `format` | `text` | 或 `json` |
 | `dir` | `null` | 日志目录 |
-| `rotation` | `10 MB` | 超过这个大小就轮转 |
-| `retention` | `7 days` | 删除更早的日志 |
+| `rotation` | `10 MB` | 何时换到下一个文件：按大小（`10 MB`、`1.5 KiB`）、按间隔（`1 week`、`10 hours`）、按本地时间（`00:00`、`monday at 12:00`、`sunday`），或 `hourly`/`daily`/`weekly`/`monthly`/`yearly` |
+| `retention` | `7 days` | 删除更早的日志；取值为时长，如 `7 days`、`1 month`、`1 week, 3 days` |
+
+写法与 Python 版 markitai 相同，`markitai config validate` 会拒绝其他取值。
 
 ## 安全配置
 

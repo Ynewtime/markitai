@@ -673,8 +673,10 @@ Logs go to files only when `dir` is set.
 | `level` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` |
 | `format` | `text` | Or `json` |
 | `dir` | `null` | Log directory |
-| `rotation` | `10 MB` | Rotate above this size |
-| `retention` | `7 days` | Delete older logs |
+| `rotation` | `10 MB` | Start the next file at a size (`10 MB`, `1.5 KiB`), after an interval (`1 week`, `10 hours`), at a local time (`00:00`, `monday at 12:00`, `sunday`) or `hourly`/`daily`/`weekly`/`monthly`/`yearly` |
+| `retention` | `7 days` | Delete older logs; a duration such as `7 days`, `1 month` or `1 week, 3 days` |
+
+These are the forms Python markitai accepts. `markitai config validate` refuses any other value.
 
 ## Security Configuration
 

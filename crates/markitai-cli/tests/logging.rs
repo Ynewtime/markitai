@@ -192,6 +192,70 @@ fn parallel_json_results_and_log_rotation_keep_all_complete_records() {
 }
 
 #[test]
+fn python_style_log_policies_convert_and_validate_refuses_what_logging_would() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(root.path().join("note.txt"), "# Hello\n").unwrap();
+    let home = root.path().join("home");
+    let home = home.to_str().unwrap();
+    let env = [("HOME", home), ("USERPROFILE", home)];
+    for (index, (rotation, retention)) in [
+        ("1 week", "1 month"),
+        ("monday at 12:00", "1 week, 3 days"),
+        ("daily", "7 days"),
+        ("00:00", "10 hours"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let logs = format!("logs-{index}");
+        let cfg = json!({"log":{"dir":logs,"format":"json","rotation":rotation,"retention":retention},
+            "cache":{"enabled":false}});
+        let validate = invoke(root.path(), cfg.clone(), &["config", "validate"], &env);
+        assert!(
+            validate.status.success(),
+            "{rotation}: {}",
+            String::from_utf8_lossy(&validate.stderr)
+        );
+        let output = invoke(root.path(), cfg, &["note.txt", "-o", "out", "-q"], &env);
+        assert!(
+            output.status.success(),
+            "{rotation}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let rows = records(&root.path().join(&logs));
+        assert!(
+            rows.iter()
+                .any(|row| row["msg"] == "Run finished with exit code 0"),
+            "{rotation}: {rows:?}"
+        );
+    }
+    for (key, value) in [
+        ("rotation", "midnight"),
+        ("rotation", "25:00"),
+        ("rotation", "0 B"),
+        ("retention", "10"),
+        ("retention", "NaN days"),
+    ] {
+        let mut cfg = json!({"log":{"dir":"refused"}});
+        cfg["log"][key] = json!(value);
+        let expected = format!("log.{key} '{value}' is not");
+        let validate = invoke(root.path(), cfg.clone(), &["config", "validate"], &env);
+        let convert = invoke(root.path(), cfg, &["note.txt", "-o", "out"], &env);
+        let line = |output: &Output| {
+            assert_eq!(output.status.code(), Some(1), "{key} {value}");
+            let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+            stderr
+                .lines()
+                .find(|line| line.contains(&expected))
+                .unwrap_or_else(|| panic!("{key} {value}: {stderr}"))
+                .to_owned()
+        };
+        assert_eq!(line(&validate), line(&convert));
+        assert!(!root.path().join("refused").exists());
+    }
+}
+
+#[test]
 fn file_log_env_precedence_redaction_and_failures_are_observable() {
     let root = tempfile::tempdir().unwrap();
     let cfg = json!({"log":{"dir":"ignored","format":"text"},"cache":{"enabled":false},"llm":{"model_list":[{"model_name":"default","litellm_params":{"model":"openai/test","api_key":"credential-that-must-not-leak"}}]}});

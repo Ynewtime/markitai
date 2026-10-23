@@ -8,6 +8,8 @@ use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
+pub mod log_policy;
+
 /// An empty variable counts as unset: as a path it would name the current
 /// directory, and every path starts with it.
 pub(crate) fn variable(name: &str) -> Option<std::ffi::OsString> {
@@ -335,6 +337,7 @@ pub fn normalize(value: &Value) -> Result<Value> {
     }
     let value = normalize_node(value, schema(), "")?;
     validate_fetch(&value["fetch"])?;
+    log_policy::validate(&value["log"])?;
     Ok(value)
 }
 
@@ -351,6 +354,7 @@ pub fn normalize_model(model: &str, value: &Value) -> Result<Value> {
     match model {
         "FetchConfig" => validate_fetch(&value)?,
         "FetchPolicyConfig" => validate_policy(&value)?,
+        "LogConfig" => log_policy::validate(&value)?,
         "DomainProfileConfig" => {
             validate_strategy_list(value.get("strategy_priority"), "strategy_priority")?
         }

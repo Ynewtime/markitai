@@ -1,7 +1,8 @@
 //! The CLI owns its sinks; core and language bindings do not install global loggers.
 use crate::term::{Mark, Style, Tone};
-use chrono::Local;
+use chrono::{DateTime, Local, NaiveDateTime};
 use markitai_core::config;
+use markitai_core::config::log_policy::{self, Rotation};
 use serde_json::{Value, json};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
@@ -48,7 +49,10 @@ struct Sink {
     stem: String,
     sequence: u64,
     bytes: u64,
-    rotation: u64,
+    rotation: Rotation,
+    /// When the current file is rotated by time: the first local time after
+    /// it opened that `rotation` names.
+    limit: Option<NaiveDateTime>,
     json: bool,
     minimum: Level,
     failed: bool,
@@ -87,16 +91,20 @@ pub(super) fn start(cfg: &Value, level: Option<&str>) -> io::Result<()> {
     let sink = directory
         .map(|directory| {
             let directory = config::state_path(Path::new(directory));
-            let rotation = size(
+            // Configuration validation runs the same parsers, so a value
+            // that validates is never refused here.
+            let rotation = log_policy::rotation(
                 cfg.pointer("/log/rotation")
                     .and_then(Value::as_str)
                     .unwrap_or("10 MB"),
-            )?;
-            let retention = duration(
+            )
+            .map_err(|error| invalid(&error.to_string()))?;
+            let retention = log_policy::retention(
                 cfg.pointer("/log/retention")
                     .and_then(Value::as_str)
                     .unwrap_or("7 days"),
-            )?;
+            )
+            .map_err(|error| invalid(&error.to_string()))?;
             let minimum = Level::parse(
                 level
                     .or_else(|| cfg.pointer("/log/level").and_then(Value::as_str))
@@ -110,9 +118,10 @@ pub(super) fn start(cfg: &Value, level: Option<&str>) -> io::Result<()> {
                 .unwrap_or("text");
             private_directory(&directory)?;
             prune(&directory, retention)?;
+            let opened = Local::now();
             let stem = format!(
                 "markitai_{}_{}",
-                Local::now().format("%Y%m%d_%H%M%S_%6f"),
+                opened.format("%Y%m%d_%H%M%S_%6f"),
                 std::process::id()
             );
             let first_path = directory.join(format!("{stem}.log"));
@@ -126,6 +135,7 @@ pub(super) fn start(cfg: &Value, level: Option<&str>) -> io::Result<()> {
                 sequence: 0,
                 bytes: 0,
                 rotation,
+                limit: rotation.next_after(opened.naive_local()),
                 json: format == "json",
                 minimum,
                 failed: false,
@@ -405,7 +415,13 @@ pub(super) fn finish(code: i32) -> io::Result<()> {
 
 impl Sink {
     fn write(&mut self, level: Level, message: &str) -> io::Result<()> {
-        let now = Local::now();
+        self.write_at(level, message, Local::now())
+    }
+
+    /// Write one record at `now`, first rotating to the session's next file
+    /// when the record would take the current one past the size limit or the
+    /// time limit has been reached. An empty file is not rotated.
+    fn write_at(&mut self, level: Level, message: &str, now: DateTime<Local>) -> io::Result<()> {
         let line = if self.json {
             format!(
                 "{}\n",
@@ -419,7 +435,14 @@ impl Sink {
                 message.replace('\n', "\\n").replace('\r', "\\r")
             )
         };
-        if self.bytes > 0 && self.bytes.saturating_add(line.len() as u64) > self.rotation {
+        let local = now.naive_local();
+        let due = match self.rotation {
+            Rotation::Size(limit) => self.bytes.saturating_add(line.len() as u64) > limit,
+            _ => self.limit.is_some_and(|limit| local >= limit),
+        };
+        if due && self.bytes == 0 {
+            self.limit = self.rotation.next_after(local);
+        } else if due {
             self.file.flush()?;
             self.file.sync_data()?;
             self.sequence = self
@@ -432,6 +455,7 @@ impl Sink {
                     .with_file_name(format!("{}_{:06}.log", self.stem, self.sequence)),
             )?;
             self.bytes = 0;
+            self.limit = self.rotation.next_after(local);
         }
         self.file.write_all(line.as_bytes())?;
         self.bytes += line.len() as u64;
@@ -489,54 +513,6 @@ fn released(path: &Path) -> Option<File> {
     file.try_lock().is_ok().then_some(file)
 }
 
-fn size(value: &str) -> io::Result<u64> {
-    quantity(
-        value,
-        &[
-            ("b", 1.0),
-            ("kb", 1e3),
-            ("mb", 1e6),
-            ("gb", 1e9),
-            ("kib", 1024.0),
-            ("mib", 1_048_576.0),
-            ("gib", 1_073_741_824.0),
-        ],
-    )
-    .filter(|value| *value > 0)
-    .ok_or_else(|| invalid("log.rotation supports positive byte sizes, e.g. '10 MB'"))
-}
-fn duration(value: &str) -> io::Result<Duration> {
-    quantity(
-        value,
-        &[
-            ("s", 1.0),
-            ("second", 1.0),
-            ("seconds", 1.0),
-            ("m", 60.0),
-            ("minute", 60.0),
-            ("minutes", 60.0),
-            ("h", 3600.0),
-            ("hour", 3600.0),
-            ("hours", 3600.0),
-            ("d", 86400.0),
-            ("day", 86400.0),
-            ("days", 86400.0),
-            ("week", 604800.0),
-            ("weeks", 604800.0),
-        ],
-    )
-    .map(Duration::from_secs)
-    .ok_or_else(|| invalid("log.retention supports durations, e.g. '7 days'"))
-}
-fn quantity(value: &str, units: &[(&str, f64)]) -> Option<u64> {
-    let value = value.trim();
-    let split = value.find(|c: char| !c.is_ascii_digit() && c != '.')?;
-    let number = value[..split].parse::<f64>().ok()?;
-    let unit = value[split..].trim().to_ascii_lowercase();
-    let multiplier = units.iter().find(|(name, _)| *name == unit)?.1;
-    let total = number * multiplier;
-    (total.is_finite() && total >= 0.0 && total < u64::MAX as f64).then_some(total as u64)
-}
 /// Remove expired logs whose session has ended, then expired session locks
 /// nobody holds. A log's session is alive while its `<stem>.lock` is held; a
 /// log without one (written by an earlier version, which locked the log
@@ -769,7 +745,8 @@ mod tests {
             stem: path.file_stem().unwrap().to_str().unwrap().into(),
             sequence: 0,
             bytes: 0,
-            rotation: 100,
+            rotation: Rotation::Size(100),
+            limit: None,
             json: true,
             minimum: Level::Debug,
             failed: false,
@@ -836,12 +813,75 @@ mod tests {
         assert_eq!(fs::read_dir(temp.path()).unwrap().count(), 2);
     }
     #[test]
-    fn policy_parsing_is_explicit() {
-        assert_eq!(size("10 MB").unwrap(), 10_000_000);
-        assert_eq!(size("1.5 KiB").unwrap(), 1536);
-        assert_eq!(duration("7 days").unwrap().as_secs(), 604800);
-        assert!(size("midnight").is_err());
-        assert!(size("0 B").is_err());
-        assert!(duration("NaN days").is_err());
+    fn time_rotation_moves_to_the_next_file_once_its_limit_passes() {
+        let temp = tempfile::tempdir().unwrap();
+        let stem = "markitai_20260101_120000_123456_999";
+        let path = temp.path().join(format!("{stem}.log"));
+        let opened = Local::now();
+        let rotation = log_policy::rotation("1 s").unwrap();
+        let mut sink = Sink {
+            file: private_file(&path).unwrap(),
+            _session: SessionLock::acquire(&temp.path().join(format!("{stem}.lock"))).unwrap(),
+            first_path: path.clone(),
+            stem: stem.into(),
+            sequence: 0,
+            bytes: 0,
+            rotation,
+            limit: rotation.next_after(opened.naive_local()),
+            json: false,
+            minimum: Level::Debug,
+            failed: false,
+        };
+        let later = |millis| opened + chrono::TimeDelta::milliseconds(millis);
+        let file = |sequence: u64| temp.path().join(format!("{stem}_{sequence:06}.log"));
+        sink.write_at(Level::Info, "first", opened).unwrap();
+        sink.write_at(Level::Info, "still first", later(999))
+            .unwrap();
+        assert!(!file(1).exists());
+        sink.write_at(Level::Info, "second", later(1_000)).unwrap();
+        sink.write_at(Level::Info, "still second", later(1_500))
+            .unwrap();
+        // The second file opened at 1 s, so it lasts until 2 s.
+        sink.write_at(Level::Info, "third", later(2_000)).unwrap();
+        // Hours later, one record still makes one file.
+        sink.write_at(Level::Info, "fourth", later(7_200_000))
+            .unwrap();
+        drop(sink);
+        let read = |path: &Path| fs::read_to_string(path).unwrap();
+        let first = read(&path);
+        assert!(first.contains("| first\n") && first.contains("| still first\n"));
+        assert!(read(&file(1)).contains("| second\n"));
+        assert!(read(&file(1)).contains("| still second\n"));
+        assert!(read(&file(2)).ends_with("| third\n"));
+        assert!(read(&file(3)).ends_with("| fourth\n"));
+        assert!(!file(4).exists());
+    }
+
+    #[test]
+    fn a_time_limit_reached_before_any_record_does_not_leave_an_empty_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let stem = "markitai_20260101_120000_123456_998";
+        let path = temp.path().join(format!("{stem}.log"));
+        let opened = Local::now();
+        let rotation = log_policy::rotation("daily").unwrap();
+        let mut sink = Sink {
+            file: private_file(&path).unwrap(),
+            _session: SessionLock::acquire(&temp.path().join(format!("{stem}.lock"))).unwrap(),
+            first_path: path.clone(),
+            stem: stem.into(),
+            sequence: 0,
+            bytes: 0,
+            rotation,
+            limit: rotation.next_after(opened.naive_local()),
+            json: true,
+            minimum: Level::Debug,
+            failed: false,
+        };
+        let tomorrow = opened + chrono::TimeDelta::days(1);
+        sink.write_at(Level::Info, "late start", tomorrow).unwrap();
+        sink.write_at(Level::Info, "same day", tomorrow).unwrap();
+        drop(sink);
+        assert_eq!(fs::read_to_string(&path).unwrap().lines().count(), 2);
+        assert!(!temp.path().join(format!("{stem}_000001.log")).exists());
     }
 }
