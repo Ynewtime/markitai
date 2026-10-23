@@ -2,7 +2,7 @@
 import hashlib
 import io
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import stat
 import struct
 import tarfile
@@ -407,7 +407,9 @@ class ShortenPathTests(unittest.TestCase):
     def test_shipped_paths_lose_the_build_machine(self):
         from package_go_static import _relative_paths, _shorten_path
 
-        root = Path("/home/ci/checkout")
+        # The static Go package builds only on Linux and macOS: their paths and
+        # home, on any host that runs this test.
+        root = PurePosixPath("/home/ci/checkout")
         self.assertEqual(_shorten_path(str(root / "LICENSE"), root), "LICENSE")
         self.assertEqual(
             _shorten_path("/home/ci/.cargo/registry/src/idx/dep-1.0/LICENSE", root),
@@ -417,9 +419,10 @@ class ShortenPathTests(unittest.TestCase):
             _shorten_path("/home/ci/.rustup/toolchains/stable/COPYRIGHT", root),
             "rustup/toolchains/stable/COPYRIGHT",
         )
-        import os as _os
-        home = _os.path.expanduser("~")
-        self.assertEqual(_shorten_path(f"{home}/elsewhere/x", root), "elsewhere/x")
+        with patch("os.path.expanduser", return_value="/home/ci"):
+            self.assertEqual(_shorten_path("/home/ci/elsewhere/x", root), "elsewhere/x")
+        with patch("os.path.expanduser", return_value="/Users/ci"):
+            self.assertEqual(_shorten_path("/Users/ci/elsewhere/x", root), "elsewhere/x")
         # A system path and a non-path string are left alone.
         self.assertEqual(_shorten_path("/lib/x86_64-linux-gnu/libc.so.6", root), "/lib/x86_64-linux-gnu/libc.so.6")
         self.assertEqual(_shorten_path("MIT OR Apache-2.0", root), "MIT OR Apache-2.0")
