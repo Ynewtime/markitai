@@ -948,6 +948,12 @@ async def process_batch(
         visible_assets=assets_visible(cfg),
     )
 
+    if not dry_run and files:
+        from markitai.cli.processors.file import prepare_ocr_first_use
+        from markitai.utils.term import get_stderr_console
+
+        prepare_ocr_first_use(cfg, console=get_stderr_console(), quiet=quiet)
+
     if not dry_run and sum(f.suffix.lower() == ".pdf" for f in files) > 1:
         # Several PDFs: the extraction workers load their models while the
         # batch starts (see markitai.converter.pdf_parallel)

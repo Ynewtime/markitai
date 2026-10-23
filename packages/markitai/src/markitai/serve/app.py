@@ -3374,7 +3374,7 @@ def create_app(
         from markitai.converter.onnx_threads import warm_up_in_background
 
         # The first job converts on a loaded stack, not while loading it
-        warm_up_in_background()
+        warm_up_in_background(cfg.ocr)
         if cfg.llm.model_list or detected_models:
             # LiteLLM loads in the background, not on the loop when the first
             # LLM job (or settings test) needs it

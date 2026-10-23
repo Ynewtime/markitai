@@ -15,6 +15,13 @@ from markitai.cli.commands.doctor import doctor
 from markitai.cli.commands.doctor_text import zh_hint, zh_hint_line, zh_message
 
 
+@pytest.fixture(autouse=True)
+def _no_ocr_child(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Doctor's RapidOCR check loads the OCR stack once in a child process
+    (``ocr.prepare_ocr_stack``); these tests check its report, not that."""
+    monkeypatch.setattr("markitai.ocr._load_in_child", lambda _config: None)
+
+
 @pytest.fixture
 def zh() -> Iterator[None]:
     before = i18n._lang

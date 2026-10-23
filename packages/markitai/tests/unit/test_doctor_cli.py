@@ -10,6 +10,13 @@ from click.testing import CliRunner
 
 
 @pytest.fixture(autouse=True)
+def _no_ocr_child(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Doctor's RapidOCR check loads the OCR stack once in a child process
+    (``ocr.prepare_ocr_stack``); these tests check its report, not that."""
+    monkeypatch.setattr("markitai.ocr._load_in_child", lambda _config: None)
+
+
+@pytest.fixture(autouse=True)
 def _no_real_office_container_probe():
     """Doctor must not write-probe the developer's real Office container."""
     with patch(

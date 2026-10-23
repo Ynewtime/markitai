@@ -82,6 +82,8 @@ uv tool install 'markitai[browser]' --force
 markitai doctor --fix
 ```
 
+装了 OCR extra（或升级 markitai）之后，运行一次 `markitai doctor`：它会首次加载 OCR 的库和模型，在 macOS 上最多需要一分钟（系统会对每个新装的库检查一次）。否则第一次 `--ocr` 转换或 `markitai serve` 里的第一个 OCR 任务会等待这一步，并给出提示。安装脚本会自动完成这一步。
+
 ## 手动安装
 
 已有 Python 3.11 到 3.13 时：

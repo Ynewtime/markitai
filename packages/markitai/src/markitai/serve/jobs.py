@@ -1197,12 +1197,18 @@ async def _run_item(
     url_ctx: UrlJobContext | None,
     *,
     require_llm: bool = False,
+    notice: str | None = None,
 ) -> None:
-    """Run one item, emitting running -> done/error events."""
+    """Run one item, emitting running -> done/error events.
+
+    *notice* stays first among the item's warnings (the job waited for the
+    OCR stack's first load before it).
+    """
     from markitai.notices import capture_task_notices
 
+    lead = [notice] if notice else []
     item.status = "running"
-    item.warnings = []
+    item.warnings = list(lead)
     registry.publish_item(job, item)
     start = time.perf_counter()
     sink: Any = None
@@ -1237,7 +1243,7 @@ async def _run_item(
                     finally:
                         CAPTURE.reset(token)
             finally:
-                item.warnings = list(notices)
+                item.warnings = [*lead, *notices]
     except asyncio.CancelledError:
         # Only registry.shutdown() cancels a running item (a stop request
         # cancels items still waiting for their slot, never a running one).
@@ -1373,6 +1379,33 @@ async def run_job(
 
             await asyncio.to_thread(prestart)
 
+        # The first OCR job after an install waits for the OCR stack's first
+        # load (serve's start-up warm-up may be at it already): its items say
+        # so while they wait, not sit silent for a minute (macOS)
+        ocr_notice: str | None = None
+        if (
+            run_cfg.ocr.enabled
+            and not run_cfg.llm.enabled  # with a model, pages go to the model
+            and any(i.kind == "file" for i in targets)
+        ):
+            from markitai.ocr import (
+                OCR_FIRST_USE_NOTICE,
+                is_ocr_available,
+                ocr_stack_prepared,
+                prepare_ocr_stack,
+            )
+
+            if is_ocr_available() and not await asyncio.to_thread(ocr_stack_prepared):
+                ocr_notice = OCR_FIRST_USE_NOTICE
+                for item in targets:
+                    if item.kind == "file":
+                        item.warnings = [ocr_notice]
+                        registry.publish_item(job, item)
+                try:
+                    await asyncio.to_thread(prepare_ocr_stack, run_cfg.ocr)
+                except Exception:  # the conversion reports it where it matters
+                    pass
+
         # File slots are handed on at the LLM step, as in a CLI batch: the
         # next file converts while this one waits on the model
         from contextlib import AbstractAsyncContextManager
@@ -1450,6 +1483,7 @@ async def run_job(
                                 shared_processor,
                                 url_ctx,
                                 require_llm=require_llm,
+                                notice=ocr_notice,
                             )
                     finally:
                         remote_services_refused.reset(refused)

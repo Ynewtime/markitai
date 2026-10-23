@@ -14,6 +14,9 @@ markitai module, and every module its sources name in an import statement
 (read from the sources, so the list cannot drift), in a few processes at
 once and below normal priority. The setup scripts start it in the
 background right after installing markitai and wait for it at the end.
+With the ``ocr`` extra installed it also builds an OCR engine once
+(:func:`markitai.ocr.prepare_ocr_stack`), so the first ``--ocr`` does not
+load the OCR stack for the first time.
 ``--browser`` launches Chromium once as ``markitai doctor`` does (the first
 launch after a download is the slow one on Windows) and remembers it.
 
@@ -195,10 +198,26 @@ def run(jobs: int, browser: bool) -> dict[str, object]:
         # A process that died before its report: its share compiles on use
         "crashed": crashed,
     }
+    report.update(_prepare_ocr())
     if browser:
         report.update(_launch_browser())
     report["seconds"] = round(time.perf_counter() - started, 3)
     return report
+
+
+def _prepare_ocr() -> dict[str, object]:
+    """Build an OCR engine once and remember it, as ``markitai doctor`` does
+    (``ocr.prepare_ocr_stack``): the engine's first build after an install
+    took 7 s on macOS, on top of OpenCV's first load the imports paid."""
+    from markitai.ocr import is_ocr_available, prepare_ocr_stack
+
+    if not is_ocr_available():
+        return {"ocr": "not installed"}
+    try:
+        took = prepare_ocr_stack()
+    except Exception as exc:  # noqa: BLE001 - the first --ocr reports it
+        return {"ocr": f"failed: {exc}"}
+    return {"ocr": "prepared", "ocr_seconds": round(took or 0.0, 3)}
 
 
 def main(argv: list[str] | None = None) -> int:

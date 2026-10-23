@@ -82,6 +82,8 @@ After adding the browser extra, install Chromium once:
 markitai doctor --fix
 ```
 
+After adding the OCR extra (or upgrading markitai), run `markitai doctor` once: it loads the OCR libraries and models for the first time, which takes up to a minute on macOS (the system checks each newly installed library once). Otherwise the first `--ocr` conversion, or the first OCR job in `markitai serve`, waits for it and says so. The setup scripts do it for you.
+
 ## Manual Installation
 
 If Python 3.11 to 3.13 is already installed:

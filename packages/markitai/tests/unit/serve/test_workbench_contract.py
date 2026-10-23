@@ -1664,6 +1664,55 @@ async def _job_with_auth(
 # ---------------------------------------------------------------------------
 
 
+class TestOcrFirstUse:
+    """The first OCR job after an install waits for the OCR stack's first
+    load (a minute on macOS): its items say so while they wait, and after."""
+
+    async def test_items_say_why_they_wait(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import threading
+
+        from markitai import ocr
+
+        release = threading.Event()
+        calls: list[Any] = []
+
+        def prepare(config: Any = None) -> float:
+            calls.append(config)
+            release.wait(20)
+            return 40.0
+
+        monkeypatch.setattr(ocr, "is_ocr_available", lambda: True)
+        monkeypatch.setattr(ocr, "ocr_stack_prepared", lambda: False)
+        monkeypatch.setattr(ocr, "prepare_ocr_stack", prepare)
+        monkeypatch.setattr("markitai.serve.jobs.process_file_item", _converter())
+        async with _client(_make_app(tmp_path)) as client:
+            created = await client.post(
+                "/api/jobs",
+                files=_form(files=[("scan.pdf", _pdf_bytes(1))], options={"ocr": True}),
+            )
+            job_id = created.json()["job_id"]
+            waiting: dict[str, Any] = {}
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                waiting = (await client.get(f"/api/jobs/{job_id}")).json()
+                if waiting["items"][0]["warnings"]:
+                    break
+                await asyncio.sleep(0.02)
+            release.set()
+            done = await _done(client, job_id)
+            # Without OCR nothing waits
+            _, plain = await _job(client, files=[("doc.pdf", _pdf_bytes(1))])
+        assert waiting["items"][0]["status"] == "queued"
+        assert waiting["items"][0]["warnings"] == [ocr.OCR_FIRST_USE_NOTICE]
+        assert done["items"][0]["status"] == "done"
+        assert done["items"][0]["warnings"][0] == ocr.OCR_FIRST_USE_NOTICE
+        assert plain["items"][0]["warnings"] == []
+        # The job's own wait (serve's start-up warm-up may call it too)
+        assert [config.enabled for config in calls].count(True) == 1
+
+
 class TestOriginals:
     async def _job_of(
         self,

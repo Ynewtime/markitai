@@ -808,14 +808,32 @@ def _check_rapidocr(cfg: Any) -> dict[str, Any]:
             # ja load the same model, so "lang: en (English)" read as if
             # Chinese and Japanese scans would not work
             reads = "Chinese, English, Japanese and Latin-script"
+        message = (
+            f"v{rapidocr_version}, reads {reads} text (ocr.lang: {configured_lang})"
+        )
+        # The first load after an install is the slow one (a minute on
+        # macOS): paid here, where setup is expected, not by the first --ocr
+        from markitai.ocr import prepare_ocr_stack
+
+        try:
+            took = prepare_ocr_stack(cfg.ocr)
+        except Exception as e:  # noqa: BLE001 - reported, not raised
+            return {
+                "name": "RapidOCR",
+                "description": "OCR for scanned documents (--ocr)",
+                "status": "error",
+                "optional": True,
+                "message": f"v{rapidocr_version}, failed to load: {e}",
+                "install_hint": OCR_INSTALL_HINT,
+            }
+        if took is not None and took >= 1:
+            message += f"; prepared for first use in {took:.0f} s"
         return {
             "name": "RapidOCR",
             "description": "OCR for scanned documents (--ocr)",
             "status": "ok",
             "optional": True,
-            "message": (
-                f"v{rapidocr_version}, reads {reads} text (ocr.lang: {configured_lang})"
-            ),
+            "message": message,
             "install_hint": "",
         }
     except ImportError:
@@ -854,6 +872,20 @@ def _record_step(name: str, seconds: float) -> None:
     from markitai.launcher import record
 
     record(f"doctor: {name}", seconds)
+
+
+def _rapidocr_label() -> str:
+    """The RapidOCR check's name while it runs: it loads the OCR stack the
+    first time after an install, which takes a while on macOS."""
+    from markitai.ocr import is_ocr_available, ocr_stack_prepared
+
+    if not is_ocr_available() or ocr_stack_prepared():
+        return "RapidOCR"
+    return (
+        "RapidOCR（首次准备 OCR）"
+        if _zh()
+        else "RapidOCR (preparing OCR, first time only)"
+    )
 
 
 def _run_checks(
@@ -959,7 +991,7 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
             "LibreOffice",
             lambda: _check_libreoffice(cfg.office.macos_fallback),
         ),
-        "rapidocr": ("RapidOCR", lambda: _check_rapidocr(cfg)),
+        "rapidocr": (_rapidocr_label(), lambda: _check_rapidocr(cfg)),
         "anydoc": ("anydoc", _check_anydoc),
         "serve": ("Serve", _check_serve),
     }

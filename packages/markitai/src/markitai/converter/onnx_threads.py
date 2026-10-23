@@ -18,7 +18,10 @@ from __future__ import annotations
 
 import threading
 from types import ModuleType
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from markitai.config import OCRConfig
 
 #: Threads one in-process session uses at most.
 LOCAL_SESSION_THREADS = 4
@@ -108,14 +111,18 @@ _CONVERTER_LIBRARIES = ("numpy", "PIL.Image", "lxml.etree", "pptx")
 _warm_started = False
 
 
-def warm_up_in_background() -> None:
-    """Load the PDF layout models and converter libraries in a daemon thread.
+def warm_up_in_background(ocr_config: OCRConfig | None = None) -> None:
+    """Load the PDF layout models and converter libraries in a daemon thread,
+    then prepare the OCR stack when OCR is installed.
 
     For ``markitai serve``: its first job otherwise paid them, and every
     file of that job waited (pymupdf4llm loads three ONNX models as it is
-    imported). Once per process. As for serve's LiteLLM prewarm, the thread
-    imports only third-party modules: the markitai module the cap reads its
-    core count from is imported here first.
+    imported). OpenCV is loaded only by the OCR step, after the rest, and
+    only until this installation has loaded it once
+    (``ocr.prepare_ocr_stack``: the first load after an install took 40 s
+    on macOS). Once per process. As for serve's LiteLLM prewarm, the thread
+    imports only third-party modules: the markitai modules it calls are
+    imported here first.
     """
     global _warm_started
     import importlib
@@ -125,6 +132,7 @@ def warm_up_in_background() -> None:
             return
         _warm_started = True
     importlib.import_module("markitai.converter.pdf_parallel")
+    from markitai.ocr import is_ocr_available, prepare_ocr_stack
 
     def run() -> None:
         try:
@@ -135,6 +143,11 @@ def warm_up_in_background() -> None:
             try:
                 importlib.import_module(name)
             except Exception:
+                pass
+        if is_ocr_available():
+            try:
+                prepare_ocr_stack(ocr_config)
+            except Exception:  # an OCR conversion reports it where it matters
                 pass
 
     threading.Thread(target=run, name="markitai-converter-prewarm", daemon=True).start()
