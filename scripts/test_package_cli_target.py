@@ -167,8 +167,11 @@ class TargetPackagingTests(unittest.TestCase):
             return str(self.root / "work")
 
         printed = io.StringIO()
+        # Windows has no os.uname, so platform.uname() would read the patched "linux" and probe
+        # the executable with the patched subprocess; the record's platform line is not under test.
         with (patch("package_cli_target.sys.platform", "linux"),
-              patch.dict(os.environ, {"HOME": str(self.root)}, clear=True),
+              patch("package_cli_target.platform.platform", return_value="Linux-synthetic"),
+              patch.dict(os.environ, {"HOME": str(self.root), "USERPROFILE": str(self.root)}, clear=True),
               patch("package_cli_target.tempfile.mkdtemp", side_effect=work),
               patch("package_cli_target.subprocess.check_output", side_effect=check_output),
               patch("package_cli_target.run_logged", side_effect=run_logged),
