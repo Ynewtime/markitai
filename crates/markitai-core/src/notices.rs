@@ -33,7 +33,8 @@ pub struct Classified {
 #[derive(Clone, Copy)]
 enum Subject {
     None,
-    /// `PDF page 3:` / `Office page 2:` / `TIFF page 4`: the page number.
+    /// `PDF page 3:` / `Office page 2:` / `TIFF page 4`: the page number;
+    /// `pages 1–12, 15, 20–31` every page of the list.
     Page,
     /// `Image analysis failed for asset-1.emf:`: the image file name.
     ImageAfterFor,
@@ -50,7 +51,22 @@ const FAMILIES: &[(&str, Level, &str, &str, Subject)] = &[
     (
         "pdf.page_without_text",
         Level::Warning,
+        "PDF is scanned: ",
+        "",
+        Subject::Page,
+    ),
+    (
+        "pdf.page_without_text",
+        Level::Warning,
         "PDF page ",
+        ": native text was not recovered",
+        Subject::Page,
+    ),
+    // The same sentences for several pages (`PDF pages 3–5, 9 (4 of 120): …`).
+    (
+        "pdf.page_without_text",
+        Level::Warning,
+        "PDF pages ",
         ": native text was not recovered",
         Subject::Page,
     ),
@@ -62,6 +78,7 @@ const FAMILIES: &[(&str, Level, &str, &str, Subject)] = &[
         Subject::Page,
     ),
     ("pdf.page", Level::Warning, "PDF page ", "", Subject::Page),
+    ("pdf.page", Level::Warning, "PDF pages ", "", Subject::Page),
     (
         "pdf.images_after_text",
         Level::Info,
@@ -376,8 +393,48 @@ const FAMILIES: &[(&str, Level, &str, &str, Subject)] = &[
 static PAGE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\bpages? (\d+)(?:\s*[-\u{2013}]\s*(\d+))?").expect("page pattern compiles")
 });
+/// A further entry of a page list (`, 15` or `, 20–31`), taken only when a
+/// list separator, ` (` or the sentence's end follows it.
+static MORE_PAGES: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^,\s*(\d+)(?:\s*[-\u{2013}]\s*(\d+))?(?:[,);:.]| \(|$)")
+        .expect("page list pattern compiles")
+});
+/// At most this many pages are named for one notice.
+const MAX_PAGES: usize = 10_000;
 static QUOTED: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#""((?:[^"\\]|\\.)*)""#).expect("quoted pattern compiles"));
+
+/// The pages a sentence names: its first `page N` or `pages N–M`, and the
+/// entries of the list that continues it.
+fn pages(message: &str) -> Vec<String> {
+    let Some(found) = PAGE.captures(message) else {
+        return Vec::new();
+    };
+    let mut items = Vec::new();
+    let mut add = |first: &str, last: Option<regex::Match>| {
+        let first: usize = first.parse().unwrap_or(0);
+        let last = last
+            .and_then(|last| last.as_str().parse().ok())
+            .filter(|last| *last >= first && last - first < MAX_PAGES)
+            .unwrap_or(first);
+        for page in first..=last {
+            if items.len() < MAX_PAGES {
+                items.push(page.to_string());
+            }
+        }
+    };
+    add(&found[1], found.get(2));
+    let mut at = found.get(0).map_or(message.len(), |all| all.end());
+    while let Some(more) = MORE_PAGES.captures(&message[at..]) {
+        let end = more
+            .get(2)
+            .unwrap_or_else(|| more.get(1).expect("a page"))
+            .end();
+        add(&more[1], more.get(2));
+        at += end;
+    }
+    items
+}
 
 /// The family of one warning sentence.
 pub fn classify(message: &str) -> Classified {
@@ -394,18 +451,7 @@ pub fn classify(message: &str) -> Classified {
     let rest = &message[prefix.len()..];
     let items = match subject {
         Subject::None => Vec::new(),
-        Subject::Page => PAGE
-            .captures(message)
-            .map(|found| {
-                let first: usize = found[1].parse().unwrap_or(0);
-                let last = found
-                    .get(2)
-                    .and_then(|last| last.as_str().parse().ok())
-                    .filter(|last| *last >= first && last - first < 10_000)
-                    .unwrap_or(first);
-                (first..=last).map(|page| page.to_string()).collect()
-            })
-            .unwrap_or_default(),
+        Subject::Page => pages(message),
         Subject::ImageAfterFor => rest
             .split_once(": ")
             .map(|(name, _)| vec![name.to_owned()])
@@ -495,6 +541,52 @@ mod tests {
             code("PDF hidden text: 2 span(s) on page(s) 1\u{2013}2 left out of the Markdown (possible prompt injection; excerpt: \"a; b\").").0,
             "pdf.hidden_text"
         );
+    }
+
+    #[test]
+    fn a_scanned_pdf_names_every_page_of_its_list() {
+        let pages = |list: &[(usize, usize)]| -> Vec<String> {
+            list.iter()
+                .flat_map(|&(first, last)| first..=last)
+                .map(|page| page.to_string())
+                .collect()
+        };
+        assert_eq!(
+            code(
+                "PDF is scanned: 3 of 3 pages have no readable text (pages 1\u{2013}3); run again with --ocr to read them."
+            ),
+            ("pdf.page_without_text", Level::Warning, pages(&[(1, 3)]))
+        );
+        assert_eq!(
+            code(
+                "PDF is scanned: 1 of 1 page has no readable text (page 1); run again with --ocr to read it."
+            ),
+            ("pdf.page_without_text", Level::Warning, pages(&[(1, 1)]))
+        );
+        assert_eq!(
+            code(
+                "PDF is scanned: 26 of 28 pages have no readable text (pages 1\u{2013}12, 15, 20\u{2013}31, 40); run again with --ocr to read them."
+            ),
+            (
+                "pdf.page_without_text",
+                Level::Warning,
+                pages(&[(1, 12), (15, 15), (20, 31), (40, 40)])
+            )
+        );
+        // The per-reason sentences list their pages the same way.
+        assert_eq!(
+            code(
+                "PDF pages 3\u{2013}5, 9 (4 of 120): native text was not recovered (scanned); OCR is required to read them. Run again with --ocr."
+            ),
+            (
+                "pdf.page_without_text",
+                Level::Warning,
+                pages(&[(3, 5), (9, 9)])
+            )
+        );
+        // A number after a comma that is not a list entry is not a page.
+        assert_eq!(code(&crate::ocr::capped_warning("PDF page 7")).2, ["7"]);
+        assert_eq!(code("Office page 2, 3 lines were cut.").2, ["2"]);
     }
 
     #[test]

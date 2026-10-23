@@ -101,9 +101,9 @@ code keeps working when wording changes.
 
 | Code | Level | Family |
 |---|---|---|
-| `pdf.page_without_text` | warning | A PDF page without recoverable text (OCR needed); `items` the page |
+| `pdf.page_without_text` | warning | PDF pages without recoverable text, or a scanned PDF (OCR needed); `items` every page named |
 | `pdf.page_plain_text` | info | A PDF page read as plain text |
-| `pdf.page` | warning | Other notes about one PDF page |
+| `pdf.page` | warning | Other notes about PDF pages |
 | `pdf.images_after_text` | info | PDF pictures placed after their page's text |
 | `pdf.embedded_image`, `pdf.layout`, `pdf.hidden_text` | warning | PDF picture OCR, layout refinement, hidden-text removal |
 | `ocr.no_text`, `ocr.unread`, `ocr.capped`, `ocr.unavailable` | warning | Local OCR found nothing, could not read a script, stopped at its region limit, or could not run |
