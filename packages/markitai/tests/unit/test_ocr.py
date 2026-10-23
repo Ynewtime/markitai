@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from markitai.config import OCRConfig
+from markitai.converter.onnx_threads import local_threads
 from markitai.ocr import OCRProcessor, OCRResult, is_likely_garbled
 
 
@@ -219,6 +220,7 @@ class TestOCRProcessorMocked:
         # Set global engine directly (config must match to avoid rebuild)
         OCRProcessor._global_engine = mock_engine
         OCRProcessor._global_config = ocr_config
+        OCRProcessor._global_threads = local_threads()
 
         processor = OCRProcessor(ocr_config)
         result = processor.recognize(test_image)
@@ -247,6 +249,8 @@ class TestOCRProcessorMocked:
         OCRProcessor._global_engine = mock_engine
         OCRProcessor._global_config = ocr_config
 
+        OCRProcessor._global_threads = local_threads()
+
         processor = OCRProcessor(ocr_config)
         result = processor.recognize(test_image)
 
@@ -268,6 +272,7 @@ class TestOCRProcessorMocked:
         mock_engine = MagicMock(side_effect=[empty, found, empty, empty, empty])
         OCRProcessor._global_engine = mock_engine
         OCRProcessor._global_config = ocr_config
+        OCRProcessor._global_threads = local_threads()
 
         result = OCRProcessor(ocr_config).recognize_numpy(
             np.zeros((768, 1024, 3), dtype=np.uint8)
@@ -618,7 +623,7 @@ class TestOCRLanguageResolution:
             OCRProcessor._global_engine = None
             OCRProcessor._global_threads = None
 
-        assert built == [2, None]
+        assert built == [2, local_threads()]
 
     @pytest.mark.parametrize(
         "lang",
@@ -710,6 +715,7 @@ class TestSparseTileThreadSafety:
         engine = _ThresholdRecordingEngine()
         OCRProcessor._global_engine = engine
         OCRProcessor._global_config = ocr_config
+        OCRProcessor._global_threads = local_threads()
         processor = OCRProcessor(ocr_config)
         # Every full pass is empty, so each call also runs the tiled retry
         image = np.zeros((1200, 1600, 3), dtype=np.uint8)
@@ -745,6 +751,7 @@ class TestOCRParagraphLayout:
         )
         OCRProcessor._global_engine = mock_engine
         OCRProcessor._global_config = ocr_config
+        OCRProcessor._global_threads = local_threads()
 
         result = OCRProcessor(ocr_config).recognize_numpy(
             np.zeros((200, 400, 3), dtype=np.uint8)
@@ -763,6 +770,7 @@ class TestOCRParagraphLayout:
         mock_engine = MagicMock(return_value=mock_result)
         OCRProcessor._global_engine = mock_engine
         OCRProcessor._global_config = ocr_config
+        OCRProcessor._global_threads = local_threads()
 
         OCRProcessor(ocr_config).recognize_to_markdown(test_image)
 
@@ -899,6 +907,7 @@ class TestUpsideDownDetection:
         engine.text_cls = classify
         OCRProcessor._global_engine = engine
         OCRProcessor._global_config = ocr_config
+        OCRProcessor._global_threads = local_threads()
 
         crop_module = types.ModuleType("rapidocr.utils.process_img")
         crop_module.get_rotate_crop_image = lambda _image, poly: poly  # type: ignore[attr-defined]

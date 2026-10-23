@@ -3370,6 +3370,10 @@ def create_app(
         # Startup cleanup alone never expires history on a long-running server
         expiry_task = asyncio.create_task(run_history_expiry(state.registry))
         logger.info("[Serve] markitai {} ready (jobs root: {})", __version__, root)
+        from markitai.converter.onnx_threads import warm_up_in_background
+
+        # The first job converts on a loaded stack, not while loading it
+        warm_up_in_background()
         if cfg.llm.model_list or detected_models:
             # LiteLLM loads in the background, not on the loop when the first
             # LLM job (or settings test) needs it

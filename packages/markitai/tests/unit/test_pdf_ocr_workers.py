@@ -8,7 +8,6 @@ process gives.
 
 from __future__ import annotations
 
-import os
 import threading
 from collections.abc import Callable
 from concurrent.futures import Future
@@ -299,13 +298,13 @@ def test_the_in_process_readers_follow_the_cores(
     from markitai.converter.pdf import PdfConverter
 
     monkeypatch.setattr(pdf_parallel, "ocr_slots", lambda workers: workers)
-    monkeypatch.setattr(os, "cpu_count", lambda: 10)
+    monkeypatch.setattr(pdf_parallel, "usable_cores", lambda: 10)
     assert PdfConverter._ocr_thread_count(100) == 5
     assert PdfConverter._ocr_thread_count(2) == 2
-    monkeypatch.setattr(os, "cpu_count", lambda: 64)
+    monkeypatch.setattr(pdf_parallel, "usable_cores", lambda: 64)
     assert PdfConverter._ocr_thread_count(100) == 8
-    monkeypatch.setattr(os, "cpu_count", lambda: 1)
+    monkeypatch.setattr(pdf_parallel, "usable_cores", lambda: 1)
     assert PdfConverter._ocr_thread_count(100) == 1
     monkeypatch.setattr(pdf_parallel, "ocr_slots", lambda _workers: 1)
-    monkeypatch.setattr(os, "cpu_count", lambda: 10)
+    monkeypatch.setattr(pdf_parallel, "usable_cores", lambda: 10)
     assert PdfConverter._ocr_thread_count(100) == 1  # memory allows one

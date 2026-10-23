@@ -475,9 +475,10 @@ class OCRProcessor:
 
         Args:
             config: Optional OCR configuration
-            threads: onnxruntime threads per recognition (None: its default,
-                every core). A PDF extraction worker reading one page of
-                many sets its share of the cores.
+            threads: onnxruntime threads per recognition (None: at most
+                four, ``onnx_threads.local_threads``). A PDF extraction
+                worker reading one page of many sets its share of the
+                cores, and so do pages read on threads here.
         """
         self.config = config
         self._threads = threads
@@ -507,11 +508,17 @@ class OCRProcessor:
 
         Args:
             config: Optional OCR configuration for engine creation
-            threads: onnxruntime threads per recognition (None: its default)
+            threads: onnxruntime threads per recognition (None: at most four)
 
         Returns:
             Shared RapidOCR engine instance
         """
+        if not threads:
+            from markitai.converter.onnx_threads import local_threads
+
+            # Every core by onnxruntime's default: four times the CPU for
+            # the same time, and slower once threads outnumber free cores
+            threads = local_threads()
         new_fp = cls._config_fingerprint(config)
 
         def stale() -> bool:

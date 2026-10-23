@@ -99,8 +99,9 @@ def enable() -> None:
 
 def layout_engine_active() -> bool:
     """Whether pymupdf4llm renders through PyMuPDF-Layout (its default)."""
-    import pymupdf4llm
+    from markitai.converter.onnx_threads import import_pymupdf4llm
 
+    pymupdf4llm = import_pymupdf4llm()
     return bool(getattr(pymupdf4llm, "_use_layout", False))
 
 
