@@ -57,7 +57,7 @@ def source_digest():
 
 class WebDistTest(unittest.TestCase):
     def setUp(self):
-        self.manifest = json.loads((DIST / "manifest.json").read_text())
+        self.manifest = json.loads((DIST / "manifest.json").read_text(encoding="utf-8"))
 
     def test_every_built_file_matches_the_manifest(self):
         listed = set(self.manifest["files"])
@@ -84,20 +84,20 @@ class WebDistTest(unittest.TestCase):
             self.assertEqual(self.manifest["vendor"][name], sha256(original), name)
 
     def test_the_server_embeds_only_listed_files(self):
-        source = WEB_RS.read_text()
+        source = WEB_RS.read_text(encoding="utf-8")
         embedded = set(re.findall(r'dist!\("([^"]+)"\)', source))
         self.assertTrue(embedded, "web.rs embeds nothing from dist/")
         self.assertTrue(embedded <= set(self.manifest["files"]), embedded - set(self.manifest["files"]))
         for name in re.findall(r'vendor!\("([^"]+)"\)', source):
             self.assertTrue((VENDOR / name).is_file(), name)
         # The page loads exactly these, all same-origin.
-        html = (DIST / "index.html").read_text()
+        html = (DIST / "index.html").read_text(encoding="utf-8")
         for reference in re.findall(r'(?:src|href)="([^"]+)"', html):
             self.assertTrue(reference.startswith("/ui/"), reference)
         self.assertNotIn("style=", html)
 
     def test_vendored_files_match_their_provenance(self):
-        entries = json.loads((VENDOR / "provenance.json").read_text())
+        entries = json.loads((VENDOR / "provenance.json").read_text(encoding="utf-8"))
         by_file = {entry["file"]: entry for entry in entries}
         for path in VENDOR.iterdir():
             if path.name == "provenance.json":
@@ -117,20 +117,20 @@ class WebDistTest(unittest.TestCase):
     def test_pele_licence_evidence_follows_the_locked_version(self):
         # package.json takes any pele 1.x from 1.9.0, so `npm update pele` can move the lock: the licence copy,
         # its provenance entry and the NOTICE line must then be refreshed to the version the build bundles.
-        locked = json.loads((WEB / "package-lock.json").read_text())["packages"]["node_modules/pele"]
-        entry = next(entry for entry in json.loads((VENDOR / "provenance.json").read_text()) if entry["file"] == "pele-LICENSE")
+        locked = json.loads((WEB / "package-lock.json").read_text(encoding="utf-8"))["packages"]["node_modules/pele"]
+        entry = next(entry for entry in json.loads((VENDOR / "provenance.json").read_text(encoding="utf-8")) if entry["file"] == "pele-LICENSE")
         stale = "refresh vendor/web/pele-LICENSE, its provenance entry and NOTICE for the locked pele (see docs/web-ui.md)"
         self.assertEqual(entry["version"], locked["version"], stale)
         self.assertEqual(entry["package_integrity"], locked["integrity"], stale)
         self.assertEqual(entry["source"], locked["resolved"], stale)
-        self.assertIn(f"Pele {locked['version']} (MIT", (ROOT / "NOTICE").read_text(), stale)
+        self.assertIn(f"Pele {locked['version']} (MIT", (ROOT / "NOTICE").read_text(encoding="utf-8"), stale)
         installed = WEB / "node_modules/pele"
-        if (installed / "LICENSE").is_file() and json.loads((installed / "package.json").read_text())["version"] == locked["version"]:
+        if (installed / "LICENSE").is_file() and json.loads((installed / "package.json").read_text(encoding="utf-8"))["version"] == locked["version"]:
             self.assertEqual((VENDOR / "pele-LICENSE").read_bytes(), (installed / "LICENSE").read_bytes(), stale)
 
     @unittest.skipUnless(shutil.which("node") and (WEB / "node_modules/esbuild").is_dir(), "Node or the pinned toolchain is not installed")
     def test_a_rebuild_reproduces_dist(self):
-        result = subprocess.run(["node", "build.mjs", "--check"], cwd=WEB, capture_output=True, text=True, timeout=300)
+        result = subprocess.run(["node", "build.mjs", "--check"], cwd=WEB, capture_output=True, encoding="utf-8", errors="replace", timeout=300)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     @unittest.skipUnless(shutil.which("node"), "Node is not installed")
@@ -142,7 +142,7 @@ class WebDistTest(unittest.TestCase):
             ["node", "scripts/check-css-scale.mjs"],
             ["node", "scripts/check-contrast.mjs"],
         ]:
-            result = subprocess.run(command, cwd=WEB, capture_output=True, text=True, timeout=300)
+            result = subprocess.run(command, cwd=WEB, capture_output=True, encoding="utf-8", errors="replace", timeout=300)
             self.assertEqual(result.returncode, 0, result.stdout[-4000:] + result.stderr[-4000:])
 
 
