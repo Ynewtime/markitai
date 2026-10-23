@@ -38,6 +38,7 @@ from markitai.converter.pdf_layout_boxes import (
 )
 from markitai.converter.pdf_markdown import repair_pages
 from markitai.converter.pdf_ocr import (
+    PageAssets,
     PageShot,
     read_page,
     read_page_task,
@@ -70,6 +71,7 @@ from markitai.ocr import (
     ocr_lang_for_script,
     ocr_readable_scripts,
 )
+from markitai.ocr_layout import resolve_heading_levels
 from markitai.utils.cjk_radicals import fold_cjk_radicals
 from markitai.utils.errors import ConversionError, MissingDependencyError
 from markitai.utils.mime import get_mime_type, normalize_image_extension
@@ -2027,6 +2029,16 @@ class PdfConverter(BaseConverter):
                     image_format=image_format,
                     image=self.config.image if self.config else None,
                 )
+            # Figures cut out of OCR'd pages go beside the native pictures
+            figures: PageAssets | None = None
+            if output_dir and ocr_pages:
+                figures = PageAssets(
+                    directory=str(output_dir / ASSETS_REL_PATH),
+                    reference=ASSETS_REL_PATH,
+                    prefix=self.asset_prefix or input_path.name,
+                    image_format=image_format,
+                    image=self.config.image if self.config else None,
+                )
             # Every page when each gets a screenshot, else the ones to read
             targets = list(range(total_pages)) if shot else ocr_pages
             ocr_page_set = set(ocr_pages)
@@ -2047,7 +2059,7 @@ class PdfConverter(BaseConverter):
                 input_path,
                 read_page_task,
                 targets,
-                (dpi, ocr_config, frozenset(ocr_page_set), shot),
+                (dpi, ocr_config, frozenset(ocr_page_set), shot, figures),
                 finished,
             )
             if left is None:
@@ -2063,6 +2075,7 @@ class PdfConverter(BaseConverter):
                             dpi,
                             read=i in ocr_page_set,
                             shot=shot,
+                            assets=figures,
                         ): i
                         for i in left
                     }
@@ -2071,11 +2084,25 @@ class PdfConverter(BaseConverter):
 
             # In page order. Page renders are screenshots, counted from
             # page_images like on the standard path, never as embedded images.
+            ocr_layouts: list[dict[str, Any]] = []
             for i in sorted(results):
                 if results[i]["page_image"] is not None:
                     page_images.append(results[i]["page_image"])
                 if results[i]["text"] is not None and i in ocr_page_set:
                     ocr_texts[i] = results[i]["text"]
+                    if results[i].get("layout"):
+                        ocr_layouts.append(results[i]["layout"])
+            # Heading levels from all the OCR'd pages' heading sizes at once
+            read_order = sorted(ocr_texts)
+            ocr_texts = dict(
+                zip(
+                    read_order,
+                    resolve_heading_levels([ocr_texts[i] for i in read_order]),
+                    strict=True,
+                )
+            )
+            if figures is not None and assets_dir is None:
+                assets_dir = Path(figures.directory)
 
             if failures:
                 pages = sorted(failures)
@@ -2181,6 +2208,9 @@ class PdfConverter(BaseConverter):
             _log_page_sources(input_path, metadata["page_sources"])
             if reference_images and output_dir:
                 metadata["reference_images"] = reference_images
+            if ocr_layouts:
+                # What the Compare view matches an OCR'd page's blocks with
+                metadata["ocr_pages"] = ocr_layouts
 
             return ConvertResult(
                 markdown=extracted_text,

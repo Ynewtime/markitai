@@ -15,6 +15,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from markitai.ocr_layout import OcrPage, place_figures
+
 if TYPE_CHECKING:
     from markitai.config import ImageConfig, OCRConfig
 
@@ -29,6 +31,21 @@ class PageShot:
     image: ImageConfig | None
 
 
+@dataclass(frozen=True)
+class PageAssets:
+    """Where a page's figures go: ``<directory>/<prefix>-0001-01.jpg``.
+
+    ``reference`` is the directory as the Markdown names it
+    (``.markitai/assets``).
+    """
+
+    directory: str
+    reference: str
+    prefix: str
+    image_format: str
+    image: ImageConfig | None
+
+
 def read_page(
     ocr: Any,
     path: Path | str,
@@ -37,8 +54,13 @@ def read_page(
     *,
     read: bool,
     shot: PageShot | None,
+    assets: PageAssets | None = None,
 ) -> dict[str, Any]:
     """Render page *page_num* (0-based), save its screenshot, OCR it.
+
+    The page is read with its structure (``OCRProcessor.recognize_page``):
+    its figures are cut out into *assets* and referenced where they stand
+    (without *assets* they are left out, their labels too).
 
     Args:
         ocr: The :class:`markitai.ocr.OCRProcessor` to read with.
@@ -47,50 +69,129 @@ def read_page(
         dpi: Render resolution.
         read: OCR the page (False: only its screenshot is wanted).
         shot: Save the render as the page's screenshot.
+        assets: Save the page's figures.
 
     Returns:
-        ``{"text": str | None, "page_image": {"page", "path", "name"} | None}``
+        ``{"text": str | None, "page_image": {"page", "path", "name"} | None,
+        "layout": dict | None}``. ``text`` keeps heading placeholders
+        (``ocr_layout.resolve_heading_levels`` sets the levels over the
+        whole document); ``layout`` is the page's recognized lines and
+        figure boxes in points from its top-left corner (what the Compare
+        view's page text answers for an OCR'd page).
     """
+    page_image: dict[str, Any] | None = None
+    figures = assets is not None
+    result: Any = None
     if shot is None:
-        text = ocr.recognize_pdf_page(Path(path), page_num, dpi=dpi).text.strip()
-        return {"text": text, "page_image": None}
+        if read:
+            result = ocr.recognize_pdf_page(
+                Path(path), page_num, dpi=dpi, figures=figures
+            )
+    else:
+        pix, rect = _render(path, page_num, dpi)
+        saved = _save_shot(pix, page_num, shot)
+        # The saved name: the fallback may have changed its extension
+        page_image = {"page": page_num + 1, "path": str(saved), "name": saved.name}
+        if read:
+            # The render the screenshot came from, not a second one
+            result = ocr.recognize_pixmap(
+                pix.samples, pix.width, pix.height, pix.n, figures=figures
+            )
+            result.page_size = rect
+    if result is None:
+        return {"text": None, "page_image": page_image, "layout": None}
+    page = getattr(result, "page", None)
+    if not isinstance(page, OcrPage):
+        return {"text": result.text.strip(), "page_image": page_image, "layout": None}
 
-    pix, _size, saved = _render_and_save(path, page_num, dpi, shot)
-    text: str | None = None
-    if read:
-        # The render the screenshot came from, not a second one
-        result = ocr.recognize_pixmap(pix.samples, pix.width, pix.height, pix.n)
-        text = result.text.strip()
-    # The saved name: the fallback may have changed its extension
-    return {
-        "text": text,
-        "page_image": {"page": page_num + 1, "path": str(saved), "name": saved.name},
-    }
+    references = [
+        _save_figure(result.image, box, page_num, index, assets)
+        for index, box in enumerate(page.figures)
+    ]
+    text = place_figures(page.markdown, references).strip()
+    layout: dict[str, Any] | None = None
+    size = result.page_size
+    if size is not None:
+        sx = size[0] / result.image.shape[1]
+        sy = size[1] / result.image.shape[0]
+
+        def points(box: Any) -> list[float]:
+            return [
+                round(max(0.0, box[0] * sx), 2),
+                round(max(0.0, box[1] * sy), 2),
+                round(min(size[0], box[2] * sx), 2),
+                round(min(size[1], box[3] * sy), 2),
+            ]
+
+        layout = {
+            "page": page_num + 1,
+            "width": round(size[0], 2),
+            "height": round(size[1], 2),
+            "lines": [{"text": t, "bbox": points(b)} for t, b in page.lines],
+            "images": [
+                {"bbox": points(box)}
+                for box, reference in zip(page.figures, references, strict=True)
+                if reference
+            ],
+        }
+    return {"text": text, "page_image": page_image, "layout": layout}
 
 
-def _render_and_save(
-    path: Path | str, page_num: int, dpi: int, shot: PageShot
-) -> tuple[Any, tuple[int, int], Path]:
-    """Render page *page_num* and save it as its screenshot.
-
-    Returns:
-        The render, the saved image's size, and where it was saved (the
-        fallback may have changed its extension).
-    """
+def _render(
+    path: Path | str, page_num: int, dpi: int
+) -> tuple[Any, tuple[float, float]]:
+    """Page *page_num* rendered at *dpi* (capped), and its size in points."""
     import pymupdf
 
-    from markitai.image import ImageProcessor
     from markitai.ocr import page_render_matrix
 
     # Each task opens its own document (PyMuPDF is not thread-safe)
     with pymupdf.open(path) as doc:
         page = doc[page_num]
         pix = page.get_pixmap(matrix=page_render_matrix(page, dpi))
+        rect = (float(page.rect.width), float(page.rect.height))
+    return pix, rect
+
+
+def _save_shot(pix: Any, page_num: int, shot: PageShot) -> Path:
+    from markitai.image import ImageProcessor
+
     name = f"{shot.prefix}.page{page_num + 1:04d}.{shot.image_format}"
-    size, saved = ImageProcessor(shot.image).save_screenshot(
+    _size, saved = ImageProcessor(shot.image).save_screenshot(
         pix.samples, pix.width, pix.height, Path(shot.directory) / name
     )
-    return pix, size, saved
+    return saved
+
+
+def _save_figure(
+    image: Any, box: Any, page_num: int, index: int, assets: PageAssets | None
+) -> str | None:
+    """Cut figure *index* out of the page and save it; its Markdown, or
+    None when it could not be saved."""
+    if assets is None:
+        return None
+    import numpy as np
+    from loguru import logger
+
+    from markitai.image import ImageProcessor
+
+    x0, y0, x1, y1 = (int(round(v)) for v in box)
+    crop = np.ascontiguousarray(image[y0:y1, x0:x1])
+    if crop.size == 0:
+        return None
+    name = f"{assets.prefix}-{page_num + 1:04d}-{index + 1:02d}.{assets.image_format}"
+    try:
+        Path(assets.directory).mkdir(parents=True, exist_ok=True)
+        _size, saved = ImageProcessor(assets.image).save_screenshot(
+            crop.tobytes(), crop.shape[1], crop.shape[0], Path(assets.directory) / name
+        )
+    except Exception as e:  # the page's text stands without the picture
+        logger.debug("Figure {} of page {} not saved: {}", index + 1, page_num + 1, e)
+        return None
+    from urllib.parse import quote
+
+    # Encoded as the native pictures' references are (spaces, brackets)
+    return f"![]({assets.reference}/{quote(saved.name, safe='/._~-')})"
 
 
 def shoot_page(
@@ -101,7 +202,13 @@ def shoot_page(
     Returns:
         The saved image's size and its path.
     """
-    _pix, size, saved = _render_and_save(path, page_num, dpi, shot)
+    from markitai.image import ImageProcessor
+
+    pix, _rect = _render(path, page_num, dpi)
+    name = f"{shot.prefix}.page{page_num + 1:04d}.{shot.image_format}"
+    size, saved = ImageProcessor(shot.image).save_screenshot(
+        pix.samples, pix.width, pix.height, Path(shot.directory) / name
+    )
     return size, str(saved)
 
 
@@ -124,6 +231,7 @@ def read_page_task(
     config: OCRConfig | None,
     to_read: frozenset[int],
     shot: PageShot | None,
+    assets: PageAssets | None = None,
 ) -> dict[str, Any]:
     """:func:`read_page` as a worker task, reading the page if in *to_read*.
 
@@ -139,4 +247,5 @@ def read_page_task(
         dpi,
         read=page_num in to_read,
         shot=shot,
+        assets=assets,
     )

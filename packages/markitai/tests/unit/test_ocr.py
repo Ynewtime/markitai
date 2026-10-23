@@ -367,6 +367,8 @@ class TestOCRRecognizeToMarkdown:
         OCRProcessor._global_engine = MagicMock(return_value=mock_result)
         OCRProcessor._global_config = ocr_config
 
+        OCRProcessor._global_threads = local_threads()
+
         result = OCRProcessor(ocr_config).recognize_to_markdown(test_image)
 
         assert result.splitlines()[:3] == [
@@ -390,6 +392,8 @@ class TestOCRRecognizeToMarkdown:
 
         OCRProcessor._global_engine = MagicMock(return_value=mock_result)
         OCRProcessor._global_config = ocr_config
+
+        OCRProcessor._global_threads = local_threads()
 
         result = OCRProcessor(ocr_config).recognize_to_markdown(test_image)
 
@@ -1148,3 +1152,55 @@ class TestRealEngineMarginStamp:
             for para in range(1, 4)
         ]
         assert "arXiv" in "".join(body[3:])
+
+
+class TestWeakLinesReadAgain:
+    """RapidOCR's batched recognition now and then turns a long line into
+    noise with a low score ("Nuut ne is ss u u e ss ue ne", 0.51) though the
+    same crop alone reads right: such a line is read again on its own."""
+
+    def _raw(self, scores: list[float]) -> Any:
+        import numpy as np
+
+        def poly(y: float) -> Any:
+            return np.array([[10, y], [600, y], [600, y + 20], [10, y + 20]])
+
+        return MagicMock(
+            txts=["Nuut ne is ss u u e ss ue ne", "A line read fine."],
+            scores=scores,
+            boxes=[poly(10), poly(40)],
+            img=np.zeros((80, 640, 3), dtype=np.uint8),
+        )
+
+    def test_a_weak_long_line_takes_the_better_reading(self):
+        crops: list[Any] = []
+
+        def recognizer(request: Any) -> Any:
+            crops.extend(request.img)
+            return MagicMock(txts=("Nunc ac faucibus odio.",), scores=(0.99,))
+
+        processor = OCRProcessor.__new__(OCRProcessor)
+        processor.config, processor._threads = None, 1
+        with (
+            patch.object(OCRProcessor, "engine", new=MagicMock()),
+            patch("markitai.ocr._text_recognizer", return_value=recognizer),
+        ):
+            texts, scores, _bounds = processor._raw_lines(self._raw([0.51, 0.99]))
+
+        assert texts == ["Nunc ac faucibus odio.", "A line read fine."]
+        assert scores == [0.99, 0.99]
+        assert len(crops) == 1 and crops[0].shape[0] == 24  # the line, 2 px around
+
+    def test_a_reading_no_better_is_not_taken(self):
+        def recognizer(_request: Any) -> Any:
+            return MagicMock(txts=("Something else",), scores=(0.55,))
+
+        processor = OCRProcessor.__new__(OCRProcessor)
+        processor.config, processor._threads = None, 1
+        with (
+            patch.object(OCRProcessor, "engine", new=MagicMock()),
+            patch("markitai.ocr._text_recognizer", return_value=recognizer),
+        ):
+            texts, _scores, _bounds = processor._raw_lines(self._raw([0.51, 0.99]))
+
+        assert texts[0] == "Nuut ne is ss u u e ss ue ne"

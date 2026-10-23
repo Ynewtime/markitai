@@ -22,13 +22,37 @@ retry) lays text out the same way:
 * boxes on one visual line join into one line, and runs of rows with the
   same number of widely spaced, aligned cells become a Markdown table;
 * a vertical gap taller than most of a line starts a new paragraph.
+
+:func:`structure_ocr_page` adds what the page's pixels show
+(:mod:`markitai.ocr_structure`) and the document structure the geometry
+implies, with markitai-rust's rules so both give the same Markdown:
+
+* **headings**: a one-piece line set at least 1.25 times the body text's
+  size (or bold, 1.1 times, and opening a paragraph), at most 60
+  characters and not ending in ``,`` or ``;``; the lines right below it of
+  the same size (within 20 %) continue it, three lines at most. The size
+  is measured on the ink from the top of the capitals to the baseline
+  (``ocr_structure.size_ratios``), the box height only for a line too
+  short to measure; the body text's is that of its long lines. Its level
+  comes later, from all the document's OCR'd headings
+  (:func:`resolve_heading_levels`): sizes within 8 % of a tier's largest
+  share its level, the largest tier is ``#``;
+* **list items**: a line starting with a bullet glyph the recognizer read,
+  or with a bullet blob left of it; the lines right below indented like
+  its text continue it; items are written tight (``- a`` then ``- b``);
+* ruled **tables** and **figures** where the pixels show them, written at
+  their top; a figure's labels are not text;
+* **bold and italic** per word, in paragraphs and list items (never in
+  headings or tables); a run that goes on across a line break is one run.
 """
 
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from collections.abc import Sequence
+from dataclasses import dataclass, field
 from statistics import median
+from typing import Any
 
 Bounds = tuple[float, float, float, float]
 
@@ -193,6 +217,221 @@ def layout_ocr_text(
     return "\n\n".join(part for part in (*parts, "\n".join(loose)) if part)
 
 
+# --- structure ---------------------------------------------------------------------
+
+#: A heading line is this much taller than the body text...
+_HEADING_RATIO = 1.25
+#: ...or bold, this much taller, and opening a paragraph.
+_BOLD_HEADING_RATIO = 1.1
+#: A heading's next line continues it when this much taller (or bold)...
+_HEADING_NEXT_RATIO = 1.15
+#: ...and within this share of its first line's height.
+_HEADING_NEXT_SIZE = 0.2
+_HEADING_MAX_ROWS = 3
+_HEADING_MAX_CHARS = 60
+_HEADING_OPEN_END = ",;，；、"
+#: Heading sizes within this share of a tier's largest share its level
+#: (sizes from the ink are steady to a pixel: 18 and 16 pt headings, 27
+#: and 24 px at 150 dpi, are two levels, as in the text layer).
+_HEADING_TIER = 0.92
+_BULLET_GLYPHS = "•●▪■◦‣∙○□➢►▶-–*"
+#: A list item's next line continues it when indented at least to the
+#: item's text minus this many line heights.
+_ITEM_INDENT = 0.5
+_HEADING_MARK = re.compile(r"^\x00H(\d+(?:\.\d+)?)\x00 ", re.MULTILINE)
+
+
+@dataclass
+class OcrPage:
+    """An OCR'd page laid out with its structure.
+
+    ``markdown`` holds two kinds of placeholders: ``\\x00H<size>\\x00 `` in
+    front of a heading (:func:`resolve_heading_levels` turns it into
+    ``#``s) and ``\\x00F<n>\\x00`` on its own line where figure ``n`` goes
+    (:func:`place_figures`).
+    """
+
+    markdown: str
+    #: The recognized lines in reading order: (text, (x0, y0, x1, y1)).
+    lines: list[tuple[str, Bounds]] = field(default_factory=list)
+    #: The figures' crop boxes, in the order of their placeholders.
+    figures: list[Bounds] = field(default_factory=list)
+    #: The reading's mean score (set by ``OCRProcessor.recognize_page``).
+    confidence: float = 0.0
+
+
+@dataclass
+class _Page:
+    """What :func:`_render_flow` knows of the page beyond the boxes."""
+
+    body: float
+    bullets: set[int] = field(default_factory=set)
+    words: dict[int, list[int | None]] = field(default_factory=dict)
+    bold_lines: set[int] = field(default_factory=set)
+    #: Lines' type size over the body's, where the ink shows it.
+    sizes: dict[int, float] = field(default_factory=dict)
+    blocks: dict[str, str] = field(default_factory=dict)
+    #: The lines a table block took, read where the table is written.
+    block_lines: dict[str, list[_Box]] = field(default_factory=dict)
+    order: list[_Box] = field(default_factory=list)
+
+
+def structure_ocr_page(
+    texts: Sequence[str],
+    bounds: Sequence[Bounds | None],
+    image: Any = None,
+    *,
+    upside_down: bool = False,
+    figures: bool = False,
+) -> OcrPage:
+    """Lay a page's boxes out with headings, lists, tables, figures, emphasis.
+
+    Args:
+        texts: Recognized text per box.
+        bounds: ``(x0, y0, x1, y1)`` per box in the pixels of *image*.
+        image: The page as read (RGB array); without it only the geometry
+            speaks (headings, read bullet glyphs).
+        upside_down: The page was read rotated by 180 degrees (no pixel
+            steps then: the boxes are flipped, the pixels are not).
+        figures: Cut figures out (a PDF page; an image input is its own
+            picture).
+    """
+    from markitai import ocr_structure as px
+
+    boxes: list[_Box] = []
+    loose: list[str] = []
+    for text, bound in zip(texts, bounds):
+        text = str(text).strip()
+        if not text:
+            continue
+        if bound is None:
+            loose.append(text)
+        else:
+            boxes.append(_Box(text, *bound))
+    if not boxes or upside_down or _is_vertical(boxes):
+        markdown = layout_ocr_text(list(texts), list(bounds), upside_down=upside_down)
+        return OcrPage(markdown, [(b.text, (b.x0, b.y0, b.x1, b.y1)) for b in boxes])
+
+    boxes, margin = _split_margin(boxes)
+    body = _body_height(boxes)
+    page = _Page(body=body)
+    pixels = px.page_pixels(image) if image is not None else None
+    figure_boxes: list[Bounds] = []
+    if pixels is not None:
+        lines = [(b.text, (b.x0, b.y0, b.x1, b.y1)) for b in boxes]
+        taken: set[int] = set()
+        placed: list[_Box] = []
+        grids = px.find_grids(pixels, body)
+        for grid in grids:
+            cells = px.table_cells(
+                pixels, grid, [line for i, line in enumerate(lines) if i not in taken]
+            )
+            if cells is None:
+                continue
+            rows, local = cells
+            free = [i for i in range(len(lines)) if i not in taken]
+            taken.update(free[i] for i in local)
+            token = f"\x00T{len(page.blocks)}\x00"
+            page.blocks[token] = px.markdown_table(rows)
+            x0, y0, x1, _y1 = grid.box
+            placed.append(_Box(token, x0, y0, x1, y0 + body))
+            page.block_lines[token] = [boxes[i] for i in sorted(free[j] for j in local)]
+        bullets = px.find_bullets(pixels, [b for _t, b in lines], body)
+        page.bullets = {id(boxes[i]) for i in bullets if i not in taken}
+        if figures:
+            cleared = [g.box for g in grids]
+            cleared += [
+                (x - body / 2, lines[i][1][1], x + body / 2, lines[i][1][3])
+                for i, x in bullets.items()
+            ]
+            free = [i for i in range(len(lines)) if i not in taken]
+            found = px.find_figures(pixels, [lines[i] for i in free], body, cleared)
+            for crop, labels in found:
+                token = f"\x00F{len(figure_boxes)}\x00"
+                figure_boxes.append(crop)
+                page.blocks[token] = token
+                taken.update(free[i] for i in labels)
+                placed.append(_Box(token, crop[0], crop[1], crop[2], crop[1] + body))
+        emphasis = px.measure_emphasis(pixels, lines, body)
+        for index, flags in emphasis.words.items():
+            page.words[id(boxes[index])] = flags
+            # Bold line: every measured word of four letters or more bold
+            measured = [
+                f
+                for f, word in zip(flags, lines[index][0].split(), strict=False)
+                if f is not None and not px.short_word(word)
+            ]
+            if measured and all(f & px.BOLD for f in measured):
+                page.bold_lines.add(id(boxes[index]))
+        for index, ratio in px.size_ratios(pixels, lines).items():
+            page.sizes[id(boxes[index])] = ratio
+        laid = [b for i, b in enumerate(boxes) if i not in taken] + placed
+    else:
+        laid = list(boxes)
+
+    body_text = _render_columns(laid, page)
+    for token, block in page.blocks.items():
+        if token.startswith("\x00T"):
+            body_text = body_text.replace(token, block)
+    parts = [body_text, *(box.text for box in sorted(margin, key=lambda b: b.x0))]
+    markdown = "\n\n".join(part for part in (*parts, "\n".join(loose)) if part)
+    emitted = {id(b) for b in page.order}
+    rest = sorted(
+        (b for b in boxes + margin if id(b) not in emitted), key=lambda b: (b.y0, b.x0)
+    )
+    ordered = [
+        (b.text, (b.x0, b.y0, b.x1, b.y1))
+        for b in page.order + rest
+        if not b.text.startswith("\x00")
+    ]
+    return OcrPage(markdown, ordered, figure_boxes)
+
+
+#: Lines this long are body text, whose height the page's sizes compare to.
+_BODY_LINE_CHARS = 12
+
+
+def _body_height(boxes: list[_Box]) -> float:
+    """The body text's line height: the median of the lines of twelve
+    characters or more (a photo's or a chart's many short labels, a
+    keyboard's keys, would pull a plain median down and make every body
+    line a heading); of all lines when fewer than three are that long."""
+    long = [b.height for b in boxes if len(b.text.replace(" ", "")) >= _BODY_LINE_CHARS]
+    return median(long) if len(long) >= 3 else median(b.height for b in boxes)
+
+
+def place_figures(markdown: str, references: list[str | None]) -> str:
+    """Put figure ``n``'s Markdown (``![](…)``) where its placeholder is;
+    a figure without one (not saved) leaves nothing."""
+    for index, reference in enumerate(references):
+        markdown = markdown.replace(f"\x00F{index}\x00", reference or "")
+    markdown = re.sub(r"\x00F\d+\x00", "", markdown)
+    return re.sub(r"\n{3,}", "\n\n", markdown).strip("\n")
+
+
+def resolve_heading_levels(pages: list[str]) -> list[str]:
+    """Turn heading placeholders into levels across all *pages* at once.
+
+    Sizes (line height over the page's body height) sorted from the
+    largest: a size at least 0.92 times its tier's largest joins that tier,
+    else it starts the next one; tier n is n ``#``s (six at most).
+    """
+    sizes = sorted(
+        {float(m.group(1)) for page in pages for m in _HEADING_MARK.finditer(page)},
+        reverse=True,
+    )
+    level: dict[float, int] = {}
+    tier, top = 0, 0.0
+    for size in sizes:
+        if not tier or size < _HEADING_TIER * top:
+            tier, top = tier + 1, size
+        level[size] = min(tier, 6)
+    return [
+        _HEADING_MARK.sub(lambda m: "#" * level[float(m.group(1))] + " ", page)
+        for page in pages
+    ]
+
+
 def _split_margin(boxes: list[_Box]) -> tuple[list[_Box], list[_Box]]:
     """Set apart upright boxes many lines tall: (body boxes, margin boxes)."""
     line_height = median(box.height for box in boxes)
@@ -346,7 +585,7 @@ def _columns_side_by_side(columns: dict[int, list[_Box]]) -> bool:
     return True
 
 
-def _render_columns(boxes: list[_Box]) -> str:
+def _render_columns(boxes: list[_Box], page: _Page | None = None) -> str:
     gutters = _find_gutters(boxes)
     wide: set[int] = set()
     if gutters:
@@ -374,7 +613,7 @@ def _render_columns(boxes: list[_Box]) -> str:
             start = max(min(b.y0 for b in members) for members in columns.values())
             wide.update(i for i, box in enumerate(boxes) if box.cy < start)
     if not gutters:
-        return _render_flow(boxes)
+        return _render_flow(boxes, page)
 
     # Full-width blocks (a title, a footer) separate runs of columns: every
     # column of a run is read before the block that follows it.
@@ -384,10 +623,10 @@ def _render_columns(boxes: list[_Box]) -> str:
 
     def flush() -> None:
         for column in sorted(run):
-            blocks.append(_render_flow(run[column]))
+            blocks.append(_render_flow(run[column], page))
         run.clear()
         if block:
-            blocks.append(_render_flow(block))
+            blocks.append(_render_flow(block, page))
             block.clear()
 
     order = sorted(range(len(boxes)), key=lambda i: (boxes[i].y0, boxes[i].x0))
@@ -493,10 +732,14 @@ def _table(rows: list[list[_Box]]) -> str:
     return "\n".join([row(header), divider, *(row(cells) for cells in body)])
 
 
-def _render_flow(boxes: list[_Box]) -> str:
-    """One column: visual lines, paragraph breaks, and cell-row tables."""
+def _render_flow(boxes: list[_Box], page: _Page | None = None) -> str:
+    """One column: visual lines, paragraph breaks, and cell-row tables.
+
+    With *page* (:func:`structure_ocr_page`) also headings, list items,
+    the page's table and figure blocks and emphasis.
+    """
     lines = _group_lines(boxes)
-    parts: list[str] = []
+    flow = _Flow(page)
     previous: list[_Box] | None = None
     index = 0
     while index < len(lines):
@@ -511,23 +754,249 @@ def _render_flow(boxes: list[_Box]) -> str:
             ):
                 run_end += 1
         is_table = _is_table(lines[index : run_end + 1])
+        gap_before = previous is not None and (
+            is_table or _paragraph_gap(previous, line)
+        )
 
-        if previous is not None:
-            gap = min(b.y0 for b in line) - max(b.y1 for b in previous)
-            height = max(max(b.height for b in previous), max(b.height for b in line))
-            if is_table or (height > 0 and gap > height * PARAGRAPH_GAP_RATIO):
-                parts.append("")
-
-        if is_table:
-            parts.append(_table(lines[index : run_end + 1]))
-            previous = lines[run_end]
-            index = run_end + 1
-            if index < len(lines):
-                parts.append("")
-                previous = None  # the blank line after a table is already in
+        if page is not None and any(b.text in page.blocks for b in line):
+            # A table or figure, with any text beside its top line before it
+            beside = [b for b in line if b.text not in page.blocks]
+            if beside:
+                if gap_before:
+                    flow.paragraph_break()
+                flow.line(beside)
+            for token in (b.text for b in line if b.text in page.blocks):
+                flow.block(token)
+                flow.emitted(*page.block_lines.get(token, []))
+            previous = None
+            index += 1
             continue
-
-        parts.append(_join_line(line))
+        if is_table:
+            flow.block(_table(lines[index : run_end + 1]))
+            flow.emitted(*(b for row in lines[index : run_end + 1] for b in row))
+            previous = None
+            index = run_end + 1
+            continue
+        if page is not None:
+            heading = _heading_run(lines, index, page, previous is None or gap_before)
+            if heading:
+                rows = [lines[i] for i in heading]
+                size = max(_size(b, page) for row in rows for b in row)
+                text = _join_rows([_join_line(row) for row in rows])
+                flow.block(f"\x00H{size:.3f}\x00 {text}")
+                flow.emitted(*(b for row in rows for b in row))
+                previous = None
+                index = heading[-1] + 1
+                continue
+            item = _list_item(line, page)
+            if item is not None:
+                run = _item_run(lines, index, page)
+                flow.item(item, [lines[i] for i in run[1:]], line)
+                previous = lines[run[-1]]
+                index = run[-1] + 1
+                continue
+        if gap_before:
+            flow.paragraph_break()
+        flow.line(line)
         previous = line
         index += 1
-    return "\n".join(parts)
+    return flow.text()
+
+
+def _paragraph_gap(previous: list[_Box], line: list[_Box]) -> bool:
+    gap = min(b.y0 for b in line) - max(b.y1 for b in previous)
+    height = max(max(b.height for b in previous), max(b.height for b in line))
+    return height > 0 and gap > height * PARAGRAPH_GAP_RATIO
+
+
+def _join_rows(rows: list[str]) -> str:
+    out = rows[0]
+    for row in rows[1:]:
+        out += row if _is_cjk(out[-1]) and _is_cjk(row[0]) else " " + row
+    return out
+
+
+def _heading_run(
+    lines: list[list[_Box]], index: int, page: _Page, opens: bool
+) -> list[int]:
+    """*lines[index]* and the lines continuing it, when it is a heading."""
+
+    def fits(line: list[_Box]) -> bool:
+        text = line[0].text
+        return (
+            len(line) == 1
+            and len(text.replace(" ", "")) <= _HEADING_MAX_CHARS
+            and not text.endswith(tuple(_HEADING_OPEN_END))
+            and id(line[0]) not in page.bullets
+            and not text.startswith(tuple(_BULLET_GLYPHS))
+        )
+
+    line = lines[index]
+    if not fits(line) or page.body <= 0:
+        return []
+    size = _size(line[0], page)
+    bold = id(line[0]) in page.bold_lines
+    if not (size >= _HEADING_RATIO or (bold and opens and size >= _BOLD_HEADING_RATIO)):
+        return []
+    run = [index]
+    while len(run) < _HEADING_MAX_ROWS and run[-1] + 1 < len(lines):
+        following = lines[run[-1] + 1]
+        if not fits(following) or _paragraph_gap(lines[run[-1]], following):
+            break
+        other = following[0]
+        # A short last line ("a.", "elit.") has no ink size: its box speaks
+        other_size = _size(other, page)
+        same_size = abs(other_size - size) <= size * _HEADING_NEXT_SIZE or (
+            id(other) not in page.sizes
+            and abs(other.height - line[0].height)
+            <= line[0].height * _HEADING_NEXT_SIZE
+        )
+        like = other_size >= _HEADING_NEXT_RATIO or (
+            bold and id(other) in page.bold_lines
+        )
+        if not (same_size and like):
+            break
+        run.append(run[-1] + 1)
+    return run
+
+
+def _size(box: _Box, page: _Page) -> float:
+    """A line's type size over the body's: from its ink where the pixels
+    show it (``ocr_structure.size_ratios``), else its box height's ratio."""
+    measured = page.sizes.get(id(box))
+    return measured if measured is not None else box.height / page.body
+
+
+def _list_item(line: list[_Box], page: _Page) -> str | None:
+    """The item's text when *line* starts a list item (its glyph removed)."""
+    first = line[0]
+    text = _join_line(line)
+    if len(text) > 2 and text[0] in _BULLET_GLYPHS and text[1] == " ":
+        return text[2:].strip()
+    if id(first) in page.bullets:
+        return text
+    return None
+
+
+def _item_run(lines: list[list[_Box]], index: int, page: _Page) -> list[int]:
+    """The item at *lines[index]* and the lines right below that continue it."""
+    left = lines[index][0].x0
+    run = [index]
+    while run[-1] + 1 < len(lines):
+        following = lines[run[-1] + 1]
+        height = max(b.height for b in following)
+        if (
+            _paragraph_gap(lines[run[-1]], following)
+            or _list_item(following, page) is not None
+            or any(b.text in page.blocks for b in following)
+            or following[0].x0 < left - _ITEM_INDENT * height
+        ):
+            break
+        run.append(run[-1] + 1)
+    return run
+
+
+class _Flow:
+    """The Markdown of one column as it is written, line by line."""
+
+    def __init__(self, page: _Page | None) -> None:
+        self.page = page
+        self.parts: list[str] = []
+        self.words: list[str] = []
+        self.flags: list[int | None] = []
+        self.breaks: set[int] = set()
+        self.in_list = False
+
+    def emitted(self, *boxes: _Box) -> None:
+        if self.page is not None:
+            self.page.order.extend(boxes)
+
+    def _line_words(self, line: list[_Box]) -> tuple[list[str], list[int | None]]:
+        """The line's words and their emphasis (None: not measured)."""
+        page = self.page
+        text = _join_line(line)
+        if page is None or any(_is_cjk(c) for c in text):
+            return [text], [None]
+        words: list[str] = []
+        flags: list[int | None] = []
+        for box in line:
+            tokens = box.text.split()
+            measured = page.words.get(id(box))
+            words.extend(tokens)
+            flags.extend(measured if measured else [None] * len(tokens))
+        return words, flags
+
+    def _flush(self) -> None:
+        if not self.words:
+            return
+        from markitai.ocr_structure import emphasized, smooth_emphasis
+
+        if all(f is None for f in self.flags):
+            text = ""
+            for i, word in enumerate(self.words):
+                text += ("\n" if i in self.breaks else " ") if i else ""
+                text += word
+        else:
+            text = emphasized(
+                self.words, smooth_emphasis(self.words, self.flags), self.breaks
+            )
+        self.parts.append(text)
+        self.words, self.flags, self.breaks = [], [], set()
+
+    def _gap(self) -> None:
+        self._flush()
+        if self.parts and self.parts[-1] != "":
+            self.parts.append("")
+
+    def line(self, line: list[_Box]) -> None:
+        if self.in_list:
+            self._gap()
+            self.in_list = False
+        self.emitted(*line)
+        words, flags = self._line_words(line)
+        if self.words:
+            self.breaks.add(len(self.words))
+        self.words.extend(words)
+        self.flags.extend(flags)
+
+    def paragraph_break(self) -> None:
+        self._gap()
+
+    def block(self, markdown: str) -> None:
+        self._gap()
+        self.in_list = False
+        self.parts.extend([markdown, ""])
+
+    def item(self, text: str, more: list[list[_Box]], first: list[_Box]) -> None:
+        if not self.in_list:
+            self._gap()
+            self.in_list = True
+        else:
+            self._flush()
+        self.emitted(*first, *(b for row in more for b in row))
+        words, flags = self._line_words(first)
+        if text != " ".join(words):
+            # The read glyph is gone from the item's text: a word of its
+            # own, or inside the one word a CJK line is
+            if len(words) > 1 and words[0] in _BULLET_GLYPHS:
+                words, flags = words[1:], flags[1:]
+            else:
+                words, flags = [text], [None]
+        rows = [(words, flags)] + [self._line_words(row) for row in more]
+        for row, (row_words, row_flags) in enumerate(rows):
+            if row:
+                self.breaks.add(len(self.words))
+            self.words.extend(row_words)
+            self.flags.extend(row_flags)
+        start = len(self.parts)
+        self._flush()
+        if len(self.parts) > start:
+            self.parts[-1] = "- " + self.parts[-1].replace("\n", "\n  ")
+
+    def text(self) -> str:
+        self._flush()
+        while self.parts and self.parts[-1] == "":
+            self.parts.pop()
+        while self.parts and self.parts[0] == "":
+            self.parts.pop(0)
+        return "\n".join(self.parts)

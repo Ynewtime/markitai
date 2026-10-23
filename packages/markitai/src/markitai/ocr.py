@@ -13,7 +13,7 @@ import math
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -142,6 +142,18 @@ class OCRResult:
     text: str
     confidence: float
     boxes: list[list[float]]
+    #: Each recognized line: its text and ``(x0, y0, x1, y1)`` (None when
+    #: its box was unusable), in the recognizer's order.
+    lines: list[tuple[str, tuple[float, float, float, float] | None]] = field(
+        default_factory=list
+    )
+    #: A page read with its structure (``recognize_pixmap``,
+    #: ``recognize_pdf_page``): the laid-out page (``text`` is its Markdown,
+    #: placeholders included), the RGB pixels it was read from, and for a
+    #: PDF page its size in points.
+    page: Any = None
+    image: Any = None
+    page_size: tuple[float, float] | None = None
 
 
 class OCRError(RuntimeError):
@@ -450,6 +462,14 @@ def _text_recognizer(engine: Any) -> Any:
     return recognizer
 
 
+#: A recognized line scoring under this, at least this many times wider
+#: than tall, is read again on its own; the new reading is kept when it
+#: scores this much more.
+_WEAK_LINE_SCORE = 0.8
+_WEAK_LINE_ASPECT = 4
+_WEAK_LINE_GAIN = 0.1
+
+
 class OCRProcessor:
     """OCR processor using RapidOCR.
 
@@ -663,6 +683,108 @@ class OCRProcessor:
         with self._gate.shared():
             return engine(image)
 
+    def _raw_lines(
+        self, raw_result: Any
+    ) -> tuple[list[str], list[float], list[tuple[float, float, float, float] | None]]:
+        """Texts, scores and box bounds of a pass, weak lines read again.
+
+        RapidOCR recognizes the lines of a page in batches; now and then a
+        long line comes out as noise with a low score ("Nuut ne is ss u u e
+        ss ue ne", 0.51, for a justified line of body text), though the
+        same crop read on its own reads right (0.99). A long line scoring
+        under 0.8 is read again alone, and the reading kept when it scores
+        clearly better.
+        """
+        texts = [str(t) for t in raw_result.txts] if raw_result.txts is not None else []
+        scores = (
+            [float(v) for v in raw_result.scores]
+            if raw_result.scores is not None
+            else []
+        )
+        boxes = list(raw_result.boxes) if raw_result.boxes is not None else []
+        bounds = [
+            _polygon_bounds(boxes[index]) if index < len(boxes) else None
+            for index in range(len(texts))
+        ]
+        image = getattr(raw_result, "img", None)
+        weak = [
+            index
+            for index, bound in enumerate(bounds)
+            if bound is not None
+            and index < len(scores)
+            and scores[index] < _WEAK_LINE_SCORE
+            and bound[2] - bound[0] >= _WEAK_LINE_ASPECT * (bound[3] - bound[1])
+        ]
+        if not weak or image is None or getattr(image, "ndim", 0) < 2:
+            return texts, scores, bounds
+        try:
+            import numpy as np
+            from rapidocr.ch_ppocr_rec import TextRecInput
+
+            crops = []
+            for index in weak:
+                x0, y0, x1, y1 = bounds[index]  # type: ignore[misc]
+                pad = 2
+                crops.append(
+                    np.ascontiguousarray(
+                        image[
+                            max(0, int(y0) - pad) : int(y1) + pad,
+                            max(0, int(x0) - pad) : int(x1) + pad,
+                        ]
+                    )
+                )
+            recognizer = _text_recognizer(self.engine)
+            with self._gate.shared():
+                again = [recognizer(TextRecInput(img=[crop])) for crop in crops]
+        except Exception as e:  # a refinement; the first reading stands
+            logger.debug(f"OCR re-read of weak lines skipped: {e}")
+            return texts, scores, bounds
+        for index, output in zip(weak, again, strict=True):
+            new_texts = list(output.txts) if output.txts is not None else []
+            new_scores = list(output.scores) if output.scores is not None else []
+            if (
+                new_texts
+                and new_scores
+                and new_scores[0] > scores[index] + _WEAK_LINE_GAIN
+            ):
+                texts[index], scores[index] = str(new_texts[0]), float(new_scores[0])
+        return texts, scores, bounds
+
+    def recognize_page(self, image_array: Any, *, figures: bool = False) -> Any:
+        """Read a page and lay it out with its structure.
+
+        Headings, lists, ruled tables, emphasis and (with *figures*) figure
+        regions, from the boxes and the page's pixels
+        (:func:`markitai.ocr_layout.structure_ocr_page`); an empty pass is
+        retried by tiles first.
+
+        Returns:
+            :class:`markitai.ocr_layout.OcrPage` (heading and figure
+            placeholders in its Markdown) with the reading's mean score in
+            ``confidence``.
+        """
+        import numpy as np
+
+        from markitai.ocr_layout import structure_ocr_page
+
+        if not isinstance(image_array, np.ndarray):
+            raise TypeError(f"Expected numpy array, got {type(image_array)}")
+        if image_array.ndim == 3 and image_array.shape[2] == 4:
+            image_array = image_array[:, :, :3]
+        raw = self._run_engine(image_array)
+        texts, scores, bounds = self._raw_lines(raw)
+        upside_down = self._is_upside_down(raw) if texts else False
+        if not any(text.strip() for text in texts):
+            tiles = self._recognize_sparse_tiles(image_array)
+            texts = [text for text, _bound in tiles.lines]
+            bounds = [bound for _text, bound in tiles.lines]
+            scores = [tiles.confidence] * len(texts)
+        page = structure_ocr_page(
+            texts, bounds, image_array, upside_down=upside_down, figures=figures
+        )
+        page.confidence = sum(scores) / len(scores) if scores else 0.0
+        return page
+
     def _build_ocr_result(self, raw_result: Any) -> OCRResult:
         """Build OCRResult from raw RapidOCR engine output.
 
@@ -677,17 +799,11 @@ class OCRProcessor:
         """
         # Extract text from result (RapidOCR returns union type with incomplete stubs)
         # Use 'is not None' to avoid numpy array boolean ambiguity
-        texts = list(raw_result.txts) if raw_result.txts is not None else []
-        scores = list(raw_result.scores) if raw_result.scores is not None else []
         boxes = list(raw_result.boxes) if raw_result.boxes is not None else []
+        texts, scores, bounds = self._raw_lines(raw_result)
 
         full_text = layout_ocr_text(
-            [str(text) for text in texts],
-            [
-                _polygon_bounds(boxes[index]) if index < len(boxes) else None
-                for index in range(len(texts))
-            ],
-            upside_down=self._is_upside_down(raw_result),
+            texts, bounds, upside_down=self._is_upside_down(raw_result)
         )
         avg_confidence = sum(scores) / len(scores) if scores else 0.0
 
@@ -702,6 +818,7 @@ class OCRProcessor:
             boxes=[
                 box.tolist() if hasattr(box, "tolist") else list(box) for box in boxes
             ],
+            lines=list(zip(texts, bounds, strict=True)),
         )
 
     def _is_upside_down(self, raw_result: Any) -> bool:
@@ -843,6 +960,7 @@ class OCRProcessor:
             ),
             confidence=sum(block["score"] for block in blocks) / len(blocks),
             boxes=[list(block["bounds"]) for block in blocks],
+            lines=[(block["text"], block["bounds"]) for block in blocks],
         )
 
     def _recognize_tiles_locked(
@@ -988,17 +1106,21 @@ class OCRProcessor:
         pdf_path: Path,
         page_num: int,
         dpi: int = DEFAULT_RENDER_DPI,
+        *,
+        figures: bool = False,
     ) -> OCRResult:
         """
-        Perform OCR on a specific PDF page.
+        Perform OCR on a specific PDF page, with its structure.
 
         Args:
             pdf_path: Path to the PDF file
             page_num: Page number (0-indexed)
             dpi: Resolution for rendering
+            figures: Find the page's figures (see :meth:`recognize_page`)
 
         Returns:
-            OCRResult with recognized text
+            OCRResult with the page laid out (see :meth:`recognize_pixmap`)
+            and the page's size in points
         """
         try:
             import pymupdf
@@ -1020,7 +1142,11 @@ class OCRProcessor:
             pix = page.get_pixmap(matrix=page_render_matrix(page, dpi))
 
             # Use recognize_pixmap for direct processing
-            return self.recognize_pixmap(pix.samples, pix.width, pix.height, pix.n)
+            result = self.recognize_pixmap(
+                pix.samples, pix.width, pix.height, pix.n, figures=figures
+            )
+            result.page_size = (float(page.rect.width), float(page.rect.height))
+            return result
 
         finally:
             doc.close()
@@ -1031,21 +1157,26 @@ class OCRProcessor:
         width: int,
         height: int,
         n_channels: int,
+        *,
+        figures: bool = False,
     ) -> OCRResult:
         """
-        Perform OCR on raw pixel data (e.g., from pymupdf pixmap).
+        Perform OCR on a page's raw pixel data (e.g., from pymupdf pixmap).
 
         This method is optimized for use with pymupdf's pixmap.samples,
-        avoiding redundant image encoding/decoding.
+        avoiding redundant image encoding/decoding. The page is read with
+        its structure (:meth:`recognize_page`).
 
         Args:
             samples: Raw pixel data bytes
             width: Image width in pixels
             height: Image height in pixels
             n_channels: Number of color channels (3 for RGB, 4 for RGBA)
+            figures: Find the page's figures
 
         Returns:
-            OCRResult with recognized text
+            OCRResult whose ``text`` is the laid-out page's Markdown (heading
+            and figure placeholders included) and ``page`` the page itself
         """
         import numpy as np
 
@@ -1058,7 +1189,15 @@ class OCRProcessor:
         if n_channels == 4:
             image_array = image_array[:, :, :3]
 
-        return self.recognize_numpy(image_array)
+        page = self.recognize_page(image_array, figures=figures)
+        return OCRResult(
+            text=page.markdown,
+            confidence=page.confidence,
+            boxes=[],
+            lines=list(page.lines),
+            page=page,
+            image=image_array,
+        )
 
     def recognize_to_markdown(self, image_path: Path | str) -> str:
         """Perform OCR and lay the result out as Markdown in reading order.
@@ -1096,7 +1235,23 @@ class OCRProcessor:
         # only line boxes are read, and RapidOCR would store those flags in
         # the shared engine for every later call.
         if texts:
-            return self._build_ocr_result(result).text
+            from markitai.ocr_layout import (
+                place_figures,
+                resolve_heading_levels,
+                structure_ocr_page,
+            )
+
+            lines, _scores, bounds = self._raw_lines(result)
+            try:
+                image = load_array()
+            except Exception:  # the boxes alone still give the layout
+                image = None
+            # Headings, lists, ruled tables and emphasis as on PDF pages;
+            # no figures cut out (the image is the picture)
+            page = structure_ocr_page(
+                lines, bounds, image, upside_down=self._is_upside_down(result)
+            )
+            return place_figures(resolve_heading_levels([page.markdown])[0], [])
 
         logger.debug("OCR Markdown pass was empty; retrying overlapping tiles")
         # The tiled result is already laid out in paragraphs by line gaps

@@ -1636,18 +1636,22 @@ class TestPosterPageRender:
         seen: list[int] = []
 
         class _Reader:
-            def recognize_pdf_page(self, path: Path, page: int, dpi: int) -> Any:
+            def recognize_pdf_page(
+                self, path: Path, page: int, dpi: int, **kwargs: Any
+            ) -> Any:
                 from markitai.ocr import OCRProcessor
 
                 def recognize_pixmap(
-                    samples: bytes, width: int, height: int, n: int
+                    samples: bytes, width: int, height: int, n: int, **_kw: Any
                 ) -> Any:
                     seen.append(width * height)
                     return Mock(text="read")
 
                 processor = OCRProcessor.__new__(OCRProcessor)
                 processor.recognize_pixmap = recognize_pixmap  # type: ignore[method-assign]
-                return OCRProcessor.recognize_pdf_page(processor, path, page, dpi)
+                return OCRProcessor.recognize_pdf_page(
+                    processor, path, page, dpi, **kwargs
+                )
 
         result = read_page(_Reader(), pdf_file, 0, 150, read=True, shot=None)
 
