@@ -1857,9 +1857,21 @@ def browse(
                     page.get_by_role("option", name=re.compile(r"^Files"))
                 ).first.click()
             else:
+                # v1.20: Download is a split button; its caret lists the
+                # formats and Choose files… (Preview's Files)
                 page.locator(".peek-head").get_by_role(
-                    "button", name="Download", exact=True
+                    "button", name="Download as", exact=True
                 ).click()
+                menu = page.locator(".peek-head .download-menu")
+                menu.wait_for(timeout=10000)
+                entries = " | ".join(
+                    " ".join(text.split())
+                    for text in menu.get_by_role("menuitem").all_inner_texts()
+                )
+                for wanted in ("Markdown", "JSON", "All files", "Choose files"):
+                    if wanted not in entries:
+                        raise AssertionError(f"Download lists {entries!r}")
+                menu.get_by_role("menuitem", name=re.compile(r"^Choose files")).click()
             panel = page.locator("#peek-panel [role=tabpanel]:not([hidden]) .files")
             panel.wait_for(timeout=15000)
             first = panel.locator(".file-list li").first
@@ -2404,8 +2416,12 @@ def browse(
                     raise AssertionError("the broken block is not shown as its code")
                 if markdown.count("```mermaid") != 2 or "flowchart LR" not in markdown:
                     raise AssertionError("the converted Markdown lost a mermaid block")
+                # The diagram above is drawn, so the chunk ran; Chromium
+                # reports a copy from its memory cache as a 200 without
+                # headers (the server's own answer is checked by the tests)
                 if not any(
-                    status == 304 or (status == 200 and "javascript" in kind)
+                    status == 304
+                    or (status == 200 and ("javascript" in kind or not kind))
                     for status, kind in chunks
                 ):
                     raise AssertionError(f"/ui/mermaid.js answers {chunks}")
@@ -2424,6 +2440,139 @@ def browse(
             )
 
         run.step(page, "preview-mermaid", mermaid)
+
+        # 11c. Contract v1.20 (options A): Output's JSON switch, the local OCR
+        # language while OCR runs without LLM, Advanced → Pages with OCR
+        # Every Page only (Python always writes page markers, so it announces
+        # no page_markers); a conversion with them sends format, ocr_lang and
+        # ocr_all_pages, publishes <name>.json among its files, and Download's
+        # JSON entry saves the item's document
+        def options_a() -> str:
+            _open(page, lambda: page.goto(f"{base}/"))
+            _click_visible(page.get_by_role("button", name="Options"))
+            json_switch = page.get_by_role("switch", name="JSON", exact=True)
+            json_switch.wait_for(timeout=10000)
+            if json_switch.get_attribute("aria-checked") != "false":
+                raise AssertionError("JSON is on before it was asked for")
+            ocr = page.get_by_role("switch", name="OCR", exact=True)
+            if ocr.get_attribute("aria-checked") != "true":
+                ocr.click()
+            picker = page.locator(".opt-pick").first
+            picker.wait_for(timeout=10000)
+            shown = " ".join(picker.inner_text().split())
+            if "Automatic" not in shown:
+                raise AssertionError(f"the OCR language reads {shown!r}")
+            picker.click()
+            languages = page.locator(".opt-pick-menu [role=menuitemradio]")
+            languages.first.wait_for(timeout=10000)
+            if languages.count() != 10:
+                raise AssertionError(f"{languages.count()} OCR languages offered")
+            languages.nth(4).click()  # ko: en, zh, zh_tw, ja, ko, ...
+            picked = " ".join(picker.inner_text().split())
+            advanced = page.get_by_role("button", name="Advanced")
+            if advanced.get_attribute("aria-expanded") != "true":
+                advanced.click()
+            pages_row = page.get_by_role("group", name="Pages", exact=True)
+            pages_row.wait_for(timeout=10000)
+            if pages_row.get_by_role("switch", name="Page Markers").count():
+                raise AssertionError("Python offers Page Markers")
+            every_page = pages_row.get_by_role("switch", name="OCR Every Page")
+            every_page.click()
+            json_switch.click()
+            run.shot(page, "options-a")
+
+            def reset() -> None:
+                # The composer keeps its choices: later steps start from none
+                _open(page, lambda: page.goto(f"{base}/"))
+                _click_visible(page.get_by_role("button", name="Options"))
+                for name in ("OCR Every Page", "OCR", "JSON"):
+                    switch = page.get_by_role("switch", name=name, exact=True)
+                    if (
+                        switch.count()
+                        and switch.get_attribute("aria-checked") == "true"
+                    ):
+                        switch.click()
+                page.keyboard.press("Escape")
+
+            page.keyboard.press("Escape")
+            if phone:
+                reset()
+                return (
+                    f"JSON switch, OCR language {shown!r} → {picked!r} (10 offered), "
+                    "Pages with OCR Every Page and no Page Markers"
+                )
+            name = "options-a-notes.txt"
+            note = Path(inputs["md"]).parent / name
+            note.write_text(
+                "# Options A\n\nA table follows.\n\n| a | b |\n|---|---|\n| 1 | 2 |\n"
+            )
+            page.locator(
+                "input[type=file]:not([webkitdirectory])"
+            ).first.set_input_files([str(note)])
+            with page.expect_response(
+                lambda r: r.url.endswith("/api/jobs") and r.request.method == "POST",
+                timeout=30000,
+            ) as created:
+                page.get_by_role("button", name="Convert", exact=True).click()
+            job = created.value.json()["job_id"]
+            # The job keeps the options it was sent (a body carrying a file
+            # is not readable from the page's request)
+            saved = (
+                _api(page, base, "GET", f"/api/jobs/{job}").json().get("options") or {}
+            )
+            wanted = {"format": "json", "ocr_lang": "ko", "ocr_all_pages": True}
+            if {key: saved.get(key) for key in wanted} != wanted:
+                raise AssertionError(f"the job's options are {saved}")
+            _wait(
+                page,
+                lambda: all(
+                    item.get("finished_at")
+                    for item in _api(page, base, "GET", f"/api/jobs/{job}").json()[
+                        "items"
+                    ]
+                ),
+                what="the JSON conversion",
+            )
+            item_id = _api(page, base, "GET", f"/api/jobs/{job}").json()["items"][0][
+                "item_id"
+            ]
+            artifacts = [
+                artifact["relpath"]
+                for artifact in _api(
+                    page, base, "GET", f"/api/jobs/{job}/items/{item_id}/result"
+                ).json()["artifacts"]
+            ]
+            if artifacts[:2] != [f"{name}.md", f"{name}.json"]:
+                raise AssertionError(f"the item's files are {artifacts}")
+            _dismiss(page)
+            _open(page, lambda: page.goto(f"{base}/jobs"))
+            _item(page, name).click()
+            _heading(page, name).wait_for()
+            page.locator(".peek-head").get_by_role(
+                "button", name="Download as", exact=True
+            ).click()
+            with page.expect_download(timeout=60000) as info:
+                page.locator(".peek-head .download-menu").get_by_role(
+                    "menuitem", name=re.compile(r"^JSON")
+                ).click()
+            document = json.loads(Path(info.value.path()).read_text(encoding="utf-8"))
+            if (
+                document.get("schema_version") != "1.0"
+                or document["source"]["path"] != name
+                or document["tables"][0]["rows"] != [["1", "2"]]
+            ):
+                raise AssertionError(f"the downloaded document is {document}")
+            _close_window(page)
+            reset()
+            return (
+                f"JSON switch, OCR language {shown!r} → {picked!r} (10 offered), "
+                "Pages with OCR Every Page and no Page Markers; the job kept "
+                f"format/ocr_lang/ocr_all_pages, its files {artifacts[:2]}, "
+                f"Download → JSON saved {info.value.suggested_filename} "
+                f"(schema {document['schema_version']}, its table read)"
+            )
+
+        run.step(page, "options-a", options_a)
 
         # 12. Settings: test the configured model
         def settings() -> str:
