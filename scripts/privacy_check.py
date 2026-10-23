@@ -16,6 +16,12 @@ HOME_PATHS = re.compile(
     rb"([^\s/\\\"'<>`]+)"
 )
 TEMP_PATHS = re.compile(rb"/(?:private/)?var/" + rb"folders/[a-zA-Z0-9_-]{2}/[a-zA-Z0-9_-]{8,}")
+# A saved web page keeps the capturing browser's analytics identity (GitHub:
+# visitor id, request id and edge region, plus their HMACs); strip it first.
+CAPTURE_TRACKING = re.compile(
+    rb'<meta name="(?:visitor-' + rb'payload|visitor-hmac|request-id|html-safe-nonce|fetch-nonce)"'
+    rb"|\sdata-hydro-[a-z-]+="
+)
 SECRETS = re.compile(
     rb"-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE" + rb" KEY-----"
     rb"|(?<![a-zA-Z0-9])(?:gh[pousr]_[a-zA-Z0-9]{30,}"
@@ -30,7 +36,8 @@ def findings(data):
         name = match[1].decode("utf-8", errors="replace").lower()
         if name not in SYNTHETIC_USERS:
             result.append(("personal home path", data[:match.start()].count(b"\n") + 1))
-    for label, pattern in (("personal temporary path", TEMP_PATHS), ("secret-shaped value", SECRETS)):
+    for label, pattern in (("personal temporary path", TEMP_PATHS), ("secret-shaped value", SECRETS),
+                           ("browser analytics in a saved page", CAPTURE_TRACKING)):
         result.extend((label, data[:match.start()].count(b"\n") + 1) for match in pattern.finditer(data))
     return result
 

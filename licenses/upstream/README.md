@@ -190,7 +190,12 @@ MIT-only crates. Collection does not elect an alternative for other packages.
 
 `inventory.json` covers every other file and detects unreviewed changes; the
 source/build identity binds that inventory. `round30/provenance.json` and raw
-response records retain successes and failed retrieval attempts. The generic MIT
+response records retain successes and failed retrieval attempts. The saved
+GitHub history pages (`*-license-history.html`) are stored without the
+capturing browser's analytics (`visitor-payload`, `visitor-hmac`, `request-id`,
+`html-safe-nonce` and `fetch-nonce` meta tags, `data-hydro-*` attributes), and
+every record of them carries the stored bytes; `scripts/privacy_check.py`
+rejects such tags in any tracked file. The generic MIT
 publisher template was not substituted. Old R29 evidence and its recorded 404
 remain intact. CLI archives, npm packages and Python wheels copy the validated
 subset as well as the static-Go bundle; wheel paths are relative to its

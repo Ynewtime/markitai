@@ -407,8 +407,8 @@
           "proofs": [
             {
               "path": "round30/primary/objc2-original-license-history.html",
-              "bytes": 242574,
-              "sha256": "cce3f980b9088bf6533102997510603f50a5fbdda6fd34c055f797777fc20e0b",
+              "bytes": 238947,
+              "sha256": "6a900ec9ca515232204d2062ed6315d66c919c1902cd5d5913be03d1e41c7e43",
               "source_url": "https://github.com/madsmtm/objc2/commits/8852b424193ca41602281b3d7540d7c8ed51e49a/LICENSE.txt"
             },
             {
@@ -640,8 +640,8 @@
           "proofs": [
             {
               "path": "round30/primary/objc2-encode-old-license-history.html",
-              "bytes": 242573,
-              "sha256": "0a1efed6cc84aac1d931fe09facf2883ae2fb13caa4e131ddc3bf61aca0d9e3a",
+              "bytes": 238947,
+              "sha256": "7e2a1cacb6d5c7bd3d1b900f1e0d9b2e1d216ae72e35308b92cb1b2d4720b5a1",
               "source_url": "https://github.com/madsmtm/objc2/commits/8d214f5477365ffcbcbb7de058c86ed9a518efb7/LICENSE.txt"
             },
             {
@@ -735,8 +735,8 @@
           "proofs": [
             {
               "path": "round30/primary/foundation-original-license-history.html",
-              "bytes": 242573,
-              "sha256": "ab00bc3db74112a44b17ac776fab3a16bc6122ffc8ccf2708a80e5d96206b4de",
+              "bytes": 238947,
+              "sha256": "c6f9c6ceb29e8ed65a569cd0930b5b4cbb038a9fcdcdfdc0977b0e07913f3b4f",
               "source_url": "https://github.com/madsmtm/objc2/commits/7b1abfd750a2cacaea71d6a56ecfb83cb7de560b/LICENSE.txt"
             },
             {
@@ -2663,8 +2663,8 @@
           "proofs": [
             {
               "path": "history/objc2-0.6.5-license-history.html",
-              "bytes": 230754,
-              "sha256": "21a492cb3a3a28562fcdcf08ba386c60f21937d28db7697dbb414294ff95f907",
+              "bytes": 228610,
+              "sha256": "1f1f3b98091bf9f61ad2ea4b73a205fff845661cfcc866a72d85f3e99d48c58e",
               "source_url": "https://github.com/madsmtm/objc2/commits/d7d2fa23ceaa5e6096c923b081040e5d81b3b9df/LICENSE.txt"
             },
             {
@@ -2924,7 +2924,7 @@
   "round30_provenance": {
     "path": "round30/provenance.json",
     "bytes": 7235,
-    "sha256": "0ac2eb222598babd45c7558d9bc4c56bd07d18426f696acc18465cc4f5c69924"
+    "sha256": "00cf3e618eb38bcaddb6532ac7cd5cc81348b284943f2f3eb6f908293faff6bc"
   },
   "classification_review": {
     "scope": "Mechanical full-text supply and exact historical provenance; legal_review=not_performed.",

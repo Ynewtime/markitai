@@ -3,13 +3,13 @@
   "files": [
     {
       "path": "README.md",
-      "bytes": 12664,
-      "sha256": "7328686da898b36ed8e2d131cdbabea59bdc79cc2fbc0c11602c99c9d740593f"
+      "bytes": 13017,
+      "sha256": "2c4d6890fddf19f9f27767c3ca71bbddfe3bedf37e73d4ad000bfeae01775f2c"
     },
     {
       "path": "history/objc2-0.6.5-license-history.html",
-      "bytes": 230754,
-      "sha256": "21a492cb3a3a28562fcdcf08ba386c60f21937d28db7697dbb414294ff95f907"
+      "bytes": 228610,
+      "sha256": "1f1f3b98091bf9f61ad2ea4b73a205fff845661cfcc866a72d85f3e99d48c58e"
     },
     {
       "path": "input-manifest.json",
@@ -514,7 +514,7 @@
     {
       "path": "manifest.json",
       "bytes": 166604,
-      "sha256": "28cac1b4ca99a9c7b8baa1eacd3f35ba40c0442439273904b95505c97d87f0bf"
+      "sha256": "aa0206e16970efb1825ebd9c79dc80c6d3ccd807cb52a5a6e3cd18a480a27bea"
     },
     {
       "path": "napi-license-provenance.json",
@@ -883,8 +883,8 @@
     },
     {
       "path": "round30/primary/foundation-original-license-history.html",
-      "bytes": 242573,
-      "sha256": "ab00bc3db74112a44b17ac776fab3a16bc6122ffc8ccf2708a80e5d96206b4de"
+      "bytes": 238947,
+      "sha256": "c6f9c6ceb29e8ed65a569cd0930b5b4cbb038a9fcdcdfdc0977b0e07913f3b4f"
     },
     {
       "path": "round30/primary/mozilla-overview.html",
@@ -893,8 +893,8 @@
     },
     {
       "path": "round30/primary/objc2-encode-old-license-history.html",
-      "bytes": 242573,
-      "sha256": "0a1efed6cc84aac1d931fe09facf2883ae2fb13caa4e131ddc3bf61aca0d9e3a"
+      "bytes": 238947,
+      "sha256": "7e2a1cacb6d5c7bd3d1b900f1e0d9b2e1d216ae72e35308b92cb1b2d4720b5a1"
     },
     {
       "path": "round30/primary/objc2-license-clarification.patch",
@@ -913,13 +913,13 @@
     },
     {
       "path": "round30/primary/objc2-original-license-history.html",
-      "bytes": 242574,
-      "sha256": "cce3f980b9088bf6533102997510603f50a5fbdda6fd34c055f797777fc20e0b"
+      "bytes": 238947,
+      "sha256": "6a900ec9ca515232204d2062ed6315d66c919c1902cd5d5913be03d1e41c7e43"
     },
     {
       "path": "round30/provenance.json",
       "bytes": 7235,
-      "sha256": "0ac2eb222598babd45c7558d9bc4c56bd07d18426f696acc18465cc4f5c69924"
+      "sha256": "00cf3e618eb38bcaddb6532ac7cd5cc81348b284943f2f3eb6f908293faff6bc"
     },
     {
       "path": "round30/responses-final.json",
@@ -934,12 +934,12 @@
     {
       "path": "round30/responses-links.json",
       "bytes": 2429,
-      "sha256": "4b9a24f54ba02a78e9b4b6af01cfe5687225080bf6d0099e7e665826b9e755ce"
+      "sha256": "8aaf19fb9dc2ab19d4951bc3c3436b246eaae44d9c6adf3ffc97947c70624645"
     },
     {
       "path": "round30/responses.json",
       "bytes": 4486,
-      "sha256": "d49f87c1969d9ce1f46b7b43b2c856c9a47d9263afbdf6142952fb8e3b93f45f"
+      "sha256": "034518673686b8f31e9e0b76896450c93837787a22f0d84d7140cff4fe1147c4"
     },
     {
       "path": "source-archives/alloc-stdlib-0.3.0.crate",

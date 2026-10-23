@@ -26,5 +26,11 @@ class PrivacyCheckTests(unittest.TestCase):
         for value in (b"ghp_" + b"x" * 36, b"-----BEGIN PRIVATE" + b" KEY-----"):
             self.assertEqual(findings(value), [("secret-shaped value", 1)])
 
+    def test_saved_pages_keep_no_browser_analytics(self):
+        for value in (b'<meta name="visitor-' + b'payload" content="eyJ">', b'<meta name="visitor-' + b'hmac" content="0">',
+                      b'<a href="/" data-hydro-' + b'click-hmac="00">'):
+            self.assertEqual(findings(b"<html>\n" + value), [("browser analytics in a saved page", 2)])
+        self.assertEqual(findings(b'<meta name="viewport" content="width=device-width">'), [])
+
     def test_tracked_files_do_not_contain_private_machine_paths(self):
         self.assertEqual(check_repository(Path(__file__).resolve().parents[1]), [])

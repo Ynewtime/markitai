@@ -64,8 +64,8 @@
       "requested_url": "https://github.com/madsmtm/objc2/commits/8d214f5477365ffcbcbb7de058c86ed9a518efb7/LICENSE.txt",
       "final_url": "https://github.com/madsmtm/objc2/commits/8d214f5477365ffcbcbb7de058c86ed9a518efb7/LICENSE.txt",
       "path": "primary/objc2-encode-old-license-history.html",
-      "bytes": 242573,
-      "sha256": "0a1efed6cc84aac1d931fe09facf2883ae2fb13caa4e131ddc3bf61aca0d9e3a"
+      "bytes": 238947,
+      "sha256": "7e2a1cacb6d5c7bd3d1b900f1e0d9b2e1d216ae72e35308b92cb1b2d4720b5a1"
     },
     {
       "requested_url": "https://github.com/madsmtm/objc2/commit/cfb199226661ec6e4939fcd7cd7531b3c5453076.patch",
@@ -127,15 +127,15 @@
       "requested_url": "https://github.com/madsmtm/objc2/commits/8852b424193ca41602281b3d7540d7c8ed51e49a/LICENSE.txt",
       "final_url": "https://github.com/madsmtm/objc2/commits/8852b424193ca41602281b3d7540d7c8ed51e49a/LICENSE.txt",
       "path": "primary/objc2-original-license-history.html",
-      "bytes": 242574,
-      "sha256": "cce3f980b9088bf6533102997510603f50a5fbdda6fd34c055f797777fc20e0b"
+      "bytes": 238947,
+      "sha256": "6a900ec9ca515232204d2062ed6315d66c919c1902cd5d5913be03d1e41c7e43"
     },
     {
       "requested_url": "https://github.com/madsmtm/objc2/commits/7b1abfd750a2cacaea71d6a56ecfb83cb7de560b/LICENSE.txt",
       "final_url": "https://github.com/madsmtm/objc2/commits/7b1abfd750a2cacaea71d6a56ecfb83cb7de560b/LICENSE.txt",
       "path": "primary/foundation-original-license-history.html",
-      "bytes": 242573,
-      "sha256": "ab00bc3db74112a44b17ac776fab3a16bc6122ffc8ccf2708a80e5d96206b4de"
+      "bytes": 238947,
+      "sha256": "c6f9c6ceb29e8ed65a569cd0930b5b4cbb038a9fcdcdfdc0977b0e07913f3b4f"
     }
   ],
   "limits": {
