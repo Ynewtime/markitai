@@ -2,7 +2,9 @@ from pathlib import Path
 import contextlib
 import io
 import json
+import os
 import re
+import sys
 import tarfile
 import tempfile
 import unittest
@@ -184,6 +186,27 @@ class ArchiveTests(unittest.TestCase):
                     bundle.writestr(name, b"x")
             with self.assertRaises(SystemExit):
                 extract_release_archive(bad, Path(directory) / "bad")
+
+
+class CaptureTests(unittest.TestCase):
+    def test_a_failed_probe_shows_what_it_printed(self):
+        command = [sys.executable, "-c", "import sys; print('out'); sys.exit('the cause')"]
+        with self.assertRaises(SystemExit) as raised:
+            release_build.capture(command)
+        self.assertIn("exited 1", str(raised.exception))
+        self.assertIn("out", str(raised.exception))
+        self.assertIn("the cause", str(raised.exception))
+        self.assertEqual(release_build.capture([sys.executable, "-c", "print('ok')"]).strip(), "ok")
+
+    def test_a_python_probe_writes_utf8_whatever_the_locale(self):
+        # Windows runners give a child Python's pipes cp1252, which has no 世界.
+        probe = [sys.executable, "-c", "print('世界')"]
+        with self.assertRaises(SystemExit):
+            release_build.capture(probe, env={**os.environ, "PYTHONIOENCODING": "cp1252"})
+        self.assertEqual(release_build.capture(probe, env={**os.environ, "PYTHONIOENCODING": "utf-8"}).strip(),
+                         "世界")
+        source = Path(release_build.__file__).read_text(encoding="utf-8")
+        self.assertIn('"PYTHONIOENCODING": "utf-8"', source.split("def smoke_wheel", 1)[1].split("\ndef ", 1)[0])
 
 
 class GlibcTests(unittest.TestCase):

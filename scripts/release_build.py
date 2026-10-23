@@ -186,8 +186,13 @@ def run(command, **options):
 
 
 def capture(command, **options):
-    return subprocess.run([str(part) for part in command], check=True, capture_output=True, text=True,
-                          encoding="utf-8", timeout=300, **options).stdout
+    """A command's standard output; a failure shows what it printed."""
+    result = subprocess.run([str(part) for part in command], capture_output=True, text=True,
+                            encoding="utf-8", errors="replace", timeout=300, **options)
+    if result.returncode:
+        raise SystemExit(f"{command[0]} exited {result.returncode}\n--- stdout\n{result.stdout}"
+                         f"\n--- stderr\n{result.stderr}")
+    return result.stdout
 
 
 def host_target():
@@ -385,7 +390,10 @@ def smoke_wheel(wheel, python, run_tests):
                  " print(markitai.__version__); print(result.markdown, end='')")
         source = work / "api.md"
         source.write_text("# Python API\n\nHello 世界.\n", encoding="utf-8")
-        lines = capture([interpreter, "-c", probe, source], cwd=work, env=environment).splitlines()
+        # Python writes a pipe in the locale's encoding (cp1252 on Windows),
+        # which has no 世界; the probe reads its answer as UTF-8.
+        lines = capture([interpreter, "-c", probe, source], cwd=work,
+                        env={**environment, "PYTHONIOENCODING": "utf-8"}).splitlines()
         if lines[0] != version or "Hello 世界." not in "\n".join(lines[1:]):
             raise SystemExit(f"The Python API answered {lines!r}")
         results["python_api"] = lines[0]
