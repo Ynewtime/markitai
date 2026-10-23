@@ -198,6 +198,13 @@ class AssetTests(unittest.TestCase):
         for text in [shell, powershell]:
             self.assertTrue("markitai-v" in text and "SHA256SUMS" in text)
 
+    def test_pypi_gets_the_wheels_only(self):
+        workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+        job = workflow.split("\n  pypi:", 1)[1].split("\n  mcp-registry:", 1)[0]
+        self.assertIn("pattern: wheel-*", job)
+        self.assertNotIn("name: sdist", job)
+        self.assertIn("markitai-2.0.0.tar.gz", expected_assets("2.0.0"))
+
     def test_container_images_match(self):
         workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
         images = re.findall(r"image: '(quay\.io/pypa/manylinux_2_28_\w+@sha256:[0-9a-f]{64})'", workflow)

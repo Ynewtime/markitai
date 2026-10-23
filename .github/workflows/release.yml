@@ -1,8 +1,8 @@
 name: Release
 
 # One run builds, tests and publishes a release (docs/ci.md#releases).
-# Pushing a v2.* tag publishes it: CLI archives, SHA256SUMS and build
-# provenance in a GitHub Release, wheels and the sdist on PyPI (trusted
+# Pushing a v2.* tag publishes it: CLI archives, wheels, the sdist, SHA256SUMS
+# and build provenance in a GitHub Release, the wheels on PyPI (trusted
 # publishing from the `pypi` environment), then server.json on the MCP
 # Registry. Started by hand, it builds and tests everything and publishes
 # nothing unless dry_run is off and the run is on a tag. Nothing here needs a
@@ -338,15 +338,14 @@ jobs:
     permissions:
       id-token: write  # trusted publishing; the action also attests each file
     steps:
+      # Wheels only: without one for its platform, pip keeps 1.x rather than
+      # compiling the sdist (a Rust toolchain download and a long LTO build).
+      # The sdist stays a GitHub Release asset.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: dist
           pattern: wheel-*
           merge-multiple: true
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          path: dist
-          name: sdist
       - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
         with:
           packages-dir: dist/

@@ -199,7 +199,7 @@ a tag). It uses no caches and no stored secrets. Each step runs a subcommand of
 | `wheel` | One abi3 wheel per platform (`cp310-abi3`, `macosx_11_0`, `manylinux_2_28`, `win_amd64`, `win_arm64`) with the CLI archives' license set, installed into a new venv: its three commands, the Python API and `bindings/python/tests`. |
 | `sdist` | The source distribution, then a wheel pip builds from it alone. |
 | `github-release` | A check that each target's archive and wheel carry the same license files, `SHA256SUMS` over every asset, build-provenance attestations, and the Release with the notes, created as a draft with all assets and then published. |
-| `pypi` | Wheels and sdist by trusted publishing from the `pypi` environment (the action also uploads PEP 740 attestations). |
+| `pypi` | The six wheels, not the sdist, by trusted publishing from the `pypi` environment (the action also uploads PEP 740 attestations). On a platform without a wheel pip keeps markitai 1.x instead of building 2.x from source; the sdist is on the GitHub Release for those who do. |
 | `mcp-registry` | `server.json` (`io.github.Ynewtime/markitai`, pointing at the PyPI release) through `mcp-publisher` with GitHub OIDC, once PyPI lists the version. |
 
 The archives keep the package inventory above, at the archive root. macOS builds
