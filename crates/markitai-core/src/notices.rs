@@ -264,6 +264,13 @@ const FAMILIES: &[(&str, Level, &str, &str, Subject)] = &[
         "",
         Subject::None,
     ),
+    (
+        "image.webp_as_jpeg",
+        Level::Warning,
+        "image.format webp: pictures were written as JPEG",
+        "",
+        Subject::None,
+    ),
     // Office documents and workbooks.
     (
         "office.renderer_missing",
@@ -293,6 +300,7 @@ const FAMILIES: &[(&str, Level, &str, &str, Subject)] = &[
         "",
         Subject::Page,
     ),
+    // Older builds, which wrote every WebP screenshot lossless.
     (
         "office.screenshot_format",
         Level::Info,
@@ -536,6 +544,10 @@ mod tests {
         assert_eq!(
             code("No model succeeded for this document; only the base Markdown was kept.").0,
             "llm.no_model_succeeded"
+        );
+        assert_eq!(
+            code(crate::images::WEBP_AS_JPEG),
+            ("image.webp_as_jpeg", Level::Warning, Vec::new())
         );
         assert_eq!(
             code("PDF hidden text: 2 span(s) on page(s) 1\u{2013}2 left out of the Markdown (possible prompt injection; excerpt: \"a; b\").").0,

@@ -400,6 +400,9 @@ fn encode_screenshot(
     {
         "jpeg" | "jpg" => Encoding::Jpeg,
         "png" => Encoding::Png,
+        // Screenshots have no transparency: below quality 100 they are JPEG
+        // (see `images::WEBP_AS_JPEG`).
+        "webp" if quality < 100 => Encoding::Jpeg,
         "webp" => Encoding::Webp,
         _ => {
             return Err(Error::Config(
@@ -693,11 +696,13 @@ pub(crate) fn capture_external_pdf(
             captured.warnings.push(format!(
                 "Office page {page}: screenshot size required JPEG compression fallback."
             ));
-        } else if encoded.format == Encoding::Webp && captured.screenshots.is_empty() {
-            captured.warnings.push(
-                "Office screenshots use lossless WebP; image.quality does not affect this encoder."
-                    .into(),
-            );
+        } else if crate::images::webp_as_jpeg(cfg)
+            && !captured
+                .warnings
+                .iter()
+                .any(|warning| warning == crate::images::WEBP_AS_JPEG)
+        {
+            captured.warnings.push(crate::images::WEBP_AS_JPEG.into());
         }
         captured.screenshots.push(Asset {
             name: format!("{prefix}.page{page:04}.{}", encoded.format.extension()),
@@ -706,9 +711,6 @@ pub(crate) fn capture_external_pdf(
     }
     Ok(captured)
 }
-
-const WEBP_NOTE: &str =
-    "PDF screenshots use lossless WebP; image.quality does not affect this encoder.";
 
 /// Scanned pages recognized at once. The portable engine spreads a page's
 /// lines over several threads, but a page alone leaves processors idle
@@ -1060,16 +1062,16 @@ fn prepare_with(
                     warnings.push(format!(
                         "PDF page {number}: screenshot size required JPEG compression fallback."
                     ));
-                } else if encoded.format == Encoding::Webp
+                } else if crate::images::webp_as_jpeg(cfg)
                     && !webp_noted
                     && !pages
                         .document
                         .warnings
                         .iter()
-                        .any(|warning| warning == WEBP_NOTE)
+                        .any(|warning| warning == crate::images::WEBP_AS_JPEG)
                 {
                     webp_noted = true;
-                    warnings.push(WEBP_NOTE.into());
+                    warnings.push(crate::images::WEBP_AS_JPEG.into());
                 }
                 screenshots.push(Asset {
                     name: format!("{prefix}.page{number:04}.{}", encoded.format.extension()),
@@ -1311,15 +1313,18 @@ mod tests {
     fn screenshot_formats_match_real_bytes_and_leave_ocr_pixels_unchanged() {
         let rgb = RgbImage::from_fn(80, 40, |x, y| Rgb([x as u8, y as u8, 180]));
         let original = rgb.clone();
-        for (format, expected) in [
-            ("jpeg", ImageFormat::Jpeg),
-            ("png", ImageFormat::Png),
-            ("webp", ImageFormat::WebP),
+        for (format, quality, expected, extension) in [
+            ("jpeg", 80, ImageFormat::Jpeg, "jpg"),
+            ("png", 80, ImageFormat::Png, "png"),
+            // No lossy WebP encoder: below quality 100 it is JPEG.
+            ("webp", 80, ImageFormat::Jpeg, "jpg"),
+            ("webp", 100, ImageFormat::WebP, "webp"),
         ] {
             let cfg =
-                json!({"image":{"format":format,"max_width":20,"max_height":20,"quality":80}});
+                json!({"image":{"format":format,"max_width":20,"max_height":20,"quality":quality}});
             let encoded = encode_screenshot(&rgb, &cfg, MAX_SHOT_BYTES, None).unwrap();
             assert_eq!(image::guess_format(&encoded.bytes).unwrap(), expected);
+            assert_eq!(encoded.format.extension(), extension);
             let decoded = image::load_from_memory(&encoded.bytes).unwrap();
             assert_eq!((decoded.width(), decoded.height()), (20, 10));
             assert!(!encoded.fallback);

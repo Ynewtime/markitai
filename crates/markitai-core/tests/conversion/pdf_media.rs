@@ -152,37 +152,42 @@ fn pdf_config_only_flag_does_not_enable_capture() {
 fn pdf_vlm_sends_every_page_with_real_mime_in_memory() {
     let dir = tempfile::tempdir().unwrap();
     let path = source(dir.path());
-    let (base, server) = llm_server(
-        200,
-        r##"{"choices":[{"message":{"content":"# Verified pages\n\nAll pages reviewed."}}]}"##,
-    );
-    let mut config = cfg();
-    model(&mut config, &base);
-    config["ocr"] = json!({"enabled":true});
-    config["image"]["format"] = json!("webp");
-    let result = run(&path, config, None).unwrap();
-    let request = server.join().unwrap();
-    let blocks = request["messages"][1]["content"].as_array().unwrap();
-    let images = blocks
-        .iter()
-        .filter_map(|block| block["image_url"]["url"].as_str())
-        .collect::<Vec<_>>();
-    assert_eq!(images.len(), 3);
-    for image in images {
-        let encoded = image.strip_prefix("data:image/webp;base64,").unwrap();
-        let bytes = base64::engine::general_purpose::STANDARD
-            .decode(encoded)
-            .unwrap();
-        assert_eq!(
-            image::guess_format(&bytes).unwrap(),
-            image::ImageFormat::WebP
+    // WebP below quality 100 is JPEG (no lossy WebP encoder); at 100 it is
+    // lossless WebP. The MIME type follows the bytes either way.
+    for (quality, mime, format) in [
+        (75, "image/jpeg", image::ImageFormat::Jpeg),
+        (100, "image/webp", image::ImageFormat::WebP),
+    ] {
+        let (base, server) = llm_server(
+            200,
+            r##"{"choices":[{"message":{"content":"# Verified pages\n\nAll pages reviewed."}}]}"##,
         );
+        let mut config = cfg();
+        model(&mut config, &base);
+        config["ocr"] = json!({"enabled":true});
+        config["image"]["format"] = json!("webp");
+        config["image"]["quality"] = json!(quality);
+        let result = run(&path, config, None).unwrap();
+        let request = server.join().unwrap();
+        let blocks = request["messages"][1]["content"].as_array().unwrap();
+        let images = blocks
+            .iter()
+            .filter_map(|block| block["image_url"]["url"].as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(images.len(), 3);
+        for image in images {
+            let encoded = image.strip_prefix(&format!("data:{mime};base64,")).unwrap();
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(encoded)
+                .unwrap();
+            assert_eq!(image::guess_format(&bytes).unwrap(), format);
+        }
+        assert!(result.screenshots.is_empty());
+        let enhanced = result.llm_markdown.unwrap();
+        assert!(enhanced.contains("All pages reviewed."));
+        assert_eq!(enhanced.matches("<!-- Page number:").count(), 3);
+        assert_eq!(enhanced.matches("<!-- ![Page ").count(), 3);
     }
-    assert!(result.screenshots.is_empty());
-    let enhanced = result.llm_markdown.unwrap();
-    assert!(enhanced.contains("All pages reviewed."));
-    assert_eq!(enhanced.matches("<!-- Page number:").count(), 3);
-    assert_eq!(enhanced.matches("<!-- ![Page ").count(), 3);
 }
 
 #[test]

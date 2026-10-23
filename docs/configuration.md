@@ -113,7 +113,7 @@ stdout 仍为“配置有效”且退出 0。只检查所选文件与 `--config-
 | `batch.heavy_task_limit` | 无运行效果；显式配置时警告 | 不提供额外的“重任务”限额。用 `batch.concurrency`/`-j` 限制文件转换并发；模型请求用 `llm.concurrency`，URL 用 `batch.url_concurrency` |
 | `office.macos_fallback` | 无运行效果；显式配置时警告 | 不自动操作 PowerPoint 等 macOS 应用。Office 文本用原生解析；页面截图所需后端见 [Office 渲染](office-rendering.md) |
 | `image.stdout_fetch_external` | 无运行效果；显式配置时警告 | 不提供终端内联图片显示。stdout 的已提取图片仍由 `image.stdout_persist` 保存，或用 `-o DIR` 保留资产 |
-| `image.quality` | JPEG 有效；WebP 不使用 | JPEG 按设置编码；WebP 使用无损编码，不受质量值影响；PNG 也不使用有损质量值，见[图片](images.md) |
+| `image.quality` | JPEG 有效；WebP 低于 100 时按 JPEG 生效 | JPEG 按设置编码。本构建没有有损 WebP 编码器：`image.format: webp` 且质量低于 100 时，不含透明像素的图片按该质量写为 JPEG（扩展名 `.jpg`，每个文档一条警告），含透明像素的图片和质量 100 时写无损 WebP；PNG 不使用质量值，见[图片](images.md) |
 | `llm.model_list[].model_info.max_input_tokens` | 有效 | 限制文档分块的输入窗口，不是兼容性占位键；详见上表和[长文本](llm.md#structured-documents-and-complete-long-text) |
 | `fetch.fallback_patterns` | 显式配置时有效 | CLI 的 `auto` 使用用户写出的列表；内建默认列表不改变策略顺序，`serve`、`mcp` 和绑定不应用列表 |
 | `fetch.remote_consent` | 依调用方式生效 | 远程策略明确选用时按值运行；CLI 与 `serve` 的 `auto` 回退需要显式同意，`mcp` 和语言绑定的 `auto` 不远程回退；见[抓取](fetch.md#strategy-order-and-remote-fallback) |

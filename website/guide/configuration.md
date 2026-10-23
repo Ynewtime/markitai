@@ -439,8 +439,8 @@ Claude Code caches long system prompts itself; `markitai cache stats --verbose` 
 | `alt_enabled` | `false` | Alt text via LLM |
 | `desc_enabled` | `false` | Image descriptions |
 | `compress` | `true` | Compress extracted images |
-| `quality` | `75` | JPEG/WebP quality (1–100) |
-| `format` | `jpeg` | `jpeg`, `png` or `webp` |
+| `quality` | `75` | JPEG quality (1–100) |
+| `format` | `jpeg` | `jpeg`, `png` or `webp` (below quality 100, pictures without transparency are written as JPEG; at 100, lossless WebP) |
 | `max_width` / `max_height` | `1920` / `99999` | Max size in pixels |
 | `filter.min_width` / `min_height` / `min_area` | `50` / `50` / `5000` | Skip smaller images |
 | `filter.deduplicate` | `true` | Drop duplicates |

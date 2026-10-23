@@ -271,8 +271,11 @@ attributes, code and comments remain literal.
 
 With compression enabled, maximum width/height use proportional Lanczos resize.
 JPEG uses the configured quality and composites alpha onto white. PNG keeps
-transparency. WebP currently uses a lossless native encoder, with a warning that
-`image.quality` has no effect for WebP. Native encoded bytes are not claimed to
+transparency. This build has no lossy WebP encoder: with `image.format: webp`
+and `image.quality` below 100, a picture without transparent pixels is written
+as JPEG at that quality, named `.jpg`, and the document gets one warning
+(`image.webp_as_jpeg`); a picture with transparency, and every picture at
+quality 100, is lossless WebP. Native encoded bytes are not claimed to
 match Pillow's encoders; image-output parity needs pixel/quality measurements in
 addition to the existing strict asset-hash audit.
 

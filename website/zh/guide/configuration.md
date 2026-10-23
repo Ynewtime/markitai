@@ -439,8 +439,8 @@ Claude Code 自己缓存较长的系统提示词；`markitai cache stats --verbo
 | `alt_enabled` | `false` | 用 LLM 生成 alt 文本 |
 | `desc_enabled` | `false` | 图片描述 |
 | `compress` | `true` | 压缩抽取出的图片 |
-| `quality` | `75` | JPEG/WebP 质量（1–100） |
-| `format` | `jpeg` | `jpeg`、`png` 或 `webp` |
+| `quality` | `75` | JPEG 质量（1–100） |
+| `format` | `jpeg` | `jpeg`、`png` 或 `webp`（质量低于 100 时，不含透明像素的图片写为 JPEG；100 时为无损 WebP） |
 | `max_width` / `max_height` | `1920` / `99999` | 最大尺寸（像素） |
 | `filter.min_width` / `min_height` / `min_area` | `50` / `50` / `5000` | 跳过更小的图片 |
 | `filter.deduplicate` | `true` | 去掉重复图片 |

@@ -115,9 +115,10 @@ code keeps working when wording changes.
 | `llm.cost_incomplete` | warning | Some requests have no reviewed price |
 | `image.analysis_failed` | warning | A picture's analysis failed; `items` the picture |
 | `image.not_localized` | warning | A linked picture could not be saved |
+| `image.webp_as_jpeg` | warning | `image.format: webp` below quality 100: pictures without transparency were written as JPEG |
 | `office.renderer_missing` | warning | Office page screenshots or vision OCR need LibreOffice |
 | `office.page` | warning | A note about rendered Office pages |
-| `office.screenshot_format`, `office.count_verified` | info | Office rendering notes |
+| `office.screenshot_format`, `office.count_verified` | info | Office rendering notes (`office.screenshot_format`: older builds' lossless WebP screenshots) |
 | `spreadsheet.hidden_sheet` | info | A hidden worksheet left out (older builds; hidden sheets are now converted under a marked heading); `items` the sheet |
 | `spreadsheet.screenshot_scope`, `spreadsheet.font_color`, `spreadsheet.numbers_formatting` | info | Workbook rendering notes |
 | `spreadsheet.rendering`, `spreadsheet.numbers_objects` | warning | Workbook content that could not be rendered or read |
