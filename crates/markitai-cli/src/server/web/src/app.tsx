@@ -442,6 +442,14 @@ export function App() {
     },
     [authorize, requestItem, announce],
   );
+  const itemArchive = (item: SessionItem): (() => void) | null => {
+    const name = `${basename(item.output ?? item.name).replace(/\.llm\.md$/i, "").replace(/\.md$/i, "") || "markitai"}.zip`;
+    if (features?.item_archive === true) return () => downloadArchive(itemArchivePath(item.jobId, item.itemId), name, item.key);
+    // Without the item route, a submission of this one item zips the same files (not the original).
+    if (conversions.items.filter((other) => other.jobId === item.jobId).length === 1)
+      return () => downloadArchive(`/api/jobs/${encodeURIComponent(item.jobId)}/archive`, name, item.key);
+    return null;
+  };
   const itemActions: ItemActionsApi = {
     preview: (item) => {
       setRoute({ view: "jobs" });
@@ -460,6 +468,7 @@ export function App() {
       const stem = basename(item.output ?? item.name).replace(/\.[^.]*$/, "").replace(/\.(llm|v\d+)$/, "");
       void download(documentPath(item.jobId, item.itemId), `${stem}.json`).catch((error: unknown) => failAction(item.key, dicts[localeRef.current].downloadFailedFile, error));
     },
+    archive: (item) => itemArchive(item),
     copyFailed: (item) => failAction(item.key, dicts[localeRef.current].copyFailed),
     retry: (item) => void retry(item),
     retryPlain: (item) => void retry(item, { ...savedOptions(item), llm: false, alt: null, desc: null }),
@@ -674,6 +683,11 @@ export function App() {
       busy={submitting || cloudflare.pending !== null}
       openRequest={optionsRequest}
       textOnly={features?.text_only === true}
+      documentJson={features?.document_json === true}
+      ocrLanguages={features?.ocr_lang === true ? (caps?.ocr_languages ?? null) : null}
+      serverOcrLang={caps?.ocr_lang ?? "en"}
+      ocrAllPages={features?.ocr_all_pages === true}
+      pageMarkers={features?.page_markers === true}
       localOnly={role === "user"}
       defaults={defaults.control}
       onChange={(next) => {
@@ -816,14 +830,7 @@ export function App() {
             setQuery("");
           }
         }}
-        downloadAll={(item) => {
-          const name = `${basename(item.output ?? item.name).replace(/\.llm\.md$/i, "").replace(/\.md$/i, "") || "markitai"}.zip`;
-          if (features?.item_archive === true) return () => downloadArchive(itemArchivePath(item.jobId, item.itemId), name, item.key);
-          // Without the item route, a submission of this one item zips the same files (not the original).
-          if (conversions.items.filter((other) => other.jobId === item.jobId).length === 1)
-            return () => downloadArchive(`/api/jobs/${encodeURIComponent(item.jobId)}/archive`, name, item.key);
-          return null;
-        }}
+        downloadAll={itemArchive}
         announce={announce}
         describe={describe}
         onReconvert={(chosen) => void reconvert(chosen)}

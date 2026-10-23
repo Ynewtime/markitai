@@ -3452,6 +3452,76 @@ kbd {
 .chip:not(:disabled):active {
   transform: scale(0.97);
 }
+.chip.has-icon {
+  gap: 6px;
+}
+.chip.has-icon svg {
+  color: var(--text-3);
+}
+.chip.has-icon[aria-checked="true"] svg {
+  color: var(--text-1);
+}
+/* a hairline between the output profiles and the JSON switch */
+.opt-divider {
+  align-self: center;
+  width: 1px;
+  height: 18px;
+  margin: 0 4px;
+  background: var(--hairline-strong);
+}
+/* local OCR's engine and language after the OCR switch: quiet text that opens a menu */
+.opt-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: var(--r-xs);
+  font-size: var(--text-ui);
+  font-weight: 500;
+  color: var(--text-2);
+}
+.opt-pick svg {
+  color: var(--text-3);
+}
+.menu.is-start {
+  right: auto;
+  left: 0;
+}
+.opt-pick-menu {
+  width: 220px;
+}
+.opt-pick-menu .menu-check {
+  border: 0;
+}
+/* what a menu entry adds at its end: the scripts it reads, the extension it saves */
+.menu-hint,
+.menu-ext {
+  margin-left: auto;
+  padding-left: 12px;
+  font-size: var(--text-xs);
+  color: var(--text-3);
+}
+.menu-ext {
+  font-family: var(--font-mono);
+}
+/* Download and its formats: one outline, the caret a narrow segment */
+.split-btn {
+  display: inline-flex;
+}
+.split-btn > .btn:first-child {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.split-btn > .split-caret {
+  padding: 0 6px;
+  border-left: 0;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+.download-menu {
+  width: 220px;
+}
 
 .help-bubble {
   position: fixed;
@@ -5885,6 +5955,7 @@ input[type="password"],
     color: var(--text-1);
   }
   .opt-fold-btn:hover,
+  .opt-pick:hover,
   .menu > button:hover,
   .menu > a:hover,
   .menu > [role="group"] > button:hover,
@@ -5974,6 +6045,7 @@ input[type="password"],
 .doc-notices summary:focus-visible,
 .crumbs button:focus-visible,
 .opt-fold-btn:focus-visible,
+.opt-pick:focus-visible,
 .help-anchor:focus-visible,
 .recent-row:focus-visible,
 .failure-link:focus-visible,
@@ -6287,7 +6359,8 @@ input[type="password"],
     min-height: 36px;
   }
   .opt-controls .chip,
-  .opt-controls .seg {
+  .opt-controls .seg,
+  .opt-pick {
     min-height: 36px;
   }
   .opt-controls .seg {

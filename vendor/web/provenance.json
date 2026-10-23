@@ -156,9 +156,9 @@
     "source": "https://registry.npmjs.org/@phosphor-icons/react/-/react-2.1.10.tgz",
     "package_integrity": "sha512-vt8Tvq8GLjheAZZYa+YG/pW7HDbov8El/MANW8pOAz4eGxrwhnbfrQZq0Cp4q8zBEu8NIhHdnr+r8thnfRSNYA==",
     "member": "package/dist/defs/*.es.js (path data of the listed icons)",
-    "bytes": 23706,
-    "sha256": "87ffdd8c8d2f908024240b0adef36f0fde4cd825930efb5490956e9d611d09a4",
-    "obtained": "generated: the SVG path strings of 64 icons were extracted from the members below; bundled into dist/app.js",
+    "bytes": 26681,
+    "sha256": "44c300f90afff1319f14b16ba457f2d34b7ace263b2a0af7f58f17ecfc3a3582",
+    "obtained": "generated: the SVG path strings of 70 icons were extracted from the members below; bundled into dist/app.js",
     "derived_from": [
       {
         "member": "package/dist/defs/FileText.es.js",
@@ -469,6 +469,36 @@
         "member": "package/dist/defs/FunnelSimple.es.js",
         "bytes": 2065,
         "sha256": "07065eed6e81e0ca7a8710c218baf58fd54c25b047d8de29940d6adea9906b28"
+      },
+      {
+        "member": "package/dist/defs/BracketsCurly.es.js",
+        "bytes": 5065,
+        "sha256": "8fdc93fcf5e132dfd5e0de6343db7405c1c99a2e647423bf38663c1a5565b74e"
+      },
+      {
+        "member": "package/dist/defs/Translate.es.js",
+        "bytes": 4251,
+        "sha256": "a52878bca7feb480c10b6bea0a5f1694650658fea342ed57c944fe079f47ad3c"
+      },
+      {
+        "member": "package/dist/defs/Hash.es.js",
+        "bytes": 3561,
+        "sha256": "5d55f7e40d61735c01a7a52b8b50bf9f431f877c8c17fd3eed41a891fdac04f2"
+      },
+      {
+        "member": "package/dist/defs/Scan.es.js",
+        "bytes": 3294,
+        "sha256": "1c7fa2d4b0d61411159568d164ea59fbc1ca7b324c8c734e6b18cff8f96b55c8"
+      },
+      {
+        "member": "package/dist/defs/FileZip.es.js",
+        "bytes": 3829,
+        "sha256": "79a22ed3b8cae84639a245e0d3420b6cbeb61aec71966e75854d88c7da769d52"
+      },
+      {
+        "member": "package/dist/defs/MarkdownLogo.es.js",
+        "bytes": 3666,
+        "sha256": "d7f8bbb15c61bd911f61b621a2cb7c69369df96d5b86902559310c61dad56ec5"
       }
     ]
   },

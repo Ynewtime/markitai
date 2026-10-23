@@ -458,8 +458,11 @@ fn an_uploaded_pdf_is_described_drawn_and_read_by_line() {
             "original":true,"result_excerpt":true,"job_labels":true,"item_assets":true,
             "item_archive":true,"token_regenerate":false,"user_tokens":false,"user_models":false,"user_config":false,
             "config_edit":true,"batch_delete":true,"pdf_outline":true,"convert_defaults":true,
-            "document_json":true,"text_only":true})
+            "document_json":true,"text_only":true,"ocr_lang":true,"ocr_all_pages":true,
+            "page_markers":true})
     );
+    assert_eq!(capabilities["ocr_languages"][0], "en");
+    assert_eq!(capabilities["ocr_lang"], "en");
     let id = server.submit(&[("report.pdf", PDF)], json!([]), json!({}))["job_id"]
         .as_str()
         .unwrap()

@@ -454,6 +454,7 @@ mod tests {
             "preset":"minimal", "llm":false, "ocr":false, "profile":"rag",
             "alt":false, "desc":false, "screenshot":false, "screenshot_only":false,
             "pure":false, "no_cache":true, "no_compress":true,
+            "format":"json", "ocr_lang":"ko", "ocr_all_pages":true, "page_markers":true,
             "strategy":"static", "backend":"cloudflare", "remote_processing":"cloudflare"
         }))
         .unwrap();
@@ -535,7 +536,7 @@ mod tests {
             );
         }
         // Nested llm fields must not be mistaken for top-level capabilities.
-        assert_eq!(interface("Capabilities").len(), 13);
+        assert_eq!(interface("Capabilities").len(), 15);
         assert_eq!(interface("CloudflareCapability").len(), 6);
     }
 }

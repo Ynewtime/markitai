@@ -19,6 +19,8 @@ export type NoticeKind =
   | "pdf_images_placed"
   | "word_picture_metadata"
   | "hidden_sheet"
+  | "first_conversion"
+  | "first_ocr"
   | "other";
 
 export interface NoticeEntry {
@@ -66,6 +68,9 @@ const SHAPES: [NoticeKind, RegExp][] = [
   ["pdf_images_placed", /^(?:Embedded )?PDF images are placed after their page's text/],
   ["word_picture_metadata", /^(?:Word picture metadata had an inconsistent count|The picture bank's declared slot count differs)/],
   ["hidden_sheet", /^Hidden worksheet [\s\S]* is omitted by the native spreadsheet reader/],
+  // Python's first conversion after an install, while its libraries (and OCR models) load once.
+  ["first_conversion", /^First conversion since installing: /],
+  ["first_ocr", /^First OCR use since installing: /],
   ["answer_rejected", /page drift guard|LLM answer discarded or replaced too much source content|answer left out or changed too much of the document/],
 ];
 

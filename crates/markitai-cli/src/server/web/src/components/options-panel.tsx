@@ -26,7 +26,9 @@ import {
 } from "../lib/options.ts";
 import { UploadPicker } from "./file-picker.tsx";
 import { HelpTooltip, helpItemText, type HelpItem } from "./help-tooltip.tsx";
+import type { IconName } from "./icon-paths.ts";
 import { Icon } from "./icons.tsx";
+import { OcrLanguageMenu } from "./pick-menu.tsx";
 import type { DefaultsControl } from "../hooks/use-convert-defaults.ts";
 
 const BACKENDS: ConversionBackend[] = ["native", "cloudflare"];
@@ -46,6 +48,7 @@ function Described({ id, item }: { id: string; item: HelpItem }) {
 function Chip({
   id,
   label,
+  icon,
   on,
   disabled = false,
   help,
@@ -53,6 +56,7 @@ function Chip({
 }: {
   id: string;
   label: string;
+  icon?: IconName;
   on: boolean;
   disabled?: boolean;
   help: HelpItem;
@@ -63,13 +67,14 @@ function Chip({
       <button
         type="button"
         role="switch"
-        class="chip"
+        class={icon ? "chip has-icon" : "chip"}
         aria-checked={on}
         aria-label={label}
         aria-describedby={id}
         disabled={disabled}
         onClick={() => onToggle(!on)}
       >
+        {icon && <Icon name={icon} size={13} />}
         {label}
       </button>
       <Described id={id} item={help} />
@@ -164,6 +169,11 @@ export function OptionsPanel({
   openRequest = 0,
   textOnly = false,
   localOnly = false,
+  documentJson = false,
+  ocrLanguages = null,
+  serverOcrLang = "en",
+  ocrAllPages = false,
+  pageMarkers = false,
 }: {
   t: Dict;
   state: Composer;
@@ -194,6 +204,16 @@ export function OptionsPanel({
    * strategies and the Cloudflare backend are not offered (both backends
    * refuse them with 403 `remote_processing_forbidden`). */
   localOnly?: boolean;
+  /** v1.20 `features.document_json`: the JSON switch (`format`). */
+  documentJson?: boolean;
+  /** v1.20 `features.ocr_lang`: the capabilities' `ocr_languages`; null hides the picker. */
+  ocrLanguages?: string[] | null;
+  /** v1.20: the server's `ocr.lang`, what the picker shows until one is chosen. */
+  serverOcrLang?: string;
+  /** v1.20 `features.ocr_all_pages`. */
+  ocrAllPages?: boolean;
+  /** v1.20 `features.page_markers`. */
+  pageMarkers?: boolean;
 }) {
   const [id] = useState(() => `opts-${++panels}`);
   const modelNote = needsModel ?? t.advNeedsModel;
@@ -277,7 +297,13 @@ export function OptionsPanel({
     textOnly: { label: t.advTextOnly, text: t.helpTextOnly },
     noCache: { label: t.advNoCache, text: t.helpCache },
     noCompress: { label: t.advNoCompress, text: t.helpCompress },
+    json: { label: t.advJson, text: t.helpJson },
+    ocrLang: { label: t.ocrLangLabel, text: t.helpOcrLang },
+    pageMarkers: { label: t.advPageMarkers, text: t.helpPageMarkers, note: state.profile === "rag" ? t.advRagPageMarkers : undefined },
+    ocrAllPages: { label: t.advOcrAllPages, text: t.helpOcrAllPages, note: state.ocr ? undefined : t.advNeedsOcr },
   } satisfies Record<string, HelpItem>;
+  const picker = ocrLanguages !== null && ocrLanguages.length > 0 && state.ocr && !state.llm;
+  const pagesRow = pageMarkers || ocrAllPages;
   const remoteNotice = effective.strategy === "defuddle" ? t.noticeDefuddle : effective.strategy === "jina" ? t.noticeJina : null;
   const paths = stagedPaths(staged);
   const command = cliCommand([...paths, ...urls], { ...effective, preset: shownPreset }, presets);
@@ -341,7 +367,13 @@ export function OptionsPanel({
                 </div>
               </div>
               <div class="opt-row" role="group" aria-labelledby={`${id}-enhance`}>
-                <RowLabel id={`${id}-enhance`} text={t.advEnhance} hint={t.helpEnhance} items={[help.llm, help.ocr]} helpLabel={t.helpLabel} />
+                <RowLabel
+                  id={`${id}-enhance`}
+                  text={t.advEnhance}
+                  hint={t.helpEnhance}
+                  items={[help.llm, help.ocr, ...(ocrLanguages !== null ? [help.ocrLang] : [])]}
+                  helpLabel={t.helpLabel}
+                />
                 <div class="opt-controls">
                   <Chip
                     id={`${id}-llm`}
@@ -352,7 +384,24 @@ export function OptionsPanel({
                     onToggle={(llm) => onChange({ ...state, llm })}
                   />
                   <Chip id={`${id}-ocr`} label={t.ocr} on={state.ocr} help={help.ocr} onToggle={(ocr) => onChange({ ...state, ocr })} />
-                  {state.ocr && <p class="opt-note">{state.llm ? t.advVlmOcr : t.advLocalOcr}</p>}
+                  {/* Local OCR (LLM off) names its engine and language in the picker, instead of a note. */}
+                  {picker && (
+                    <>
+                      <OcrLanguageMenu
+                        label={t.ocrLangLabel}
+                        engine={t.ocrLocal}
+                        automatic={t.ocrLangAuto}
+                        automaticShort={t.ocrLangAutoShort}
+                        automaticHint={t.ocrLangAutoHint}
+                        languages={ocrLanguages}
+                        value={state.ocrLang ?? serverOcrLang}
+                        describedBy={`${id}-ocr-lang`}
+                        onPick={(ocrLang) => onChange({ ...state, ocrLang })}
+                      />
+                      <Described id={`${id}-ocr-lang`} item={help.ocrLang} />
+                    </>
+                  )}
+                  {state.ocr && (state.llm || !picker) && <p class="opt-note">{state.llm ? t.advVlmOcr : t.advLocalOcr}</p>}
                   {!llmReady && <p class="opt-note no-model-note">{modelNote}</p>}
                 </div>
               </div>
@@ -392,7 +441,13 @@ export function OptionsPanel({
                 </div>
               </div>
               <div class="opt-row">
-                <RowLabel id={`${id}-output`} text={t.advOutput} hint={t.helpOutput} items={PROFILES.map(profileHelp)} helpLabel={t.helpLabel} />
+                <RowLabel
+                  id={`${id}-output`}
+                  text={t.advOutput}
+                  hint={t.helpOutput}
+                  items={[...PROFILES.map(profileHelp), ...(documentJson ? [help.json] : [])]}
+                  helpLabel={t.helpLabel}
+                />
                 <div class="opt-controls">
                   <Segments
                     labelledBy={`${id}-output`}
@@ -402,6 +457,19 @@ export function OptionsPanel({
                     help={profileHelp}
                     onPick={(profile) => onChange({ ...state, profile })}
                   />
+                  {documentJson && (
+                    <>
+                      <span class="opt-divider" aria-hidden="true" />
+                      <Chip
+                        id={`${id}-json`}
+                        label={t.advJson}
+                        icon="BracketsCurly"
+                        on={state.format === "json"}
+                        help={help.json}
+                        onToggle={(json) => onChange({ ...state, format: json ? "json" : "markdown" })}
+                      />
+                    </>
+                  )}
                 </div>
               </div>
               <div class={advOpen ? "opt-row opt-fold is-open" : "opt-row opt-fold"}>
@@ -464,6 +532,42 @@ export function OptionsPanel({
                     <RowLabel id={`${id}-cloudflare`} text="Cloudflare" hint={t.cloudflareSetup} items={[]} helpLabel={t.helpLabel} />
                     <div class="opt-controls"><p class="opt-note">{t.cloudflareReason(reason)}</p></div>
                   </div>}
+                  {pagesRow && (
+                    <div class="opt-row" role="group" aria-labelledby={`${id}-pages`}>
+                      <RowLabel
+                        id={`${id}-pages`}
+                        text={t.advPages}
+                        hint={t.helpPages}
+                        items={[...(pageMarkers ? [help.pageMarkers] : []), ...(ocrAllPages ? [help.ocrAllPages] : [])]}
+                        helpLabel={t.helpLabel}
+                      />
+                      <div class="opt-controls">
+                        {pageMarkers && (
+                          <Chip
+                            id={`${id}-page-markers`}
+                            label={t.advPageMarkers}
+                            icon="Hash"
+                            // RAG output keeps its own page provenance either way.
+                            on={state.profile === "rag" || a.pageMarkers === true}
+                            disabled={state.profile === "rag"}
+                            help={help.pageMarkers}
+                            onToggle={(value) => set("pageMarkers", value)}
+                          />
+                        )}
+                        {ocrAllPages && (
+                          <Chip
+                            id={`${id}-ocr-all-pages`}
+                            label={t.advOcrAllPages}
+                            icon="Scan"
+                            on={effective.ocr_all_pages === true}
+                            disabled={!state.ocr}
+                            help={help.ocrAllPages}
+                            onToggle={(value) => set("ocrAllPages", value)}
+                          />
+                        )}
+                      </div>
+                    </div>
+                  )}
                   <div class="opt-row" role="group" aria-labelledby={`${id}-other`}>
                     <RowLabel
                       id={`${id}-other`}

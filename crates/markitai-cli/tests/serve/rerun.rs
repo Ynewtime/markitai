@@ -772,3 +772,62 @@ fn failed_retry_restores_only_retained_outputs_options_and_preserves_siblings_af
     assert_eq!(result(&server, id, "i1"), retained);
     server.stop();
 }
+
+#[test]
+fn json_output_is_one_of_the_items_files_and_a_retry_without_it_removes_it() {
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::start(temp.path());
+    let created = server.submit(
+        &[("notes.txt", b"A body worth keeping.")],
+        json!([]),
+        json!({"format":"json","llm":false}),
+    );
+    let id = created["job_id"].as_str().unwrap().to_owned();
+    let done = server.done(&id);
+    assert_eq!(done["items"][0]["options"]["format"], "json");
+    let names = |value: &Value| -> Vec<String> {
+        value["artifacts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|artifact| artifact["relpath"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    assert_eq!(
+        names(&result(&server, &id, "i1")),
+        ["notes.txt.md", "notes.txt.json"]
+    );
+    let document = server.json(&format!("/api/jobs/{id}/files/notes.txt.json"));
+    assert_eq!(document["schema_version"], "1.0");
+    assert!(
+        document["text"]
+            .as_str()
+            .unwrap()
+            .contains("A body worth keeping.")
+    );
+    let archive = server.request("GET", &format!("/api/jobs/{id}/items/i1/archive"), &[], &[]);
+    assert_eq!(archive.status, 200);
+    assert!(zip_contents(&archive.body).contains_key("notes.txt.json"));
+    // A retry that publishes Markdown only takes the old JSON with it.
+    assert_eq!(
+        retry(
+            &server,
+            &id,
+            "i1",
+            Some(json!({"options":{"format":"markdown","llm":false}}))
+        )
+        .status,
+        202
+    );
+    until("the retry publishes", || {
+        let item = &server.json(&format!("/api/jobs/{id}"))["items"][0];
+        item["status"] == "done" && item["operation"] == "retry"
+    });
+    assert_eq!(names(&result(&server, &id, "i1")), ["notes.txt.md"]);
+    assert!(!server.jobdir(&id).join("out/notes.txt.json").exists());
+    // The document route keeps every finished item's document whatever its format.
+    assert_eq!(
+        server.json(&format!("/api/jobs/{id}/items/i1/document"))["schema_version"],
+        "1.0"
+    );
+}

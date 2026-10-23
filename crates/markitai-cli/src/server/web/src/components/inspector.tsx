@@ -28,6 +28,7 @@ import { FileName } from "./file-name.tsx";
 import { Duration, glyphOf, StatusGlyph, statusWord, useElapsed } from "./item-bits.tsx";
 import type { IconName } from "./icon-paths.ts";
 import { Icon } from "./icons.tsx";
+import type { DownloadEntry } from "./pick-menu.tsx";
 import { Skeleton } from "./skeleton.tsx";
 
 type Described = { text: string; detail: string };
@@ -38,6 +39,8 @@ export interface ItemActionsApi {
   download(item: SessionItem, path: string): void;
   /** v1.19: save the item's document JSON. */
   downloadJson(item: SessionItem): void;
+  /** Save the item's files as a .zip, or null when this server cannot zip them. */
+  archive(item: SessionItem): (() => void) | null;
   copyFailed(item: SessionItem): void;
   retry(item: SessionItem): void;
   retryPlain(item: SessionItem): void;
@@ -383,6 +386,8 @@ export interface Act {
   title?: string;
   disabled?: boolean;
   busy?: boolean;
+  /** Download's formats (.md, .json, .zip): a split button whose caret lists them. */
+  menu?: DownloadEntry[];
 }
 
 /** What a conversion offers: shown as buttons, the rest in "⋯", and Delete (confirmed) last. */
@@ -402,7 +407,14 @@ export function itemActs(ctx: InspectorContext, item: SessionItem, actions: Item
   const imageOnly = item.skipped && item.skipReason === "image_only";
   const shown: Act[] = [];
   const more: Act[] = [];
-  if (previewable && item.output) shown.push({ key: "download", label: t.downloadShort, icon: "DownloadSimple", run: () => actions.download(item, item.output as string) });
+  if (previewable && item.output) {
+    const output = item.output;
+    const menu: DownloadEntry[] = [{ key: "dl-md", label: t.downloadMarkdown, ext: ".md", icon: "MarkdownLogo", run: () => actions.download(item, output) }];
+    if (item.status === "done" && ctx.documentJson) menu.push({ key: "dl-json", label: t.downloadJson, ext: ".json", icon: "BracketsCurly", run: () => actions.downloadJson(item) });
+    const zip = actions.archive(item);
+    if (zip) menu.push({ key: "dl-zip", label: t.downloadAllFiles, ext: ".zip", icon: "FileZip", run: zip });
+    shown.push({ key: "download", label: t.downloadShort, icon: "DownloadSimple", run: () => actions.download(item, output), menu });
+  }
   else if (retryable && !noModel && !imageOnly)
     shown.push({ key: "retry", label: t.retryPlainVerb, icon: "ArrowCounterClockwise", primary: true, disabled: busy, busy, run: () => actions.retry(item) });
   if (noModel && retryable && ctx.admin) {

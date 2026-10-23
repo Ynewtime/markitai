@@ -48,6 +48,8 @@ export function cliCommand(inputs: string[], options: JobOptions, table: PresetT
     if (value !== null && value !== features[key]) words.push(value ? `--${key}` : `--no-${key}`);
   }
   if (options.profile !== null) words.push("--profile", options.profile);
+  if (options.format === "json") words.push("-f", "json");
+  if (options.page_markers) words.push("--page-markers");
   // Not part of a preset; false is the documented default and stays implicit.
   if (options.screenshot_only) words.push("--screenshot-only");
   if (options.pure) words.push("--pure");
@@ -56,5 +58,10 @@ export function cliCommand(inputs: string[], options: JobOptions, table: PresetT
   if (options.no_compress) words.push("--no-compress");
   if (options.strategy !== null && options.strategy !== "auto") words.push("--strategy", options.strategy);
   if (options.backend !== null && options.backend !== "native") words.push("--backend", options.backend);
+  // OCR settings without a flag of their own; "en" is the default language policy.
+  const ocr: Record<string, string | boolean> = {};
+  if (options.ocr_lang && options.ocr_lang !== "en") ocr.lang = options.ocr_lang;
+  if (options.ocr_all_pages) ocr.per_page_routing = false;
+  if (Object.keys(ocr).length > 0) words.push("--config-json", shellQuote(JSON.stringify({ ocr })));
   return words.join(" ");
 }

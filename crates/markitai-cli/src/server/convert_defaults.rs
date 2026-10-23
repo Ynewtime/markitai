@@ -7,7 +7,7 @@
 use super::{
     State,
     security::Principal,
-    types::{ApiError, ApiResult, REMOTE_STRATEGIES},
+    types::{ApiError, ApiResult, FORMATS, REMOTE_STRATEGIES, ocr_languages},
 };
 use axum::{
     Json, Router,
@@ -33,10 +33,13 @@ enum Kind {
     Inverted,
     /// One of these words; `null` allowed when `nullable`.
     Word(&'static [&'static str], bool),
+    /// An `ocr.lang` code; a save checks it against the offered ones
+    /// (`types::ocr_languages`).
+    Language,
 }
 
 /// The options, their configuration keys (both backends' `config.json`), and their kinds.
-const OPTIONS: [(&str, &str, Kind); 11] = [
+const OPTIONS: [(&str, &str, Kind); 15] = [
     ("llm", "/llm/enabled", Kind::Flag),
     ("ocr", "/ocr/enabled", Kind::Flag),
     ("alt", "/image/alt_enabled", Kind::Flag),
@@ -56,6 +59,11 @@ const OPTIONS: [(&str, &str, Kind); 11] = [
         "/fetch/strategy",
         Kind::Word(&["auto", "static", "playwright", "defuddle", "jina"], false),
     ),
+    // v1.20
+    ("format", "/output/format", Kind::Word(&FORMATS, false)),
+    ("ocr_lang", "/ocr/lang", Kind::Language),
+    ("ocr_all_pages", "/ocr/per_page_routing", Kind::Inverted),
+    ("page_markers", "/output/page_markers", Kind::Flag),
 ];
 
 fn invalid(detail: impl Into<String>) -> ApiError {
@@ -76,6 +84,7 @@ pub(super) fn of_config(cfg: &Value) -> Map<String, Value> {
                 _ if *nullable => Value::Null,
                 _ => json!(words[0]),
             },
+            Kind::Language => json!(value.and_then(Value::as_str).unwrap_or("en")),
         };
         out.insert((*name).to_owned(), shown);
     }
@@ -102,12 +111,20 @@ pub(super) fn checked(value: &Value) -> ApiResult<Map<String, Value>> {
                 (entry.is_null() && *nullable)
                     || entry.as_str().is_some_and(|word| words.contains(&word))
             }
+            Kind::Language => entry.as_str().is_some_and(|code| {
+                !code.is_empty()
+                    && code.len() <= 48
+                    && code
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+            }),
         };
         if !fits {
             return Err(invalid(match kind {
                 Kind::Word(words, _) => {
                     format!("default '{key}' must be one of: {}", words.join(", "))
                 }
+                Kind::Language => format!("default '{key}' must be an OCR language code"),
                 _ => format!("default '{key}' must be true or false"),
             }));
         }
@@ -280,6 +297,19 @@ async fn replace(
         Value::Null => None,
         value => Some(checked(value)?),
     };
+    if let Some(code) = wanted
+        .as_ref()
+        .and_then(|wanted| wanted.get("ocr_lang"))
+        .and_then(Value::as_str)
+    {
+        let offered = ocr_languages(&state.settings.snapshot());
+        if !offered.iter().any(|offer| offer == code) {
+            return Err(invalid(format!(
+                "default 'ocr_lang' must be one of: {}",
+                offered.join(", ")
+            )));
+        }
+    }
     match principal.clone() {
         Principal::Anonymous => Err(ApiError::new(
             403,
@@ -400,6 +430,48 @@ mod tests {
             );
         }
         assert!(checked(&json!({"profile":null,"ocr":true})).is_ok());
+        for bad in [
+            json!({"format":"yaml"}),
+            json!({"format":null}),
+            json!({"ocr_lang":"../en"}),
+            json!({"ocr_lang":null}),
+            json!({"ocr_all_pages":"yes"}),
+        ] {
+            assert!(checked(&bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn json_output_ocr_language_all_pages_and_page_markers_are_defaults_too() {
+        let built_in = builtin();
+        assert_eq!(built_in["format"], "markdown");
+        assert_eq!(built_in["ocr_lang"], "en");
+        assert_eq!(built_in["ocr_all_pages"], false);
+        assert_eq!(built_in["page_markers"], false);
+        let cfg = json!({"output":{"format":"json","page_markers":true},
+            "ocr":{"lang":"ko","per_page_routing":false}});
+        let defaults = of_config(&cfg);
+        assert_eq!(
+            (
+                &defaults["format"],
+                &defaults["ocr_lang"],
+                &defaults["ocr_all_pages"],
+                &defaults["page_markers"]
+            ),
+            (&json!("json"), &json!("ko"), &json!(true), &json!(true))
+        );
+        let mut file = json!({});
+        write_into_file(
+            &mut file,
+            &checked(
+                &json!({"format":"json","ocr_lang":"en","ocr_all_pages":true,"page_markers":false}),
+            )
+            .unwrap(),
+        );
+        assert_eq!(
+            file,
+            json!({"output":{"format":"json"},"ocr":{"per_page_routing":false}})
+        );
     }
 
     #[test]

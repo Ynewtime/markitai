@@ -16,7 +16,7 @@ const file = (name: string, path?: string): File => {
 test("staged files are named from the folder that holds them, a picked folder once", () => {
   const files = [file("notes.pdf"), file("a.md", "Field trip/a.md"), file("b.md", "Field trip/sub/b.md"), file("春季 计划.docx"), file("notes.pdf")];
   assert.deepEqual(stagedPaths(files), ["./notes.pdf", "./Field trip/", "./春季 计划.docx"]);
-  const options = resolveOptions({ preset: "minimal", llm: false, ocr: false, profile: null, advanced: { ...ADVANCED_DEFAULTS } });
+  const options = resolveOptions({ preset: "minimal", llm: false, ocr: false, profile: null, advanced: { ...ADVANCED_DEFAULTS }, format: null, ocrLang: null });
   assert.equal(
     cliCommand([...stagedPaths(files), "https://example.com/a"], options),
     "markitai ./notes.pdf './Field trip/' './春季 计划.docx' https://example.com/a -o output/ --preset minimal",

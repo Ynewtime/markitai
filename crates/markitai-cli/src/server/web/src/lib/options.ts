@@ -4,6 +4,7 @@
 import type {
   ConvertDefaults,
   ConversionBackend,
+  DocumentFormat,
   FetchStrategy,
   JobOptions,
   OutputProfile,
@@ -24,6 +25,10 @@ export interface Advanced {
   noCompress: boolean;
   strategy: FetchStrategy;
   backend: ConversionBackend;
+  /** v1.20 (`features.page_markers`): null leaves the server's configuration. */
+  pageMarkers: boolean | null;
+  /** v1.20 (`features.ocr_all_pages`): OCR every PDF page; sent only while OCR is on. */
+  ocrAllPages: boolean | null;
 }
 
 export const ADVANCED_DEFAULTS: Advanced = {
@@ -37,6 +42,8 @@ export const ADVANCED_DEFAULTS: Advanced = {
   noCompress: false,
   strategy: "auto",
   backend: "native",
+  pageMarkers: null,
+  ocrAllPages: null,
 };
 
 export interface Composer {
@@ -45,6 +52,10 @@ export interface Composer {
   ocr: boolean;
   profile: OutputProfile | null;
   advanced: Advanced;
+  /** v1.20 (`features.document_json`): null leaves the server's configuration (Markdown). */
+  format: DocumentFormat | null;
+  /** v1.20 (`features.ocr_lang`): the local OCR language; null leaves the server's `ocr.lang`. */
+  ocrLang: string | null;
 }
 
 export type PresetTable = Record<string, PresetFeatures>;
@@ -95,6 +106,12 @@ export function resolveOptions(state: Composer, table: PresetTable = BUILTIN_PRE
     backend: a.backend,
     // Sent only when chosen: a backend without the option never sees the key.
     ...(a.textOnly ? { text_only: true } : {}),
+    // v1.20: set only on a backend that offers them (its defaults or its controls).
+    ...(state.format !== null ? { format: state.format } : {}),
+    // The language applies to local OCR, and every-page OCR to OCR at all.
+    ...(ocr && !llm && state.ocrLang !== null ? { ocr_lang: state.ocrLang } : {}),
+    ...(ocr && a.ocrAllPages !== null ? { ocr_all_pages: a.ocrAllPages } : {}),
+    ...(a.pageMarkers !== null ? { page_markers: a.pageMarkers } : {}),
   };
 }
 
@@ -117,8 +134,12 @@ export function changeAdvanced<K extends keyof Advanced>(value: Advanced, key: K
 }
 
 export function hasAdvancedChoices(value: Advanced): boolean {
-  return (["screenshotOnly", "pure", "textOnly", "noCache", "noCompress", "strategy", "backend"] as const).some(
-    (key) => value[key] !== ADVANCED_DEFAULTS[key],
+  return (
+    (["screenshotOnly", "pure", "textOnly", "noCache", "noCompress", "strategy", "backend"] as const).some(
+      (key) => value[key] !== ADVANCED_DEFAULTS[key],
+    ) ||
+    value.pageMarkers === true ||
+    value.ocrAllPages === true
   );
 }
 
@@ -152,6 +173,9 @@ const PROFILES = ["rag", "obsidian", "okf"];
 const STRATEGIES = ["auto", "static", "playwright", "defuddle", "jina", "cloudflare"];
 const BACKENDS = ["native", "cloudflare"];
 const BOOLEANS = ["llm", "ocr", "alt", "desc", "screenshot", "screenshot_only", "pure", "no_cache", "no_compress"] as const;
+const FORMATS = ["markdown", "json"];
+/** An `ocr.lang` code as both backends spell them (`zh_tw`, `pt-BR`). */
+const LANGUAGE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,47}$/;
 
 /** Only the public option keys with valid values: stored job options carry
  * internal metadata (`origin`), and a retry body rejects unknown keys. */
@@ -165,6 +189,10 @@ export function publicOptions(raw: unknown): JobOptions {
   if (typeof value.strategy === "string" && STRATEGIES.includes(value.strategy)) options.strategy = value.strategy as FetchStrategy;
   if (typeof value.backend === "string" && BACKENDS.includes(value.backend)) options.backend = value.backend as ConversionBackend;
   if (value.text_only === true) options.text_only = true;
+  if (typeof value.format === "string" && FORMATS.includes(value.format)) options.format = value.format as DocumentFormat;
+  if (typeof value.ocr_lang === "string" && LANGUAGE.test(value.ocr_lang)) options.ocr_lang = value.ocr_lang;
+  if (typeof value.ocr_all_pages === "boolean") options.ocr_all_pages = value.ocr_all_pages;
+  if (typeof value.page_markers === "boolean") options.page_markers = value.page_markers;
   return options;
 }
 
@@ -247,6 +275,8 @@ export function initialComposer(saved: Remembered): Composer {
     ocr: saved.ocr ?? false,
     profile: saved.profile,
     advanced: { ...ADVANCED_DEFAULTS, ...saved.images },
+    format: null,
+    ocrLang: null,
   };
 }
 
@@ -285,7 +315,11 @@ export function composerFromDefaults(defaults: ConvertDefaults, table: PresetTab
       noCompress: defaults.no_compress,
       strategy: defaults.strategy,
       backend: "native",
+      pageMarkers: defaults.page_markers ?? null,
+      ocrAllPages: defaults.ocr_all_pages ?? null,
     },
+    format: defaults.format ?? null,
+    ocrLang: defaults.ocr_lang ?? null,
   };
 }
 
@@ -307,10 +341,17 @@ export function defaultsOf(state: Composer, table: PresetTable = BUILTIN_PRESETS
     no_compress: a.noCompress,
     profile: state.profile,
     strategy: a.strategy,
+    // v1.20: only what this backend offers (a choice is set only through its defaults or controls).
+    ...(state.format !== null ? { format: state.format } : {}),
+    ...(state.ocrLang !== null ? { ocr_lang: state.ocrLang } : {}),
+    ...(a.ocrAllPages !== null ? { ocr_all_pages: a.ocrAllPages } : {}),
+    ...(a.pageMarkers !== null ? { page_markers: a.pageMarkers } : {}),
   };
 }
 
 const DEFAULT_KEYS = ["llm", "ocr", "alt", "desc", "screenshot", "screenshot_only", "pure", "no_cache", "no_compress", "profile", "strategy"] as const;
+/** v1.20 defaults a backend has only with their features. */
+const OFFERED_KEYS = ["format", "ocr_lang", "ocr_all_pages", "page_markers"] as const;
 
 /** Whether the composer's choices are these defaults (what a request would do, so the image
  * switches count only while a model analyses pictures). */
@@ -318,5 +359,9 @@ export function sameAsDefaults(state: Composer, defaults: ConvertDefaults, table
   const mine = defaultsOf(state, table);
   if (mine === null) return false;
   const analysis = mine.llm && !mine.pure;
-  return DEFAULT_KEYS.every((key) => ((key === "alt" || key === "desc") && !analysis) || mine[key] === defaults[key]);
+  return (
+    DEFAULT_KEYS.every((key) => ((key === "alt" || key === "desc") && !analysis) || mine[key] === defaults[key]) &&
+    // A v1.20 default the composer has not set yet still holds.
+    OFFERED_KEYS.every((key) => mine[key] === undefined || mine[key] === defaults[key])
+  );
 }

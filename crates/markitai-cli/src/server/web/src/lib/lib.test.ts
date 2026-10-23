@@ -22,7 +22,7 @@ import {
 } from "./options.ts";
 import { parseUrls } from "./urls.ts";
 
-const base: Composer = { preset: "minimal", llm: false, ocr: false, profile: null, advanced: { ...ADVANCED_DEFAULTS } };
+const base: Composer = { preset: "minimal", llm: false, ocr: false, profile: null, advanced: { ...ADVANCED_DEFAULTS }, format: null, ocrLang: null };
 
 test("presets set their five features and leave output and source choices alone", () => {
   const rich = applyPreset({ ...base, profile: "rag", advanced: { ...ADVANCED_DEFAULTS, alt: false, noCache: true } }, "rich");

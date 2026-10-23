@@ -23,6 +23,7 @@ import { Icon } from "./icons.tsx";
 import { ActionError, type ActionFailure, type ActSet } from "./inspector.tsx";
 import { MarkdownView, type RenderedState, type Tab } from "./markdown-view.tsx";
 import { PdfExportCard, readFurniture, storeFurniture } from "./pdf-settings.tsx";
+import { SplitDownload, type DownloadEntry } from "./pick-menu.tsx";
 
 export type PeekTab = "details" | "preview" | "compare";
 
@@ -171,8 +172,25 @@ export function Peek(props: PeekProps) {
   // conversion's secondary actions; on a phone the header's buttons too, except
   // the ones that must stay in reach (Stop while items wait).
   const { inline, folded } = headerActs(acts?.shown ?? [], phone);
+  const openFiles = () => {
+    setWantFiles(true);
+    onTab("preview");
+  };
+  // Download's formats, and the result's file list (Preview's Files) to choose from.
+  const formats = (act: ActSet["shown"][number]): DownloadEntry[] => [
+    ...(act.menu ?? []),
+    ...(previewable ? [{ key: "dl-files", label: t.downloadChooseFiles, icon: "Files" as const, run: openFiles }] : []),
+  ];
+  const moreKeys = new Set((acts?.more ?? []).map((act) => act.key));
   const menu: MenuAction[] = [
-    ...folded.map((act) => ({ key: act.key, label: act.label, icon: act.icon, run: act.run, disabled: act.disabled })),
+    // Folded on a phone, Download lists its formats in "⋯" (JSON once: its own entry stays below).
+    ...folded.flatMap((act) =>
+      act.menu
+        ? formats(act)
+            .filter((entry) => !(entry.key === "dl-json" && moreKeys.has("json")))
+            .map((entry) => ({ key: entry.key, label: entry.ext ? t.downloadAs(`${entry.label} ${entry.ext}`) : entry.label, icon: entry.icon, run: entry.run, disabled: act.disabled }))
+        : [{ key: act.key, label: act.label, icon: act.icon, run: act.run, disabled: act.disabled }],
+    ),
     ...(tools
       ? [
           { key: "copy", label: t.copy, icon: "Copy" as const, run: tools.copy, disabled: !tools.ready },
@@ -184,11 +202,6 @@ export function Peek(props: PeekProps) {
     ...(url && tab !== "compare" ? [{ key: "page", label: t.openPage, icon: "ArrowSquareOut" as const, run: () => undefined, href: url, hint: t.opensNewTab }] : []),
     ...(acts?.more ?? []).map((act) => ({ key: act.key, label: act.label, icon: act.icon, run: act.run, disabled: act.disabled })),
   ];
-  const openFiles = () => {
-    setWantFiles(true);
-    onTab("preview");
-  };
-  const run = (act: ActSet["shown"][number]) => (act.key === "download" && previewable ? openFiles : act.run);
 
   const header = (
     <header class="peek-head">
@@ -223,20 +236,24 @@ export function Peek(props: PeekProps) {
             </button>
           </>
         )}
-        {inline.map((act) => (
+        {inline.map((act) =>
+          act.menu ? (
+            <SplitDownload key={act.key} label={act.label} menuLabel={t.downloadFormats} title={act.title} entries={formats(act)} disabled={act.disabled} />
+          ) : (
           <button
             key={act.key}
             type="button"
             class={act.primary ? "btn btn-primary" : "btn"}
-            title={act.key === "download" && previewable ? t.downloadChoose : act.title}
+            title={act.title}
             disabled={act.disabled}
             aria-busy={act.busy || undefined}
-            onClick={run(act)}
+            onClick={act.run}
           >
             {act.icon && <Icon name={act.icon} size={14} />}
             {act.label}
           </button>
-        ))}
+          ),
+        )}
         <ActionMenu label={t.moreActions} actions={menu} danger={acts?.danger ?? undefined} plain triggerRef={menuButton} />
         {pdfOpen && tools && (
           <PdfExportCard t={t} anchor={menuAnchor} furniture={tools.furniture} onToggle={tools.toggleFurniture} onPrint={tools.exportPdf} onClose={closePdf} />

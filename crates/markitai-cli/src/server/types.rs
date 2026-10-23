@@ -36,6 +36,14 @@ pub(super) struct JobOptions {
     pub screenshot_only: Option<bool>,
     pub pure: Option<bool>,
     pub text_only: Option<bool>,
+    /// v1.20: `-f json`: the item's document JSON beside its Markdown in `out/`.
+    pub format: Option<String>,
+    /// v1.20: `ocr.lang`, one of [`ocr_languages`].
+    pub ocr_lang: Option<String>,
+    /// v1.20: `ocr.per_page_routing` off: every PDF page is recognized.
+    pub ocr_all_pages: Option<bool>,
+    /// v1.20: `output.page_markers`.
+    pub page_markers: Option<bool>,
     pub no_cache: Option<bool>,
     pub no_compress: Option<bool>,
     pub strategy: Option<String>,
@@ -45,7 +53,7 @@ pub(super) struct JobOptions {
 
 /// Option names the service accepts, by value type. Anything else is rejected
 /// by name, so a caller never reads a JSON parser's position-in-text message.
-const BOOLEAN_OPTIONS: [&str; 10] = [
+const BOOLEAN_OPTIONS: [&str; 12] = [
     "llm",
     "ocr",
     "alt",
@@ -54,16 +62,50 @@ const BOOLEAN_OPTIONS: [&str; 10] = [
     "screenshot_only",
     "pure",
     "text_only",
+    "ocr_all_pages",
+    "page_markers",
     "no_cache",
     "no_compress",
 ];
-const TEXT_OPTIONS: [&str; 5] = [
+const TEXT_OPTIONS: [&str; 7] = [
     "preset",
     "profile",
+    "format",
+    "ocr_lang",
     "strategy",
     "backend",
     "remote_processing",
 ];
+pub(super) const FORMATS: [&str; 2] = ["markdown", "json"];
+/// The `ocr.lang` values the workbench offers, the default policy first
+/// (docs/ocr.md: each reads with both the portable engine and Vision).
+const OCR_LANGUAGES: [&str; 10] = [
+    "en", "zh", "zh_tw", "ja", "ko", "ru", "ar", "th", "hi", "el",
+];
+
+/// The `ocr_lang` values a request may choose under `cfg`: the offered ones,
+/// and the configured `ocr.lang` when it is none of them, so the server's
+/// default can always be chosen again.
+pub(super) fn ocr_languages(cfg: &Value) -> Vec<String> {
+    let mut languages: Vec<String> = OCR_LANGUAGES
+        .iter()
+        .map(|code| (*code).to_owned())
+        .collect();
+    if let Some(configured) = cfg.pointer("/ocr/lang").and_then(Value::as_str)
+        && !languages.iter().any(|code| code == configured)
+    {
+        languages.push(configured.to_owned());
+    }
+    languages
+}
+
+/// The configured `ocr.lang`: what a job that chooses none reads with.
+pub(super) fn ocr_lang(cfg: &Value) -> String {
+    cfg.pointer("/ocr/lang")
+        .and_then(Value::as_str)
+        .unwrap_or("en")
+        .to_owned()
+}
 const PROFILES: [&str; 3] = ["rag", "obsidian", "okf"];
 const STRATEGIES: [&str; 6] = [
     "auto",
@@ -130,6 +172,7 @@ impl JobOptions {
         }
         for (key, allowed) in [
             ("profile", &PROFILES[..]),
+            ("format", &FORMATS[..]),
             ("strategy", &STRATEGIES[..]),
             ("backend", &["native", "cloudflare"][..]),
             ("remote_processing", &["cloudflare"][..]),
@@ -324,6 +367,7 @@ impl JobOptions {
             ("/screenshot/screenshot_only", self.screenshot_only),
             ("/llm/pure", self.pure),
             ("/output/text_only", self.text_only),
+            ("/output/page_markers", self.page_markers),
             ("/cache/no_cache", self.no_cache),
         ] {
             if let Some(value) = value {
@@ -338,6 +382,22 @@ impl JobOptions {
         }
         if let Some(value) = &self.profile {
             cfg["output"]["profile"] = json!(value);
+        }
+        if let Some(value) = &self.format {
+            cfg["output"]["format"] = json!(value);
+        }
+        if let Some(value) = self.ocr_all_pages {
+            cfg["ocr"]["per_page_routing"] = json!(!value);
+        }
+        if let Some(value) = &self.ocr_lang {
+            let allowed = ocr_languages(base);
+            if !allowed.contains(value) {
+                return Err(invalid_options(format!(
+                    "option 'ocr_lang' must be one of: {}",
+                    allowed.join(", ")
+                )));
+            }
+            cfg["ocr"]["lang"] = json!(value);
         }
         if let Some(value) = &self.strategy {
             cfg["fetch"]["strategy"] = json!(value);
@@ -689,7 +749,7 @@ mod error_tests {
         let detail = |text: &str| JobOptions::parse(text.as_bytes()).unwrap_err().detail;
         assert_eq!(
             detail(r#"{"bogus":true}"#),
-            "unknown option 'bogus'; supported options: preset, profile, strategy, backend, remote_processing, llm, ocr, alt, desc, screenshot, screenshot_only, pure, text_only, no_cache, no_compress"
+            "unknown option 'bogus'; supported options: preset, profile, format, ocr_lang, strategy, backend, remote_processing, llm, ocr, alt, desc, screenshot, screenshot_only, pure, text_only, ocr_all_pages, page_markers, no_cache, no_compress"
         );
         assert_eq!(
             detail(r#"{"llm":"yes"}"#),
@@ -727,6 +787,60 @@ mod error_tests {
             (Some(true), Some("rag"), None)
         );
         assert!(JobOptions::parse(b"null").unwrap().preset.is_none());
+    }
+
+    #[test]
+    fn json_output_ocr_language_all_pages_and_page_markers_set_their_configuration() {
+        let base = markitai_core::config::normalize(&json!({})).unwrap();
+        let options = |text: &str| JobOptions::parse(text.as_bytes()).unwrap();
+        let cfg = options(
+            r#"{"format":"json","ocr_lang":"ko","ocr_all_pages":true,"page_markers":true}"#,
+        )
+        .config(&base)
+        .unwrap();
+        assert_eq!(cfg["output"]["format"], "json");
+        assert_eq!(cfg["ocr"]["lang"], "ko");
+        assert_eq!(cfg["ocr"]["per_page_routing"], false);
+        assert_eq!(cfg["output"]["page_markers"], true);
+        // Unset, the configuration decides.
+        let cfg = options("{}").config(&base).unwrap();
+        assert_eq!(
+            (
+                &cfg["output"]["format"],
+                &cfg["ocr"]["lang"],
+                &cfg["ocr"]["per_page_routing"]
+            ),
+            (&json!("markdown"), &json!("en"), &json!(true))
+        );
+        let detail = |text: &str| JobOptions::parse(text.as_bytes()).unwrap_err().detail;
+        assert_eq!(
+            detail(r#"{"format":"yaml"}"#),
+            "option 'format' must be one of: markdown, json"
+        );
+        assert_eq!(
+            detail(r#"{"ocr_lang":1}"#),
+            "option 'ocr_lang' must be text"
+        );
+        assert_eq!(
+            detail(r#"{"page_markers":"yes"}"#),
+            "option 'page_markers' must be true or false"
+        );
+        let error = options(r#"{"ocr_lang":"fr"}"#).config(&base).unwrap_err();
+        assert_eq!(
+            (error.reason, error.detail.as_str()),
+            (
+                "invalid_options",
+                "option 'ocr_lang' must be one of: en, zh, zh_tw, ja, ko, ru, ar, th, hi, el"
+            )
+        );
+        // A server configured for another language offers it too.
+        let french = markitai_core::config::normalize(&json!({"ocr":{"lang":"fr"}})).unwrap();
+        assert_eq!(
+            ocr_languages(&french).last().map(String::as_str),
+            Some("fr")
+        );
+        assert_eq!(ocr_lang(&french), "fr");
+        assert!(options(r#"{"ocr_lang":"fr"}"#).config(&french).is_ok());
     }
 
     #[test]

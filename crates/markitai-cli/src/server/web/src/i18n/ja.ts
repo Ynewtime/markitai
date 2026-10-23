@@ -77,9 +77,9 @@ export const ja: Dict = {
   helpImages: "テキストと一緒に残す画像の説明やページのスクリーンショットを選びます。",
   advAlt: "代替テキスト",
   helpAlt: "プレーンモード以外では、ビジョンモデルで画像の代替テキストを作成します。LLM が必要で、モデルの追加費用が発生する場合があります。",
-  advDesc: "説明 JSON",
+  advDesc: "画像の説明",
   helpDesc:
-    "プレーンモード以外では、ビジョンモデルで画像説明の JSON を作成します。LLM が必要で、モデルの追加費用が発生する場合があります。",
+    "プレーンモード以外では、ビジョンモデルで画像の詳しい説明を作成します（JSON 出力とは別です）。LLM が必要で、モデルの追加費用が発生する場合があります。",
   advScreenshot: "スクリーンショット",
   helpScreenshot: "対応するレンダラーでページのスクリーンショットを保存します。モデルによる分析はオンになりません。",
   advNeedsLlm: "画像を分析するには LLM 強化をオンにしてください。",
@@ -127,6 +127,22 @@ export const ja: Dict = {
   advPure: "プレーンモード",
   advTextOnly: "テキストのみ",
   helpTextOnly: "画像と PDF: 読み取った文字だけを書き出します。タイトル、画像、説明、フロントマターは含みません。",
+  advJson: "JSON",
+  helpJson: "各変換結果を Markdown の横に JSON ドキュメントとしても保存します（markitai -f json の出力）: テキスト、ページ、画像、表、お知らせ。",
+  ocrLangLabel: "OCR の言語",
+  ocrLocal: "ローカル",
+  ocrLangAuto: "自動判定",
+  ocrLangAutoShort: "自動",
+  ocrLangAutoHint: "中 · 英 · 日",
+  helpOcrLang: "LLM なしの OCR は、このサーバーのローカルエンジンで読み取ります。自動判定は中国語・英語・日本語を読みます。ほかの文字のスキャンは、その言語を選んでください。",
+  advPages: "ページ",
+  helpPages: "ページのある文書（PDF、スライド）の番号の残し方と読み取り方を選びます。",
+  advPageMarkers: "ページ番号",
+  helpPageMarkers: "Markdown にページ番号とスライド番号のコメント（<!-- Page number: N -->）を残します。",
+  advRagPageMarkers: "RAG プロファイルは常に独自のページマーカーを残します。",
+  advOcrAllPages: "全ページ OCR",
+  helpOcrAllPages: "読み取れる文字のないページだけでなく、PDF の全ページを認識します。テキストレイヤーが正しく読めない PDF 向けです。",
+  advNeedsOcr: "全ページを認識するには OCR をオンにしてください。",
   helpPure: "通常のメタデータと画像の処理をスキップします。画像の分析は一時停止し、スクリーンショットをソースにするモードとは併用できません。",
   advNoCache: "キャッシュを使わない",
   helpCache: "キャッシュを読まずに取得と処理をやり直します。モデルの費用が新たに発生する場合があります。結果は引き続き保存されます。",
@@ -603,6 +619,11 @@ export const ja: Dict = {
   downloadJson: "JSON",
   downloadJsonTitle: "変換結果を JSON ドキュメントとしてダウンロード（markitai -f json の出力）",
   downloadZip: ".zip をダウンロード",
+  downloadFormats: "ダウンロード形式",
+  downloadAs: (what: string) => `${what} をダウンロード`,
+  downloadMarkdown: "Markdown",
+  downloadAllFiles: "すべてのファイル",
+  downloadChooseFiles: "ファイルを選ぶ…",
   runAgain: "再実行",
   enhance: "LLM で強化",
   retryPlainVerb: "再試行",
@@ -677,6 +698,10 @@ export const ja: Dict = {
         return "Office ファイルの画像リストに不整合がありましたが、すべての画像を復元しました";
       case "hidden_sheet":
         return "非表示のワークシートは出力に含まれません";
+      case "first_conversion":
+        return "インストール後の初回変換：変換に使うライブラリを一度だけ読み込みます（macOS では数秒かかります）。以降の変換はすぐに始まります。";
+      case "first_ocr":
+        return "インストール後の初回 OCR：OCR のライブラリとモデルを一度だけ読み込みます（macOS では最大 1 分かかります）。以降の OCR 変換はすぐに始まります。";
       case "pdf_scanned":
         return count === 1 ? "この PDF はスキャンです。OCR をオンにして変換し直してください" : `${count} 件の PDF はスキャンです。OCR をオンにして変換し直してください`;
       case "ocr_blank":
@@ -714,7 +739,6 @@ export const ja: Dict = {
   peekViews: "表示",
   peekFullScreen: "全画面表示",
   peekExitFullScreen: "全画面表示を終了",
-  downloadChoose: "ダウンロードするファイルを選ぶ",
   downloadAllZip: "すべてダウンロード（.zip）",
   filesTotal: (n: number, size: string) => `${n} 件のファイル · ${size}`,
   filesOriginalPage: "取得したページ",

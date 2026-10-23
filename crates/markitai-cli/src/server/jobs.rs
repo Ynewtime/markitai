@@ -336,6 +336,7 @@ async fn convert_one(
     };
     let mut cfg = cfg;
     cfg["output"]["filename"] = json!(format!("{base}.md"));
+    let json_cfg = json!({"output":{"format":cfg["output"]["format"].clone()}});
     // A URL item keeps the page it was converted from, for Compare.
     let snapshots = job.folder.join("snapshots");
     let kept_id = super::snapshots::names(&item.item_id)
@@ -389,14 +390,22 @@ async fn convert_one(
     match result {
         Ok(Ok(result)) => {
             super::snapshots::keep_ocr(&job.folder, &item.item_id, result.ocr_layout());
-            super::documents::keep(
-                &job.folder,
-                &item.item_id,
+            let out = job.folder.join("out");
+            let document = super::documents::render(
                 &item.name,
                 &result,
-                &job.folder.join("out"),
+                &out,
                 item.duration_ms.map(|ms| ms as f64 / 1000.0),
             );
+            super::documents::keep(&job.folder, &item.item_id, &document);
+            let mut beside = None;
+            let mut unwritten = None;
+            if super::documents::wanted(&json_cfg, &result) {
+                match super::documents::write_beside(&out, &base, &document) {
+                    Ok(name) => beside = Some(name),
+                    Err(error) => unwritten = Some(super::documents::unwritten(error)),
+                }
+            }
             item.status = "done".into();
             item.skipped = result.skip_reason.is_some();
             item.skip_reason = result.skip_reason;
@@ -411,17 +420,22 @@ async fn convert_one(
             item.models = super::types::models(item.llm_enhanced, &result.usage);
             item.diagnostics = AttemptDiagnostics::completed(Operation::Convert, result.usage);
             item.warnings = result.warnings;
+            item.warnings.extend(unwritten);
             item.page_sources = result.page_sources;
             item.output = result
                 .llm_output_path
                 .or(result.output_path)
                 .and_then(|p| store::relpath(&p, &job.folder.join("out")));
             assets = Some(
-                result
-                    .assets
+                beside
                     .into_iter()
-                    .chain(result.screenshots)
-                    .filter_map(|p| store::relpath(&p, &job.folder.join("out")))
+                    .chain(
+                        result
+                            .assets
+                            .into_iter()
+                            .chain(result.screenshots)
+                            .filter_map(|p| store::relpath(&p, &job.folder.join("out"))),
+                    )
                     .collect(),
             );
         }

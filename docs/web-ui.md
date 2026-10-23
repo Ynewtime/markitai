@@ -43,7 +43,8 @@ right, and the options drawer, which ends with the equivalent CLI command line.
 The options start from the server's defaults (its configuration: `llm.enabled`,
 `ocr.enabled`, `image.alt_enabled`, `image.desc_enabled`, `screenshot.enabled`,
 `screenshot.screenshot_only`, `llm.pure`, `cache.no_cache`, `image.compress`,
-`output.profile`, `fetch.strategy`), or for a user token its own defaults over
+`output.profile`, `fetch.strategy`, and with contract v1.20 `output.format`,
+`ocr.lang`, `ocr.per_page_routing`, `output.page_markers`), or for a user token its own defaults over
 them. A row above the command line says whether the choices are those defaults;
 Reset to defaults returns to them, and Save as default makes the current choices
 the defaults: the admin's go into `config.json` (the command line reads them
@@ -52,6 +53,20 @@ them). Cloudflare is never a default: it asks for a confirmation each time.
 Other also offers Text only (images and PDFs as the recognised text alone, see
 [images](images.md#text-only)) when the backend reports `features.text_only`;
 it is sent as `text_only` only when chosen and is not one of the saved defaults.
+Contract v1.20 fills in the rest of what a conversion can produce, each shown only
+when the backend reports its feature: a `{ } JSON` switch after the Output
+profiles (`format: "json"`, `features.document_json`) also saves each result's
+[document JSON](json-output.md) as `<name>.json` beside its Markdown, in the
+result's files, its .zip and the command line (`-f json`). While OCR is on and LLM
+off, a picker after OCR names the local engine and its language (`Local ·
+Automatic language`, `ocr_lang`, from the server's `ocr_languages`; the automatic
+`en` reads Chinese, English and Japanese, see [OCR](ocr.md#languages)). Advanced
+gains a Pages row: Page Markers (`page_markers`, `--page-markers`; on and locked
+while the profile is RAG, which keeps its own) and OCR Every Page
+(`ocr_all_pages`, `ocr.per_page_routing: false`, only while OCR is on, see
+[PDF OCR](pdf-ocr.md)). The OCR settings appear in the command line as one
+`--config-json '{"ocr":{…}}'`. Image Descriptions (`desc`) is a picture
+analysis, not the JSON output.
 Files and folders waiting for Convert appear in it relative to the folder that
 holds them (`./notes.pdf`, a picked folder as `./Field trip/`, quoted for the
 shell), with an (i) beside Copy: run it in that folder, since a browser never
@@ -119,7 +134,10 @@ files wait on Convert); typing URLs is Convert's job.
 - The **peek window** opens over the dimmed list: previous and next with the
   position (`8 of 14`), the name (all on one centre line with the buttons; a
   long name gives up its middle at about 34 characters and shows in full on
-  hover), the actions that matter (Download, which opens Preview's Files; Retry,
+  hover), the actions that matter (Download, which saves the Markdown, with a
+  caret listing Markdown .md, JSON .json (`…/document`, when the backend reports
+  `features.document_json`), All files .zip and Choose files…, which opens
+  Preview's Files; Retry,
   Add a model or Enable OCR and retry when that is the fix) and "⋯" (Enhance
   with LLM, Run again, Re-convert, Retry without LLM, Delete), then Preview, Compare and
   Details as tabs; a conversion opens on Preview (a submission, or a
@@ -310,7 +328,7 @@ outline never moves the text. An original that cannot be shown (a DOCX, a page t
 keep) says why and offers its download.
 
 **On phones** the window fills the screen, over the tab bar: back, previous and
-next, and "⋯" (Download and every other action, Copy and Export PDF on
+next, and "⋯" (Download's formats and every other action, Copy and Export PDF on
 Preview), the name on a row of its own below them, then the same three tabs. While items wait, Stop remaining
 stays a button in the header, since the window covers the list's own: a
 submission's window stops that submission, an item's window the submission it
@@ -680,8 +698,12 @@ reads, described by the server's [OpenAPI document](serve.md#machine-readable-ap
 What a backend offers beyond the base job API is announced in
 `GET /api/capabilities` under `features` (`cancel`, `download_tickets`,
 `url_lists`, `history_items`, `original`, `result_excerpt`, `job_labels`,
-`item_assets`, `document_json`, `text_only`; the last two arrived with contract v1.19: the
-item menu's JSON entry saves `…/document`, the options' Text only sets `text_only`); a missing feature hides its control instead of failing (no Stop
+`item_assets`, `document_json`, `text_only`, `ocr_lang`, `ocr_all_pages`, `page_markers`;
+`document_json` and `text_only` arrived with contract v1.19: the item menu's JSON entry
+saves `…/document`, the options' Text only sets `text_only`; contract v1.20 adds the
+job options `format` (under `document_json`), `ocr_lang` (with `ocr_languages` and
+`ocr_lang` in the capabilities), `ocr_all_pages` and `page_markers`, and the same
+keys as saved defaults); a missing feature hides its control instead of failing (no Stop
 remaining, no Compare, archives saved through the page, history read job by job,
 images read from the file route).
 `docs_url` points the Docs link at the backend's own documentation. The guide links

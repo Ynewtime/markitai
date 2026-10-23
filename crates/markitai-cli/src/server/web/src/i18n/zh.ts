@@ -73,8 +73,8 @@ export const zh: Dict = {
   helpImages: "选择随正文保留的图片描述或页面截图。",
   advAlt: "alt 文本",
   helpAlt: "在非纯净模式下用视觉模型生成图片替代文本，需要开启 LLM 且可能增加费用。",
-  advDesc: "描述 JSON",
-  helpDesc: "在非纯净模式下用视觉模型生成图片描述 JSON，需要开启 LLM 且可能增加费用。",
+  advDesc: "图片描述",
+  helpDesc: "在非纯净模式下用视觉模型为图片写详细描述（与 JSON 输出无关），需要开启 LLM 且可能增加费用。",
   advScreenshot: "页截图",
   helpScreenshot: "使用适用的渲染器保存页面截图，不会自动开启模型分析。",
   advNeedsLlm: "请先开启 LLM 增强，再分析图片。",
@@ -121,6 +121,22 @@ export const zh: Dict = {
   advPure: "纯净模式",
   advTextOnly: "仅文字",
   helpTextOnly: "图片和 PDF：只写出其中识别到的文字，不含标题、图片、描述和 frontmatter。",
+  advJson: "JSON",
+  helpJson: "同时把每个转换结果另存为 JSON 文档，放在 Markdown 旁边（即 markitai -f json 的输出）：文字、页面、图片、表格和提示。",
+  ocrLangLabel: "OCR 语言",
+  ocrLocal: "本机",
+  ocrLangAuto: "自动语言",
+  ocrLangAutoShort: "自动",
+  ocrLangAutoHint: "中 · 英 · 日",
+  helpOcrLang: "不开启 LLM 时，OCR 使用本机的识别引擎。自动可读中文、英文和日文；其他文字的扫描件请选择对应语言。",
+  advPages: "页面",
+  helpPages: "选择分页文档（PDF、幻灯片）如何标记页码、如何识别。",
+  advPageMarkers: "页码标记",
+  helpPageMarkers: "在 Markdown 中保留页码和幻灯片编号注释（<!-- Page number: N -->）。",
+  advRagPageMarkers: "RAG 输出始终保留自己的页码标记。",
+  advOcrAllPages: "每页都 OCR",
+  helpOcrAllPages: "识别 PDF 的每一页，而不只是没有可读文字的页面：适合文字层读出来不对的 PDF。",
+  advNeedsOcr: "开启 OCR 后才能逐页识别。",
   helpPure: "跳过常规元数据与图片后处理，暂停图片分析，且不能同时以截图为内容源。",
   advNoCache: "不用缓存",
   helpCache: "跳过缓存读取并重新获取和处理，可能产生新的模型费用，结果仍可缓存。",
@@ -572,6 +588,11 @@ export const zh: Dict = {
   downloadJson: "JSON",
   downloadJsonTitle: "下载为 JSON 文档（markitai -f json 的输出）",
   downloadZip: "下载 .zip",
+  downloadFormats: "下载格式",
+  downloadAs: (what: string) => `下载 ${what}`,
+  downloadMarkdown: "Markdown",
+  downloadAllFiles: "全部文件",
+  downloadChooseFiles: "选择文件…",
   runAgain: "重新运行",
   enhance: "用 LLM 增强",
   retryPlainVerb: "重试",
@@ -641,6 +662,10 @@ export const zh: Dict = {
         return "Office 文件的图片列表不一致，已找回全部图片";
       case "hidden_sheet":
         return "隐藏的工作表不会出现在输出中";
+      case "first_conversion":
+        return "安装后首次转换：转换所需的库只加载一次（在 macOS 上需要数秒），之后的转换会立即开始。";
+      case "first_ocr":
+        return "安装后首次使用 OCR：OCR 的库和模型只加载一次（在 macOS 上最多一分钟），之后的 OCR 转换会立即开始。";
       case "pdf_scanned":
         return count === 1 ? "这个 PDF 是扫描件：请开启 OCR 后重新转换" : `${count} 个 PDF 是扫描件：请开启 OCR 后重新转换`;
       case "ocr_blank":
@@ -678,7 +703,6 @@ export const zh: Dict = {
   peekViews: "视图",
   peekFullScreen: "全屏",
   peekExitFullScreen: "退出全屏",
-  downloadChoose: "选择要下载的文件",
   downloadAllZip: "全部下载（.zip）",
   filesTotal: (n, size) => `${n} 个文件 · ${size}`,
   filesOriginalPage: "抓取的网页",

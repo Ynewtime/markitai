@@ -387,6 +387,20 @@ async fn run(state: Arc<State>, job: Arc<Job>, work: Work) {
                     "conversion produced no output",
                 ));
             }
+            let document = super::documents::render(
+                &work.prior.name,
+                &converted,
+                &out,
+                Some(started.elapsed().as_secs_f64()),
+            );
+            let mut beside = None;
+            let mut unwritten = None;
+            if super::documents::wanted(&work.cfg, &converted) {
+                match super::documents::write_beside(&out, &work.base, &document) {
+                    Ok(name) => beside = Some(name),
+                    Err(error) => unwritten = Some(super::documents::unwritten(error)),
+                }
+            }
             let mut replacements = store::files(&out)
                 .map_err(ApiError::internal)?
                 .into_iter()
@@ -433,6 +447,14 @@ async fn run(state: Arc<State>, job: Arc<Job>, work: Work) {
             } else {
                 Vec::new()
             };
+            // A result published without its document JSON drops the old one.
+            let stale = super::documents::beside_name(&work.base);
+            if beside.is_none()
+                && !shared.contains(&stale)
+                && store::safe_file(&worker.folder.join("out"), &stale).is_ok()
+            {
+                removals.push(format!("out/{stale}"));
+            }
             if kept {
                 // What the new attempt kept replaces the old files; an old
                 // file it did not keep again goes (a page not converted from
@@ -476,19 +498,16 @@ async fn run(state: Arc<State>, job: Arc<Job>, work: Work) {
                 super::snapshots::prune(&worker.folder, &work.prior.item_id);
             }
             super::snapshots::keep_ocr(&worker.folder, &work.prior.item_id, converted.ocr_layout());
-            super::documents::keep(
-                &worker.folder,
-                &work.prior.item_id,
-                &work.prior.name,
-                &converted,
-                &out,
-                Some(started.elapsed().as_secs_f64()),
-            );
-            let assets = converted
-                .assets
-                .iter()
-                .chain(&converted.screenshots)
-                .filter_map(|p| relative(p))
+            super::documents::keep(&worker.folder, &work.prior.item_id, &document);
+            let assets = beside
+                .into_iter()
+                .chain(
+                    converted
+                        .assets
+                        .iter()
+                        .chain(&converted.screenshots)
+                        .filter_map(|p| relative(p)),
+                )
                 .collect();
             data.assets.insert(work.prior.item_id.clone(), assets);
             let item = &mut data.items[work.index];
@@ -510,6 +529,7 @@ async fn run(state: Arc<State>, job: Arc<Job>, work: Work) {
             item.error_code = None;
             item.rerun_failure = None;
             item.warnings = converted.warnings;
+            item.warnings.extend(unwritten);
             item.page_sources = converted.page_sources;
             worker
                 .retry_pending

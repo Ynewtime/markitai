@@ -11,6 +11,8 @@ export type FetchStrategy = "auto" | "static" | "playwright" | "defuddle" | "jin
 export type ConversionBackend = "native" | "cloudflare";
 
 /** The request options; null leaves the server configuration in charge. */
+export type DocumentFormat = "markdown" | "json";
+
 export interface JobOptions {
   /** Authorization is for this request only; never restore it from history. */
   remote_processing?: "cloudflare" | null;
@@ -25,6 +27,14 @@ export interface JobOptions {
   pure: boolean | null;
   /** Rust backends with `features.text_only`: images and PDFs as their recognised text only. */
   text_only?: boolean | null;
+  /** v1.20 (`features.document_json`): "json" also writes `<base>.json` into the result (`-f json`). */
+  format?: DocumentFormat | null;
+  /** v1.20 (`features.ocr_lang`): `ocr.lang` for local OCR, one of `ocr_languages`. */
+  ocr_lang?: string | null;
+  /** v1.20 (`features.ocr_all_pages`): OCR every PDF page (`ocr.per_page_routing: false`). */
+  ocr_all_pages?: boolean | null;
+  /** v1.20 (`features.page_markers`): keep page and slide number comments (`--page-markers`). */
+  page_markers?: boolean | null;
   no_cache: boolean | null;
   no_compress: boolean | null;
   strategy: FetchStrategy | null;
@@ -213,6 +223,10 @@ export interface Capabilities {
   access?: { role: "admin" | "user"; label?: string };
   /** v1.16: which build answers, for the sidebar's version line. */
   build?: BuildInfo;
+  /** v1.20 (`features.ocr_lang`): the `ocr_lang` values, the automatic default ("en") first. */
+  ocr_languages?: string[];
+  /** v1.20 (`features.ocr_lang`): the server's configured `ocr.lang`, what a job without `ocr_lang` reads with. */
+  ocr_lang?: string;
 }
 
 /** v1.16: the backend's build: its version, the commit it was built from and when. */
@@ -253,10 +267,16 @@ export interface Features {
   user_config?: boolean;
   /** v1.17: GET /api/jobs/{id}/items/{item}/original/outline (a PDF's own bookmarks). */
   pdf_outline?: boolean;
-  /** v1.19: GET /api/jobs/{job_id}/items/{item_id}/document (the item's document JSON; the item menu's JSON entry). */
+  /** v1.19: GET /api/jobs/{job_id}/items/{item_id}/document (the item's document JSON; the item menu's JSON entry); v1.20: also `format` in job options and convert defaults. */
   document_json?: boolean;
   /** v1.19: `text_only` in job options (Markdown without picture references, the Text only option). */
   text_only?: boolean;
+  /** v1.20: `ocr_lang` in job options and convert defaults; `ocr_languages` and `ocr_lang` in the capabilities. */
+  ocr_lang?: boolean;
+  /** v1.20: `ocr_all_pages` in job options and convert defaults. */
+  ocr_all_pages?: boolean;
+  /** v1.20: `page_markers` in job options and convert defaults. */
+  page_markers?: boolean;
   /** v1.17: GET/PUT /api/convert-defaults, the composer's defaults (the server's, a user's own). */
   convert_defaults?: boolean;
 }
@@ -579,6 +599,11 @@ export interface ConvertDefaults {
   no_compress: boolean;
   profile: OutputProfile | null;
   strategy: Exclude<FetchStrategy, "cloudflare">;
+  /** v1.20, each present only with its feature (`document_json`, `ocr_lang`, `ocr_all_pages`, `page_markers`). */
+  format?: DocumentFormat;
+  ocr_lang?: string;
+  ocr_all_pages?: boolean;
+  page_markers?: boolean;
 }
 
 export interface ConvertDefaultsView {

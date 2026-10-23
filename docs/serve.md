@@ -21,7 +21,13 @@ settings writes unavailable until restart without those overrides.
 
 Each finished item's [document JSON](json-output.md), the same object `markitai -f json`
 writes, is served by `GET /api/jobs/{job_id}/items/{item_id}/document`
-(`features.document_json`).
+(`features.document_json`). The job option `format: "json"` (contract v1.20) also
+publishes it as `<name>.json` beside the item's Markdown in `out/`: it is listed in
+the result's `artifacts`, archived with the item and the job, and removed with the
+item or by a retry that publishes no JSON. The job options `ocr_lang` (one of the
+capabilities' `ocr_languages`; the configured `ocr.lang` is in that list and is
+`ocr_lang` there), `ocr_all_pages` (`ocr.per_page_routing: false`) and
+`page_markers` (`output.page_markers`) set those keys for one job.
 
 `GET /api/openapi.json` returns an OpenAPI 3.1 document of every `/api/` route
 (jobs, history, downloads, settings, provider discovery and tests) with its
@@ -315,7 +321,7 @@ about boundaries is never passed on. A POST with neither a content type nor a bo
 is an empty job (422 `empty_job`). A bad `options` field is 422 `invalid_options`
 and names the option: `unknown option 'x'; supported options: …`,
 `option 'llm' must be true or false`, `option 'profile' must be one of: rag,
-obsidian, okf`, or `options must be a JSON object`. A retry body is checked the
+obsidian, okf`, `option 'ocr_lang' must be one of: en, zh, …`, or `options must be a JSON object`. A retry body is checked the
 same way (`invalid_retry_body` for its own fields). JSON parser positions such as
 "at line 1 column 8" never appear.
 

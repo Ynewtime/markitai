@@ -90,12 +90,15 @@ pub(super) async fn capabilities(
         "extras":{"browser":markitai_core::browser_available(),"svg":true},
         "limits":{"max_job_items":MAX_ITEMS,"history_retention_days":super::retention::DAYS},
         "access":access,
+        "ocr_languages":super::types::ocr_languages(&cfg),
+        "ocr_lang":super::types::ocr_lang(&cfg),
         "features":{"cancel":true,"download_tickets":true,"url_lists":true,"history_items":true,
             "original":true,"result_excerpt":true,"job_labels":true,"item_assets":true,
             "item_archive":true,"token_regenerate":state.auth_enabled(),
             "user_tokens":state.auth_enabled(),"config_edit":true,"batch_delete":true,
             "user_models":state.auth_enabled(),"user_config":state.auth_enabled(),
-            "convert_defaults":true,"pdf_outline":true,"document_json":true,"text_only":true},
+            "convert_defaults":true,"pdf_outline":true,"document_json":true,"text_only":true,
+            "ocr_lang":true,"ocr_all_pages":true,"page_markers":true},
     }))
 }
 

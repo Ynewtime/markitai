@@ -80,9 +80,9 @@ export const en = {
   helpImages: "Choose image descriptions or page screenshots to keep alongside the text.",
   advAlt: "Alt Text",
   helpAlt: "Write image alt text with a vision model outside plain mode, requiring LLM and potentially extra model costs.",
-  advDesc: "Description JSON",
+  advDesc: "Image Descriptions",
   helpDesc:
-    "Create image-description JSON with a vision model outside plain mode, requiring LLM and potentially extra model costs.",
+    "Describe images in detail with a vision model outside plain mode (separate from the JSON output), requiring LLM and potentially extra model costs.",
   advScreenshot: "Page Screenshots",
   helpScreenshot: "Save page screenshots with a compatible renderer, without enabling model analysis.",
   advNeedsLlm: "Enable LLM enhancement to analyze images.",
@@ -130,6 +130,23 @@ export const en = {
   advPure: "Plain Mode",
   advTextOnly: "Text Only",
   helpTextOnly: "Images and PDFs: write only the text read in them, without a title, pictures, a description or front matter.",
+  advJson: "JSON",
+  helpJson: "Also save each conversion as a JSON document beside its Markdown (what markitai -f json writes): text, pages, images, tables and notices.",
+  ocrLangLabel: "OCR language",
+  ocrLocal: "Local",
+  ocrLangAuto: "Automatic language",
+  ocrLangAutoShort: "Automatic",
+  ocrLangAutoHint: "Chinese · English · Japanese",
+  helpOcrLang:
+    "Without LLM, OCR runs on this server's local engine. Automatic reads Chinese, English and Japanese; choose the language of scans in another script.",
+  advPages: "Pages",
+  helpPages: "Choose how paged documents (PDFs, slides) are marked and read.",
+  advPageMarkers: "Page Markers",
+  helpPageMarkers: "Keep page and slide number comments (<!-- Page number: N -->) in the Markdown.",
+  advRagPageMarkers: "The RAG profile always keeps its own page markers.",
+  advOcrAllPages: "OCR Every Page",
+  helpOcrAllPages: "Recognize every PDF page, not only the pages without readable text: for a PDF whose text layer reads wrong.",
+  advNeedsOcr: "Turn on OCR to recognize every page.",
   helpPure: "Skip normal metadata and image processing, pausing image analysis and excluding screenshot-source mode.",
   advNoCache: "Skip Cache",
   helpCache: "Fetch and process afresh instead of reading cache, possibly incurring new model costs while still saving results.",
@@ -607,6 +624,11 @@ export const en = {
   downloadJson: "JSON",
   downloadJsonTitle: "Download the conversion as a JSON document (what markitai -f json writes)",
   downloadZip: "Download .zip",
+  downloadFormats: "Download as",
+  downloadAs: (what: string) => `Download ${what}`,
+  downloadMarkdown: "Markdown",
+  downloadAllFiles: "All files",
+  downloadChooseFiles: "Choose files…",
   runAgain: "Run again",
   enhance: "Enhance with LLM",
   retryPlainVerb: "Retry",
@@ -683,6 +705,10 @@ export const en = {
         return "An Office file's image list was inconsistent; all images were recovered";
       case "hidden_sheet":
         return "Hidden worksheets are left out of the output";
+      case "first_conversion":
+        return "First conversion since installing: the libraries conversions use load once (several seconds on macOS); later conversions start right away.";
+      case "first_ocr":
+        return "First OCR use since installing: the OCR libraries and models load once (up to a minute on macOS); later OCR conversions start right away.";
       case "pdf_scanned":
         return count === 1 ? "This PDF is scanned: turn on OCR and convert again" : `${count} PDFs are scanned: turn on OCR and convert them again`;
       case "ocr_blank":
@@ -730,7 +756,6 @@ export const en = {
   peekViews: "Views",
   peekFullScreen: "Full screen",
   peekExitFullScreen: "Exit full screen",
-  downloadChoose: "Choose files to download",
   downloadAllZip: "Download all (.zip)",
   filesTotal: (n: number, size: string) => (n === 1 ? `1 file · ${size}` : `${n} files · ${size}`),
   filesOriginalPage: "Page as fetched",
