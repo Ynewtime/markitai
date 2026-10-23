@@ -177,7 +177,8 @@ puts each recognized line in the cell under it, splitting a line read across
 two cells at its words, empty cells kept. In a scanned PDF page, a picture
 (a chart, a photograph: marked areas no text line covers) is cut out of the
 page and written as a picture where it stands, and its labels (axis numbers,
-legends) are not repeated as text. Pixels are not read on a page read turned
+legends) are not repeated as text; a heading set right above or below it
+stays text. Pixels are not read on a page read turned
 or too dark to tell ink from paper.
 
 It is not a full layout reconstruction engine: underline, strikethrough and

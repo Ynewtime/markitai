@@ -984,7 +984,7 @@ fn assemble_with(
     if let (Some((page, cut)), Some(sizes)) = (&page, sizes) {
         aligned_bullets(&mut lines, sizes.body);
         style = Style::of(&lines, sizes.body);
-        regions = self::regions(page, &mut lines, sizes.body, *cut, &mut figures);
+        regions = self::regions(page, &mut lines, sizes, &style, *cut, &mut figures);
     }
     let mut out = Out {
         lines: Vec::with_capacity(lines.len()),
@@ -1324,14 +1324,23 @@ const MIN_PROSE_CHARS: usize = 30;
 
 /// The ruled tables of the page and, when `cut`, its pictures, each taken
 /// out of `lines` with the lines it holds (a table's cells, a picture's
-/// labels); the pictures' pixels go to `figures`.
+/// labels); the pictures' pixels go to `figures`. A line wholly above or
+/// below a picture that reads as a heading (in a larger face, or a little
+/// larger and bold) is the text's, not a label: a section's heading set
+/// right above its chart.
 fn regions(
     page: &page::Page<'_>,
     lines: &mut Vec<Line>,
-    body: f32,
+    sizes: Sizes,
+    style: &Style,
     cut: bool,
     figures: &mut Vec<Figure>,
 ) -> Vec<Region> {
+    let body = sizes.body;
+    let heading = |line: &Line| {
+        let size = sizes.of(line);
+        size >= LARGE || (size >= BOLD_HEADING && style.bold(line))
+    };
     let center = |b: [f32; 4]| [(b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0];
     let inside = |b: [f32; 4], area: [f32; 4]| {
         let [x, y] = center(b);
@@ -1393,8 +1402,10 @@ fn regions(
             for (i, line) in lines.iter().enumerate() {
                 let b = line.bounds;
                 let near = b[0] < reach[2] && b[2] > reach[0] && b[1] < reach[3] && b[3] > reach[1];
+                let apart = b[3] <= area[1] || b[1] >= area[3];
                 if held.contains(&i)
                     || !(inside(b, area) || near)
+                    || (apart && heading(line))
                     || chars(line) > MAX_LABEL_CHARS
                     || caption(&line.text)
                     || line.marks.bullet.is_some()
@@ -3272,6 +3283,54 @@ pub(crate) mod tests {
             "{}",
             again.text
         );
+    }
+
+    /// A section's heading set right above its chart, within a line height
+    /// of the bars, stays the text's heading; the chart's short labels are
+    /// the picture's.
+    #[test]
+    fn a_heading_right_above_a_chart_is_no_label() {
+        let mut image = page::tests::paper(1000, 1100);
+        let plain = |text| (text, 2, 0.0);
+        let mut lines = Vec::new();
+        for (top, words) in [
+            (100, [plain("the"), plain("opening"), plain("paragraph")]),
+            (132, [plain("reads"), plain("over"), plain("three")]),
+            (164, [plain("lines"), plain("of"), plain("text")]),
+        ] {
+            let mut line = drawn(&mut image, 100, top, &words);
+            line.bounds[2] = 700.;
+            lines.push(line);
+        }
+        lines.push(sized("Results", [100., 560., 300., 600.]));
+        page::tests::fill(&mut image, [300, 620, 340, 820], [0, 60, 140]);
+        page::tests::fill(&mut image, [350, 670, 390, 820], [255, 204, 0]);
+        page::tests::fill(&mut image, [400, 640, 440, 820], [255, 69, 0]);
+        lines.push(drawn(&mut image, 250, 620, &[plain("10")]));
+        lines.push(drawn(&mut image, 320, 830, &[plain("Row"), plain("1")]));
+        lines.push(drawn(
+            &mut image,
+            100,
+            950,
+            &[plain("after"), plain("the"), plain("chart")],
+        ));
+        let result = assemble_with(
+            lines,
+            1000,
+            1100,
+            Some(Pixels {
+                image: &image,
+                figures: true,
+            }),
+        )
+        .unwrap();
+        assert_eq!(
+            result.text,
+            "the opening paragraph\nreads over three\nlines of text\n\n# Results\n\nafter the chart"
+        );
+        assert_eq!(result.figures.len(), 1);
+        let [_, top, ..] = result.figures[0].bounds;
+        assert!(top >= 600., "{:?}", result.figures[0].bounds);
     }
 
     #[test]
