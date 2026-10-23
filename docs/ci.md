@@ -214,6 +214,33 @@ attribution files to it.
 A user checks a download with `sha256sum -c SHA256SUMS --ignore-missing` and
 its origin with `gh attestation verify <file> --repo Ynewtime/markitai`.
 
+### The release commit
+
+A release is one commit on `main` that sets the version, then the tag on it.
+On macOS or Linux (the help snapshot test is Unix-only):
+
+1. `python3 scripts/release_build.py prepare-version X.Y.Z` writes the version
+   into `Cargo.toml`, `Cargo.lock` (`cargo update --workspace`; `--locked`
+   builds fail on a stale lock), `bindings/python/pyproject.toml`,
+   `bindings/node/package.json` and `server.json`, regenerates
+   `crates/markitai-cli/tests/fixtures/help_en.txt` (it prints the version),
+   and lists every tracked line that still names the old version. Tests,
+   `AGENTS.md`, the changelogs, `website/` and the private workbench package are
+   exempt.
+2. Correct the listed lines, chiefly the guides the archives ship (README,
+   `docs/index.md`, `docs/quickstart.md`, `docs/cli.md`), until the command
+   finishes clean (`git checkout -- .` undoes a trial run).
+3. Move `.local/changelog-unreleased.md` and `.local/changelog-unreleased.zh.md`
+   into `CHANGELOG.md` and `CHANGELOG.zh.md` as `## [X.Y.Z] - YYYY-MM-DD`. When
+   the English section exceeds 100,000 characters, write a short summary
+   between the heading and its first `###`: the Release shows it with a link to
+   the full section. `python3 scripts/release_build.py notes --version X.Y.Z
+   --output notes.md` shows the Release text and fails where `prepare` would.
+4. `python3 scripts/release_build.py version --tag vX.Y.Z` and
+   `python3 scripts/check.py`, commit, push `main`, run a dry run on it
+   (`gh workflow run release.yml --ref main`), then push an annotated
+   `vX.Y.Z` tag on that commit.
+
 ### Setup scripts
 
 `scripts/install/setup.sh` (macOS, Linux) and `scripts/install/setup.ps1`

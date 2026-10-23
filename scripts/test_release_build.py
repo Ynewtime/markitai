@@ -4,6 +4,7 @@ import io
 import json
 import os
 import re
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -109,6 +110,50 @@ class NotesTests(unittest.TestCase):
             self.assertEqual(release_build.main(["notes", "--version", "0.0.1", "--output", str(output)]),
                              release_build.NO_NOTES)
             self.assertFalse(output.exists())
+
+
+class PrepareVersionTests(unittest.TestCase):
+    def copy(self, directory):
+        root = Path(directory)
+        for name in ["Cargo.toml", "bindings/python/pyproject.toml", "bindings/python/README.md",
+                     "bindings/node/package.json", "server.json"]:
+            (root / name).parent.mkdir(parents=True, exist_ok=True)
+            (root / name).write_bytes((ROOT / name).read_bytes())
+        (root / "docs").mkdir()
+        old = release_build.workspace_version((ROOT / "Cargo.toml").read_text(encoding="utf-8"))
+        (root / "docs/guide.md").write_text(f"This is {old}.\n", encoding="utf-8")
+        (root / "scripts").mkdir()
+        (root / "scripts/test_x.py").write_text(f"'{old}'\n", encoding="utf-8")
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+        return root, old
+
+    def test_sets_every_manifest_and_lists_what_still_names_the_old_version(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root, old = self.copy(directory)
+            with contextlib.redirect_stdout(io.StringIO()) as printed, self.assertRaises(SystemExit) as raised:
+                release_build.prepare_version(root, "v9.8.7", run_cargo=False)
+            self.assertIn("1 lines still name", str(raised.exception))
+            self.assertEqual(printed.getvalue().strip(), f"docs/guide.md:1: {old}")
+            self.assertEqual(check_versions(root, "v9.8.7")["python_version"], "9.8.7")
+            package = json.loads((root / "bindings/node/package.json").read_text(encoding="utf-8"))
+            self.assertEqual(package["version"], "9.8.7")
+            server = json.loads((root / "server.json").read_text(encoding="utf-8"))
+            self.assertEqual((server["version"], server["packages"][0]["version"]), ("9.8.7", "9.8.7"))
+            self.assertIn({"--from": "markitai==9.8.7"},
+                          [{item["name"]: item["value"]} for item in server["packages"][0]["runtimeArguments"]])
+            (root / "docs/guide.md").write_text("This is 9.8.7.\n", encoding="utf-8")
+            self.assertEqual(release_build.stale_versions(root, old), [])
+            with self.assertRaises(SystemExit):
+                release_build.prepare_version(root, "9.8.7", run_cargo=False)
+
+    def test_refuses_development_versions(self):
+        with self.assertRaises(SystemExit):
+            release_build.prepare_version(ROOT, "2.0.0-dev", run_cargo=False)
+        with self.assertRaises(ValueError):
+            release_build.set_versions(ROOT, "2.0")
+        self.assertEqual(release_build.npm_version("2.0.0-dev"), "2.0.0-dev.0")
+        self.assertEqual(release_build.npm_version("2.0.0-rc.1"), "2.0.0-rc.1")
 
 
 class AssetTests(unittest.TestCase):

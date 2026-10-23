@@ -3,6 +3,9 @@
 `.github/workflows/release.yml` runs every subcommand; each also runs locally:
 
   version   check the tag, Cargo, Python and server.json versions agree
+  prepare-version  set a release's version everywhere it is written, for the
+            release commit (Cargo, Cargo.lock, Python, npm, server.json, the
+            help snapshot), then list what still names the old version
   notes     the GitHub Release notes: the tag's section of CHANGELOG.md
             (or its lead when long) and a link to the full changelog
   cli       build the CLI for one target and write its release archive
@@ -21,6 +24,7 @@ these names. Nothing here signs or publishes.
 """
 from pathlib import Path, PurePosixPath
 import argparse
+import fnmatch
 import hashlib
 import io
 import json
@@ -188,6 +192,95 @@ def release_body(changelog, version, repository=REPOSITORY):
                          f"under {NOTES_LIMIT:,} characters between `{heading}` and its first `###` "
                          "subsection: the Release shows it with a link to the full section.")
     return lead + "\n" + link
+
+
+# Files that keep naming a development version on purpose: tests and examples
+# of version parsing, the private workbench package (its version is unused and
+# feeds the bundle's source digest), the contributor protocol, released history
+# and the website (deployed on its own).
+STALE_VERSION_EXEMPT = ("*.test.ts", "scripts/test_*.py", "scripts/release_build.py", "AGENTS.md",
+                        "CHANGELOG.md", "CHANGELOG.zh.md", "website/*",
+                        "crates/markitai-cli/src/server/web/package.json",
+                        "crates/markitai-cli/src/server/web/package-lock.json")
+
+
+def npm_version(cargo):
+    """The npm form of a Cargo version: 2.0.0-dev -> 2.0.0-dev.0; others as they are."""
+    return f"{cargo}.0" if re.fullmatch(r"\d+\.\d+\.\d+-[a-z]+", cargo) else cargo
+
+
+def _replace_once(path, pattern, replacement):
+    text = path.read_text(encoding="utf-8")
+    new, count = re.subn(pattern, replacement, text, count=1, flags=re.MULTILINE)
+    if count != 1:
+        raise SystemExit(f"{path}: no version to set")
+    path.write_bytes(new.encode("utf-8"))
+
+
+def set_versions(root, version):
+    """Write `version` into every manifest a release reads; returns the old Cargo version."""
+    python_version(version)
+    old = workspace_version((root / "Cargo.toml").read_text(encoding="utf-8"))
+    _replace_once(root / "Cargo.toml", r'(^\[workspace\.package\][^\[]*?^version\s*=\s*")[^"]+(")',
+                  rf"\g<1>{version}\g<2>")
+    _replace_once(root / "bindings/python/pyproject.toml", r'(^\[project\][^\[]*?^version\s*=\s*")[^"]+(")',
+                  rf"\g<1>{python_version(version)}\g<2>")
+    _replace_once(root / "bindings/node/package.json", r'^(  "version": ")[^"]+(")', rf"\g<1>{npm_version(version)}\g<2>")
+    server_path = root / "server.json"
+    server = json.loads(server_path.read_text(encoding="utf-8"))
+    pinned = python_version(version)
+    server["version"] = pinned
+    server["packages"][0]["version"] = pinned
+    for argument in server["packages"][0].get("runtimeArguments", []):
+        if argument.get("name") == "--from":
+            argument["value"] = f"markitai=={pinned}"
+    server_path.write_bytes((json.dumps(server, indent=2, ensure_ascii=False) + "\n").encode("utf-8"))
+    return old
+
+
+def stale_versions(root, old):
+    """Tracked files outside STALE_VERSION_EXEMPT that still name the old version, with line numbers."""
+    spellings = sorted({old, python_version(old), npm_version(old)}, key=len, reverse=True)
+    pattern = re.compile("|".join(map(re.escape, spellings)))
+    names = subprocess.check_output(["git", "ls-files", "-z"], cwd=root).decode("utf-8").split("\0")
+    found = []
+    for name in filter(None, names):
+        path = root / name
+        if any(PurePosixPath(name).match(glob) or fnmatch.fnmatch(name, glob) for glob in STALE_VERSION_EXEMPT):
+            continue
+        if not path.is_file() or path.is_symlink():
+            continue
+        data = path.read_bytes()
+        if b"\0" in data[:8192]:
+            continue
+        text = data.decode("utf-8", errors="replace")
+        found.extend(f"{name}:{text.count(chr(10), 0, match.start()) + 1}: {match.group(0)}"
+                     for match in pattern.finditer(text))
+    return found
+
+
+def prepare_version(root, version, run_cargo=True):
+    """The mechanical half of a release commit; the CHANGELOG move and the guides are by hand."""
+    if version.startswith("v"):
+        version = version[1:]
+    if version.endswith("-dev"):
+        raise SystemExit(f"{version} is a development version, not a release")
+    if workspace_version((root / "Cargo.toml").read_text(encoding="utf-8")) == version:
+        raise SystemExit(f"The workspace is already at {version}")
+    old = set_versions(root, version)
+    if run_cargo:
+        # Only the workspace's own entries in Cargo.lock change.
+        run(["cargo", "update", "--workspace"], cwd=root)
+        run(["cargo", "test", "--locked", "-p", "markitai-cli", "--test", "help_language", "--",
+             "english_help_is_unchanged"], cwd=root, env={**os.environ, "MARKITAI_UPDATE_HELP_SNAPSHOT": "1"})
+    check_versions(root, f"v{version}")
+    stale = stale_versions(root, old)
+    for line in stale:
+        print(line)
+    if stale:
+        raise SystemExit(f"{len(stale)} lines still name {old}; update them in the release commit")
+    print(f"Set {old} -> {version}; now move the release notes into CHANGELOG.md and CHANGELOG.zh.md "
+          "(docs/ci.md#the-release-commit).")
 
 
 def archive_name(version, target):
@@ -541,6 +634,8 @@ def main(argv=None):
     version = commands.add_parser("version")
     version.add_argument("--tag")
     version.add_argument("--github-output", type=Path)
+    prepare = commands.add_parser("prepare-version", help="set the release version for the release commit")
+    prepare.add_argument("version", help="X.Y.Z (or X.Y.Z-rc.N)")
     notes = commands.add_parser("notes")
     notes.add_argument("--version", required=True)
     notes.add_argument("--output", type=Path, required=True)
@@ -572,6 +667,8 @@ def main(argv=None):
             with args.github_output.open("a", encoding="utf-8") as stream:
                 for key, value in result.items():
                     stream.write(f"{key}={str(value).lower() if isinstance(value, bool) else value}\n")
+    elif args.command == "prepare-version":
+        prepare_version(ROOT, args.version)
     elif args.command == "notes":
         try:
             body = release_body((ROOT / "CHANGELOG.md").read_text(encoding="utf-8"), args.version,
