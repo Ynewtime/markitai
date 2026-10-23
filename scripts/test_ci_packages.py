@@ -92,9 +92,12 @@ class PackageValidationTests(unittest.TestCase):
         # The existing (config-derived) flag is kept, remap rules appended.
         self.assertEqual(flags[0], "-Clink-arg=-fuse-ld=lld")
         self.assertNotIn("RUSTFLAGS", result)
-        self.assertTrue(any(f"--remap-path-prefix={root}/=" == f for f in flags))
-        self.assertTrue(any(f.endswith("/registry/=registry/") for f in flags))
-        self.assertTrue(any(f.endswith("/=rustup/") for f in flags))
+        # Native paths with a `/` end: rustc compares path components, so it also
+        # matches `C:\...\registry/` on Windows. The most specific rule is last.
+        self.assertEqual(flags[1:], [f"--remap-path-prefix={Path.home()}/=",
+                                     f"--remap-path-prefix={root}/=",
+                                     f"--remap-path-prefix={self.root / 'rustup'}/=rustup/",
+                                     f"--remap-path-prefix={self.root / 'cargo' / 'registry'}/=registry/"])
 
     def test_sbom_loses_every_local_path(self):
         # Synthetic build users the repository privacy check accepts. Cargo writes path
