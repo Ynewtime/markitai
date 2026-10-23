@@ -1,0 +1,29 @@
+[
+  {
+    "file": "reportlab.pdf",
+    "bytes": 2078,
+    "sha256": "82e058fcaeb8a9af0f0c83e3f06fa8eaf24fb82b6dde8cf6f3eadc04ef143e16",
+    "content": "invented harbour notes, no real data",
+    "authored": "written for these tests in markitai-rust",
+    "generator": "make.py: ReportLab 5.1.0 paragraphs at 10 pt, `<super>`/`<sub>` set with a text rise of half the line's size in 8 pt",
+    "purpose": "units (m², cm³), footnote marks after words, a letter and an asterisk mark, a subscript dropped half an em (CO₂) and a mark ending the last line: each stays on its word where the reader once dropped it or moved it to the start of the line below"
+  },
+  {
+    "file": "reportlab-12pt.pdf",
+    "bytes": 1811,
+    "sha256": "eec47b88c25df3f7285cebed0e1ee87ec8154769b1e5980f894865ae809401f4",
+    "content": "invented ferry survey, no real data",
+    "authored": "written for these tests in markitai-rust",
+    "generator": "make.py: ReportLab 5.1.0 paragraphs at 12 pt with `<super>` marks",
+    "purpose": "the same raised marks on 12 pt text, raised further than the 5 pt line window"
+  },
+  {
+    "file": "libreoffice.pdf",
+    "bytes": 17479,
+    "sha256": "ef046b300436e513ea7264d748d4cbc4b6e4c1136a352e22829dd6177c9ad7f5",
+    "content": "invented ferry notes, no real data",
+    "authored": "written for these tests in markitai-rust",
+    "generator": "make.py: pandoc 3.7 Markdown to DOCX, printed by LibreOffice 26.2 (`soffice --convert-to pdf`), then rewritten by pypdf without its XMP packet and with fixed metadata (generic producer, dates 2000-01-01 UTC)",
+    "purpose": "footnote anchors LibreOffice raises in a smaller size inside a line, superscript units, a subscript, and the footnotes' raised numbers at the foot of the page, the last of them in the folio band"
+  }
+]

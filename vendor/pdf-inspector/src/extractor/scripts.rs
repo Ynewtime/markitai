@@ -88,6 +88,11 @@ const SCRIPT_MIN_SHIFT: f32 = 0.1;
 /// 0.15–0.3 em down; ruby/annotation text above a line starts near 0.9 em.
 const SCRIPT_MAX_RAISE: f32 = 0.6;
 const SCRIPT_MAX_DROP: f32 = 0.45;
+/// markitai: reportlab drops its `<sub>` half an em, as far as it raises
+/// its `<super>`. A drop down to this is a script only after the word it
+/// touches (`CO₂`), never under or before a glyph: a sum's lower limit sits
+/// that far below the sign.
+const SCRIPT_MAX_TRAILING_DROP: f32 = 0.55;
 /// Horizontal attachment window between a run and its anchor, as fractions
 /// of the anchor size: kerned markers overlap slightly (negative gap), a
 /// word space (≥ 0.25 em) means a separate word.
@@ -213,13 +218,20 @@ fn script_anchor_gap(
     }
     if dy.abs() < body.font_size * SCRIPT_MIN_SHIFT
         || dy > body.font_size * SCRIPT_MAX_RAISE
-        || dy < -body.font_size * SCRIPT_MAX_DROP
+        || dy < -body.font_size * SCRIPT_MAX_TRAILING_DROP
     {
         return None;
     }
+    let deep = dy < -body.font_size * SCRIPT_MAX_DROP;
     let window = (-body.font_size * SCRIPT_ATTACH_OVERLAP)..=(body.font_size * SCRIPT_ATTACH_GAP);
     let body_center = (body.x + item_right(body)) / 2.0;
     let run_center = (first.x + item_right(last)) / 2.0;
+    if deep {
+        let gap = first.x - item_right(body);
+        let edge_ok = body.text.chars().last().is_some_and(|c| !c.is_whitespace());
+        let touching = (-run_fs * 0.1..=body.font_size * SCRIPT_ATTACH_GAP).contains(&gap);
+        return (body_center <= run_center && touching && edge_ok).then_some((gap.max(0.0), true));
+    }
     if body_center <= run_center {
         // Body precedes the run: its LAST character faces the run. A
         // trailing space means the "marker" is a separate word (a table
@@ -551,6 +563,33 @@ mod tests {
 
     fn texts(items: &[TextItem]) -> Vec<&str> {
         items.iter().map(|i| i.text.as_str()).collect()
+    }
+
+    /// markitai: reportlab drops `<sub>` half an em: still a subscript of
+    /// the word it touches. A sum's lower limit as far under the sign is not.
+    #[test]
+    fn a_half_em_drop_after_its_word_is_a_subscript_but_not_under_a_sign() {
+        let items = vec![
+            make_item_fs("The keeper logged CO", 78.0, 700.0, 101.2, 10.0),
+            make_item_fs("2", 179.2, 695.0, 4.4, 8.0),
+            make_item_fs(" readings.", 183.6, 700.0, 40.0, 10.0),
+        ];
+        assert_eq!(
+            texts(&merge_subscript_items(items)),
+            ["The keeper logged CO₂", " readings."]
+        );
+        let items = vec![
+            make_item_fs("∑", 293.5, 374.9, 13.8, 17.5),
+            make_item_fs("i", 294.8, 365.85, 2.0, 7.2),
+            make_item_fs("= 1", 297.7, 365.85, 8.4, 7.2),
+        ];
+        let merged = merge_subscript_items(items);
+        assert!(
+            merged.iter().all(|i| i.baseline_shift == 0.0),
+            "{:?}",
+            texts(&merged)
+        );
+        assert!(texts(&merged).contains(&"i"), "{:?}", texts(&merged));
     }
 
     #[test]

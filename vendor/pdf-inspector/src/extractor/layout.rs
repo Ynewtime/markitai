@@ -2015,8 +2015,39 @@ fn page_number_removal_mask(items: &[TextItem], document_page_count: usize) -> V
     candidate_values
         .iter()
         .enumerate()
-        .map(|(index, value)| explicit_folio[index] || (value.is_some() && !contextual[index]))
+        .map(|(index, value)| {
+            explicit_folio[index]
+                || (value.is_some() && !contextual[index] && !raised_label(items, index))
+        })
         .collect()
+}
+
+/// Markitai: whether an edge number is a footnote's label or mark — set in
+/// smaller type raised off a line of words it touches, before the line's
+/// first word (`³ Written in March.` at the foot of the page) or after a
+/// word. A folio stands on a baseline of its own; this number's line lies
+/// below it by less than the line's own size, farther than the row
+/// tolerance reaches.
+fn raised_label(items: &[TextItem], index: usize) -> bool {
+    let mark = &items[index];
+    let mark_right = mark.x + effective_width(mark);
+    items.iter().any(|text| {
+        let rise = mark.y - text.y;
+        let em = text.font_size;
+        text.page == mark.page
+            && matches!(text.item_type, crate::types::ItemType::Text)
+            && text.text.chars().any(char::is_alphabetic)
+            && mark.font_size <= em * 0.85
+            && rise >= em * 0.15
+            && rise <= em * 0.6
+            && ({
+                let before = text.x - mark_right;
+                before >= -mark.font_size * 0.5 && before <= em * 0.5
+            } || {
+                let after = mark.x - (text.x + effective_width(text));
+                after >= -mark.font_size * 0.5 && after <= em * 0.25
+            })
+    })
 }
 
 /// Return whether selected-page extraction contains a page-edge number whose
@@ -3401,6 +3432,27 @@ mod tests {
             mcid: None,
             baseline_shift: 0.0,
         }
+    }
+
+    /// Markitai: LibreOffice raises a footnote's number in a smaller size
+    /// before its text; at the foot of the page it is the footnote's label,
+    /// not a folio. A number alone at the foot still is one.
+    #[test]
+    fn a_raised_footnote_label_at_the_foot_is_no_page_number() {
+        let mut label = make_item(1, 72.1, 80.8, "3");
+        label.font_size = 7.0;
+        label.width = 3.9;
+        let mut text = make_item(1, 75.9, 75.5, " Written in March.");
+        text.font_size = 12.0;
+        text.width = 105.7;
+        let body = make_item(1, 72.1, 600.0, "The surveyor's note ends here.");
+        assert_eq!(
+            page_number_removal_mask(&[body.clone(), label.clone(), text], 1),
+            [false, false, false]
+        );
+        let mut folio = make_item(1, 297.0, 30.0, "3");
+        folio.font_size = 9.0;
+        assert_eq!(page_number_removal_mask(&[body, folio], 1), [false, true]);
     }
 
     /// Markitai: a year set across a cover at display size is no folio; the

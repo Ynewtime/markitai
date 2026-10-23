@@ -131,7 +131,9 @@ other heights, and anything below the top or above the bottom line stay.
 A lone one-to-four-digit number in the top or bottom page band is still removed
 as a folio, except when it is set at 20 pt or more (a report's year across its
 cover; a bare number the page reader sets as a heading is kept for the same
-reason), or when it shares its baseline with other text and no folio-like
+reason), when it is a footnote's number or mark (smaller than a line of words it
+touches, raised 0.15 to 0.6 of that line's size off it: `³ Written in March.` at
+the foot of a LibreOffice page), or when it shares its baseline with other text and no folio-like
 edge number in the same band corroborates it. Corroboration is another page with
 the same value or the same value per page step (one or two printed pages per PDF
 page), or a same-page neighbour one apart on its baseline (a two-up spread). Only
@@ -475,7 +477,13 @@ heading, or offset from the line above. A number on a line of its own marks the
 next line. Items nest by their marker's offset (a browser indents 40px),
 consecutive items form one tight list, and a heading keeps its level. Super/subscript runs keep their
 anchor's line and render as `<sup>`/`<sub>`; digits the page reader fuses into
-their word stay Unicode superscripts. Headings need more than 1.15 times the body
+their word stay Unicode superscripts. A mark raised or lowered far enough to group
+into a line of its own (reportlab sets `<super>` and `<sub>` half an em off the
+line, LibreOffice raises footnote anchors about as far) still stands between the
+two runs of its line either side of it: the reader does not merge those runs
+across it, so the mark stays on the word before it (`70 m²`, `hourly¹`, `CO₂`)
+instead of being dropped or moved to the start of the line below. A drop past
+0.45 em counts only after the word it touches, not under a sign (a sum's limit). Headings need more than 1.15 times the body
 size, so a browser `<h3>` (1.17 em) is one.
 
 The refinement limits are 250,000 positioned items and 16 MiB decoded text across

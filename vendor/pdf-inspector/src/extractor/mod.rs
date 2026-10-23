@@ -1909,6 +1909,71 @@ const MERGE_FONT_SIZE_BAND: f32 = 0.20;
 const MERGE_SCRIPT_SIZE_STEP: f32 = 0.05;
 const MERGE_SCRIPT_SHIFT: f32 = 0.2;
 
+/// markitai: a short run of smaller type set off the baseline — a footnote
+/// mark or superscript set with a text rise, as reportlab's `<super>` and
+/// LibreOffice's footnote anchors are — can sit far enough above its line
+/// (half the line's size and more) to group into a line of its own. The
+/// fragments of its line either side of it are then neighbours, and merged
+/// they would hold the mark's place as a double space, leaving the mark no
+/// word to hang from. Such a mark stands in the gap of a junction: within
+/// `GAP_MARK_MAX_SHIFT` of the larger type size above or below the line, at
+/// least `MERGE_SCRIPT_SHIFT` off it, no larger than `GAP_MARK_MAX_RATIO` of
+/// that size, and no wider than the gap (with a tenth of its own size
+/// either side). The junction is not merged, so the scripts pass sees the
+/// word the mark is set after.
+const GAP_MARK_MAX_SHIFT: f32 = 0.75;
+const GAP_MARK_MAX_RATIO: f32 = 0.9;
+const GAP_MARK_MAX_CHARS: usize = 12;
+
+/// The fragments of a page that may be [`GAP_MARK_MAX_SHIFT`] marks, by
+/// page and then baseline.
+fn gap_mark_candidates(items: &[TextItem]) -> Vec<&TextItem> {
+    let mut marks: Vec<&TextItem> = items
+        .iter()
+        .filter(|item| {
+            let chars = item.text.trim().chars().count();
+            (1..=GAP_MARK_MAX_CHARS).contains(&chars)
+                && item.font_size > 0.0
+                && item.width > 0.0
+                && item.is_upright()
+                && !matches!(item.item_type, crate::types::ItemType::Image)
+        })
+        .collect();
+    crate::sort::total(&mut marks, &mut |a, b| {
+        a.page.cmp(&b.page).then_with(|| a.y.total_cmp(&b.y))
+    });
+    marks
+}
+
+/// Whether a mark of another line stands in the gap between `end_x`, where
+/// `previous` ends, and `next` (see [`GAP_MARK_MAX_SHIFT`]).
+fn mark_in_gap(
+    marks: &[&TextItem],
+    group: &[&TextItem],
+    previous: &TextItem,
+    end_x: f32,
+    next: &TextItem,
+) -> bool {
+    if next.x <= end_x {
+        return false;
+    }
+    let larger = previous.font_size.max(next.font_size);
+    let (y, reach) = (previous.y, larger * GAP_MARK_MAX_SHIFT);
+    let page = previous.page;
+    let start = marks.partition_point(|m| (m.page, m.y) < (page, y - reach));
+    marks[start..]
+        .iter()
+        .take_while(|m| m.page == page && m.y <= y + reach)
+        .any(|m| {
+            let slack = m.font_size * 0.1;
+            (m.y - y).abs() >= larger * MERGE_SCRIPT_SHIFT
+                && m.font_size <= larger * GAP_MARK_MAX_RATIO
+                && m.x >= end_x - slack
+                && m.x + m.width <= next.x + slack
+                && !group.iter().any(|g| std::ptr::eq(*g, *m))
+        })
+}
+
 /// Detect a small-caps continuation: typesetters render small caps as a
 /// full-size capital immediately followed by shrunken capitals in the same
 /// font (`(R) Tj` at 9.98pt, then `(OLANDO) Tj` at 6.74pt). Those runs are one
@@ -2645,6 +2710,7 @@ fn merge_page_text_items(
     });
 
     let mut merged = Vec::new();
+    let gap_marks = gap_mark_candidates(&items);
 
     for line in &ordered_line_groups {
         let LineGroup {
@@ -2741,6 +2807,14 @@ fn merge_page_text_items(
                 if (next.font_size - first.font_size).abs() > larger * MERGE_SCRIPT_SIZE_STEP
                     && (next.y - first.y).abs() >= larger * MERGE_SCRIPT_SHIFT
                     && !small_caps_join
+                {
+                    break;
+                }
+                // markitai: nor across a mark of another line set in the
+                // gap between the two (see `GAP_MARK_MAX_SHIFT`).
+                if !*bidi
+                    && !*preserve_stream_order
+                    && mark_in_gap(&gap_marks, group, group[j - 1], end_x, next)
                 {
                     break;
                 }
@@ -3746,6 +3820,40 @@ mod tests {
             assert_eq!(merged[0].text, "KEY");
             assert_eq!(merged[1].text, "Body");
         }
+    }
+
+    /// markitai: reportlab sets `<super>` with a text rise of half the
+    /// line's size, far enough up for the mark to group into a line of its
+    /// own. The two runs either side of it stay apart, so the scripts pass
+    /// can hang it on the word before it; with nothing in the gap they merge.
+    #[test]
+    fn a_raised_mark_in_the_gap_keeps_the_runs_either_side_apart() {
+        let mark = make_item_fs("1", 215.3, 705.0, 4.4, 8.0);
+        let items = vec![
+            make_item_fs("The tide reached 5.6 m", 78.0, 700.0, 137.3, 10.0),
+            mark.clone(),
+            make_item_fs(" on the twelfth.", 219.7, 700.0, 70.0, 10.0),
+        ];
+        let merged = merge_text_items(items);
+        let mut texts: Vec<&str> = merged.iter().map(|i| i.text.as_str()).collect();
+        texts.sort_unstable();
+        assert_eq!(texts, [" on the twelfth.", "1", "The tide reached 5.6 m"]);
+        let scripted = merge_subscript_items(merged);
+        let texts: Vec<&str> = scripted.iter().map(|i| i.text.as_str()).collect();
+        assert_eq!(texts, ["The tide reached 5.6 m¹", " on the twelfth."]);
+
+        // The same mark over the middle of a run is no mark in a gap.
+        let items = vec![
+            make_item_fs("The tide reached", 78.0, 700.0, 80.0, 10.0),
+            make_item_fs(" 5.6 m on the twelfth.", 158.0, 700.0, 110.0, 10.0),
+            make_item_fs("1", 215.3, 705.0, 4.4, 8.0),
+        ];
+        let merged = merge_text_items(items);
+        let texts: Vec<&str> = merged.iter().map(|i| i.text.as_str()).collect();
+        assert!(
+            texts.contains(&"The tide reached 5.6 m on the twelfth."),
+            "{texts:?}"
+        );
     }
 
     #[test]

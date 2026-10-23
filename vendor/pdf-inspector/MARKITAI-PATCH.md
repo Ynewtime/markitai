@@ -881,3 +881,27 @@ failed by name as the 1.25.1 copy (1,727 passed).
 
   Run in the isolated copy (as above), the crate's unit tests give 1,735
   passed (3 added) and the same 21 failed by name.
+
+## Raised and lowered marks (2.0 parity, Q1)
+
+- `src/extractor/mod.rs`: `merge_page_text_items` does not merge two runs of a
+  line across a short run of smaller type of another line set in the gap
+  between them (`mark_in_gap`: at least `MERGE_SCRIPT_SHIFT` and at most
+  `GAP_MARK_MAX_SHIFT` (0.75) of the larger size above or below the line, no
+  larger than 0.9 of it, at most 12 characters). reportlab's `<super>` (a
+  text rise of half the line's size) and LibreOffice's footnote anchors sit
+  far enough up to group into a line of their own; merged, the runs held the
+  mark's place as a double space (`5.6 m  on`) and the mark had no word to
+  hang from, so it was dropped or read as the label of the line below.
+- `src/extractor/scripts.rs`: a run dropped up to
+  `SCRIPT_MAX_TRAILING_DROP` (0.55 em, past `SCRIPT_MAX_DROP`'s 0.45) is a
+  subscript only after the word it touches (reportlab's `<sub>`: `CO₂`),
+  never under or before a glyph (a sum's lower limit).
+- `src/extractor/layout.rs`: `raised_label` keeps an edge number that is a
+  footnote's number or mark (smaller than a line of words it touches, raised
+  0.15 to 0.6 of that line's size, before its first word or after a word)
+  out of the folio removal: LibreOffice's last footnote at the foot of a page
+  lost its number.
+
+  Run in the isolated copy (as above), the crate's unit tests give 1,744
+  passed (3 added) and the same 21 failed by name.

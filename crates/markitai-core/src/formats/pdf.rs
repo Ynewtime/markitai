@@ -35,6 +35,9 @@ mod placement;
 mod policy_tests;
 #[path = "pdf/radicals.rs"]
 mod radicals;
+#[cfg(test)]
+#[path = "pdf/raised_marks_tests.rs"]
+mod raised_marks_tests;
 #[path = "pdf/running.rs"]
 mod running;
 #[path = "pdf/sanitize.rs"]
