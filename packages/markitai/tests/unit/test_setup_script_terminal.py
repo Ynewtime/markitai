@@ -157,11 +157,25 @@ def _run_sh(tmp_path: Path, body: str, **env: str) -> subprocess.CompletedProces
 
 
 def _run_ps(
-    tmp_path: Path, body: str, *, runtime: bool = True, **env: str
+    tmp_path: Path,
+    body: str,
+    *,
+    runtime: bool = True,
+    lang: str | None = "en",
+    **env: str,
 ) -> subprocess.CompletedProcess[str]:
+    """Run *body* after setup.ps1's runtime, in English unless *lang* says
+    otherwise (None: the language setup.ps1 picks from the culture).
+
+    setup.ps1 speaks Chinese wherever Windows' culture is Chinese, and
+    PowerShell takes that from the system, not from LANG: on a Chinese
+    Windows every English expectation below failed while the script was
+    right."""
     assert _PWSH is not None
     script = tmp_path / "harness.ps1"
     prefix = _ps_runtime() if runtime else ""
+    if runtime and lang is not None:
+        prefix += f'\n$script:LANG_CODE = "{lang}"\n'
     script.write_text(f"{prefix}\n{body}\n", encoding="utf-8")
     return subprocess.run(
         [
@@ -372,6 +386,7 @@ def test_setup_ps1_picks_chinese_from_the_culture(tmp_path: Path) -> None:
     result = _run_ps(
         tmp_path,
         '"lang=$($script:LANG_CODE)"\nClack-Intro (i18n "welcome")',
+        lang=None,
         LANG="zh_CN.UTF-8",
         LC_ALL="zh_CN.UTF-8",
     )
