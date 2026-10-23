@@ -642,6 +642,37 @@ def test_pages_install_with_the_scripts_own_commands() -> None:
         )
 
 
+def test_pages_uninstall_with_the_scripts_own_commands() -> None:
+    """The uninstall commands on Getting Started are the ones the scripts document."""
+    unix = _script_usage("setup.sh", "markitai.dev/setup.sh | sh -s -- --uninstall")
+    windows = _script_usage("setup.ps1", "-Uninstall  ")
+    for guide in _GUIDES:
+        page = guide / "getting-started.md"
+        text = page.read_text(encoding="utf-8")
+        assert unix in text, f"{_relative(page)} does not show `{unix}`"
+        assert windows in text, f"{_relative(page)} does not show `{windows}`"
+
+
+def test_upgrading_rolls_back_with_the_scripts_1x_command() -> None:
+    """Going back to 1.x uses the command the setup scripts print for a 1.x version."""
+    commands = set()
+    for name, pattern in (
+        ("setup.sh", r"^PYTHON_1X_INSTALL='(.+)'$"),
+        ("setup.ps1", r"^\$Python1xInstall = '(.+)'$"),
+    ):
+        text = (_REPO / "scripts" / "install" / name).read_text(encoding="utf-8")
+        found = re.search(pattern, text, re.MULTILINE)
+        assert found, f"scripts/install/{name} has no 1.x install command"
+        commands.add(found.group(1))
+    assert len(commands) == 1, f"the setup scripts disagree on the 1.x command: {commands}"
+    command = commands.pop()
+    for guide in _GUIDES:
+        page = guide / "upgrading.md"
+        assert command in page.read_text(encoding="utf-8"), (
+            f"{_relative(page)} does not show the 1.x command `{command}`"
+        )
+
+
 def test_getting_started_pins_no_literal_version() -> None:
     """A version baked into a doc example rots on the next release."""
     for guide in _GUIDES:
