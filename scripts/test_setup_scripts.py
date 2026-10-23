@@ -234,12 +234,15 @@ class SetupShTests(unittest.TestCase):
 PS_HARNESS = r"""
 param([string]$Script, [string]$Base, [string]$Work)
 $ErrorActionPreference = "Stop"
-# Load every definition, not the two statements that run setup.
+# Load every definition of setup's script block, not the two statements that run setup.
 $tokens = $null; $errors = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile($Script, [ref]$tokens, [ref]$errors)
 if ($errors) { throw "parse errors: $errors" }
-$body = @($ast.EndBlock.Statements | Where-Object { $_.Extent.Text -notmatch '^if \((-not \$script:OnWindows|\$Uninstall)' })
-if ($body.Count -ne $ast.EndBlock.Statements.Count - 2) { throw "setup.ps1 ends differently than expected" }
+$block = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.ScriptBlockExpressionAst] }, $false)
+if (-not $block -or $ast.EndBlock.Statements.Count -ne 1) { throw "setup.ps1 is not one script block" }
+$statements = $block.ScriptBlock.EndBlock.Statements
+$body = @($statements | Where-Object { $_.Extent.Text -notmatch '^if \((-not \$OnWindows|\$Uninstall)' })
+if ($body.Count -ne $statements.Count - 2) { throw "setup.ps1 ends differently than expected" }
 . ([scriptblock]::Create(($body | ForEach-Object { $_.Extent.Text }) -join "`n"))
 function Assert($Condition, $Message) { if (-not $Condition) { throw "FAILED: $Message" } }
 function Write-Host { }
@@ -323,6 +326,33 @@ Assert ((Msg "verified") -eq "SHA-256 verified") "en"
 """
 
 
+PS_SESSION = r"""
+param([string]$Script)
+# setup.ps1 piped into iex, then as a script block with -Uninstall, in this
+# scope as in a user's window; nothing is installed, so both only uninstall.
+$ErrorActionPreference = "Continue"; $ProgressPreference = "Continue"
+$code = [IO.File]::ReadAllText($Script)
+$check = '$OnWindows = ($PSVersionTable.PSEdition -ne "Core") -or $IsWindows'
+if (-not $code.Contains($check)) { throw "setup.ps1 has no OS check" }
+$code = $code.Replace($check, '$OnWindows = $true')
+$piped = $null; $block = $null; $functions = $null; $variables = $null
+$functions = @(Get-ChildItem function: | ForEach-Object { $_.Name })
+$variables = @(Get-Variable | ForEach-Object { $_.Name })
+$env:MARKITAI_UNINSTALL = "1"
+try { $piped = $code | Invoke-Expression 6>&1 | Out-String } catch { $piped = "$_" }
+Remove-Item env:MARKITAI_UNINSTALL
+try { $block = & ([scriptblock]::Create($code)) -Uninstall 6>&1 | Out-String } catch { $block = "$_" }
+function Assert($Condition, $Message) { if (-not $Condition) { throw "FAILED: $Message" } }
+Assert ($ErrorActionPreference -eq "Continue" -and $ProgressPreference -eq "Continue") "preferences kept"
+$left = @(Get-ChildItem function: | Where-Object { $functions -notcontains $_.Name -and $_.Name -ne "Assert" })
+Assert ($left.Count -eq 0) "functions left: $($left.Name -join ', ')"
+$left = @(Get-Variable | Where-Object { $variables -notcontains $_.Name -and $_.Name -notmatch '^(_|PSItem|left|LASTEXITCODE)$' })
+Assert ($left.Count -eq 0) "variables left: $($left.Name -join ', ')"
+Assert (-not (Test-Path env:MARKITAI_UNINSTALL)) "MARKITAI_UNINSTALL not set"
+"ok"
+"""
+
+
 @unittest.skipUnless(shutil.which("pwsh"), "needs PowerShell 7 (pwsh)")
 class SetupPs1Tests(unittest.TestCase):
     def test_functions_against_a_fake_release(self):
@@ -350,6 +380,21 @@ class SetupPs1Tests(unittest.TestCase):
             result = subprocess.run(["pwsh", "-NoLogo", "-NoProfile", "-NonInteractive", "-File", str(harness),
                                      "-Script", str(SETUP_PS1), "-Base", releases.base, "-Work", str(work / "scratch")],
                                     capture_output=True, text=True, timeout=180, env=env)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(result.stdout.strip().splitlines()[-1], "ok")
+
+    def test_irm_iex_leaves_the_session_alone(self):
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            harness = work / "session.ps1"
+            harness.write_text(PS_SESSION, encoding="utf-8")
+            (work / "home").mkdir()
+            env = {**os.environ, "HOME": str(work / "home"), "USERPROFILE": str(work / "home"), "TMPDIR": str(work),
+                   "LOCALAPPDATA": str(work / "LocalAppData"), "MARKITAI_HOME": str(work / "state")}
+            for name in ["MARKITAI_VERSION", "MARKITAI_INSTALL_DIR", "MARKITAI_UNINSTALL"]:
+                env.pop(name, None)
+            result = subprocess.run(["pwsh", "-NoLogo", "-NoProfile", "-NonInteractive", "-File", str(harness),
+                                     "-Script", str(SETUP_PS1)], capture_output=True, text=True, timeout=180, env=env)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertEqual(result.stdout.strip().splitlines()[-1], "ok")
 

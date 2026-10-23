@@ -4,7 +4,7 @@
 #
 # Usage:
 #   powershell -ExecutionPolicy ByPass -c "irm https://markitai.dev/setup.ps1 | iex"   # install or update
-#   $env:MARKITAI_UNINSTALL = "1"; irm https://markitai.dev/setup.ps1 | iex          # remove it
+#   & ([scriptblock]::Create((irm https://markitai.dev/setup.ps1))) -Uninstall         # remove it
 #   .\setup.ps1 [-Uninstall]
 #
 # It downloads markitai-v<version>-<target>.zip and the release's SHA256SUMS,
@@ -31,17 +31,23 @@
 
 param([switch]$Uninstall)
 
+# Everything below runs in this script block's own scope, so `irm | iex` in
+# the user's session leaves no preference, function or variable behind
+# (hence no $script: variables: under iex that scope is the user's).
+& {
+param([switch]$Uninstall)
+
 $ErrorActionPreference = "Stop"
 # Invoke-WebRequest's progress bar slows Windows PowerShell 5.1 downloads tenfold.
 $ProgressPreference = "SilentlyContinue"
 
-$script:RepositoryReleases = "https://github.com/Ynewtime/markitai/releases"
-$script:ScriptUrl = "https://markitai.dev/setup.ps1"
-$script:Targets = @{ "AMD64" = "x86_64-pc-windows-msvc"; "ARM64" = "aarch64-pc-windows-msvc" }
-$script:Executables = @("markitai.exe", "mkai.exe", "markitai-mcp.exe")
+$RepositoryReleases = "https://github.com/Ynewtime/markitai/releases"
+$ScriptUrl = "https://markitai.dev/setup.ps1"
+$Targets = @{ "AMD64" = "x86_64-pc-windows-msvc"; "ARM64" = "aarch64-pc-windows-msvc" }
+$Executables = @("markitai.exe", "mkai.exe", "markitai-mcp.exe")
 
 # Windows PowerShell 5.1 has no $IsWindows; it only runs on Windows.
-$script:OnWindows = ($PSVersionTable.PSEdition -ne "Core") -or $IsWindows
+$OnWindows = ($PSVersionTable.PSEdition -ne "Core") -or $IsWindows
 
 # ============================================================
 # Terminal capabilities (the rules the 1.x script and markitai follow)
@@ -67,23 +73,23 @@ function Test-OutputRedirected {
     try { return [Console]::IsOutputRedirected } catch { return $false }
 }
 
-$script:ConsoleOutputCodePage = 0
-if ($script:OnWindows -and (Test-OutputRedirected)) { $script:ConsoleOutputCodePage = Get-ConsoleOutputCodePage }
+$ConsoleOutputCodePage = 0
+if ($OnWindows -and (Test-OutputRedirected)) { $ConsoleOutputCodePage = Get-ConsoleOutputCodePage }
 
 # Windows Terminal, VS Code, ConEmu and SSH clients draw Unicode and CJK with
 # font fallback; the legacy console host does not.
-$script:ModernTerminal = [bool](
+$ModernTerminal = [bool](
     $env:WT_SESSION -or $env:TERM_PROGRAM -or ($env:ConEmuANSI -eq "ON") -or
     $env:SSH_CONNECTION -or $env:SSH_CLIENT
 )
 
 function Test-UnicodeMarks {
     if ($env:TERM -eq "dumb") { return $false }
-    if (-not $script:OnWindows) { return $true }
+    if (-not $OnWindows) { return $true }
     if (Test-OutputRedirected) {
-        return (@(0, 65001) -contains $script:ConsoleOutputCodePage)
+        return (@(0, 65001) -contains $ConsoleOutputCodePage)
     }
-    if ($script:ModernTerminal) { return $true }
+    if ($ModernTerminal) { return $true }
     try { return [bool]$Host.UI.SupportsVirtualTerminal } catch { return $false }
 }
 
@@ -96,7 +102,7 @@ function Test-UseColor {
 
 # The legacy console host draws Chinese only with a CJK or UTF-8 code page.
 function Test-CjkCapableOutput {
-    if (-not $script:OnWindows -or $script:ModernTerminal) { return $true }
+    if (-not $OnWindows -or $ModernTerminal) { return $true }
     if (Test-OutputRedirected) { return $true }
     $codePage = 0
     try { $codePage = [Console]::OutputEncoding.CodePage } catch {}
@@ -125,20 +131,20 @@ function ConvertFrom-CodePointEscape {
     return $builder.ToString()
 }
 
-$script:UseColor = Test-UseColor
+$UseColor = Test-UseColor
 if (Test-UnicodeMarks) {
-    $script:S = @{ Bar = [string][char]0x2502; Top = [string][char]0x256D + [char]0x2500; Branch = [string][char]0x251C + [char]0x2500
+    $S = @{ Bar = [string][char]0x2502; Top = [string][char]0x256D + [char]0x2500; Branch = [string][char]0x251C + [char]0x2500
         Bottom = [string][char]0x2570 + [char]0x2500; Check = [string][char]0x2713; Cross = [string][char]0x2717
         Arrow = [string][char]0x2192; Dot = [string][char]0x2022; Circle = [string][char]0x25CB }
 } else {
-    $script:S = @{ Bar = "|"; Top = "+-"; Branch = "+-"; Bottom = "+-"; Check = "+"; Cross = "x"; Arrow = ">"; Dot = "-"; Circle = "o" }
+    $S = @{ Bar = "|"; Top = "+-"; Branch = "+-"; Bottom = "+-"; Check = "+"; Cross = "x"; Arrow = ">"; Dot = "-"; Circle = "o" }
 }
-$script:LANG_CODE = Get-Lang
+$LANG_CODE = Get-Lang
 
 # Messages; setup.sh carries the same (a test compares the Chinese tables).
 function Msg {
     param([string]$Key)
-    if ($script:LANG_CODE -eq "zh") {
+    if ($LANG_CODE -eq "zh") {
         $text = switch ($Key) {
             "configure_llm" { '\u914d\u7f6e LLM' }
             "confirm_optional" { '\u73b0\u5728\u51c6\u5907\u53ef\u9009\u7ec4\u4ef6? (\u672c\u5730 OCR \u6a21\u578b\u7ea6 45 MB\uff1b\u627e\u4e0d\u5230\u6d4f\u89c8\u5668\u65f6\u4e0b\u8f7d\u65e0\u5934 Chromium\uff0c\u7ea6 280 MB)' }
@@ -243,7 +249,7 @@ function Msg {
 
 function Write-Part {
     param([string]$Text, [string]$Color, [switch]$NoNewline)
-    if ($script:UseColor -and $Color) {
+    if ($UseColor -and $Color) {
         Write-Host $Text -ForegroundColor $Color -NoNewline:$NoNewline
     } else {
         Write-Host $Text -NoNewline:$NoNewline
@@ -322,7 +328,7 @@ function Get-NativeArchitecture {
 
 function Get-ReleaseTarget {
     param([string]$Architecture)
-    $target = $script:Targets[$Architecture]
+    $target = $Targets[$Architecture]
     if (-not $target) { Stop-Setup (Msg "error_arch") $Architecture }
     return $target
 }
@@ -380,7 +386,7 @@ function Expand-Release {
                 Stop-Setup (Msg "error_run") "unsafe archive member $name"
             }
         }
-        foreach ($name in $script:Executables) {
+        foreach ($name in $Executables) {
             if ($names -notcontains $name) { Stop-Setup (Msg "error_run") "$name is missing from the archive" }
         }
     } finally {
@@ -621,8 +627,10 @@ function Write-GettingStarted {
     Write-Hint (Msg "web_ui") "markitai serve"
     Write-Hint (Msg "configure_llm") "markitai init"
     Write-Hint (Msg "show_help") "markitai --help"
-    Write-Hint (Msg "update") "irm $($script:ScriptUrl) | iex"
-    Write-Hint (Msg "uninstall") ('$env:MARKITAI_UNINSTALL = "1"; irm ' + $script:ScriptUrl + ' | iex')
+    Write-Hint (Msg "update") "irm $ScriptUrl | iex"
+    # A script block takes -Uninstall and, unlike setting MARKITAI_UNINSTALL,
+    # leaves nothing set in this window for a later update to trip over.
+    Write-Hint (Msg "uninstall") "& ([scriptblock]::Create((irm $ScriptUrl))) -Uninstall"
     Write-Info "$(Msg 'docs'): https://markitai.dev"
 }
 
@@ -632,7 +640,7 @@ function Invoke-Uninstall {
     $removed = $false
     if (Test-Path -LiteralPath (Join-Path $directory "markitai.exe")) {
         $names = @(Get-InstalledNames $directory)
-        if (-not $names) { $names = $script:Executables }
+        if (-not $names) { $names = $Executables }
         Clear-InstalledNames $directory ($names + @("receipt"))
         if (Remove-OldExecutables $directory) { Write-Info (Msg "old_in_use") }
         if (-not @(Get-ChildItem -LiteralPath $directory -Force)) { Remove-Item -LiteralPath $directory -Force }
@@ -651,7 +659,7 @@ function Invoke-Uninstall {
 
 function Invoke-Install {
     Write-Intro (Msg "welcome")
-    $base = if ($env:MARKITAI_DOWNLOAD_URL) { $env:MARKITAI_DOWNLOAD_URL.TrimEnd('/') } else { $script:RepositoryReleases }
+    $base = if ($env:MARKITAI_DOWNLOAD_URL) { $env:MARKITAI_DOWNLOAD_URL.TrimEnd('/') } else { $RepositoryReleases }
     if ($base -notmatch '^https://') { Write-Warn "$(Msg 'warn_http'): $base" }
     # Windows PowerShell 5.1 on older .NET may not offer TLS 1.2 by default.
     try {
@@ -700,8 +708,9 @@ function Invoke-Install {
     }
 }
 
-if (-not $script:OnWindows) {
+if (-not $OnWindows) {
     Write-Intro (Msg "welcome")
     Stop-Setup (Msg "error_os_windows") "curl -fsSL https://markitai.dev/setup.sh | sh"
 }
 if ($Uninstall -or (Test-Truthy "$env:MARKITAI_UNINSTALL")) { Invoke-Uninstall } else { Invoke-Install }
+} -Uninstall:$Uninstall
