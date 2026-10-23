@@ -966,20 +966,22 @@ fn assemble_with(
     // A page whose text runs sideways or upside down is read upright.
     let turn = layout::orientation(&lines);
     layout::upright(&mut lines, turn, width, height);
-    let sizes = sizes(&lines);
     // The pixels speak only for an upright page of the lines' size.
     let page = pixels
         .filter(|pixels| {
             turn == layout::Turn::Upright && pixels.image.dimensions() == (width, height)
         })
         .and_then(|pixels| Some((page::Page::new(pixels.image)?, pixels.figures)));
+    if let Some((page, _)) = &page {
+        for line in &mut lines {
+            line.marks = page.marks(line);
+        }
+    }
+    let sizes = sizes(&lines);
     let mut style = Style::default();
     let mut regions = Vec::new();
     let mut figures = Vec::new();
     if let (Some((page, cut)), Some(sizes)) = (&page, sizes) {
-        for line in &mut lines {
-            line.marks = page.marks(line);
-        }
         aligned_bullets(&mut lines, sizes.body);
         style = Style::of(&lines, sizes.body);
         regions = self::regions(page, &mut lines, sizes.body, *cut, &mut figures);
@@ -1050,8 +1052,10 @@ pub(crate) struct Recognized {
     pub bounds: [f32; 4],
 }
 
-/// Heading sizes this share of a larger one apart start a level of their own.
-const TIER: f32 = 0.88;
+/// Heading sizes this share of a larger one apart start a level of their own:
+/// 16 pt under 18 pt (0.89) is another level. Type sizes measured on the ink
+/// hold to about 4 %.
+const TIER: f32 = 0.92;
 
 /// The heading levels of `blocks`' sizes: the largest headings are of the
 /// first level, those less than [`TIER`] of them of the second, and so on.
@@ -1253,7 +1257,23 @@ impl Style {
     /// whole stroke when its words were not told apart.
     fn bold(&self, line: &Line) -> bool {
         match (self.words(line, None), self.body, line.marks.stroke) {
-            (Some(words), ..) => !words.is_empty() && words.iter().all(|(bold, _)| *bold),
+            (Some(words), ..) => {
+                // A short word's few pixels do not tell (`In` of a bold line
+                // measures light), unless the line has no other.
+                let letters = |word: &str| word.chars().filter(|c| c.is_alphanumeric()).count();
+                let flags: Vec<bool> = line
+                    .text
+                    .split_whitespace()
+                    .zip(&words)
+                    .filter(|(word, _)| letters(word) >= MIN_STYLED_LETTERS)
+                    .map(|(_, (bold, _))| *bold)
+                    .collect();
+                if flags.is_empty() {
+                    !words.is_empty() && words.iter().all(|(bold, _)| *bold)
+                } else {
+                    flags.iter().all(|bold| *bold)
+                }
+            }
             (None, Some(body), Some(stroke)) => stroke >= page::BOLD * body,
             _ => false,
         }
@@ -1817,12 +1837,34 @@ fn columns(mut lines: Vec<Line>, depth: usize) -> Vec<Vec<Line>> {
     blocks
 }
 
-/// Text heights on a page, for telling its headings: the median line's.
-/// `None` on a page of too few lines to tell.
+/// Text heights on a page, for telling its headings: the median height of
+/// its lines of prose (a picture's short labels, a photo's key caps, do not
+/// count), and, with the page's pixels, the median type size of its long
+/// lines (`page::Marks::size`). `None` on a page of too few lines to tell.
 #[derive(Clone, Copy)]
 struct Sizes {
     body: f32,
+    ink: Option<f32>,
 }
+
+impl Sizes {
+    /// A line's size in body sizes: its type measured on the ink when both
+    /// were, else its box's height. A recognizer's boxes grow and shrink with
+    /// descenders and commas (one 16 pt heading measured 1.03–1.28 times the
+    /// body by box, 1.41 times every time on the ink).
+    fn of(&self, line: &Line) -> f32 {
+        match (self.ink, line.marks.size) {
+            (Some(body), Some(size)) => size / body,
+            _ => (line.bounds[3] - line.bounds[1]) / self.body,
+        }
+    }
+}
+
+/// Lines of at least this many characters (not spaces) are prose, whose
+/// median height is the body's: [`sizes`].
+const MIN_BODY_CHARS: usize = 12;
+/// Lines of at least this many letters and digits give the body's type size.
+const MIN_INK_BODY_CHARS: usize = 20;
 
 /// A page needs this many lines before a taller one is a heading.
 const MIN_SIZED_LINES: usize = 4;
@@ -1843,13 +1885,32 @@ fn sizes(lines: &[Line]) -> Option<Sizes> {
     if lines.len() < MIN_SIZED_LINES {
         return None;
     }
-    let mut heights: Vec<f32> = lines
+    let median = |mut values: Vec<f32>| {
+        values.sort_by(f32::total_cmp);
+        values[values.len() / 2]
+    };
+    let height = |line: &Line| line.bounds[3] - line.bounds[1];
+    let prose: Vec<f32> = lines
         .iter()
-        .map(|line| line.bounds[3] - line.bounds[1])
+        .filter(|line| line.text.chars().filter(|c| !c.is_whitespace()).count() >= MIN_BODY_CHARS)
+        .map(height)
         .collect();
-    heights.sort_by(f32::total_cmp);
-    let body = heights[heights.len() / 2];
-    (body > 0.0).then_some(Sizes { body })
+    let body = if prose.len() >= 3 {
+        median(prose)
+    } else {
+        median(lines.iter().map(height).collect())
+    };
+    let inked: Vec<f32> = lines
+        .iter()
+        .filter(|line| {
+            line.text.chars().filter(|c| c.is_alphanumeric()).count() >= MIN_INK_BODY_CHARS
+        })
+        .filter_map(|line| line.marks.size)
+        .collect();
+    let ink = (inked.len() >= 3)
+        .then(|| median(inked))
+        .filter(|ink| *ink > 0.0);
+    (body > 0.0).then_some(Sizes { body, ink })
 }
 
 /// Lines of a row at least this many line heights apart are pieces of their
@@ -1871,6 +1932,8 @@ struct Row {
     bullet: bool,
     /// Its text with its bold and italic words emphasized.
     styled: Option<String>,
+    /// Its largest line's size in body sizes ([`Sizes::of`]).
+    size: f32,
 }
 
 /// What a row is written as.
@@ -2163,6 +2226,7 @@ fn rows(
                 bold: false,
                 bullet: false,
                 styled: None,
+                size: 1.0,
             };
             for offset in group.clone() {
                 let line = &lines[offset];
@@ -2195,6 +2259,9 @@ fn rows(
                 row.rect[2] = row.rect[2].max(line.bounds[2]);
                 row.rect[3] = row.rect[3].max(line.bounds[3]);
                 row.height = row.height.max(height);
+                if let Some(sizes) = sizes {
+                    row.size = row.size.max(sizes.of(line));
+                }
             }
             if coded {
                 carry = None;
@@ -2261,9 +2328,8 @@ fn rows(
             && heading_rows < MAX_HEADING_ROWS
             && !gap(above, row)
             && !row.bullet
-            && (sizes.is_some_and(|sizes| row.height >= LARGE * sizes.body)
-                || (row.bold && above.bold))
-            && (0.8..=1.2).contains(&(row.height / above.height))
+            && (sizes.is_some() && row.size >= LARGE || (row.bold && above.bold))
+            && (0.8..=1.2).contains(&(row.size / above.size))
         {
             heading_rows += 1;
             kinds.push(Kind::HeadingMore);
@@ -2285,10 +2351,8 @@ fn rows(
         let opens = previous.is_none_or(|(above, kind)| {
             kind != Kind::Text || gap(above, row) || !(wraps && at_edge(above))
         });
-        let sized = sizes.is_some_and(|sizes| {
-            row.height >= HEADING * sizes.body
-                || (row.bold && opens && row.height >= BOLD_HEADING * sizes.body)
-        });
+        let sized = sizes.is_some()
+            && (row.size >= HEADING || (row.bold && opens && row.size >= BOLD_HEADING));
         if !sized {
             kinds.push(Kind::Text);
             continue;
@@ -2315,7 +2379,7 @@ fn rows(
             .unwrap_or(0);
         "`".repeat(longest.max(2) + 1)
     });
-    let large = |row: &Row| sizes.is_some_and(|sizes| row.height >= LARGE * sizes.body);
+    let large = |row: &Row| sizes.is_some() && row.size >= LARGE;
     let mut pending: Option<Block> = None;
     let flush = |pending: &mut Option<Block>, out: &mut Out| match pending.take() {
         Some(Block::Text(text)) => out.blocks.push(Block::Text(joined_emphasis(&text))),
@@ -2392,7 +2456,7 @@ fn rows(
             flush(&mut pending, out);
             pending = Some(match kind {
                 Kind::Heading | Kind::HeadingMore => Block::Heading {
-                    size: sizes.map_or(1.0, |sizes| row.height / sizes.body),
+                    size: row.size,
                     text: piece,
                 },
                 _ => Block::Text(piece),
@@ -2400,9 +2464,7 @@ fn rows(
         } else {
             match &mut pending {
                 Some(Block::Heading { size, text }) => {
-                    if let Some(sizes) = sizes {
-                        *size = size.max(row.height / sizes.body);
-                    }
+                    *size = size.max(row.size);
                     text.push_str(separator);
                     text.push_str(&piece);
                 }
@@ -3202,6 +3264,44 @@ pub(crate) mod tests {
             render(&blocks[..1], &tiers(&blocks), &|_| None),
             "# Section"
         );
+    }
+
+    /// The body is the prose's height, not a photo's key labels'; with the
+    /// pixels, sizes are the type's, steady where boxes vary; 16 pt under
+    /// 18 pt (0.89) is a level of its own; a short word does not make a bold
+    /// line light.
+    #[test]
+    fn sizes_come_from_prose_and_type_and_short_words_do_not_unbold_a_line() {
+        let mut lines: Vec<Line> = (0..12)
+            .map(|i| sized("Esc", [10. * i as f32, 0., 10. * i as f32 + 8., 15.]))
+            .collect();
+        for top in [40., 80., 120.] {
+            lines.push(sized(
+                "A line of prose long enough",
+                [0., top, 300., top + 28.],
+            ));
+        }
+        assert_eq!(sizes(&lines).unwrap().body, 28.0);
+        assert!(sizes(&lines).unwrap().ink.is_none());
+        for line in &mut lines[12..] {
+            line.marks.size = Some(20.0);
+        }
+        let mut heading = sized("Heading with a comma,", [0., 160., 300., 190.]);
+        heading.marks.size = Some(28.2);
+        let found = sizes(&lines).unwrap();
+        assert_eq!(found.ink, Some(20.0));
+        assert!((found.of(&heading) - 1.41).abs() < 0.001);
+        assert_eq!(tiers_of(&mut [1.58, 1.41, 2.35]), [2.35, 1.58, 1.41]);
+        let style = Style { body: Some(2.0) };
+        let word = |stroke| page::Word {
+            stroke,
+            italic: false,
+        };
+        let mut bold = sized("In eleifend velit", [0., 0., 300., 28.]);
+        bold.marks.words = Some(vec![word(2.1), word(3.2), word(3.1)]);
+        assert!(style.bold(&bold));
+        bold.marks.words = Some(vec![word(3.2), word(2.0), word(3.1)]);
+        assert!(!style.bold(&bold));
     }
 
     #[test]

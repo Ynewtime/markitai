@@ -43,6 +43,10 @@ pub(super) struct Marks {
     /// The left edge of a bullet drawn left of it, which the recognizer
     /// left out.
     pub bullet: Option<f32>,
+    /// Its type size: the rows from the top of its ink to its baseline
+    /// ([`Page::type_size`]); none for a line of fewer than four letters,
+    /// whose ink may hold no ascender.
+    pub size: Option<f32>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -228,11 +232,30 @@ impl<'a> Page<'a> {
                 })
                 .collect()
         });
+        let letters = line.text.chars().filter(|c| c.is_alphanumeric()).count();
         Marks {
             stroke,
             words,
             bullet: self.bullet(line.bounds).map(|bullet| bullet[0]),
+            size: (letters >= 4).then(|| self.type_size(area)).flatten(),
         }
+    }
+
+    /// The height of the type in `area`: from the first row holding a
+    /// twentieth of the fullest row's ink (the ascenders' and capitals' tops)
+    /// to the last row holding half of it (the baseline; descenders hold
+    /// less).
+    fn type_size(&self, [l, t, r, b]: [u32; 4]) -> Option<f32> {
+        let rows: Vec<u32> = (t..b)
+            .map(|y| (l..r).filter(|&x| self.ink(x, y)).count() as u32)
+            .collect();
+        let fullest = *rows.iter().max()?;
+        if fullest == 0 {
+            return None;
+        }
+        let top = rows.iter().position(|&n| n * 20 >= fullest)?;
+        let base = rows.iter().rposition(|&n| n * 2 >= fullest)?;
+        (base >= top).then(|| (base - top + 1) as f32)
     }
 
     /// A bullet drawn left of a line: the one solid mark (of a few pixels at
@@ -684,6 +707,19 @@ pub(super) mod tests {
                 .words
                 .is_none()
         );
+    }
+
+    #[test]
+    fn type_size_runs_from_the_ink_top_to_the_baseline_whatever_descends() {
+        let mut image = paper(300, 80);
+        word(&mut image, 10, 4, 6, 2, 0.0);
+        word(&mut image, 10, 40, 6, 2, 0.0);
+        // A descender below the second line's baseline.
+        fill(&mut image, [20, 62, 22, 72], [0; 3]);
+        let page = Page::new(&image).unwrap();
+        let plain = page.type_size([8, 4, 80, 32]).unwrap();
+        assert_eq!(plain, 18.0);
+        assert_eq!(page.type_size([8, 40, 80, 74]).unwrap(), plain);
     }
 
     #[test]

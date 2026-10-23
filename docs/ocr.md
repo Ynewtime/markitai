@@ -155,9 +155,13 @@ Markdown: a row that stops short of the text's right edge ends its paragraph
 text, or a little taller and bold where a paragraph starts, is a heading (with
 the rows of its size right below it), rows of cells in columns or divided by
 drawn rules (read as `|`) are a table, and letter-spaced Latin
-(`M a r k i t a i`, Latin set in full-width cells) is closed up. Heading levels
-follow heading sizes: the largest are `#`, the next size `##`, and so on, across
-all the pages of a scanned PDF.
+(`M a r k i t a i`, Latin set in full-width cells) is closed up. Sizes are
+judged against the page's lines of prose (short labels, such as a photograph's,
+do not count) and, when the pixels are read, measured on the type from the top
+of its ink to its baseline, which descenders and punctuation do not change.
+Heading levels follow heading sizes: the largest are `#`, the next size `##`,
+and so on (sizes within about 8 % are one level), across all the pages of a
+scanned PDF.
 
 The image's pixels add what the recognizer does not report: words whose strokes
 are clearly heavier than the body text's are bold (`**…**`) and words that lean
