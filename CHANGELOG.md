@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - A new `markitai serve` workbench, shared with markitai's Rust implementation, replaces the React web app and needs neither Node nor Rust to build.
 - Compare shows the original PDF, image or web page beside the Markdown and links the two block by block.
+- The workbench draws Mermaid diagrams with [Pele](https://pele.run), which loads only for a document that holds one.
 - `markitai serve` adds user tokens, which see only their own conversions and use their own models or the ones the admin shares.
 - The admin can edit the configuration file in the browser, and new conversions start from the server's saved defaults.
 - A PDF text layer that reads wrong now gets the scanned-page notice and OCR, a check inspired by [Indra OCR](https://github.com/datalab-to/indra).

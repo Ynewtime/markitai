@@ -11,6 +11,7 @@
 
 - 全新的 `markitai serve` 工作台与 markitai 的 Rust 实现共用，取代了 React 网页应用，构建时不再需要 Node 或 Rust。
 - 对比视图把原始的 PDF、图片或网页放在 Markdown 旁边，并逐块对应两者。
+- 工作台用 [Pele](https://pele.run) 绘制 Mermaid 图表，只在文档含有图表时才加载它。
 - `markitai serve` 新增用户令牌，它只能看到自己的转换，可以使用自己的模型或管理员共享的模型。
 - 管理员可以在浏览器里编辑配置文件，新建的转换从服务器保存的默认选项开始。
 - 读错的 PDF 文字层现在会触发扫描页提示并改用 OCR，这种检查的思路来自 [Indra OCR](https://github.com/datalab-to/indra)。
