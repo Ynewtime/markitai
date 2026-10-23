@@ -1,20 +1,26 @@
 # MCP 服务器
 
-`markitai-mcp` 随 markitai 主包发布，通过 [Model Context Protocol](https://modelcontextprotocol.io)（stdio）把转换能力提供给 AI Agent。Agent 拿到四个工具，可以单个或批量转换本地文档和 URL，走的是和 CLI 相同的管线。
+`markitai-mcp` 通过 [Model Context Protocol](https://modelcontextprotocol.io)（stdio）把 markitai 的转换交给 AI Agent，走和 CLI 相同的管线。
 
-不用先安装：`uvx` 按需拉取并运行。
+```mermaid
+flowchart LR
+  A[AI Agent] -->|MCP，stdio| S[markitai-mcp]
+  S --> P[markitai 转换管线]
+  P --> F[output_dir 里的文件]
+  S -->|Markdown 与路径| A
+```
 
 ## 接入
 
-**Claude Code**，一条命令：
+客户端可以用 `uvx` 启动，它按需拉取 markitai，不用先安装。
 
 ```bash
+# Claude Code
 claude mcp add markitai -- uvx --from "markitai[mcp]" markitai-mcp
 ```
 
-**Claude Desktop**，在 `claude_desktop_config.json` 里加一条：
-
 ```json
+// Claude Desktop：claude_desktop_config.json（其他客户端：command 和参数相同）
 {
   "mcpServers": {
     "markitai": { "command": "uvx", "args": ["--from", "markitai[mcp]", "markitai-mcp"] }
@@ -22,26 +28,63 @@ claude mcp add markitai -- uvx --from "markitai[mcp]" markitai-mcp
 }
 ```
 
-其他 MCP 客户端同理：command 填 `uvx`，参数填 `["--from", "markitai[mcp]", "markitai-mcp"]`。没有 uv 时，`pip install "markitai[mcp]"` 提供同名的 `markitai-mcp` 命令。`markitai mcp` 从 CLI 启动的是同一个服务，[MCP Registry](https://registry.modelcontextprotocol.io) 条目用的就是这种写法。两种写法都和 CLI 一样，先加载 `./.env`（服务的工作目录），再加载 `~/.markitai/.env`；已经设置的变量（比如下面的 `env` 块）优先。
+想长期装着 markitai，安装脚本交互运行时会带上 `mcp` extra（以及 OCR 和浏览器），之后客户端的 command 填 `markitai-mcp`：
+
+<!--@include: ../../snippets/setup.md-->
+
+::: details 手动安装
+```bash
+uv tool install "markitai[mcp]"   # 或：pip install "markitai[mcp]"
+```
+
+`markitai mcp` 启动的是同一个服务，[MCP Registry](https://registry.modelcontextprotocol.io) 条目用的就是这种写法。
+:::
+
+两种命令都和 CLI 一样，先加载 `./.env`，再加载 `~/.markitai/.env`。已设置的变量（客户端的 `env` 块）优先；文件夹里的 `.env` 不能设置程序、路径、端点、代理或凭据文件。
 
 ## 工具
 
 | 工具 | 用途 |
 |------|------|
-| `convert_document` | 单个本地文件（绝对路径）转 Markdown |
-| `convert_url` | 单个网页转成只含正文的干净 Markdown |
+| `convert_document` | 单个本地文件（绝对路径） |
+| `convert_url` | 单个网页，只取正文 |
 | `batch_convert` | 多个路径或 URL 后台转换，返回 `job_id` |
 | `job_status` | 批量任务的进度和逐项结果 |
 
-每次转换都写出真实文件，写进 Agent 传入的 `output_dir`，或一个新建的临时目录（路径随结果返回）。结果默认内联 Markdown，超过约 40 KB 时改为预览加 `markdown_file`（完整输出的路径），大文档不会灌爆模型上下文。转换工具还接受 `profile`（`rag`、`obsidian` 或 `okf`）为下游消费者塑形输出。
+| 选项 | 说明 |
+|------|------|
+| `llm` | 省略时由服务的配置决定（`llm.enabled`，默认关闭）；`true` 可能产生提供商费用 |
+| `output_dir` | 绝对路径；省略时新建临时目录 |
+| `profile` | `rag`、`obsidian` 或 `okf`（[输出 Profile](/zh/guide/output-profiles)） |
 
-结果里还有 `warnings`：没有让转换失败、但值得处理的提示，例如页面疑似扫描件（可加 `ocr: true` 重试）、PDF 隐藏文字可能是提示注入、OCR 没识别出文字、URL 截图没拍到、某张图片分析失败（保留原来的 alt 文本），或 LLM 增强失败（此时结果是未增强的转换；服务器配置里设了 `llm.on_failure = "fail"` 时调用直接失败）。`job_status` 里每个成功条目也带自己的 `warnings`。
+结果带写出的路径（`markdown_file`、`assets`、`screenshots`）、`cost_usd` 和 `warnings`。超过约 40,000 个字符时 Markdown 只给预览（`truncated: true`），完整文本在 `markdown_file` 里。
 
-批量任务在服务进程内执行。轮询 `job_status` 直到 `status` 为 `"completed"`，再读取各项的 `markdown_file`。其中的计数为 `done`（成功的条目，与 `markitai serve` 一致）、`failed`，以及 `finished`（`done` + `failed`，已结束的全部条目），总数为 `total`。每项写入 `output_dir/batch-<job_id>/<item_number>/`，同名文件不会互相覆盖。`concurrency`（默认 10）限制同时转换的数量。服务重启后任务记录会丢失，已写出的文件仍在。
+`warnings` 列出没让调用失败、但需要留意的情况：疑似扫描页（加 `ocr: true` 重试）、PDF 隐藏文字（可能是提示注入）、OCR 没识别出文字、URL 截图没拍到、图片分析失败，或 LLM 增强失败（返回未增强的结果；设 `llm.on_failure = "fail"` 则调用失败）。
+
+错误会写明原因：文件不存在、传了目录、相对路径（服务的工作目录不是客户端的）、URL 不可达、转换失败，或没配模型却传了 `llm: true`（错误里带着下面的配置方法）。
+
+### 批量任务
+
+```mermaid
+sequenceDiagram
+  participant A as Agent
+  participant S as markitai-mcp
+  A->>S: batch_convert(sources)
+  S-->>A: job_id、total、output_dir
+  loop 直到 status 为 "completed"
+    A->>S: job_status(job_id)
+    S-->>A: done、failed、finished、results
+  end
+  Note over A: 读取各项的 markdown_file
+```
+
+- `done` + `failed` = `finished`，总数为 `total`。某一项失败不影响其他项。
+- 每项写入 `output_dir/batch-<job_id>/<item_number>/`；`concurrency`（默认 10）限制并行数。
+- 任务记录只在内存里：重启即丢失（文件仍在），已完成的任务在之后又有 100 个完成时被丢弃。
 
 ## LLM 增强
 
-传 `llm: true` 开启增强（可能产生提供商费用）。模型的解析方式和 CLI 一样：先看 `~/.markitai/config.json` 里的 `llm.model_list`（[与 CLI 共用](/zh/guide/configuration)），再看 `MODEL`，最后自动检测提供商 API key（比如 `markitai init` 写进 `~/.markitai/.env` 的 key）和已登录的订阅制提供商。检测到多个提供商时它们共用一个模型池，服务会在 stderr 打一条警告；想只用一个就设 `MODEL`。也可以在服务条目里设置环境变量：
+模型解析和 CLI 一样：先看 `~/.markitai/config.json` 里的 `llm.model_list`（[与 CLI 共用](/zh/guide/configuration)），再看 `MODEL`，最后是检测到的 API key（比如 `markitai init` 写进 `~/.markitai/.env` 的）和已登录的订阅。检测到多个提供商时共用一个模型池；设 `MODEL` 可固定一个。key 也可以写在服务条目里：
 
 ```json
 {
@@ -58,6 +101,6 @@ claude mcp add markitai -- uvx --from "markitai[mcp]" markitai-mcp
 }
 ```
 
-省略 `llm` 时跟随服务自己的配置（`llm.enabled`，默认关闭），传 `llm: false` 则强制关闭。`alt` 和 `desc` 控制图片分析，`ocr` 和 `screenshot` 对应各自能力。没配模型却传了 `llm: true`，会得到一条把上面配置方法原样带上的错误，Agent 可以直接转述。其他失败（文件不存在、传了目录、相对路径、URL 不可达、转换失败）都以写明原因的工具错误返回。`batch_convert` 和 `convert_document` 一样，一开始就拒绝相对路径。
+## 可选能力
 
-可选能力沿用 markitai 的 extras：OCR 需要 `markitai[ocr]`，URL 截图需要 `markitai[browser]`。uvx 场景这样加：`"args": ["--from", "markitai[mcp]", "--with", "markitai[ocr]", "markitai-mcp"]`。
+- OCR：`ocr` extra；URL 截图：`browser` extra。uvx 场景：`"args": ["--from", "markitai[mcp]", "--with", "markitai[ocr]", "markitai-mcp"]`。

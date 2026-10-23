@@ -1,8 +1,20 @@
 # 输出 Profile
 
-Profile 为特定的下游消费者塑形输出文件。它和[预设](./configuration.md#预设)是两回事：预设决定跑哪些功能，profile 决定文件长什么样。
+[预设](./configuration.md#预设)决定跑哪些功能；profile 为某个消费者改写写出的文件。不设 profile 时不改写任何内容。
 
-不设 profile 时，输出就是默认形态。下面的每一项变换只在设了 profile 时才发生。
+```mermaid
+flowchart LR
+  I[输入] --> P[预设：选功能]
+  P --> W[写出的文件]
+  W --> R[Profile：改写]
+  R --> C[下游消费者]
+```
+
+| Profile | 改动 |
+|---|---|
+| `rag` | 图片移到可见的 `assets/`、`<!-- page: N -->` 页码标记、表格检查 |
+| `obsidian` | 图片移到可见的 `assets/`，可选 wikilink |
+| `okf` | frontmatter 改用 OKF 字段 |
 
 ## 启用 profile
 
@@ -25,11 +37,11 @@ out = markitai.convert("document.pdf", output_dir="out/", profile="rag")
 
 ## `rag` — 检索管道
 
-默认输出把图片放在隐藏目录 `.markitai/assets/` 里，而大多数摄取器会跳过隐藏路径（LlamaIndex 的 `SimpleDirectoryReader` 默认就是）。`rag` profile 让输出对摄取器友好：
+LlamaIndex 的 `SimpleDirectoryReader` 等摄取器会跳过隐藏路径，比如默认的 `.markitai/assets/`。`rag`：
 
-- **可见资源**：图片移到 `assets/`，Markdown 里的引用同步改写。
-- **页码标记**：PDF 输出在真实分页处带 `<!-- page: N -->` 注释，文本抽取、`--ocr` 和纯截图模式都一样。
-- **表格检查**：管道表格里列数和表头对不上的行，markitai 会报警告，但不改内容。
+- **可见资源**：图片移到 `assets/`，引用同步改写。
+- **页码标记**：PDF 真实分页处写 `<!-- page: N -->`（替代 `<!-- Page number: N -->`）。
+- **表格检查**：列数与表头不一致的行会报警告；带 `--llm` 时提示词要求各行列数一致。
 
 ```text
 out/
@@ -39,13 +51,13 @@ out/
     └── images.json          # 带 --llm --desc 时生成
 ```
 
-页面截图（`--screenshot`）仍在 `.markitai/screenshots/` 下。只有 HTML 注释引用它们，所以不进语料。
+页面截图留在 `.markitai/screenshots/`，不进语料。
 
 ## `obsidian` — 导入 vault
 
-- **可见资源**：和 `rag` 一样搬到 `assets/`，输出文件夹直接贴进 vault 也不会露出隐藏目录。
-- **Wikilink（可选）**：设 `output.wikilinks: true` 后，本地图片引用变成 `![[assets/x.png]]`，alt 文本保留为显示文本。
-- **Frontmatter**：markitai 本来就写标准 YAML frontmatter（`title`、`source`、`tags`），Obsidian 会当作 Properties 读取。
+- **可见资源**，同 `rag`：vault 里不会出现隐藏文件夹。
+- **Wikilink**：设 `output.wikilinks: true` 后写成 `![[assets/x.png]]`，alt 文本保留为显示文本。
+- markitai 的 frontmatter（`title`、`source`、`tags`）在 Obsidian 里显示为 Properties。
 
 ```bash
 markitai note.docx --profile obsidian -o vault/inbox/
@@ -54,58 +66,53 @@ markitai note.docx --profile obsidian --config-json '{"output":{"wikilinks":true
 
 ## `okf` — Open Knowledge Format
 
-把 frontmatter 对齐到 [Open Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md) 规范（v0.2）：
+把 frontmatter 映射到 [Open Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md) 规范（v0.2）；资源位置不变。
 
 | markitai 字段 | OKF 字段 |
 |---|---|
-| — | `type: Document`（注入；OKF 唯一的必填字段） |
-| `title` | `title` |
-| `description` | `description` |
+| — | `type: Document`（OKF 唯一的必填字段；每个文件都会加上） |
 | `source` | `resource` |
-| `tags` | `tags` |
 | `markitai_processed` | `generated: {by: markitai/<version>, at: <UTC 时间戳>}` |
-| 其他字段 | 保留原名 |
-
-没有 OKF 对应项的字段（`author`、`site`、`published` 等）保留原名，规范要求消费者接受未知字段。资源目录结构不变。
+| `title`、`description`、`tags` 及其他 | 不变（OKF 读取方接受未知字段） |
 
 ```yaml
 ---
 type: Document
-title: Lorem ipsum
-resource: sample.pdf
+title: Quarterly report
+resource: report.pdf
 generated:
-  by: markitai/1.0.0
+  by: markitai/1.3.0
   at: '2026-08-25T01:42:13Z'
 ---
 ```
 
 ## images.json schema（已冻结）
 
-带 `--llm --desc` 时，每个资源目录会生成一份 `images.json`，描述分析过的图片。schema 冻结在 1.0 版本。
+带 `--llm --desc` 时，每个资源目录会生成一份 `images.json`。schema 冻结在 1.0 版本。
 
 顶层：
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
-| `version` | string | 固定为 `"1.0"` |
-| `created` | string | 首次写入的 ISO 8601 时间戳（合并时保留） |
-| `updated` | string | 最近一次写入的 ISO 8601 时间戳 |
-| `images` | array | 每张分析过的图片一条 |
+| `version` | string | `"1.0"` |
+| `created` | string | ISO 8601，首次写入（合并时保留） |
+| `updated` | string | ISO 8601，最近一次写入 |
+| `images` | array | 每张图片一条 |
 
 `images` 里的每一条：
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
-| `path` | string | 图片文件的绝对路径 |
-| `alt` | string | 短标题，用作 alt 文本 |
+| `path` | string | 图片绝对路径 |
+| `alt` | string | 短标题（alt 文本） |
 | `desc` | string | 详细描述 |
-| `text` | string | 从图片里识别出的文字（可能为空） |
-| `created` | string | 分析时间的 ISO 8601 时间戳 |
-| `source` | string | 源文档的绝对路径 |
+| `text` | string | 图片里的文字（可能为空） |
+| `created` | string | ISO 8601，分析时间 |
+| `source` | string | 源文档绝对路径 |
 
 ## Recipe：LlamaIndex 摄取
 
-用了 `rag` profile 后没有隐藏文件，Markdown 和图片都进入语料，frontmatter 也已解析好：
+用了 `rag`，Markdown 和图片都进入语料：
 
 ```python
 import markitai
@@ -122,6 +129,6 @@ print(len(documents))
 
 ## 注意
 
-- Profile 只作用于这次写出的文件，不会回头改写早先的输出。别在同一个目录里混用带 profile 和不带 profile 的运行，需要时重新转一遍。
-- Profile 只影响写出的文件。stdout 模式（不带 `-o`）不理会 profile。
-- 批量报告和 `--resume` 状态仍在 `.markitai/` 下，不进语料。嵌套批量时每个子目录有自己的 `assets/`。
+- Profile 只改写本次运行写出的文件：别在同一个目录里混用带 profile 和不带 profile 的运行。
+- stdout 模式（不带 `-o`）不写文件，profile 不起作用。
+- 批量报告和 `--resume` 状态留在 `.markitai/`；嵌套批量时每个子目录各有一个 `assets/`。

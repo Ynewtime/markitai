@@ -1,20 +1,26 @@
 # MCP Server
 
-`markitai-mcp` ships with markitai and exposes its conversions to AI agents over the [Model Context Protocol](https://modelcontextprotocol.io) (stdio). Agents get four tools for converting local documents and URLs, one at a time or in batches, through the same pipeline as the CLI.
+`markitai-mcp` gives AI agents markitai's conversions over the [Model Context Protocol](https://modelcontextprotocol.io) (stdio), through the same pipeline as the CLI.
 
-Nothing to install first: `uvx` fetches and runs it on demand.
+```mermaid
+flowchart LR
+  A[AI agent] -->|MCP over stdio| S[markitai-mcp]
+  S --> P[markitai pipeline]
+  P --> F[Files in output_dir]
+  S -->|Markdown and paths| A
+```
 
 ## Setup
 
-**Claude Code**, one command:
+Clients can start it with `uvx`, which fetches markitai on demand; nothing to install first.
 
 ```bash
+# Claude Code
 claude mcp add markitai -- uvx --from "markitai[mcp]" markitai-mcp
 ```
 
-**Claude Desktop**, one entry in `claude_desktop_config.json`:
-
 ```json
+// Claude Desktop: claude_desktop_config.json (other clients: same command and args)
 {
   "mcpServers": {
     "markitai": { "command": "uvx", "args": ["--from", "markitai[mcp]", "markitai-mcp"] }
@@ -22,26 +28,63 @@ claude mcp add markitai -- uvx --from "markitai[mcp]" markitai-mcp
 }
 ```
 
-Any other MCP client works the same way: command `uvx`, arguments `["--from", "markitai[mcp]", "markitai-mcp"]`. Without uv, `pip install "markitai[mcp]"` provides the same `markitai-mcp` command. `markitai mcp` starts the same server from the CLI, which is the form the [MCP Registry](https://registry.modelcontextprotocol.io) entry uses. Both forms load `./.env` (the server's working directory) and then `~/.markitai/.env`, as the CLI does; variables already set, such as the `env` block below, take precedence.
+To keep markitai installed instead, an interactive run of the setup script includes the `mcp` extra (and OCR and the browser); then use `markitai-mcp` as the client's command:
+
+<!--@include: ../snippets/setup.md-->
+
+::: details Manual install
+```bash
+uv tool install "markitai[mcp]"   # or: pip install "markitai[mcp]"
+```
+
+`markitai mcp` starts the same server; the [MCP Registry](https://registry.modelcontextprotocol.io) entry uses that form.
+:::
+
+Both commands load `./.env`, then `~/.markitai/.env`, as the CLI does. Variables already set (the client's `env` block) win; a folder's `.env` cannot set programs, paths, endpoints, proxies or credential files.
 
 ## Tools
 
 | Tool | Purpose |
 |------|---------|
-| `convert_document` | One local file (absolute path) to Markdown |
-| `convert_url` | One web page to clean main-content Markdown |
+| `convert_document` | One local file (absolute path) |
+| `convert_url` | One web page, main content only |
 | `batch_convert` | Many paths or URLs in the background; returns a `job_id` |
-| `job_status` | Progress and per-item results of a batch job |
+| `job_status` | Progress and per-item results of a batch |
 
-Every conversion writes real files, into the `output_dir` the agent passes or into a fresh temporary directory, and the result carries that path. Results inline the Markdown; past about 40 KB they switch to a preview plus `markdown_file`, the path to the full output, so a huge document never floods the model context. The conversion tools also accept `profile` (`rag`, `obsidian` or `okf`) to shape the output for a downstream consumer.
+| Option | Note |
+|--------|------|
+| `llm` | Omitted: the server's config decides (`llm.enabled`, off by default). `true` may cost provider charges |
+| `output_dir` | Absolute; omitted, a fresh temporary directory |
+| `profile` | `rag`, `obsidian` or `okf` ([Output Profiles](/guide/output-profiles)) |
 
-Results also carry `warnings`: notices that didn't fail the conversion but are worth acting on, such as pages that look scanned (retry with `ocr: true`), hidden PDF text that may be a prompt injection, OCR that found no text, a URL screenshot that wasn't captured, an image whose analysis failed (it keeps its original alt text), or an LLM enhancement that failed (the result is then the unenhanced conversion; with `llm.on_failure = "fail"` in the server's config the call fails instead). Each successful `job_status` result has its own `warnings` too.
+Results carry the written paths (`markdown_file`, `assets`, `screenshots`), `cost_usd` and `warnings`. Past about 40,000 characters the Markdown is a preview (`truncated: true`) and the full text is in `markdown_file`.
 
-Batch jobs run inside the server process. Poll `job_status` until `status` is `"completed"`, then read the `markdown_file` paths. Its counts are `done` (items that succeeded, as in `markitai serve`), `failed`, and `finished` (`done` + `failed`, every item that ended) out of `total`. Each item lands in `output_dir/batch-<job_id>/<item_number>/`, so same-named files never collide. `concurrency` (default 10) bounds how many conversions run at once. A server restart forgets the jobs; the written files remain.
+`warnings` names what did not fail the call but needs a look: scanned-looking pages (retry with `ocr: true`), hidden PDF text (possible prompt injection), OCR without text, a missed URL screenshot, a failed image analysis, or a failed LLM enhancement (the unenhanced result is returned; `llm.on_failure = "fail"` makes the call fail).
+
+Errors state their reason: missing file, directory, relative path (the server's working directory is not the client's), unreachable URL, failed conversion, or `llm: true` with no model (the error carries the setup below).
+
+### Batch jobs
+
+```mermaid
+sequenceDiagram
+  participant A as Agent
+  participant S as markitai-mcp
+  A->>S: batch_convert(sources)
+  S-->>A: job_id, total, output_dir
+  loop until status is "completed"
+    A->>S: job_status(job_id)
+    S-->>A: done, failed, finished, results
+  end
+  Note over A: read each markdown_file
+```
+
+- `done` + `failed` = `finished`, out of `total`. One failing item does not stop the rest.
+- Items go to `output_dir/batch-<job_id>/<item_number>/`; `concurrency` (default 10) bounds parallel conversions.
+- Jobs live in memory: a restart forgets them (files remain), and a finished job is dropped after 100 newer ones finish.
 
 ## LLM Enhancement
 
-Pass `llm: true` to enable enhancement (provider charges may apply). Models resolve as in the CLI: `llm.model_list` in `~/.markitai/config.json` ([shared with the CLI](/guide/configuration)), then `MODEL`, then automatic detection of provider API keys (for example the ones `markitai init` writes to `~/.markitai/.env`) and signed-in subscription providers. Several detected providers share one pool and the server logs a warning on stderr; set `MODEL` to pin one. You can also set environment variables in the server entry:
+Models resolve as in the CLI: `llm.model_list` in `~/.markitai/config.json` ([shared with the CLI](/guide/configuration)), then `MODEL`, then detected API keys (such as those `markitai init` writes to `~/.markitai/.env`) and signed-in subscriptions. Several detected providers share one pool; set `MODEL` to pin one. Keys can go in the server entry:
 
 ```json
 {
@@ -58,6 +101,6 @@ Pass `llm: true` to enable enhancement (provider charges may apply). Models reso
 }
 ```
 
-Omitting `llm` follows the server's own config (`llm.enabled`, off by default); `llm: false` forces it off. `alt` and `desc` control image analysis, `ocr` and `screenshot` their capabilities. Calling with `llm: true` and no model configured fails with an error that repeats this setup guidance, so agents can relay the fix. Other failures (a missing file, a directory, a relative path, an unreachable URL, a failed conversion) come back as tool errors that state the reason. `batch_convert` rejects relative paths up front, as `convert_document` does.
+## Optional capabilities
 
-Optional capabilities follow the markitai extras: OCR needs `markitai[ocr]`, URL screenshots need `markitai[browser]`. With uvx, add them as `"args": ["--from", "markitai[mcp]", "--with", "markitai[ocr]", "markitai-mcp"]`.
+- OCR: `ocr` extra; URL screenshots: `browser` extra. With uvx: `"args": ["--from", "markitai[mcp]", "--with", "markitai[ocr]", "markitai-mcp"]`.
