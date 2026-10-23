@@ -733,7 +733,8 @@ mod tests {
     }
     #[test]
     fn anthropic_plans_send_message_params_and_decode_tool_answers_at_batch_prices() {
-        let cfg = json!({"llm":{"model_list":[{"litellm_params":{"model":"anthropic/claude-haiku-5-5","api_key":"fixture-api-secret"}}]},"cache":{"enabled":false}});
+        // Configured sampling settings never reach a Message Batch row.
+        let cfg = json!({"llm":{"model_list":[{"litellm_params":{"model":"anthropic/claude-haiku-5-5","api_key":"fixture-api-secret","temperature":0.2,"top_p":0.9,"top_k":40}}]},"cache":{"enabled":false}});
         let session = Session::configured(&cfg, &HashMap::new()).unwrap();
         assert_eq!(session.api(), crate::provider_batch::Api::Anthropic);
         assert_eq!(session.identity().api_base, "https://api.anthropic.com/v1");
@@ -748,6 +749,10 @@ mod tests {
         assert_eq!(params["max_tokens"], 128_000);
         assert!(params["system"].is_string());
         assert_eq!(params["tool_choice"]["name"], "MarkitaiDocument");
+        assert_eq!(
+            crate::llm::anthropic_request_refusal(params.as_object().unwrap()),
+            None
+        );
         let protected = chunks::Protected::new(text);
         let answer = json!({"cleaned_markdown":protected.text,"frontmatter":{"description":"A fixture document","tags":["fixture"]}});
         let item = crate::provider_batch::ResultItem {

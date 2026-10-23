@@ -70,6 +70,7 @@ markitai config edit                 # 终端中的交互编辑器
 | `llm.model_list` | `[]` | 模型部署；为空时按 `MODEL`、本机已登录的订阅运行时（Claude Code、Copilot、Codex）和供应商密钥自动选择。前缀见 [LLM：供应商](llm.md#providers-and-request-parameters)，其中包括 `groq/`、`mistral/`、`xai/`、`together_ai/` 等兼容 OpenAI 的前缀，以及 `bedrock/`、`vertex_ai/`（凭据见 [Bedrock 与 Vertex AI](llm.md#bedrock-and-vertex-ai)） |
 | `llm.model_list[].model_info.max_input_tokens` | `null` | 模型的输入窗口（token）。设置后文档分块还须放进所有启用部署中最小的窗口（扣除提示词后按保守估算取 90%），只会变小、不会超过 32,000 字符；见 [LLM：长文本](llm.md#structured-documents-and-complete-long-text) |
 | `llm.model_list[].litellm_params.reasoning_effort` | `null` | 推理模型的思考强度：`none`、`minimal`、`low`、`medium`、`high`、`xhigh` 或 `max`。未设置时 `deepseek/`、接受 `none` 的 OpenAI 模型（如 `gpt-6-luna`）和 Claude Haiku 5.5 关闭思考（清理不需要推理，且推理 token 会占用 `max_tokens`），其他供应商使用模型默认值；`anthropic/` 只接受 `none`，订阅运行时不接受此项；见 [LLM：供应商](llm.md#providers-and-request-parameters) |
+| `llm.model_list[].litellm_params.temperature`、`top_p`、`top_k` | — | 不是配置项，不会发送（LiteLLM 会转发它们）；`anthropic/` 和 Vertex AI 上的 Claude 模型设置了它们时警告一次，因为 Anthropic API 版本 `2026-10-21` 对所有模型拒绝这三项；见 [LLM：供应商](llm.md#providers-and-request-parameters) |
 | `llm.keep_base` | `false` | 增强后同时保留基础 Markdown，同 `--keep-base` |
 | `llm.on_failure` | `fallback` | 增强失败时保留基础结果并警告（没有任何模型成功时只写基础 `.md`，不写 `.llm.md`）；`fail` 判为失败 |
 | `llm.concurrency` | `10` | 同时进行的模型请求上限 |

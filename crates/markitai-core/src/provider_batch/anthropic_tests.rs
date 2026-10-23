@@ -92,7 +92,7 @@ fn upload_is_local_and_create_sends_the_saved_rows_inline_once() {
         "{headers}"
     );
     assert!(
-        headers.contains("anthropic-version: 2023-06-01"),
+        headers.contains("anthropic-version: 2026-10-21"),
         "{headers}"
     );
     assert!(!headers.contains("authorization:"), "{headers}");
@@ -138,6 +138,50 @@ fn create_refuses_rows_changed_after_validation_or_without_the_nonce() {
         &[json!({"custom_id":"a","method":"POST","url":"/v1/chat/completions","body":{}})],
     );
     assert!(matches!(client.upload(&path), Err(Error::Invalid(_))));
+    assert!(server.requests().is_empty());
+}
+
+#[test]
+fn rows_that_api_version_2026_10_21_refuses_are_never_sent() {
+    let root = tempfile::tempdir().unwrap();
+    let server = Server::new(|_, _| panic!("no request may be sent"));
+    let client = client(&server);
+    let mut sampled = Vec::new();
+    for (name, value) in [
+        ("temperature", json!(1)),
+        ("top_p", json!(0.9)),
+        ("top_k", json!(5)),
+    ] {
+        let mut row = request(0);
+        row["params"][name] = value;
+        sampled.push(row);
+    }
+    let mut document = request(0);
+    document["params"]["messages"] = json!([
+        {"role":"user","content":"Read it."},
+        {"role":"assistant","content":[{"type":"document","source":{"type":"text","media_type":"text/plain","data":"x"}}]},
+        {"role":"user","content":"Go on."}]);
+    let mut cited = request(0);
+    cited["params"]["messages"] = json!([{"role":"user","content":[{"type":"tool_result","tool_use_id":"t",
+        "content":[{"type":"search_result","source":"s","title":"t","content":[
+            {"type":"text","text":"quoted","citations":[{"type":"char_location","cited_text":"q"}]}]}]}]}]);
+    for row in sampled.into_iter().chain([document, cited]) {
+        let path = write_requests(root.path(), &[row]);
+        assert!(
+            matches!(client.upload(&path), Err(Error::Invalid(reason)) if reason.contains("2026-10-21")),
+            "{path:?}"
+        );
+    }
+    // Still accepted: citations on Claude's own replies and the citations
+    // switch on a document in a user message.
+    let mut accepted = request(0);
+    accepted["params"]["messages"] = json!([
+        {"role":"user","content":[{"type":"document","source":{"type":"text","media_type":"text/plain","data":"x"},
+            "citations":{"enabled":true}}]},
+        {"role":"assistant","content":[{"type":"text","text":"x","citations":[{"type":"char_location","cited_text":"x"}]}]},
+        {"role":"user","content":"More."}]);
+    let path = write_requests(root.path(), &[accepted]);
+    client.upload(&path).unwrap();
     assert!(server.requests().is_empty());
 }
 

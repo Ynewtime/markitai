@@ -131,6 +131,13 @@ pub(super) fn snapshot(path: &Path, limits: Limits, api: Api) -> Result<Input, E
                 "Message Batch requests need a positive max_tokens",
             ));
         }
+        // Requests run under this build's API version; one it refuses would
+        // only come back as an errored result after the batch's wait.
+        if api == Api::Anthropic
+            && let Some(refusal) = crate::llm::anthropic_request_refusal(body)
+        {
+            return Err(Error::Invalid(refusal));
+        }
         let name = body
             .get("model")
             .and_then(Value::as_str)

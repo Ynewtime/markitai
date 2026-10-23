@@ -125,8 +125,11 @@ fn vars(pairs: &[(&str, &str)]) -> HashMap<String, String> {
 #[test]
 fn a_signed_converse_request_carries_a_valid_sigv4_signature() {
     let (base, worker) = serve(1, |_| converse_answer("Answer from Bedrock"));
-    let cfg =
-        config(json!({"model":"bedrock/anthropic.claude-haiku-4-5-20251001-v1:0","api_base":base}));
+    // A configured sampling setting is not sent (Converse has no
+    // Anthropic version: an old Claude model keeps working).
+    let cfg = config(
+        json!({"model":"bedrock/anthropic.claude-haiku-4-5-20251001-v1:0","api_base":base,"temperature":0.2}),
+    );
     let env = vars(&[
         ("AWS_ACCESS_KEY_ID", "AKIDFIXTURE"),
         ("AWS_SECRET_ACCESS_KEY", "fixture-secret"),
@@ -152,6 +155,8 @@ fn a_signed_converse_request_carries_a_valid_sigv4_signature() {
     );
     assert_eq!(body["inferenceConfig"], json!({"maxTokens":256}));
     assert!(body.get("model").is_none());
+    assert!(body.get("anthropic_version").is_none());
+    assert!(request.header("anthropic-version").is_none());
     // The server's view of the request signs to the same value.
     let date = request.header("x-amz-date").unwrap();
     let authorization = request.header("authorization").unwrap();
@@ -338,8 +343,12 @@ fn claude_on_vertex_uses_raw_predict_with_a_user_credential() {
                 "POST /v1/projects/user-project/locations/us-east5/publishers/anthropic/models/claude-haiku-4-5@20251001:rawPredict HTTP/1.1"
             );
             let body = request.json();
-            assert_eq!(body["anthropic_version"], "vertex-2023-10-16");
+            assert_eq!(body["anthropic_version"], "2026-10-21");
             assert!(body.get("model").is_none());
+            // The configured sampling settings stay out of the request.
+            for name in ["temperature", "top_p", "top_k"] {
+                assert!(body.get(name).is_none(), "{name}");
+            }
             assert!(request.header("anthropic-version").is_none());
             assert!(request.header("x-api-key").is_none());
             json!({"type":"message","role":"assistant","model":"claude-haiku-4-5","content":[{"type":"text","text":"Claude on Vertex"}],
@@ -356,7 +365,9 @@ fn claude_on_vertex_uses_raw_predict_with_a_user_credential() {
         .to_string(),
     )
     .unwrap();
-    let cfg = config(json!({"model":"vertex_ai/claude-haiku-4-5@20251001","api_base":base}));
+    let cfg = config(
+        json!({"model":"vertex_ai/claude-haiku-4-5@20251001","api_base":base,"temperature":0.2,"top_p":0.9,"top_k":40}),
+    );
     let env = vars(&[
         ("HOME", home.path().to_str().unwrap()),
         ("VERTEXAI_PROJECT", "user-project"),

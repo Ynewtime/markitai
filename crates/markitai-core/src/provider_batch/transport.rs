@@ -10,8 +10,7 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 use url::Url;
 
-/// Anthropic's documented API version for Message Batches.
-const ANTHROPIC_VERSION: &str = "2023-06-01";
+use crate::llm::ANTHROPIC_VERSION;
 /// Anthropic batches whose results are opened to prove an uncertain creation.
 const MAX_PROOFS: usize = 4;
 

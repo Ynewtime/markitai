@@ -341,7 +341,7 @@ fn perform(entry: &Deployment) -> Result<(), Failure> {
             };
         }
         if entry.protocol == Protocol::Anthropic {
-            call = call.header("anthropic-version", "2023-06-01");
+            call = call.header("anthropic-version", super::ANTHROPIC_VERSION);
         }
         call = call.json(&body);
     }

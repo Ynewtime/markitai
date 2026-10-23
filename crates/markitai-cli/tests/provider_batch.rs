@@ -324,8 +324,24 @@ fn check_enhanced(run: &Run) {
 fn anthropic_batch_submits_inline_waits_and_collects() {
     let fake = Fake::start();
     let run = Run::new(&fake, "fallback");
+    // Sampling settings a configuration carries over from Python markitai
+    // are not sent (API version 2026-10-21 refuses them); one warning says so.
+    let path = run.path("config.json");
+    let mut config: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let params = &mut config["llm"]["model_list"][0]["litellm_params"];
+    params["temperature"] = json!(0.2);
+    params["top_k"] = json!(40);
+    std::fs::write(&path, serde_json::to_vec(&config).unwrap()).unwrap();
     let output = run.markitai(&["inputs", "--llm", "--llm-batch", "-o", "out", "--json"]);
     assert_eq!(output.status.code(), Some(0), "{}", text(&output));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        stderr
+            .matches("Warning: temperature, top_k not sent to anthropic/claude-haiku-5-5: Anthropic API 2026-10-21 rejects temperature, top_p and top_k")
+            .count(),
+        1,
+        "{stderr}"
+    );
     check_enhanced(&run);
     let envelope: Value = serde_json::from_slice(&output.stdout).unwrap();
     let items = envelope["items"].as_array().unwrap();
@@ -341,7 +357,7 @@ fn anthropic_batch_submits_inline_waits_and_collects() {
         "{headers}"
     );
     assert!(
-        headers.contains("anthropic-version: 2023-06-01"),
+        headers.contains("anthropic-version: 2026-10-21"),
         "{headers}"
     );
     assert!(!headers.contains("authorization:"), "{headers}");
@@ -354,6 +370,9 @@ fn anthropic_batch_submits_inline_waits_and_collects() {
         assert_eq!(request["params"]["model"], "claude-haiku-5-5");
         // Without a configured cap, the model's output limit.
         assert_eq!(request["params"]["max_tokens"], 128_000);
+        for name in ["temperature", "top_p", "top_k"] {
+            assert!(request["params"].get(name).is_none(), "{name}");
+        }
     }
     // One create, status and results reads; the results_url was not followed.
     assert_eq!(seen.iter().filter(|seen| seen.method == "POST").count(), 1);

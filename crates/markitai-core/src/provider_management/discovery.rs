@@ -171,7 +171,7 @@ pub(super) fn load(
         };
     }
     if provider == "anthropic" {
-        request = request.header("anthropic-version", "2023-06-01");
+        request = request.header("anthropic-version", crate::llm::ANTHROPIC_VERSION);
     }
     let response = request.send().map_err(|error| {
         if public_only && crate::public_net::refused(&error) {

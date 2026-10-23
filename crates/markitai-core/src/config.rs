@@ -328,6 +328,11 @@ pub fn raw(explicit: Option<&Path>, overrides: Option<Value>) -> Result<Value> {
 /// Unknown model fields are ignored, matching the reference model's extra-field rule.
 /// Valid configuration is not a promise that its requested runtime feature is implemented.
 pub fn normalize(value: &Value) -> Result<Value> {
+    // Sampling settings are not configuration fields and are dropped below;
+    // the user of an Anthropic model may expect them to apply, so is told once.
+    for note in crate::llm::sampling_notes(value) {
+        warn_once(note);
+    }
     let value = normalize_node(value, schema(), "")?;
     validate_fetch(&value["fetch"])?;
     Ok(value)
@@ -1067,7 +1072,7 @@ pub fn project_may_not_set(name: &str) -> bool {
 }
 
 /// Print `message` on stderr once per process.
-fn warn_once(message: String) {
+pub(crate) fn warn_once(message: String) {
     static SHOWN: OnceLock<std::sync::Mutex<HashSet<String>>> = OnceLock::new();
     let shown = SHOWN.get_or_init(Default::default);
     if shown

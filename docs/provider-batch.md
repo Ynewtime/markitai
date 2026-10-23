@@ -84,11 +84,13 @@ successful fallback.
 
 An `anthropic/<model>` deployment submits to Message Batches
 (`POST /v1/messages/batches`) with its `x-api-key` and `anthropic-version:
-2023-06-01`. The lifecycle above is the same, with these differences:
+2026-10-21`. The lifecycle above is the same, with these differences:
 
 - There is no file upload. The upload step only validates the saved
   `requests.jsonl` (each row exactly `custom_id` and `params`, one model, a
-  positive `max_tokens`) and records its digest; the single create call sends
+  positive `max_tokens`, nothing API version 2026-10-21 refuses: `temperature`,
+  `top_p`, `top_k`, a `document` block in an `assistant` message or cited text
+  in a `user` message) and records its digest; the single create call sends
   those rows inline after checking that they still match the digest.
 - Each request is the live Messages request: the system prompt, the document
   and the same structured mode (forced tool for Claude Haiku 5.5, JSON schema

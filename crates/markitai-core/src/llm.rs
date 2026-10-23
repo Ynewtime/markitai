@@ -64,6 +64,102 @@ pub(crate) fn keyed_defaults(
     })
 }
 
+/// The `anthropic-version` every Anthropic Messages API request sends (the
+/// header; Vertex AI's `anthropic_version` body field): live requests,
+/// Message Batches, connection probes and model discovery. Amazon Bedrock is
+/// reached through Converse, which carries no Anthropic version.
+pub(crate) const ANTHROPIC_VERSION: &str = "2026-10-21";
+
+/// Sampling settings that API version 2026-10-21 answers with a 400 on every
+/// model, in the order a warning names them.
+const ANTHROPIC_REJECTED_SAMPLING: [&str; 3] = ["temperature", "top_p", "top_k"];
+
+/// The warnings for models served by the Anthropic Messages API (an
+/// `anthropic/` model, Claude on Vertex AI) whose `litellm_params` in `cfg`
+/// set sampling settings. Normalizing a configuration drops them, so they
+/// are never sent; [`config::normalize`] prints these once. The wording is
+/// the one Python markitai prints. Bedrock is reached through Converse,
+/// where the settings were never sent either and no Anthropic version
+/// applies.
+pub(crate) fn sampling_notes(cfg: &Value) -> Vec<String> {
+    cfg.pointer("/llm/model_list")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| {
+            let params = entry.get("litellm_params")?;
+            let model = params.get("model").and_then(Value::as_str)?.trim();
+            let messages_api = match model.split_once('/') {
+                Some(("anthropic", _)) => true,
+                Some(("vertex_ai" | "vertex_ai_beta", name)) => name.starts_with("claude"),
+                _ => false,
+            };
+            let set: Vec<&str> = ANTHROPIC_REJECTED_SAMPLING
+                .into_iter()
+                .filter(|name| params.get(*name).is_some_and(|value| !value.is_null()))
+                .collect();
+            (messages_api && !set.is_empty()).then(|| {
+                format!(
+                    "Warning: {} not sent to {model}: Anthropic API {ANTHROPIC_VERSION} rejects temperature, top_p and top_k",
+                    set.join(", ")
+                )
+            })
+        })
+        .collect()
+}
+
+/// What API version 2026-10-21 refuses in an Anthropic Messages request
+/// body, or `None`: a sampling setting, a `document` block directly in an
+/// `assistant` message, or a `text` block with non-empty `citations` in a
+/// `user` message (directly or inside a `search_result`, also within a
+/// `tool_result`). Requests built here never hold one; a saved Message Batch
+/// input is checked before it is sent.
+pub(crate) fn anthropic_request_refusal(
+    body: &serde_json::Map<String, Value>,
+) -> Option<&'static str> {
+    if ANTHROPIC_REJECTED_SAMPLING
+        .into_iter()
+        .any(|name| body.contains_key(name))
+    {
+        return Some("Anthropic API 2026-10-21 rejects temperature, top_p and top_k");
+    }
+    fn cited(blocks: &[Value]) -> bool {
+        blocks.iter().any(|block| match block["type"].as_str() {
+            Some("text") => block["citations"]
+                .as_array()
+                .is_some_and(|citations| !citations.is_empty()),
+            Some("search_result" | "tool_result") => block["content"]
+                .as_array()
+                .is_some_and(|inner| cited(inner)),
+            _ => false,
+        })
+    }
+    for message in body
+        .get("messages")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let Some(blocks) = message["content"].as_array() else {
+            continue;
+        };
+        match message["role"].as_str() {
+            Some("assistant") if blocks.iter().any(|block| block["type"] == "document") => {
+                return Some(
+                    "Anthropic API 2026-10-21 rejects a document block in an assistant message",
+                );
+            }
+            Some("user") if cited(blocks) => {
+                return Some(
+                    "Anthropic API 2026-10-21 rejects a text block with citations in a user message",
+                );
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Protocol {
     Chat,
@@ -2162,7 +2258,7 @@ fn request_with_mode(
             };
         }
         if entry.protocol == Protocol::Anthropic {
-            request = request.header("anthropic-version", "2023-06-01");
+            request = request.header("anthropic-version", ANTHROPIC_VERSION);
         }
         request.json(&body)
     };
@@ -3705,6 +3801,77 @@ mod tests {
             "image/png"
         );
         assert_eq!(requests[0].1["max_tokens"], 8192);
+    }
+
+    #[test]
+    fn anthropic_requests_use_api_version_2026_10_21_without_sampling_settings() {
+        let answer = json!({"model":"claude-test","content":[{"type":"text","text":"clean"}],"usage":{"input_tokens":3,"output_tokens":1}});
+        let server = Mock::new(vec![(200, answer)]);
+        let mut cfg = cfg("anthropic/claude-test", &server.base);
+        let params = &mut cfg["llm"]["model_list"][0]["litellm_params"];
+        params["temperature"] = json!(0.2);
+        params["top_p"] = json!(0.9);
+        params["top_k"] = json!(40);
+        let mut prompts = plain();
+        prompts.image = Some(vec![("image/png".into(), "cG5n".into())]);
+        prompts.labels = vec!["Page 1:".into()];
+        run(&prompts, &cfg, &HashMap::new(), &mut |_| {}).unwrap();
+        let requests = server.finish();
+        assert!(
+            requests[0]
+                .0
+                .to_ascii_lowercase()
+                .contains("anthropic-version: 2026-10-21"),
+            "{}",
+            requests[0].0
+        );
+        let mut bodies = vec![requests[0].1.clone()];
+        // The structured rungs build on the same body.
+        let entry = deployments(&cfg, &HashMap::new()).unwrap().remove(0);
+        for mode in [structured::Mode::Tools, structured::Mode::JsonSchema] {
+            bodies.push(
+                structured::Wire {
+                    mode,
+                    schema: structured::Schema::Document,
+                }
+                .payload(&entry, &prompts),
+            );
+        }
+        for body in &bodies {
+            let object = body.as_object().unwrap();
+            for name in ["temperature", "top_p", "top_k"] {
+                assert!(!object.contains_key(name), "{name}: {body}");
+            }
+            // One user turn: no assistant document, no cited user text.
+            assert_eq!(body["messages"].as_array().unwrap().len(), 1);
+            assert_eq!(body["messages"][0]["role"], "user");
+            assert_eq!(anthropic_request_refusal(object), None, "{body}");
+        }
+    }
+
+    #[test]
+    fn sampling_settings_of_messages_api_models_are_named_once_each() {
+        let raw = json!({"llm":{"model_list":[
+            {"model_name":"default","litellm_params":{"model":"anthropic/claude-test","temperature":0.2,"top_p":0.9,"top_k":40}},
+            {"model_name":"default","litellm_params":{"model":"vertex_ai/claude-haiku-4-5@20251001","top_k":5,"temperature":null}},
+            {"model_name":"default","litellm_params":{"model":"anthropic/claude-plain"}},
+            {"model_name":"default","litellm_params":{"model":"vertex_ai/gemini-2.5-flash","temperature":0.2}},
+            {"model_name":"default","litellm_params":{"model":"bedrock/anthropic.claude-haiku-4-5-20251001-v1:0","temperature":0.2}},
+            {"model_name":"default","litellm_params":{"model":"openai/gpt-x","temperature":0.2}}]}});
+        assert_eq!(
+            sampling_notes(&raw),
+            [
+                "Warning: temperature, top_p, top_k not sent to anthropic/claude-test: Anthropic API 2026-10-21 rejects temperature, top_p and top_k",
+                "Warning: top_k not sent to vertex_ai/claude-haiku-4-5@20251001: Anthropic API 2026-10-21 rejects temperature, top_p and top_k",
+            ]
+        );
+        // Normalizing drops the settings, so no request can carry them.
+        let normalized = config::normalize(&raw).unwrap();
+        for entry in normalized["llm"]["model_list"].as_array().unwrap() {
+            for name in ["temperature", "top_p", "top_k"] {
+                assert!(entry["litellm_params"].get(name).is_none(), "{entry}");
+            }
+        }
     }
 
     #[test]

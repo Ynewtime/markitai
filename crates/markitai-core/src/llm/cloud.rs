@@ -1126,7 +1126,7 @@ pub(super) fn prepare(
                 && let Some(object) = body.as_object_mut()
             {
                 object.remove("model");
-                object.insert("anthropic_version".into(), json!("vertex-2023-10-16"));
+                object.insert("anthropic_version".into(), json!(super::ANTHROPIC_VERSION));
             }
             let token = tokens.token(client)?;
             Ok(request.bearer_auth(token).json(&body))

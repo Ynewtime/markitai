@@ -207,6 +207,16 @@ The five built-in API providers read their keys from `OPENAI_API_KEY`,
 both are set, as in Google's SDK), `DEEPSEEK_API_KEY`, and `OPENROUTER_API_KEY`
 or `OR_API_KEY`, as LiteLLM does.
 
+Anthropic Messages requests (`anthropic/`, including a gateway, proxy or
+Microsoft Foundry address in `api_base`, and Claude on Vertex AI) use API
+version `2026-10-21`: the `anthropic-version` header, Vertex AI's
+`anthropic_version` body field, Message Batches, model discovery and the
+connection test. `litellm_params` keeps only the settings listed in
+[configuration](configuration.md); `temperature`, `top_p` and `top_k`, which
+LiteLLM forwards, are never sent, and an Anthropic model that sets them gets one
+warning naming them, since that API version refuses them on every model. A
+gateway in `api_base` must accept that version.
+
 ### OpenAI-compatible prefixes
 
 These prefixes are plain Chat Completions endpoints that the reference reaches
@@ -393,7 +403,8 @@ Converse.
   `AWS_BEDROCK_RUNTIME_ENDPOINT` (for a VPC endpoint), else the region's
   runtime host.
 - The request carries the system prompt, the text and images (PNG, JPEG, GIF,
-  WebP) and `max_tokens` as `inferenceConfig.maxTokens`; structured documents
+  WebP) and `max_tokens` as `inferenceConfig.maxTokens`, and no Anthropic API
+  version (Converse has none, so Claude models before 4.7 keep working); structured documents
   use the JSON-text mode. Usage includes cache read and write tokens. A
   guardrail intervention or content filter is a refusal, a `max_tokens` or
   context-window stop a truncation.
@@ -407,7 +418,7 @@ the other Model Garden models through its OpenAI-compatible endpoint
 model `google/<model>` unless the name has its publisher), and Claude models
 (`vertex_ai/claude-…@<version>`) through Anthropic's Messages API behind
 `…/publishers/anthropic/models/<model>:rawPredict` with
-`anthropic_version: vertex-2023-10-16`.
+`anthropic_version: 2026-10-21`.
 
 - Credentials, in Application Default Credentials order:
   `GOOGLE_APPLICATION_CREDENTIALS` (a service-account or user credentials

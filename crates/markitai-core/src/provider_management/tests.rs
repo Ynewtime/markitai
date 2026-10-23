@@ -188,7 +188,7 @@ fn discovery_uses_provider_specific_paths_credentials_and_typed_models() {
         );
         assert!(requests[0].contains(header));
         if provider == "anthropic" {
-            assert!(requests[0].contains("anthropic-version: 2023-06-01"));
+            assert!(requests[0].contains("anthropic-version: 2026-10-21"));
         }
         if matches!(provider, "gemini" | "ollama") {
             assert!(!requests[0].contains("authorization:"));
@@ -549,6 +549,10 @@ fn probe_uses_exact_protocol_single_deployment_and_short_payload() {
         assert_eq!(requests.len(), 1);
         assert!(requests[0].starts_with(&format!("POST {path}")));
         assert!(requests[0].contains(auth));
+        assert_eq!(
+            requests[0].contains("anthropic-version: 2026-10-21"),
+            model.starts_with("anthropic/")
+        );
         let body: Value =
             serde_json::from_str(requests[0].split_once("\r\n\r\n").unwrap().1).unwrap();
         assert_eq!(
