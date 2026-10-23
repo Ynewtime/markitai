@@ -116,7 +116,13 @@ fn with_an_output_folder_the_json_sits_beside_the_markdown_and_follows_its_renam
     fs::write(fixture.path("note.txt"), b"Hello.\n").unwrap();
     let output = fixture.run(&["note.txt", "-f", "json", "-o", "out"]);
     good(&output);
-    assert!(String::from_utf8_lossy(&output.stderr).contains("Wrote out/note.txt.json"));
+    // Output locations are built with `Path::join`: Windows shows `\` there.
+    let wrote = format!("Wrote out{}note.txt.json", std::path::MAIN_SEPARATOR);
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains(&wrote),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let document = fixture.json("out/note.txt.json");
     assert_eq!(document["outputs"]["markdown"], "note.txt.md");
     assert!(fixture.path("out/note.txt.md").is_file());
