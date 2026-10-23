@@ -690,3 +690,44 @@ html:not(.dark) .home-shot img {
   margin: 10px 0;
   line-height: 1.7;
 }
+
+/* Mermaid diagrams (mermaid.ts draws them at build time with Pele).
+
+   Pele colours a drawing through its own CSS variables; mapped onto the
+   theme's, one drawing follows light and dark mode. A diagram too wide for a
+   phone carries a second, narrow drawing, and only one of the two shows. */
+.vp-doc .mk-diagram {
+  --pele-bg: var(--vp-c-bg);
+  --pele-fg: var(--vp-c-text-1);
+  --pele-muted: var(--vp-c-text-2);
+  --pele-line: var(--vp-c-text-3);
+  --pele-surface: var(--vp-c-bg-soft);
+  --pele-surface-alt: var(--vp-c-default-soft);
+  --pele-border: var(--vp-c-border);
+  --pele-accent: var(--vp-c-brand-1);
+  --pele-font: var(--vp-font-family-base);
+  --pele-font-mono: var(--vp-font-family-mono);
+  --pele-radius: 6px;
+  margin: 24px 0;
+  text-align: center;
+}
+
+.vp-doc .mk-diagram svg {
+  display: inline-block;
+  max-width: 100%;
+  height: auto;
+}
+
+.vp-doc .mk-diagram-narrow {
+  display: none;
+}
+
+@media (max-width: 639px) {
+  .vp-doc .mk-diagram.has-narrow .mk-diagram-wide {
+    display: none;
+  }
+
+  .vp-doc .mk-diagram.has-narrow .mk-diagram-narrow {
+    display: block;
+  }
+}

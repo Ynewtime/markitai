@@ -1,0 +1,13 @@
+The markitai.dev website
+Copyright (c) 2026 Ynewtime
+
+The documentation site in website/ is not part of any markitai package or
+release archive; the repository's NOTICE covers those. The site's own text
+is licensed under MIT (the repository's LICENSE). It is built with these
+works, named in website/package.json:
+
+- VitePress (MIT), Copyright (c) 2019-present, Yuxi (Evan) You: the site
+  generator; the pages it builds carry its theme and Vue (MIT), Copyright
+  (c) 2018-present, Yuxi (Evan) You.
+- Pele (MIT), Copyright (c) 2026 kepano: draws the pages' Mermaid diagrams
+  as SVG while the site is built. No Pele code is sent to the browser.

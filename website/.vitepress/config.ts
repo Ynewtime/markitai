@@ -1,4 +1,5 @@
 import { defineConfig } from 'vitepress'
+import { mermaid } from './mermaid'
 
 const SITE_URL = 'https://markitai.dev'
 const SITE_NAME = 'Markitai'
@@ -103,9 +104,17 @@ export default defineConfig({
 
   lastUpdated: true,
   cleanUrls: true,
-  // The release notes' sources; scripts/changelog.mjs publishes their released
-  // sections as /changelog and /zh/changelog.
-  srcExclude: ['changelog/**'],
+  // Not pages: the release notes' sources (scripts/changelog.mjs publishes
+  // their released sections as /changelog and /zh/changelog) and shared
+  // snippets (`<!--@include: …/snippets/setup.md-->`).
+  srcExclude: ['changelog/**', 'snippets/**'],
+
+  // ```mermaid fences become SVG at build time (see mermaid.ts).
+  markdown: {
+    config(md) {
+      md.use(mermaid)
+    },
+  },
 
   sitemap: {
     hostname: SITE_URL,
