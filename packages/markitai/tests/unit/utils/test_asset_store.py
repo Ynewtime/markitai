@@ -2,11 +2,26 @@
 
 from __future__ import annotations
 
+import errno
+import os
+import shutil
 from pathlib import Path
 
 import pytest
 
 from markitai.utils.asset_store import AssetStore
+
+
+def _symlinks_allowed(directory: Path) -> bool:
+    """Whether this user may make symlinks here: a Windows user without
+    administrator rights or Developer Mode may not (WinError 1314)."""
+    probe = directory / "symlink-probe"
+    try:
+        probe.symlink_to("target")
+    except OSError:
+        return False
+    probe.unlink()
+    return True
 
 
 class TestAssetStoreInit:
@@ -47,10 +62,11 @@ class TestAssetStoreSave:
         blob_path = store.save(img, "sample.pdf")
 
         assert blob_path.read_bytes() == b"image-data-123"
-        # The browse index still gets a ref symlink to the blob
+        # The browse index still gets a ref to the blob: a symlink where
+        # this user may make one, else a hard link to it
         ref = store.persist_dir / "refs" / "sample.pdf" / "test.jpg"
-        assert ref.is_symlink()
-        assert ref.resolve() == blob_path.resolve()
+        assert ref.is_symlink() == _symlinks_allowed(tmp_path)
+        assert ref.samefile(blob_path)
 
     def test_dedup_same_content(self, tmp_path: Path) -> None:
         store = AssetStore(tmp_path / "store")
@@ -199,8 +215,10 @@ class TestAssetStoreSourceNameSanitization:
         store = AssetStore(tmp_path / "store")
         img = self._make_image(tmp_path, "img.jpg", b"data")
 
-        store.save(img, "sample.pdf")
-        assert (store.persist_dir / "refs" / "sample.pdf" / "img.jpg").is_symlink()
+        blob = store.save(img, "sample.pdf")
+        ref = store.persist_dir / "refs" / "sample.pdf" / "img.jpg"
+        assert ref.is_symlink() == _symlinks_allowed(tmp_path)
+        assert ref.samefile(blob)
 
 
 class TestAssetStoreErrorHandling:
@@ -211,3 +229,131 @@ class TestAssetStoreErrorHandling:
         missing = tmp_path / "missing.jpg"
         with pytest.raises(FileNotFoundError):
             store.save(missing, "doc.pdf")
+
+
+#: What Windows raises for a user without the symlink privilege
+_NO_PRIVILEGE = "[WinError 1314] A required privilege is not held by the client"
+
+
+@pytest.fixture
+def no_symlinks(monkeypatch: pytest.MonkeyPatch) -> list[Path]:
+    """This system refuses symlinks, as Windows does for a user without
+    administrator rights or Developer Mode; records each attempt."""
+    attempts: list[Path] = []
+
+    def refuse(self: Path, target: object, target_is_directory: bool = False) -> None:
+        attempts.append(self)
+        raise OSError(errno.EPERM, _NO_PRIVILEGE)
+
+    monkeypatch.setattr(Path, "symlink_to", refuse)
+    return attempts
+
+
+class TestAssetStoreWithoutSymlinks:
+    """Saving never fails because symlinks are refused: the ref is a hard
+    link to the blob, else a copy, and the returned blob path always works."""
+
+    def _image(self, tmp_path: Path, name: str, content: bytes) -> Path:
+        img = tmp_path / name
+        img.write_bytes(content)
+        return img
+
+    def test_the_ref_is_a_hard_link_to_the_blob(
+        self, tmp_path: Path, no_symlinks: list[Path]
+    ) -> None:
+        store = AssetStore(tmp_path / "store")
+        blob = store.save(self._image(tmp_path, "chart.png", b"chart"), "report.pdf")
+
+        ref = store.persist_dir / "refs" / "report.pdf" / "chart.png"
+        assert no_symlinks == [ref]
+        assert not ref.is_symlink()
+        assert ref.samefile(blob)
+        assert blob.read_bytes() == b"chart"
+
+    def test_symlinks_are_tried_once_per_store(
+        self, tmp_path: Path, no_symlinks: list[Path]
+    ) -> None:
+        store = AssetStore(tmp_path / "store")
+        for number in range(3):
+            store.save(
+                self._image(tmp_path, f"p{number}.png", bytes([number])), "a.pdf"
+            )
+
+        assert len(no_symlinks) == 1
+        for number in range(3):
+            ref = store.persist_dir / "refs" / "a.pdf" / f"p{number}.png"
+            assert ref.read_bytes() == bytes([number])
+
+    def test_a_copy_where_hard_links_fail_too(
+        self,
+        tmp_path: Path,
+        no_symlinks: list[Path],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Another volume, FAT or a share: no hard links either."""
+
+        def no_link(*_args: object, **_kwargs: object) -> None:
+            raise OSError(errno.EXDEV, "Invalid cross-device link")
+
+        monkeypatch.setattr(os, "link", no_link)
+        store = AssetStore(tmp_path / "store")
+        blob = store.save(self._image(tmp_path, "chart.png", b"chart"), "report.pdf")
+
+        ref = store.persist_dir / "refs" / "report.pdf" / "chart.png"
+        assert not ref.is_symlink()
+        assert not ref.samefile(blob)
+        assert ref.read_bytes() == blob.read_bytes() == b"chart"
+
+    def test_a_new_version_replaces_the_ref_and_keeps_the_old_blob(
+        self, tmp_path: Path, no_symlinks: list[Path]
+    ) -> None:
+        """A hard-linked ref is replaced, never written through: writing
+        into it would change the earlier blob, which old links name."""
+        store = AssetStore(tmp_path / "store")
+        first = store.save(self._image(tmp_path, "chart.png", b"version-1"), "doc.pdf")
+        second = store.save(self._image(tmp_path, "chart.png", b"version-2"), "doc.pdf")
+
+        ref = store.persist_dir / "refs" / "doc.pdf" / "chart.png"
+        assert ref.samefile(second)
+        assert ref.read_bytes() == b"version-2"
+        assert first.read_bytes() == b"version-1"
+
+    def test_no_index_entry_at_all_still_stores_the_image(
+        self,
+        tmp_path: Path,
+        no_symlinks: list[Path],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        def refuse(*_args: object, **_kwargs: object) -> None:
+            raise OSError(errno.EACCES, "Access is denied")
+
+        monkeypatch.setattr(os, "link", refuse)
+        monkeypatch.setattr(shutil, "copyfile", refuse)
+        store = AssetStore(tmp_path / "store")
+        blob = store.save(self._image(tmp_path, "chart.png", b"chart"), "report.pdf")
+
+        assert blob.read_bytes() == b"chart"
+        assert not (store.persist_dir / "refs" / "report.pdf" / "chart.png").exists()
+
+    def test_stdout_output_links_the_stored_image(
+        self, tmp_path: Path, no_symlinks: list[Path]
+    ) -> None:
+        """What the user sees: the picture of a converted document links its
+        stored copy, not the ``![image: chart.png]()`` placeholder that a
+        refused symlink used to leave."""
+        from markitai.runs.output import resolve_asset_references
+
+        assets = tmp_path / "run" / ".markitai" / "assets"
+        assets.mkdir(parents=True)
+        (assets / "chart.png").write_bytes(b"chart")
+        store = AssetStore(tmp_path / "store")
+
+        markdown = resolve_asset_references(
+            "![Q3 revenue](.markitai/assets/chart.png)",
+            tmp_path / "run",
+            asset_store=store,
+            source_name="report.pdf",
+        )
+
+        blob = next((store.persist_dir / "blobs").iterdir())
+        assert markdown == f"![Q3 revenue]({blob.as_uri()})"
