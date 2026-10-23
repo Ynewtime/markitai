@@ -17,6 +17,14 @@ pub(super) fn regions(items: &[TextItem], charts: &[Chart]) -> Vec<Chart> {
     }
     let mut accepted = Vec::new();
     for &chart in charts {
+        let chart = if chart.labels {
+            match with_labels(items, chart) {
+                Some(chart) => chart,
+                None => continue,
+            }
+        } else {
+            chart
+        };
         let mut numeric = 0;
         let mut labels = 0;
         let mut bytes = 0;
@@ -59,6 +67,72 @@ pub(super) fn regions(items: &[TextItem], charts: &[Chart]) -> Vec<Chart> {
         return Vec::new();
     }
     accepted
+}
+
+/// A plot found without a frame or clip of its own (`Chart::labels`) grown
+/// over its labels: text of at most four words and 24 characters, no larger
+/// than its tick numbers (a heading set above the chart is larger), within
+/// two ems of it, as each label joined brings the next in reach.
+/// `None` without three tick numbers next to the plot.
+fn with_labels(items: &[TextItem], plot: Chart) -> Option<Chart> {
+    let text = || {
+        items.iter().filter(|i| {
+            matches!(i.item_type, ItemType::Text)
+                && !i.text.trim().is_empty()
+                && [i.x, i.y, i.width, i.height, i.font_size]
+                    .iter()
+                    .all(|v| v.is_finite())
+        })
+    };
+    let rect = |i: &TextItem| [i.x, i.y - i.font_size * 0.25, i.x + i.width, i.y + i.height];
+    let near = |i: &TextItem, chart: &Chart| {
+        let [x0, y0, x1, y1] = rect(i);
+        let reach = i.font_size * 2.;
+        (chart.x0 - x1).max(x0 - chart.x1) <= reach && (chart.y0 - y1).max(y0 - chart.y1) <= reach
+    };
+    let mut ticks: Vec<f32> = text()
+        .filter(|i| i.text.trim().parse::<f64>().is_ok_and(f64::is_finite) && near(i, &plot))
+        .map(|i| i.font_size)
+        .collect();
+    if ticks.len() < 3 {
+        return None;
+    }
+    ticks.sort_by(f32::total_cmp);
+    let tick = ticks[ticks.len() / 2];
+    let mut chart = Chart {
+        labels: false,
+        ..plot
+    };
+    for _ in 0..4 {
+        let mut grew = false;
+        for item in text() {
+            let [x0, y0, x1, y1] = rect(item);
+            let within = x0 >= chart.x0 && x1 <= chart.x1 && y0 >= chart.y0 && y1 <= chart.y1;
+            if within
+                || !near(item, &chart)
+                || item.font_size > tick * 1.15
+                || item.text.chars().count() > 24
+                || item.text.split_whitespace().count() > 4
+            {
+                continue;
+            }
+            chart.x0 = chart.x0.min(x0);
+            chart.y0 = chart.y0.min(y0);
+            chart.x1 = chart.x1.max(x1);
+            chart.y1 = chart.y1.max(y1);
+            grew = true;
+        }
+        if !grew {
+            break;
+        }
+    }
+    // A little room round the labels' glyphs.
+    let pad = tick * 0.3;
+    chart.x0 = (chart.x0 - pad).max(0.);
+    chart.y0 = (chart.y0 - pad).max(0.);
+    chart.x1 += pad;
+    chart.y1 += pad;
+    Some(chart)
 }
 
 #[derive(Default)]
@@ -187,6 +261,7 @@ mod tests {
             y0: 40.,
             x1: 120.,
             y1: 140.,
+            labels: false,
         };
         assert_eq!(crop(chart, frame, 400, 600), Some((40, 320, 200, 200)));
         assert_eq!(crop(Chart { x0: -1., ..chart }, frame, 400, 600), None);

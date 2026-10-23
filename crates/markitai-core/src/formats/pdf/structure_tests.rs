@@ -352,6 +352,7 @@ fn chart_pixels_replace_only_the_validated_band_and_preserve_repeated_prose() {
         y0: 220.,
         x1: 360.,
         y1: 400.,
+        labels: false,
     };
     let items = vec![
         body(

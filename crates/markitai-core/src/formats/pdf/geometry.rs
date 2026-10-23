@@ -1,4 +1,4 @@
-//! Conservative geometry for ruled tables, list marks and locally clipped bar charts.
+//! Conservative geometry for ruled tables, list marks and vector charts.
 use lopdf::{Object, ObjectId, content::Content};
 use std::collections::HashSet;
 
@@ -16,6 +16,10 @@ pub(super) struct Chart {
     pub y0: f32,
     pub x1: f32,
     pub y1: f32,
+    /// The rectangle is the plot alone (no clip or frame bounds the chart):
+    /// its labels around it are found from the page's text
+    /// (`figures::regions`).
+    pub labels: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -24,7 +28,24 @@ struct Bar {
     clip: [f32; 4],
 }
 
-type Shapes = (Vec<Edge>, Vec<Mark>, Vec<Bar>);
+/// A painted path that is not a rule or a rectangle: stroked with a curve or
+/// a slanted segment (a line chart's series), or filled with a curve, with
+/// the clip it was drawn in.
+#[derive(Clone, Copy, Debug)]
+struct Trace {
+    bounds: [f32; 4],
+    clip: [f32; 4],
+    filled: bool,
+}
+
+/// Rules, list marks, chart bars, series lines, and closed rectangles of
+/// any colour at least [`BOX_MIN`] wide (a chart's frame or background).
+type Shapes = (Vec<Edge>, Vec<Mark>, Vec<Bar>, Vec<Trace>, Vec<[f32; 4]>);
+
+/// The smallest rectangle, in points, kept as a possible chart frame.
+const BOX_MIN: [f32; 2] = [40., 30.];
+const MAX_TRACES: usize = 2048;
+const MAX_BOXES: usize = 512;
 
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Frame {
@@ -297,6 +318,8 @@ fn shapes(content: &Content, frame: Frame, resources: &RuleResources) -> Option<
     let mut marks = Vec::new();
     let mut bars = Vec::new();
     let mut bars_overflow = false;
+    let mut traces = Vec::new();
+    let mut boxes = Vec::new();
     let mut subpaths = 0usize;
     for op in &content.operations {
         let numbers = || {
@@ -499,6 +522,39 @@ fn shapes(content: &Content, frame: Frame, resources: &RuleResources) -> Option<
                         });
                     }
                 }
+                // A plot's series: a stroked path with a curve or a slanted
+                // segment; a filled curve is a shape a plot may not hold.
+                let slanted = segments
+                    .iter()
+                    .any(|(a, b)| (a[0] - b[0]).abs() > 0.3 && (a[1] - b[1]).abs() > 0.3);
+                if ((stroke && (curved || slanted)) || (fill && curved))
+                    && !clipping
+                    && traces.len() < MAX_TRACES
+                    && points.iter().all(|&p| state.inside(p))
+                {
+                    traces.push(Trace {
+                        bounds,
+                        clip: state.clip,
+                        filled: fill && curved,
+                    });
+                }
+                // A chart's frame or background, whatever its colour (often
+                // white): it may run past the clip, which bounds the chart.
+                let painted = matches!(
+                    op.operator.as_str(),
+                    "f" | "F" | "f*" | "B" | "B*" | "b" | "b*" | "S" | "s"
+                );
+                if painted
+                    && !curved
+                    && !clipping
+                    && subpaths == 1
+                    && boxes.len() < MAX_BOXES
+                    && bounds[2] - bounds[0] >= BOX_MIN[0]
+                    && bounds[3] - bounds[1] >= BOX_MIN[1]
+                    && charts::closed_rectangle(&points, &segments, bounds)
+                {
+                    boxes.push(bounds);
+                }
                 // A compact filled shape, curved or not, or a stroked ring
                 // may be a bullet; a stroked shape with straight sides is a
                 // checkbox or a frame.
@@ -551,12 +607,12 @@ fn shapes(content: &Content, frame: Frame, resources: &RuleResources) -> Option<
             return None;
         }
     }
-    Some((output, marks, bars))
+    Some((output, marks, bars, traces, boxes))
 }
 
 #[cfg(test)]
 fn edges(content: &Content, frame: Frame, resources: &RuleResources) -> Option<Vec<Edge>> {
-    shapes(content, frame, resources).map(|(edges, _, _)| edges)
+    shapes(content, frame, resources).map(|(edges, ..)| edges)
 }
 
 /// A stable sort of edges. Its comparator is a trait object, so the two
@@ -620,15 +676,13 @@ pub(super) fn page_shapes_with_charts(
     frame: Frame,
     resources: &RuleResources,
 ) -> (Vec<Grid>, Vec<Mark>, Vec<Chart>) {
-    let Some((edges, marks, bars)) = shapes(content, frame, resources) else {
+    let Some((edges, marks, bars, traces, boxes)) = shapes(content, frame, resources) else {
         return (Vec::new(), Vec::new(), Vec::new());
     };
     let edges = merge(edges);
-    (
-        detect_grids(&edges),
-        marks,
-        charts::detect(&edges, &bars, frame),
-    )
+    let mut charts = charts::detect(&edges, &bars, frame);
+    charts::plots(&edges, &bars, &traces, &boxes, frame, &mut charts);
+    (detect_grids(&edges), marks, charts)
 }
 
 #[cfg(test)]

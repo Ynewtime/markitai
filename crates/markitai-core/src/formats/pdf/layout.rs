@@ -1954,9 +1954,18 @@ fn render(
     };
     let links = links::LinkBox::collect(&items);
     items.retain(|i| matches!(i.item_type, ItemType::Text) && !i.text.trim().is_empty());
+    // Text in a chart's box (a rotated axis title among it) is carried by
+    // the chart's pixels, which `render_figures` checks it fits.
+    let in_figure = |i: &TextItem| {
+        let (x, y) = (i.x + i.width / 2., i.y + i.height / 2.);
+        [x, y].iter().all(|v| v.is_finite())
+            && context.figures.iter().any(|f| {
+                x >= f.bounds.x0 && x <= f.bounds.x1 && y >= f.bounds.y0 && y <= f.bounds.y1
+            })
+    };
     if items.is_empty()
         || items.iter().any(|i| {
-            !valid(i)
+            (!valid(i) && !in_figure(i))
                 || i.x < -1.
                 || i.y < -1.
                 // A line may run past the right edge (its width is the
@@ -1976,8 +1985,26 @@ fn render(
     if all_text.chars().any(is_right_to_left) {
         return None;
     }
-    if character_counts(&all_text) != character_counts(baseline) {
-        return None;
+    let (all, read) = (character_counts(&all_text), character_counts(baseline));
+    if all != read {
+        // The page reader may miss labels a chart's pixels carry (it drops
+        // some tick numbers), never text outside the charts.
+        let outside = character_counts(
+            &items
+                .iter()
+                .filter(|i| !in_figure(i))
+                .map(|i| i.text.as_str())
+                .collect::<String>(),
+        );
+        let count = |counts: &BTreeMap<char, usize>, c: &char| counts.get(c).copied().unwrap_or(0);
+        if context.figures.is_empty()
+            || all
+                .keys()
+                .chain(read.keys())
+                .any(|c| count(&read, c) > count(&all, c) || count(&read, c) < count(&outside, c))
+        {
+            return None;
+        }
     }
     // A large icon (a symbol font's pointing hand before a section's title)
     // decorates the text beside it and is left out, as Python markitai
@@ -2145,10 +2172,31 @@ fn render_figures(
                 tagged: context.tagged,
                 figures: &[],
             };
-            let rendered = render(band, faces, frame, band_grids, marks, &baseline, &mut child)?;
-            continues |= rendered.continues;
-            ending = rendered.ending;
-            blocks.push(rendered.markdown);
+            let ruled = !band_grids.is_empty();
+            match render(
+                band.clone(),
+                faces,
+                frame,
+                band_grids,
+                marks,
+                &baseline,
+                &mut child,
+            ) {
+                Some(rendered) => {
+                    continues |= rendered.continues;
+                    ending = rendered.ending;
+                    blocks.push(rendered.markdown);
+                }
+                // A band this reader declines (a table of one-line cells,
+                // text side by side) is read as the page reader reads text,
+                // unless it holds ruled tables, which only the page's rules
+                // give.
+                None if !ruled => {
+                    ending = None;
+                    blocks.push(reader_markdown(band, faces));
+                }
+                None => return None,
+            }
         }
         if let Some(figure) = figure {
             blocks.push(format!("![Chart](.markitai/assets/{})", figure.name));
@@ -2160,6 +2208,23 @@ fn render_figures(
         continues,
         ending,
     })
+}
+
+/// The page reader's Markdown of `items`' text, at the document's body size
+/// and heading sizes.
+fn reader_markdown(items: Vec<TextItem>, faces: &Faces) -> String {
+    let items: Vec<TextItem> = items
+        .into_iter()
+        .filter(|item| matches!(item.item_type, ItemType::Text))
+        .collect();
+    let options = pdf_inspector::MarkdownOptions {
+        base_font_size: Some(faces.body),
+        heading_tiers: (!faces.headings.is_empty()).then(|| faces.headings.clone()),
+        ..Default::default()
+    };
+    pdf_inspector::markdown::to_markdown_from_items(items, options)
+        .trim()
+        .to_owned()
 }
 
 /// What [`body`] makes of a region's lines.

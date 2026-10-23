@@ -737,6 +737,85 @@ fn clipped_vector_chart_becomes_an_asset_without_the_screenshot_option() {
 }
 
 #[test]
+fn unclipped_bar_and_line_charts_become_assets_under_their_headings() {
+    // A heading over an axes-only bar chart with no clip of its own, then a
+    // framed line chart with gridlines, its title inside the frame, under a
+    // page-wide clip (a LibreOffice export).
+    let label = |x: i32, y: i32, size: i32, text: &str| {
+        format!("0 g BT /F1 {size} Tf 1 0 0 1 {x} {y} Tm ({text}) Tj ET\n")
+    };
+    let mut stream = label(
+        40,
+        760,
+        12,
+        "An ordinary opening paragraph before the charts.",
+    );
+    stream.push_str(&label(40, 725, 18, "Water used"));
+    stream.push_str("q 0 G 1 w 100 700 m 100 560 l S 100 560 m 400 560 l S Q\n");
+    for (x, height) in [(120, 40), (185, 80), (250, 130), (315, 60)] {
+        stream.push_str(&format!("q 0.2 0.4 0.8 rg {x} 560 40 {height} re h f Q\n"));
+    }
+    for (y, tick) in [(556, "0"), (606, "50"), (656, "100")] {
+        stream.push_str(&label(80, y, 9, tick));
+    }
+    for (x, month) in [(130, "Apr"), (195, "May"), (260, "Jun"), (325, "Jul")] {
+        stream.push_str(&label(x, 546, 9, month));
+    }
+    stream.push_str(&label(300, 690, 9, "Litres per plot"));
+    stream.push_str(&label(
+        40,
+        520,
+        12,
+        "The paragraph between the charts stays text.",
+    ));
+    stream.push_str("q 0 0 612 792 re W* n\n");
+    let frame = "250 300 m 40 300 l 40 490 l 460 490 l 460 300 l 250 300 l h";
+    stream.push_str(&format!("1 1 1 rg {frame} f* 0.85 G {frame} S 0.53 G\n"));
+    for y in [330, 370, 410, 450] {
+        stream.push_str(&format!("400 {y} m 90 {y} l S\n"));
+    }
+    stream.push_str("0.29 0.49 0.73 RG 100 440 m 180 420 230 360 300 350 c 340 360 l S\n");
+    for (y, tick) in [(326, "0"), (366, "4"), (406, "8"), (446, "12")] {
+        stream.push_str(&label(70, y, 9, tick));
+    }
+    for (x, month) in [(100, "Apr"), (200, "May"), (300, "Jun")] {
+        stream.push_str(&label(x, 314, 9, month));
+    }
+    stream.push_str(&label(190, 466, 14, "Rain days"));
+    stream.push_str(&label(410, 400, 9, "Rain"));
+    stream.push_str("Q\n");
+    stream.push_str(&label(
+        40,
+        260,
+        12,
+        "The paragraph after the charts stays text.",
+    ));
+    let (bytes, _) = fixture(&[stream], false);
+    let document = extract_pages(&bytes).unwrap().finish().unwrap();
+    let charts: Vec<&str> = document
+        .assets
+        .iter()
+        .filter(|a| a.name.starts_with("pdf-chart-1-"))
+        .map(|a| a.name.as_str())
+        .collect();
+    assert_eq!(charts.len(), 2, "{}", document.markdown);
+    let markdown = &document.markdown;
+    for label in ["Litres per plot", "Apr", "Rain days", "100"] {
+        assert!(!markdown.contains(label), "{label}: {markdown}");
+    }
+    let at = |text: &str| {
+        markdown
+            .find(text)
+            .unwrap_or_else(|| panic!("{text}: {markdown}"))
+    };
+    assert!(at("opening paragraph") < at("Water used"));
+    assert!(at("Water used") < at(&format!("![Chart](.markitai/assets/{})", charts[0])));
+    assert!(at(charts[0]) < at("between the charts"));
+    assert!(at("between the charts") < at(charts[1]));
+    assert!(at(charts[1]) < at("after the charts"));
+}
+
+#[test]
 fn text_drawn_outside_the_crop_box_is_left_out_with_a_warning() {
     // One line inside the CropBox, one sentinel below and left of it: a
     // viewer shows only the first, upright or turned.

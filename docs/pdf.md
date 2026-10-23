@@ -699,12 +699,21 @@ smaller title. Without either, the first heading that names the document, then
 the file name, titles it (see [output](output.md#ordinary-and-pure-output)).
 Python markitai 1.3.0 uses the same rules.
 
-Clearly bounded vertical bar charts are preserved as PNG crops in their body
-position, including axes and legends, without `--screenshot`, OCR or an LLM.
-Detection requires a local rectangular clip, multiple aligned bars of different
-heights, grid lines, an axis and short labels, with no crossing or side-column
-text. Only a successfully rendered and placed crop replaces the scattered labels;
-otherwise the text remains. The crop does not provide an inferred data table.
+Clearly bounded vector bar and line charts are preserved as PNG crops in their
+body position, including axes, legends and titles, without `--screenshot`, OCR
+or an LLM. A plot is recognized by evenly spaced grid lines (or a lone baseline
+with an axis rising from it) carrying bars of different heights side by side or
+a stroked line across it; a filled curve on the plot (an area or pie chart) keeps
+it on the text path. The crop is the chart's local clip or drawn frame, as
+LibreOffice exports draw one, or else the plot grown over its short labels no
+larger than its tick numbers, so a heading set above the chart stays text.
+Charts need at least three tick numbers and two labels, and no crossing or
+side-column text in their band; text beside a chart elsewhere in the band (a
+data table next to a spreadsheet's chart) keeps the page on the text path. A
+band of text between charts that the layout reader declines is written as the
+page reader writes text. Only a successfully rendered and placed crop replaces
+the scattered labels; otherwise the text remains. The crop does not provide an
+inferred data table.
 
 This uses the existing CoreGraphics/hayro renderer at 144 DPI, opened only when
 needed, once per document and once per candidate page. Limits are four charts per

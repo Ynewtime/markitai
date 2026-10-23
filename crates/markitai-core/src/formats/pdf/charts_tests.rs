@@ -60,7 +60,13 @@ fn rectangles_and_implicitly_closed_paths_both_work() {
 
 #[test]
 fn page_clip_decoration_and_ungridded_bars_are_not_charts() {
-    assert!(detect_stream(&chart().replace("90 80 340 180 re", "0 0 600 800 re")).is_empty());
+    // Under a page-wide clip the chart is the plot, its labels to be found
+    // from the page's text.
+    let found = detect_stream(&chart().replace("90 80 340 180 re", "0 0 600 800 re"));
+    assert_eq!(found.len(), 1);
+    let r = found[0];
+    assert_eq!([r.x0, r.y0, r.x1, r.y1], [100., 100., 350., 250.]);
+    assert!(r.labels);
     let no_rules = chart()
         .lines()
         .filter(|s| !s.ends_with(" l S"))
@@ -104,4 +110,74 @@ fn tick_marks_do_not_move_the_vertical_axis() {
         stream.push_str(&format!("96 {y} m 100 {y} l S\n"));
     }
     assert_eq!(detect_stream(&stream).len(), 1);
+}
+
+/// A LibreOffice chart: a white background and a grey frame drawn as closed
+/// paths, evenly spaced gridlines without a vertical axis, two series of
+/// bars side by side, all under the sheet's print-area clip.
+fn office_chart(series: &str) -> String {
+    let mut stream = String::from("q 0 0 600 800 re W* n\n");
+    let frame = "250 300 m 40 300 l 40 520 l 460 520 l 460 300 l 250 300 l h";
+    stream.push_str(&format!("1 1 1 rg {frame} f*\n0.85 G {frame} S\n0.53 G\n"));
+    for y in [340, 380, 420, 460] {
+        stream.push_str(&format!("400 {y} m 90 {y} l S\n"));
+    }
+    stream.push_str(series);
+    stream.push_str("Q\n");
+    stream
+}
+
+#[test]
+fn a_framed_plot_takes_its_frame_and_a_line_series_counts() {
+    let mut bars = String::from(
+        "0.3 0.5 0.75 rg
+",
+    );
+    for (x, top) in [(100, 380), (170, 420), (240, 450)] {
+        bars.push_str(&format!(
+            "{x} 340 m {} 340 l {} {top} l {x} {top} l {x} 340 l h f*
+",
+            x + 18,
+            x + 18
+        ));
+    }
+    let found = detect_stream(&office_chart(&bars));
+    assert_eq!(found.len(), 1, "{found:?}");
+    let r = found[0];
+    assert_eq!([r.x0, r.y0, r.x1, r.y1,], [40., 300., 460., 520.]);
+    assert!(!r.labels);
+    let line = "0.29 0.49 0.73 RG 100 450 m 180 420 230 360 300 350 c 340 360 l S\n";
+    let found = detect_stream(&office_chart(line));
+    assert_eq!(found.len(), 1, "{found:?}");
+    // A filled curve on the plot, or a series too short, is no chart.
+    let area = "0.29 0.49 0.73 rg 100 340 m 180 420 230 360 300 340 c h f\n";
+    assert!(detect_stream(&office_chart(area)).is_empty());
+    let short = "0.29 0.49 0.73 RG 100 450 m 120 420 l S\n";
+    assert!(detect_stream(&office_chart(short)).is_empty());
+}
+
+#[test]
+fn frames_and_axes_alone_are_no_plot() {
+    // Two framed boxes stacked, a curve in one: their edges share a span
+    // and a left side, but a frame has a top edge.
+    let mut stream = String::new();
+    for bottom in [100, 400] {
+        let top = bottom + 200;
+        stream.push_str(&format!(
+            "0 G 40 {bottom} m 460 {bottom} l 460 {top} l 40 {top} l h S\n"
+        ));
+    }
+    stream.push_str("0 0 1 RG 100 450 m 180 420 230 360 300 350 c S\n");
+    assert!(detect_stream(&stream).is_empty());
+    // Axes alone, with bars on them: a plot, its labels from the text.
+    let mut axes =
+        String::from("0 G 100 542 m 100 342 l S 100 342 m 450 342 l S\n0.2 0.4 0.8 rg\n");
+    for (x, height) in [(120, 40), (185, 80), (250, 150)] {
+        axes.push_str(&format!("{x} 342 40 {height} re h f\n"));
+    }
+    let found = detect_stream(&axes);
+    assert_eq!(found.len(), 1, "{found:?}");
+    let r = found[0];
+    assert_eq!([r.x0, r.y0, r.x1, r.y1], [100., 342., 450., 542.]);
+    assert!(r.labels);
 }
