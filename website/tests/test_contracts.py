@@ -389,7 +389,8 @@ def test_doctor_docs_treat_ocr_as_optional() -> None:
 # ============================================================
 
 
-_LINK_RE = re.compile(r"\]\((/(?:zh/)?guide/[^)\s#]*)(?:#([^)\s]+))?\)")
+# Absolute guide links and relative ones (`./python-api#…`).
+_LINK_RE = re.compile(r"\]\((/(?:zh/)?guide/[^)\s#]*|\./[^)\s#]*)(?:#([^)\s]+))?\)")
 
 
 def _slugify_heading(text: str) -> str:
@@ -427,7 +428,10 @@ def test_internal_anchors_resolve(guide: Path) -> None:
         text = page.read_text(encoding="utf-8")
         for match in _LINK_RE.finditer(text):
             target, anchor = match.group(1), match.group(2)
-            candidate = _WEBSITE / target.lstrip("/")
+            if target.startswith("./"):
+                candidate = page.parent / target[2:]
+            else:
+                candidate = _WEBSITE / target.lstrip("/")
             if not candidate.suffix:
                 candidate = candidate.with_suffix(".md")
             if not candidate.exists():
