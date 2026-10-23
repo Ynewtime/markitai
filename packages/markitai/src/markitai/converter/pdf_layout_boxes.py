@@ -14,7 +14,9 @@ second look before the text is used:
    into an image and adds the same words as "picture text". A picture box that
    overlaps no embedded image and is mostly covered by text-layer lines is that
    case: its Markdown becomes the text alone and the crop is not referenced.
-   Real figures (an embedded image, or vector art with a few labels) stay.
+   Real figures (an embedded image, or vector art with a few labels) stay,
+   as the picture alone: the words pymupdf4llm read inside them are not
+   repeated as text (:func:`without_picture_text`).
 """
 
 from __future__ import annotations
@@ -132,6 +134,19 @@ def picture_as_text(segment: str) -> str | None:
     lines = [line.strip() for line in match.group(1).split("<br>")]
     text = "\n".join(line for line in lines if line)
     return f"\n{text}\n\n" if text else None
+
+
+def without_picture_text(segment: str) -> str:
+    """A picture block's Markdown without the "picture text" under its image.
+
+    The picture shows those words (a chart's axis numbers, legend and
+    labels): repeated below it as lines of text they only break up the
+    body. A block with no image reference keeps them (they are all there
+    is of the picture).
+    """
+    if _IMAGE_REF.search(segment) is None:
+        return segment
+    return PICTURE_TEXT.sub("", segment).rstrip() + "\n\n"
 
 
 def clean_layout_chunks(input_path: Path, chunks: list[Any]) -> list[Any]:

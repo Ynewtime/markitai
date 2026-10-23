@@ -28,9 +28,6 @@ Maecenas mauris lectus, lobortis et purus mattis, blandit dictum tellus.
 
 ![](.markitai/assets/sample.pdf-0001-10.jpg)
 
-<!-- Start of picture text -->
-12<br>10<br>8<br>Column 1<br>6<br>Column 2<br>4 Column 3<br>2<br>0<br>Row 1 Row 2 Row 3 Row 4<br><!-- End of picture text -->
-
 <!-- Page number: 2 -->
 
 In non mauris justo. Duis vehicula mi vel mi pretium, a viverra erat efficitur. Cras aliquam est ac eros varius, id iaculis dui auctor. Duis pretium neque ligula, et pulvinar mi placerat et. Nulla nec nunc sit amet nunc posuere vestibulum. Ut id neque eget tortor mattis tristique. Donec ante est, blandit sit amet tristique vel, lacinia pulvinar arcu. Pellentesque scelerisque fermentum erat, id posuere justo pulvinar ut. Cras id eros sed enim aliquam lobortis. Sed lobortis nisl ut eros efficitur tincidunt. Cras justo mi, porttitor quis mattis vel, ultricies ut purus. Ut facilisis et lacus eu cursus.

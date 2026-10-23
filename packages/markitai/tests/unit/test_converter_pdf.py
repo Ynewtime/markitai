@@ -526,9 +526,30 @@ class TestConvertBasic:
         assert markdown.endswith("Tail paragraph.")
 
     def test_picture_with_little_text_keeps_its_reference(self) -> None:
-        """A chart with a few labels stays a picture, its labels as they were."""
+        """A chart with a few labels stays a picture, and its labels stay in
+        it: the words pymupdf4llm read in the picture are not repeated below
+        it as text (the owner's 1.2.1 check: "12 10 8 Column 1 ... Row 4"
+        under a bar chart)."""
         picture = (
             "![](/tmp/stage/doc.pdf-0001-01.jpg)\n\n"
+            "<!-- Start of picture text -->\n12<br>10<br>Column 1<br>"
+            "<!-- End of picture text -->\n\n"
+        )
+        chunk = {
+            "text": f"Lead.\n\n{picture}Tail.\n",
+            "page_boxes": [
+                {"class": "picture", "pos": (len("Lead.\n\n"), 7 + len(picture))}
+            ],
+        }
+
+        markdown, references = PdfConverter()._demote_reference_picture_blocks(chunk, 1)
+
+        assert references == []
+        assert markdown == "Lead.\n\n![](/tmp/stage/doc.pdf-0001-01.jpg)\n\nTail.\n"
+
+    def test_a_picture_without_its_image_keeps_its_text(self) -> None:
+        """No image written (no reference): the text is all there is of it."""
+        picture = (
             "<!-- Start of picture text -->\n12<br>10<br>Column 1<br>"
             "<!-- End of picture text -->\n\n"
         )
@@ -537,10 +558,26 @@ class TestConvertBasic:
             "page_boxes": [{"class": "picture", "pos": (0, len(picture))}],
         }
 
-        markdown, references = PdfConverter()._demote_reference_picture_blocks(chunk, 1)
+        markdown, _ = PdfConverter()._demote_reference_picture_blocks(chunk, 1)
 
-        assert references == []
         assert markdown == picture
+
+    def test_a_vector_chart_is_a_picture_without_its_labels(
+        self, tmp_path: Path
+    ) -> None:
+        """The repository's sample.pdf: page 1's bar chart (vector art) is
+        written as an image, its axis numbers and legend nowhere in the text."""
+        source = Path(__file__).parents[1] / "fixtures" / "sample.pdf"
+        config = MarkitaiConfig()
+        config.cache.enabled = False
+
+        markdown = PdfConverter(config).convert(source, tmp_path).markdown
+
+        chart = markdown.index("![](.markitai/assets/sample.pdf-0001-10.jpg)")
+        assert "picture text" not in markdown
+        assert "Row 1 Row 2" not in markdown
+        assert "Column 1" not in markdown
+        assert markdown.index("<!-- Page number: 2 -->") > chart
 
     @patch("markitai.converter.pdf.pymupdf4llm")
     def test_convert_with_image_format_config(

@@ -34,6 +34,7 @@ from markitai.converter.pdf_layout_boxes import (
     PICTURE_TEXT,
     clean_layout_chunks,
     picture_as_text,
+    without_picture_text,
 )
 from markitai.converter.pdf_markdown import repair_pages
 from markitai.converter.pdf_ocr import (
@@ -940,7 +941,7 @@ class PdfConverter(BaseConverter):
         page_chunk: dict[str, Any],
         page_num: int,
     ) -> tuple[str, list[dict[str, Any]]]:
-        """Remove inline refs for text-heavy picture blocks while keeping picture text."""
+        """Text-heavy picture blocks become their text; pictures lose theirs."""
         text = page_chunk.get("text", "")
         page_boxes = page_chunk.get("page_boxes")
         if not isinstance(text, str) or not isinstance(page_boxes, list):
@@ -988,7 +989,8 @@ class PdfConverter(BaseConverter):
                 # comment under the picture, which no longer stands there
                 rebuilt_parts.append(as_text)
             else:
-                rebuilt_parts.append(segment)
+                # A picture: its labels are in the image, not below it
+                rebuilt_parts.append(without_picture_text(segment))
             cursor = end
 
         rebuilt_parts.append(text[cursor:])
