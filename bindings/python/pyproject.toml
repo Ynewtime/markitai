@@ -7,9 +7,29 @@ build-backend = "maturin"
 [project]
 name = "markitai"
 version = "2.0.0.dev0"
-description = "Native Rust document conversion for Python"
+description = "Convert documents, web pages and images to Markdown: CLI, MCP server and Python API"
+readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
+authors = [{ name = "Ynewtime" }]
+keywords = ["markdown", "converter", "llm", "pdf", "docx", "ocr", "mcp"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Rust",
+    "Topic :: Text Processing :: Markup :: Markdown",
+    "Topic :: Utilities",
+]
+
+[project.urls]
+Homepage = "https://markitai.dev"
+Repository = "https://github.com/Ynewtime/markitai"
+Changelog = "https://github.com/Ynewtime/markitai/blob/main/CHANGELOG.md"
 
 # The command-line program, which runs in the native extension.
 [project.scripts]
