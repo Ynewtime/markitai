@@ -242,7 +242,11 @@ fn request_with_ready(
         write!(socket, "{name}: {value}\r\n").unwrap();
     }
     socket.write_all(b"\r\n").unwrap();
-    socket.write_all(body).unwrap();
+    // A server may answer before it reads the body (a refusal, a size limit)
+    // and close; the answer is still there to read.
+    if let Err(error) = socket.write_all(body) {
+        assert!(closed_early(&error), "{error}");
+    }
     let mut raw = Vec::new();
     if let Some(ready) = ready {
         // Shutdown may close the listener before a newly spawned subscriber
@@ -262,7 +266,17 @@ fn request_with_ready(
         assert_eq!(status, 200, "event subscription rejected");
         ready.send(()).unwrap();
     }
-    socket.read_to_end(&mut raw).unwrap();
+    // The connection closes with `Connection: close`. When the server closed
+    // while body bytes it never read were still arriving, its system resets
+    // the connection; the reply already received stays readable before the
+    // reset is reported, so a complete reply is kept.
+    if let Err(error) = socket.read_to_end(&mut raw) {
+        assert!(
+            closed_early(&error) && reply_complete(&raw),
+            "{error} after {} bytes",
+            raw.len()
+        );
+    }
     let split = raw.windows(4).position(|v| v == b"\r\n\r\n").unwrap();
     let head = String::from_utf8_lossy(&raw[..split]);
     let mut lines = head.lines();
@@ -317,6 +331,37 @@ fn request_with_ready(
         body,
     }
 }
+fn closed_early(error: &std::io::Error) -> bool {
+    matches!(
+        error.kind(),
+        std::io::ErrorKind::ConnectionReset
+            | std::io::ErrorKind::BrokenPipe
+            | std::io::ErrorKind::ConnectionAborted
+    )
+}
+/// Whether `raw` holds a whole HTTP reply: its headers and the body their
+/// Content-Length or chunked encoding promises.
+fn reply_complete(raw: &[u8]) -> bool {
+    let Some(split) = raw.windows(4).position(|v| v == b"\r\n\r\n") else {
+        return false;
+    };
+    let head = String::from_utf8_lossy(&raw[..split]).to_ascii_lowercase();
+    let body = &raw[split + 4..];
+    let header = |name: &str| {
+        head.lines()
+            .skip(1)
+            .find_map(|line| line.strip_prefix(name).map(|value| value.trim().to_owned()))
+    };
+    if let Some(length) = header("content-length:") {
+        return length
+            .parse::<usize>()
+            .is_ok_and(|length| body.len() >= length);
+    }
+    if header("transfer-encoding:").is_some_and(|value| value == "chunked") {
+        return body.starts_with(b"0\r\n\r\n") || body.windows(7).any(|v| v == b"\r\n0\r\n\r\n");
+    }
+    false
+}
 fn multipart(files: &[(&str, &[u8])], urls: Value, options: Value) -> (String, Vec<u8>) {
     let boundary = "markitai-independent-serve-test";
     let mut body = Vec::new();
@@ -347,6 +392,54 @@ fn zip_contents(bytes: &[u8]) -> HashMap<String, Vec<u8>> {
             (name, bytes)
         })
         .collect()
+}
+
+/// A server that refuses a request before reading its body and closes is
+/// reset by its system once the unread bytes arrive; the client still gets the
+/// reply. (macOS runners met this on refusals of JSON bodies.)
+#[test]
+fn the_test_client_keeps_a_reply_sent_before_an_unread_body() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = std::thread::spawn(move || {
+        let (mut socket, _) = listener.accept().unwrap();
+        let mut head = Vec::new();
+        while !head.ends_with(b"\r\n\r\n") {
+            let mut byte = [0];
+            socket.read_exact(&mut byte).unwrap();
+            head.push(byte[0]);
+        }
+        let body = br#"{"reason":"request_too_large"}"#;
+        write!(
+            socket,
+            "HTTP/1.1 413 Payload Too Large\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        )
+        .unwrap();
+        socket.write_all(body).unwrap();
+        // Let the unread body pile up, then close with it unread: a reset.
+        std::thread::sleep(Duration::from_millis(200));
+    });
+    let reply = request(
+        port,
+        "POST",
+        "/api/access-tokens",
+        &[],
+        &vec![b'x'; 8 << 20],
+    );
+    server.join().unwrap();
+    assert_eq!(reply.status, 413);
+    assert_eq!(reply.json()["reason"], "request_too_large");
+    assert!(reply_complete(
+        b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n"
+    ));
+    assert!(reply_complete(
+        b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nok\r\n0\r\n\r\n"
+    ));
+    assert!(!reply_complete(
+        b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nok"
+    ));
+    assert!(!reply_complete(b"HTTP/1.1 200 OK\r\n\r\nno length"));
 }
 
 /// An uploaded `.urls` list is a batch of URLs, not a document: its entries
