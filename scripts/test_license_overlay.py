@@ -14,6 +14,8 @@ from ci_packages import supplement_wheel_licenses, verify_node_licenses
 from package_go_static import bundle_licenses, inventory, package_archive, unpack_verified
 
 VENDOR = Path(__file__).resolve().parents[1] / "licenses/upstream"
+# Windows refuses symlinks to accounts without Developer Mode or administrator rights.
+ERROR_PRIVILEGE_NOT_HELD = 1314
 REFRESHED = {"selectors@0.41.0", "napi@3.15.0", "napi-derive@3.6.13", "napi-sys@3.4.1",
              "napi-derive-backend@6.1.6"}
 
@@ -202,19 +204,25 @@ class LicenseOverlayTests(unittest.TestCase):
             stage_overlay(self.vendor, self.destination, self.packages)
         self.assertFalse(self.destination.exists())
 
-    def test_inventory_rejects_symlinks_traversal_and_unlisted_files(self):
+    def test_inventory_rejects_symlinks(self):
+        source = self.vendor / "README.md"
+        outside = self.root / "readme"
+        source.rename(outside)
+        try:
+            source.symlink_to(outside)
+        except OSError as error:
+            if getattr(error, "winerror", None) != ERROR_PRIVILEGE_NOT_HELD:
+                raise
+            self.skipTest("this Windows account may not create symlinks")
+        with self.assertRaisesRegex(RuntimeError, "symlinks"):
+            stage_overlay(self.vendor, self.destination, self.packages)
+        self.assertFalse(self.destination.exists())
+
+    def test_inventory_rejects_traversal_and_unlisted_files(self):
         (self.vendor / "unreviewed.txt").write_text("extra")
         with self.assertRaisesRegex(RuntimeError, "not exact"):
             stage_overlay(self.vendor, self.destination, self.packages)
         (self.vendor / "unreviewed.txt").unlink()
-        source = self.vendor / "README.md"
-        outside = self.root / "readme"
-        source.rename(outside)
-        source.symlink_to(outside)
-        with self.assertRaisesRegex(RuntimeError, "symlinks"):
-            stage_overlay(self.vendor, self.destination, self.packages)
-        source.unlink()
-        outside.rename(source)
         value = json.loads((self.vendor / "inventory.json").read_text())
         value["files"][0]["path"] = "../escape"
         (self.vendor / "inventory.json").write_text(json.dumps(value))
