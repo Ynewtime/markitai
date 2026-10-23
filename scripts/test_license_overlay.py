@@ -18,6 +18,9 @@ VENDOR = Path(__file__).resolve().parents[1] / "licenses/upstream"
 ERROR_PRIVILEGE_NOT_HELD = 1314
 REFRESHED = {"selectors@0.41.0", "napi@3.15.0", "napi-derive@3.6.13", "napi-sys@3.4.1",
              "napi-derive-backend@6.1.6"}
+# Lock-refresh tuples of 2026-10-23 (brotli 9, macOS objc2, Android verifier).
+LOCK_REFRESH = {"alloc-stdlib@0.3.0", "objc2@0.6.5", "jni@0.22.4", "jni-macros@0.22.4",
+                "jni-sys-macros@0.4.1", "rustls-platform-verifier-android@0.2.0"}
 
 
 class LicenseOverlayTests(unittest.TestCase):
@@ -36,6 +39,7 @@ class LicenseOverlayTests(unittest.TestCase):
         self.avif_packages = []
         # Versions added after the dependency majors of 2026-10-22.
         self.refresh_packages = []
+        self.lock_packages = []
         for item in self.manifest["packages"]:
             label = f"{item['name']}-{item['version']}"
             source = self.root / "registry" / label
@@ -50,7 +54,9 @@ class LicenseOverlayTests(unittest.TestCase):
                             target = source / name
                             target.parent.mkdir(parents=True, exist_ok=True)
                             target.write_bytes(archive.extractfile(member).read())
-            if item["id"].rsplit("#", 1)[-1] in REFRESHED:
+            if item["id"].rsplit("#", 1)[-1] in LOCK_REFRESH:
+                target_packages = self.lock_packages
+            elif item["id"].rsplit("#", 1)[-1] in REFRESHED:
                 target_packages = self.refresh_packages
             elif item["name"] in {"napi", "napi-build", "napi-derive", "napi-sys"}:
                 target_packages = self.node_packages
@@ -298,8 +304,8 @@ class LicenseOverlayTests(unittest.TestCase):
         self.assertFalse(self.destination.exists())
 
     def test_historical_original_closes_text_gap_without_claiming_legal_review(self):
-        result = stage_overlay(self.vendor, self.destination, self.packages)
-        self.assertEqual(result["record"]["historical_text_packages"], 3)
+        result = stage_overlay(self.vendor, self.destination, self.packages + self.lock_packages)
+        self.assertEqual(result["record"]["historical_text_packages"], 4)
         self.assertEqual(result["record"]["legal_review"], "not_performed")
         for entry in self.manifest["packages"]:
             if not entry.get("supplemental"):
@@ -423,7 +429,7 @@ class LicenseOverlayTests(unittest.TestCase):
 
     def test_parent_terms_close_both_gaps_with_truthful_manifest_provenance(self):
         result = stage_overlay(self.vendor, self.destination, self.packages)
-        self.assertEqual(result["record"]["exact_commit_manifest_matches"], 33)
+        self.assertEqual(result["record"]["exact_commit_manifest_matches"], 39)
         self.assertEqual(result["record"]["reviewed_publication_version_stamps"], 1)
         expected = {"nom-language": ("raw_exact_match", ["LICENSE"], 7),
                     "tract-extra": ("reviewed_publication_version_stamp",
@@ -652,9 +658,9 @@ class LicenseOverlayTests(unittest.TestCase):
         result = stage_overlay(self.vendor, self.destination, self.packages + self.node_packages + napi)
         self.assertEqual(result["record"]["matched_packages"], 25)
         self.assertEqual(result["record"]["complete_text_packages"], 25)
-        self.assertEqual(result["record"]["exact_commit_manifest_matches"], 33)
+        self.assertEqual(result["record"]["exact_commit_manifest_matches"], 39)
         self.assertEqual(result["record"]["reviewed_publication_version_stamps"], 1)
-        self.assertEqual(len(result["record"]["source_archives"]), 12)
+        self.assertEqual(len(result["record"]["source_archives"]), 18)
         for entry in self.manifest["packages"]:
             if not entry["name"].startswith("napi"):
                 continue
@@ -768,6 +774,49 @@ class LicenseOverlayTests(unittest.TestCase):
         self.save_manifest()
         with self.assertRaises(RuntimeError):
             stage_overlay(self.vendor, self.destination, self.refresh_packages)
+        self.assertFalse(self.destination.exists())
+
+    def test_lock_refresh_tuples_take_their_own_commit_root_terms(self):
+        self.assertEqual(sorted(p["name"] for p in self.lock_packages),
+                         ["alloc-stdlib", "jni", "jni-macros", "jni-sys-macros", "objc2",
+                          "rustls-platform-verifier-android"])
+        result = stage_overlay(self.vendor, self.destination, self.packages + self.lock_packages)
+        self.assertEqual(result["record"]["matched_packages"], 23)
+        self.assertEqual(result["record"]["complete_text_packages"], 23)
+        expected = {"alloc-stdlib": ["LICENSE"], "objc2": ["LICENSE-MIT-HISTORICAL.txt", "LICENSE.md"]}
+        for package in self.lock_packages:
+            entry = next(p for p in self.manifest["packages"] if p["id"] == package["id"])
+            self.assertEqual(entry["license_inherited_from_workspace"], package["name"] == "jni")
+            vcs = json.loads((self.vendor / "local-evidence" / f"{package['name']}-{package['version']}"
+                              / ".cargo_vcs_info.json").read_text())
+            self.assertEqual((vcs["git"]["sha1"], vcs["path_in_vcs"]), (entry["commit"], entry["path_in_vcs"]))
+            record = result["packages"][package["id"]]
+            self.assertEqual(record["manifest_provenance"], "raw_exact_match")
+            self.assertTrue(record["complete_text"])
+            self.assertEqual(record["historical_provenance"], package["name"] == "objc2")
+            self.assertEqual(sorted(Path(text["path"]).name for text in record["texts"]),
+                             expected.get(package["name"], ["LICENSE-APACHE", "LICENSE-MIT"]))
+        archives = {(row["package"], row["version"]) for row in result["record"]["source_archives"]}
+        self.assertTrue({(p["name"], p["version"]) for p in self.lock_packages} <= archives)
+
+    def test_only_jni_may_claim_workspace_license_inheritance(self):
+        for name, claim in [("jni-macros", True), ("jni", False)]:
+            entry = next(p for p in self.manifest["packages"] if p["name"] == name)
+            entry["license_inherited_from_workspace"] = claim
+            self.save_manifest()
+            with self.assertRaisesRegex(RuntimeError, "parent license package scope"):
+                stage_overlay(self.vendor, self.destination, self.lock_packages)
+            self.assertFalse(self.destination.exists())
+            entry["license_inherited_from_workspace"] = not claim
+        self.save_manifest()
+
+    def test_objc2_0_6_5_historical_text_needs_its_own_commit_history(self):
+        old = next(p for p in self.manifest["packages"] if p["id"].endswith("#objc2@0.6.4"))
+        entry = next(p for p in self.manifest["packages"] if p["id"].endswith("#objc2@0.6.5"))
+        entry["supplemental"][0]["proofs"][0] = dict(old["supplemental"][0]["proofs"][0])
+        self.save_manifest()
+        with self.assertRaisesRegex(RuntimeError, "target-anchored provenance"):
+            stage_overlay(self.vendor, self.destination, self.lock_packages)
         self.assertFalse(self.destination.exists())
 
     def test_atomig_macro_terms_are_the_published_commit_root_licenses(self):

@@ -100,10 +100,11 @@ _MIT_ORIGINAL_URL = "https://raw.githubusercontent.com/madsmtm/objc2/9961247c1a8
 _MIT_ORIGINAL_SHA = "e353f37b12aefbb9f9b29490e837cfee05d9bda70804b3562839a3285c1df1e5"
 _MIT_TARGETS = {
     ("objc2", "0.6.4"): "8852b424193ca41602281b3d7540d7c8ed51e49a",
+    ("objc2", "0.6.5"): "d7d2fa23ceaa5e6096c923b081040e5d81b3b9df",
     ("objc2-encode", "4.1.0"): "8d214f5477365ffcbcbb7de058c86ed9a518efb7",
     ("objc2-foundation", "0.3.2"): "7b1abfd750a2cacaea71d6a56ecfb83cb7de560b",
 }
-_MIT_PROOFS = {'https://github.com/madsmtm/objc2/commits/8d214f5477365ffcbcbb7de058c86ed9a518efb7/LICENSE.txt': '0a1efed6cc84aac1d931fe09facf2883ae2fb13caa4e131ddc3bf61aca0d9e3a', 'https://github.com/madsmtm/objc2/commit/cfb199226661ec6e4939fcd7cd7531b3c5453076.patch': 'b4ecc7d6db95a78e1cf777636049b4a9156783f326edf016a1461b24c84d1872', 'https://github.com/madsmtm/objc2/commit/9961247c1a82027d6edbe6c516011b1363b9354c.patch': '13127f39976ceecdadb86870d2448867fba8601ad21a376724f242fbd67e86fb', 'https://github.com/madsmtm/objc2/commits/8852b424193ca41602281b3d7540d7c8ed51e49a/LICENSE.txt': 'cce3f980b9088bf6533102997510603f50a5fbdda6fd34c055f797777fc20e0b', 'https://github.com/madsmtm/objc2/commits/7b1abfd750a2cacaea71d6a56ecfb83cb7de560b/LICENSE.txt': 'ab00bc3db74112a44b17ac776fab3a16bc6122ffc8ccf2708a80e5d96206b4de'}
+_MIT_PROOFS = {'https://github.com/madsmtm/objc2/commits/8d214f5477365ffcbcbb7de058c86ed9a518efb7/LICENSE.txt': '0a1efed6cc84aac1d931fe09facf2883ae2fb13caa4e131ddc3bf61aca0d9e3a', 'https://github.com/madsmtm/objc2/commit/cfb199226661ec6e4939fcd7cd7531b3c5453076.patch': 'b4ecc7d6db95a78e1cf777636049b4a9156783f326edf016a1461b24c84d1872', 'https://github.com/madsmtm/objc2/commit/9961247c1a82027d6edbe6c516011b1363b9354c.patch': '13127f39976ceecdadb86870d2448867fba8601ad21a376724f242fbd67e86fb', 'https://github.com/madsmtm/objc2/commits/8852b424193ca41602281b3d7540d7c8ed51e49a/LICENSE.txt': 'cce3f980b9088bf6533102997510603f50a5fbdda6fd34c055f797777fc20e0b', 'https://github.com/madsmtm/objc2/commits/7b1abfd750a2cacaea71d6a56ecfb83cb7de560b/LICENSE.txt': 'ab00bc3db74112a44b17ac776fab3a16bc6122ffc8ccf2708a80e5d96206b4de', 'https://github.com/madsmtm/objc2/commits/d7d2fa23ceaa5e6096c923b081040e5d81b3b9df/LICENSE.txt': '21a492cb3a3a28562fcdcf08ba386c60f21937d28db7697dbb414294ff95f907'}
 _SELECTORS_ARCHIVE_SHA = "8adfa1c298912827b8a28b223b3b874357397ae706e6190acd9bf28cee99114d"
 # Published source and the one version-stamp exception are fixed review facts,
 # never a general permission to normalize manifests or accept dirty sources.
@@ -155,6 +156,16 @@ _SOURCE_PACKAGES.update({
     ('napi-derive', '3.6.13', 'd9cb526c15e63ba30e06b4d169068c9854180595'): {'sha256': '3ff48271a0f61abb83f3e2d1989fa71169143db95f6f948c3a8903961f2855dc', 'path_in_vcs': 'crates/macro', 'members': 16, 'repository': 'napi-rs/napi-rs', 'declared_license': 'MIT', 'terms': {'LICENSE': '3f1ce66533302df3a32edbfdfc0b78f0dd34659e4c1f5817162e5ea3c2297215'}, 'parent_manifest_sha256': 'f2110059925ada6800f0d3e8a7976f6967803686d6a87d68f2c67ce5974b6261', 'package_manifest_sha256': '84f5ae907e86619814aad37c03c22253a547e12fd2cc3d8c500b26c2aedc5a95', 'vcs_sha256': '9af016540388a0b6e0d14bebc10fff6951ac43412cf878738ae47607cdc75124'},
     ('napi-sys', '3.4.1', 'd9cb526c15e63ba30e06b4d169068c9854180595'): {'sha256': 'd153beb7d5c973f4b9395be8a83054a28968b61188f1dd1a2cc2321af22daea2', 'path_in_vcs': 'crates/sys', 'members': 11, 'repository': 'napi-rs/napi-rs', 'declared_license': 'MIT', 'terms': {'LICENSE': '3f1ce66533302df3a32edbfdfc0b78f0dd34659e4c1f5817162e5ea3c2297215'}, 'parent_manifest_sha256': 'f2110059925ada6800f0d3e8a7976f6967803686d6a87d68f2c67ce5974b6261', 'package_manifest_sha256': '82b7eef9b33624a95256db45c4736805c2a77ae37319c34a4b0286c87694ae10', 'vcs_sha256': '2a3eb2bd1135dbf07a332c93f714fc0ccf768187c7ece05d35009c3ccebb54fc'},
     ('napi-derive-backend', '6.1.6', 'd9cb526c15e63ba30e06b4d169068c9854180595'): {'sha256': 'f2639052c5aff9956a21d7b6202fc61d5e89c5f19c72d289b7a0641ea94e8159', 'path_in_vcs': 'crates/backend', 'members': 22, 'repository': 'napi-rs/napi-rs', 'declared_license': 'MIT', 'terms': {'LICENSE': '3f1ce66533302df3a32edbfdfc0b78f0dd34659e4c1f5817162e5ea3c2297215'}, 'parent_manifest_sha256': 'f2110059925ada6800f0d3e8a7976f6967803686d6a87d68f2c67ce5974b6261', 'package_manifest_sha256': '310cae4da3ac464443046c8acb5e563e60da2b5ab502f824dfd07f8c65c14772', 'vcs_sha256': '35c192e47381e0c1a3f74c4231ae9a7b01aa5051c564f9b31bae5c4127334dce'},
+})
+# Lock-refresh tuples of 2026-10-23. jni alone inherits its license from the
+# pinned parent workspace manifest; objc2 takes the reviewed historical MIT text.
+_SOURCE_PACKAGES.update({
+    ('alloc-stdlib', '0.3.0', '0a81fd6928ea3b33c8cd484aa4575d50ffb98012'): {'sha256': '0b5c1865780388bfa186411ab5f247819487fc4864c6e9c3106611fa347586e1', 'path_in_vcs': 'alloc-stdlib', 'members': 12, 'repository': 'dropbox/rust-alloc-no-stdlib', 'declared_license': 'BSD-3-Clause', 'terms': {'LICENSE': 'c0c56f26d9c051cac4d200c34c84e7ae9aaa853e01a982a1df08b09931e518ae'}, 'package_manifest_sha256': '13c6e8d5ec2e75ae6b66542498e049e1100e71ef25e29ccb9cb083b40d6279ea', 'vcs_sha256': '2bfc044805e0e75273a7e4d06c9d72f4e029a6cb926e4645c382bde160ecfd95'},
+    ('jni', '0.22.4', '5ae9458a4ec44c5318f37ddc7569c1d4ae8a69e7'): {'sha256': '5efd9a482cf3a427f00d6b35f14332adc7902ce91efb778580e180ff90fa3498', 'path_in_vcs': 'crates/jni', 'members': 76, 'repository': 'jni-rs/jni-rs', 'declared_license': 'MIT OR Apache-2.0', 'terms': {'LICENSE-MIT': 'fea1d5bf3dd71605ce5d7d2ff695c1837e914c77195e523a86b5391716477960', 'LICENSE-APACHE': 'a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2'}, 'license_inherited_from_workspace': True, 'parent_manifest_sha256': '83fb01ea19de610d7c177f50959f5b76ae1cf83571a838aff43dc4914af870bc', 'package_manifest_sha256': '420d0c6c04c3579946386ceea541bf5dd5f564b6b190e76568cce83bad0b9db3', 'vcs_sha256': '0619bb2725fac7b26a1935d1379d5eea7427eb987731a982500389de5efd5b8b'},
+    ('jni-macros', '0.22.4', '33045a124105c939d1e2cbdcb5a39e5d868ffa03'): {'sha256': 'a00109accc170f0bdb141fed3e393c565b6f5e072365c3bd58f5b062591560a3', 'path_in_vcs': 'crates/jni-macros', 'members': 14, 'repository': 'jni-rs/jni-rs', 'declared_license': 'MIT OR Apache-2.0', 'terms': {'LICENSE-MIT': 'fea1d5bf3dd71605ce5d7d2ff695c1837e914c77195e523a86b5391716477960', 'LICENSE-APACHE': 'a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2'}, 'parent_manifest_sha256': '1d950cf4f7fb6584187a3705c37611f9b5b5cd1cdcaf3a3326a4b60abc29aff5', 'package_manifest_sha256': 'cfa3ca54bc23baa582a42df863f397debe8c4312a80ead221e8e049b834f93b5', 'vcs_sha256': '5b271175fb5d736bf6e71f696a8829f37c6c00391065111526d7e43fdeb537e1'},
+    ('jni-sys-macros', '0.4.1', '64d77b7a5f119d7b55b4e2c169a4668067ff59e6'): {'sha256': '38c0b942f458fe50cdac086d2f946512305e5631e720728f2a61aabcd47a6264', 'path_in_vcs': 'jni-sys-macros', 'members': 6, 'repository': 'jni-rs/jni-sys', 'declared_license': 'MIT OR Apache-2.0', 'terms': {'LICENSE-MIT': '1d85bd754b04ceec93e98e890edd1fa3c6a22e81bcb32135806beeccefa51cd1', 'LICENSE-APACHE': 'c6596eb7be8581c18be736c846fb9173b69eccf6ef94c5135893ec56bd92ba08'}, 'parent_manifest_sha256': '193ab6fe89ccbbed7ea68c3bf611cf098253e811824c7079fba6979737fff1e7', 'package_manifest_sha256': '6501ef93eff9b37ab65ec846bd06992d79cc28d8ef1f02f13b0488ff441ed90a', 'vcs_sha256': '1824b83bc25a1e245bcb97a6503105bfe07078a47cddc924c6b7db91e8852f45'},
+    ('objc2', '0.6.5', 'd7d2fa23ceaa5e6096c923b081040e5d81b3b9df'): {'sha256': '08849bbd4767dfae9457696856ae1c84fe4e0281bbe4a7abff2d0e06fb7981f8', 'path_in_vcs': 'crates/objc2', 'members': 120, 'repository': 'madsmtm/objc2', 'declared_license': 'MIT', 'parent_manifest_sha256': 'f93fce3a2814c16597140137b109c53042c0ae74909fd123a8a4d1f7d35090da', 'package_manifest_sha256': '4a1e1561612efc4a8aea4dd574c781f6215fa5416696425227558fc782353cba', 'vcs_sha256': '5f7c8e095d3933c477ff1f71021b551cbfe497a62346a1dc8615debd9846e257'},
+    ('rustls-platform-verifier-android', '0.2.0', '252e25161a91af476cbea620e29d277592d27ec7'): {'sha256': 'eec689c0bc40ff2458a5977b6619cb718087084a18e02a131c599b62d05e1a5f', 'path_in_vcs': 'android-release-support', 'members': 5, 'repository': 'rustls/rustls-platform-verifier', 'declared_license': 'MIT OR Apache-2.0', 'terms': {'LICENSE-MIT': '1c7cf76689c837a68ed8d704994e52a0f2940c087958f860d17f3186afbdcc0c', 'LICENSE-APACHE': 'c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4'}, 'parent_manifest_sha256': '5c47afb1a10db977965be6be81fe4e17a5fdea95a506dfc5cfe8daf5f5708fc1', 'package_manifest_sha256': 'e78f460d378e8fbf3cb90e96a249c8d23cd7cfc97e83cd7b95d979472de4adad', 'vcs_sha256': 'f9de66ae77438abeb19e82916812a0266cfdbcd6a8b1ca0404f5f167daf0a43e'},
 })
 _TRACT_IDENTITY = ("tract-extra", "0.23.8", "248335349c0f59a5772d737480b8b39250097374")
 _TRACT_STAMP = {"kind": "reviewed_publication_version_stamp", "upstream_version": "0.23.8-pre",
@@ -400,19 +411,18 @@ def stage_overlay(source, destination, packages):
         exact_matches += provenance == "raw_exact_match"
         publication_stamps += provenance == "reviewed_publication_version_stamp"
         reviewed = _SOURCE_PACKAGES.get((entry["name"], entry["version"], commit), {})
-        if "parent_manifest_sha256" in reviewed:
-            if (hashlib.sha256(data.get(root + "Cargo.toml", b"")).hexdigest()
-                    != reviewed["parent_manifest_sha256"]
-                    or hashlib.sha256(data[upstream_manifest]).hexdigest()
-                    != reviewed["package_manifest_sha256"]
-                    or hashlib.sha256(data[original + ".cargo_vcs_info.json"]).hexdigest()
-                    != reviewed["vcs_sha256"]):
-                raise RuntimeError("Reviewed Node parent/package/VCS byte identity differs")
+        pinned = [(root + "Cargo.toml", "parent_manifest_sha256"),
+                  (upstream_manifest, "package_manifest_sha256"),
+                  (original + ".cargo_vcs_info.json", "vcs_sha256")]
+        if any(field in reviewed and hashlib.sha256(data.get(name, b"")).hexdigest() != reviewed[field]
+               for name, field in pinned):
+            raise RuntimeError("Reviewed parent/package/VCS byte identity differs")
         if "terms" in reviewed:
             if (repo != reviewed["repository"] or path != reviewed["path_in_vcs"]
                     or key != f"registry+https://github.com/rust-lang/crates.io-index#{entry['name']}@{entry['version']}"
                     or entry["declared_license"] != reviewed["declared_license"]
-                    or entry.get("license_inherited_from_workspace") is not False
+                    or entry.get("license_inherited_from_workspace")
+                    is not reviewed.get("license_inherited_from_workspace", False)
                     or entry.get("version_inherited_from_workspace") is not False
                     or entry["complete_license_options_present"] != reviewed["declared_license"].split(" OR ")
                     or len(entry["assets"]) != len(reviewed["terms"])

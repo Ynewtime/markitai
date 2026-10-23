@@ -101,6 +101,29 @@ tuples stay. This brings the overlay to thirty-four versions, thirty-three raw
 exact manifest matches, fifty-five overlay files and twelve source archives.
 Legal review remains not_performed.
 
+## alloc-stdlib 0.3.0, objc2 0.6.5, the jni crates and rustls-platform-verifier-android 0.2.0
+
+The lock adds alloc-stdlib 0.3.0 (brotli 9), objc2 0.6.5 (macOS), jni and
+jni-macros 0.22.4, jni-sys-macros 0.4.1 and rustls-platform-verifier-android
+0.2.0; none ships a license file. The last four come with rustls-platform-verifier
+on Android only, which the packaged Cargo closure conservatively includes. Each
+unmodified crates.io archive (SHA-256 equal to the Cargo.lock checksum) is kept;
+its `.cargo_vcs_info.json` names the commit and crate path, and its
+`Cargo.toml.orig` equals the same-commit crate manifest. alloc-stdlib takes the
+root LICENSE of dropbox/rust-alloc-no-stdlib `0a81fd69…`, byte-identical to
+0.2.4's. jni (`5ae9458a…`) inherits `license = "MIT OR Apache-2.0"` from the
+same-commit workspace manifest; jni-macros (`33045a12…`), jni-sys-macros
+(jni-rs/jni-sys `64d77b7a…`) and rustls-platform-verifier-android (`252e2516…`)
+declare it directly. Each takes its commit's root LICENSE-MIT and LICENSE-APACHE
+unchanged. objc2 0.6.5 (`d7d2fa23…`) is covered as 0.6.4 is: its root LICENSE.md
+is the same notice, and the LICENSE.txt history at that commit (under `history/`)
+ends with the same 2025 removal, so the historical MIT text is supplied. The
+validator pins each tuple; only jni may claim workspace inheritance. The
+retrievals are listed under `lock_refresh_license_collection` in the manifest.
+The superseded tuples stay. This brings the overlay to forty versions,
+thirty-nine raw exact manifest matches, sixty-six overlay files, eighteen source
+archives and four historical-text packages. Legal review remains not_performed.
+
 ## Original seventeen-version collection and retained history
 
 Packaging validates this directory offline before copying it. Package manifests,

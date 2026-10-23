@@ -3,8 +3,13 @@
   "files": [
     {
       "path": "README.md",
-      "bytes": 11002,
-      "sha256": "588f27b150d36034d6ef36a70ec73878228c3086ad89e8092d40c9f1987038bb"
+      "bytes": 12664,
+      "sha256": "7328686da898b36ed8e2d131cdbabea59bdc79cc2fbc0c11602c99c9d740593f"
+    },
+    {
+      "path": "history/objc2-0.6.5-license-history.html",
+      "bytes": 230754,
+      "sha256": "21a492cb3a3a28562fcdcf08ba386c60f21937d28db7697dbb414294ff95f907"
     },
     {
       "path": "input-manifest.json",
@@ -30,6 +35,21 @@
       "path": "local-evidence/alloc-stdlib-0.2.4/README.md",
       "bytes": 6776,
       "sha256": "4857caaabcb6eb367687e6671d70fef3b8dcbab1276999612b71f9f4cd6190b0"
+    },
+    {
+      "path": "local-evidence/alloc-stdlib-0.3.0/.cargo_vcs_info.json",
+      "bytes": 106,
+      "sha256": "2bfc044805e0e75273a7e4d06c9d72f4e029a6cb926e4645c382bde160ecfd95"
+    },
+    {
+      "path": "local-evidence/alloc-stdlib-0.3.0/Cargo.toml.orig",
+      "bytes": 697,
+      "sha256": "13c6e8d5ec2e75ae6b66542498e049e1100e71ef25e29ccb9cb083b40d6279ea"
+    },
+    {
+      "path": "local-evidence/alloc-stdlib-0.3.0/README.md",
+      "bytes": 7210,
+      "sha256": "ce091cc5c95ad5c2c7f9a7db0edb42703db5b9c7db9f7118850d46727144ea3f"
     },
     {
       "path": "local-evidence/atomig-macro-0.4.0/.cargo_vcs_info.json",
@@ -142,6 +162,36 @@
       "sha256": "f95dde5560e0b9fe496271e72959d1ba1c0b4695afc8867fa2cf5dbee225325e"
     },
     {
+      "path": "local-evidence/jni-0.22.4/.cargo_vcs_info.json",
+      "bytes": 104,
+      "sha256": "0619bb2725fac7b26a1935d1379d5eea7427eb987731a982500389de5efd5b8b"
+    },
+    {
+      "path": "local-evidence/jni-0.22.4/Cargo.toml.orig",
+      "bytes": 2401,
+      "sha256": "420d0c6c04c3579946386ceea541bf5dd5f564b6b190e76568cce83bad0b9db3"
+    },
+    {
+      "path": "local-evidence/jni-macros-0.22.4/.cargo_vcs_info.json",
+      "bytes": 111,
+      "sha256": "5b271175fb5d736bf6e71f696a8829f37c6c00391065111526d7e43fdeb537e1"
+    },
+    {
+      "path": "local-evidence/jni-macros-0.22.4/Cargo.toml.orig",
+      "bytes": 678,
+      "sha256": "cfa3ca54bc23baa582a42df863f397debe8c4312a80ead221e8e049b834f93b5"
+    },
+    {
+      "path": "local-evidence/jni-sys-macros-0.4.1/.cargo_vcs_info.json",
+      "bytes": 108,
+      "sha256": "1824b83bc25a1e245bcb97a6503105bfe07078a47cddc924c6b7db91e8852f45"
+    },
+    {
+      "path": "local-evidence/jni-sys-macros-0.4.1/Cargo.toml.orig",
+      "bytes": 473,
+      "sha256": "6501ef93eff9b37ab65ec846bd06992d79cc28d8ef1f02f13b0488ff441ed90a"
+    },
+    {
       "path": "local-evidence/napi-3.14.0/.cargo_vcs_info.json",
       "bytes": 105,
       "sha256": "39e3cd2d05c1dc6eb219f18bbff425b6ab3ec8d4cb52edde206e8698279881b4"
@@ -243,6 +293,21 @@
     },
     {
       "path": "local-evidence/objc2-0.6.4/README.md",
+      "bytes": 847,
+      "sha256": "5da56f1508a87b982a23e6bad2ff09b329f7fcf9181ea15eac17788f8d1c6824"
+    },
+    {
+      "path": "local-evidence/objc2-0.6.5/.cargo_vcs_info.json",
+      "bytes": 106,
+      "sha256": "5f7c8e095d3933c477ff1f71021b551cbfe497a62346a1dc8615debd9846e257"
+    },
+    {
+      "path": "local-evidence/objc2-0.6.5/Cargo.toml.orig",
+      "bytes": 7515,
+      "sha256": "4a1e1561612efc4a8aea4dd574c781f6215fa5416696425227558fc782353cba"
+    },
+    {
+      "path": "local-evidence/objc2-0.6.5/README.md",
       "bytes": 847,
       "sha256": "5da56f1508a87b982a23e6bad2ff09b329f7fcf9181ea15eac17788f8d1c6824"
     },
@@ -397,6 +462,16 @@
       "sha256": "420f65fec3ba2e89d49da51b222d2881d26959037a7b7d3794143db4bd4627b1"
     },
     {
+      "path": "local-evidence/rustls-platform-verifier-android-0.2.0/.cargo_vcs_info.json",
+      "bytes": 117,
+      "sha256": "f9de66ae77438abeb19e82916812a0266cfdbcd6a8b1ca0404f5f167daf0a43e"
+    },
+    {
+      "path": "local-evidence/rustls-platform-verifier-android-0.2.0/Cargo.toml.orig",
+      "bytes": 552,
+      "sha256": "e78f460d378e8fbf3cb90e96a249c8d23cd7cfc97e83cd7b95d979472de4adad"
+    },
+    {
       "path": "local-evidence/selectors-0.38.0/.cargo_vcs_info.json",
       "bytes": 103,
       "sha256": "1ddc4845786a1b1ebc7fb2f940878d9b923c4385d7d66841f25c765d1312fe74"
@@ -438,8 +513,8 @@
     },
     {
       "path": "manifest.json",
-      "bytes": 136934,
-      "sha256": "285af2f580d9dadd74eeb9676470687946694a1f51f03e408a28855a2d36626a"
+      "bytes": 166604,
+      "sha256": "28cac1b4ca99a9c7b8baa1eacd3f35ba40c0442439273904b95505c97d87f0bf"
     },
     {
       "path": "napi-license-provenance.json",
@@ -448,6 +523,11 @@
     },
     {
       "path": "overlay/licenses/alloc-stdlib-0.2.4/LICENSE",
+      "bytes": 1483,
+      "sha256": "c0c56f26d9c051cac4d200c34c84e7ae9aaa853e01a982a1df08b09931e518ae"
+    },
+    {
+      "path": "overlay/licenses/alloc-stdlib-0.3.0/LICENSE",
       "bytes": 1483,
       "sha256": "c0c56f26d9c051cac4d200c34c84e7ae9aaa853e01a982a1df08b09931e518ae"
     },
@@ -532,6 +612,36 @@
       "sha256": "9369f62987b3a116111f2edfdc4cc72633e44ddc94d5d0c68659cf537b76a31f"
     },
     {
+      "path": "overlay/licenses/jni-0.22.4/LICENSE-APACHE",
+      "bytes": 10847,
+      "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+    },
+    {
+      "path": "overlay/licenses/jni-0.22.4/LICENSE-MIT",
+      "bytes": 1104,
+      "sha256": "fea1d5bf3dd71605ce5d7d2ff695c1837e914c77195e523a86b5391716477960"
+    },
+    {
+      "path": "overlay/licenses/jni-macros-0.22.4/LICENSE-APACHE",
+      "bytes": 10847,
+      "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+    },
+    {
+      "path": "overlay/licenses/jni-macros-0.22.4/LICENSE-MIT",
+      "bytes": 1104,
+      "sha256": "fea1d5bf3dd71605ce5d7d2ff695c1837e914c77195e523a86b5391716477960"
+    },
+    {
+      "path": "overlay/licenses/jni-sys-macros-0.4.1/LICENSE-APACHE",
+      "bytes": 11358,
+      "sha256": "c6596eb7be8581c18be736c846fb9173b69eccf6ef94c5135893ec56bd92ba08"
+    },
+    {
+      "path": "overlay/licenses/jni-sys-macros-0.4.1/LICENSE-MIT",
+      "bytes": 1071,
+      "sha256": "1d85bd754b04ceec93e98e890edd1fa3c6a22e81bcb32135806beeccefa51cd1"
+    },
+    {
       "path": "overlay/licenses/napi-3.14.0/LICENSE",
       "bytes": 2138,
       "sha256": "3f1ce66533302df3a32edbfdfc0b78f0dd34659e4c1f5817162e5ea3c2297215"
@@ -583,6 +693,16 @@
     },
     {
       "path": "overlay/licenses/objc2-0.6.4/LICENSE.md",
+      "bytes": 1339,
+      "sha256": "7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54"
+    },
+    {
+      "path": "overlay/licenses/objc2-0.6.5/LICENSE-MIT-HISTORICAL.txt",
+      "bytes": 1066,
+      "sha256": "e353f37b12aefbb9f9b29490e837cfee05d9bda70804b3562839a3285c1df1e5"
+    },
+    {
+      "path": "overlay/licenses/objc2-0.6.5/LICENSE.md",
       "bytes": 1339,
       "sha256": "7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54"
     },
@@ -685,6 +805,16 @@
       "path": "overlay/licenses/r-efi-6.0.0/AUTHORS",
       "bytes": 3733,
       "sha256": "d027e91dbc9cdbb2f1190068e498bd6b61cff022b6a032b191021ba658d96111"
+    },
+    {
+      "path": "overlay/licenses/rustls-platform-verifier-android-0.2.0/LICENSE-APACHE",
+      "bytes": 11357,
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+    },
+    {
+      "path": "overlay/licenses/rustls-platform-verifier-android-0.2.0/LICENSE-MIT",
+      "bytes": 1066,
+      "sha256": "1c7cf76689c837a68ed8d704994e52a0f2940c087958f860d17f3186afbdcc0c"
     },
     {
       "path": "overlay/licenses/selectors-0.38.0/LICENSE-MPL-2.0.txt",
@@ -812,6 +942,26 @@
       "sha256": "d49f87c1969d9ce1f46b7b43b2c856c9a47d9263afbdf6142952fb8e3b93f45f"
     },
     {
+      "path": "source-archives/alloc-stdlib-0.3.0.crate",
+      "bytes": 6922,
+      "sha256": "0b5c1865780388bfa186411ab5f247819487fc4864c6e9c3106611fa347586e1"
+    },
+    {
+      "path": "source-archives/jni-0.22.4.crate",
+      "bytes": 199347,
+      "sha256": "5efd9a482cf3a427f00d6b35f14332adc7902ce91efb778580e180ff90fa3498"
+    },
+    {
+      "path": "source-archives/jni-macros-0.22.4.crate",
+      "bytes": 63557,
+      "sha256": "a00109accc170f0bdb141fed3e393c565b6f5e072365c3bd58f5b062591560a3"
+    },
+    {
+      "path": "source-archives/jni-sys-macros-0.4.1.crate",
+      "bytes": 3301,
+      "sha256": "38c0b942f458fe50cdac086d2f946512305e5631e720728f2a61aabcd47a6264"
+    },
+    {
       "path": "source-archives/napi-3.14.0.crate",
       "bytes": 246455,
       "sha256": "15301c22171e8397a7b17beb3c75bf486bf67ca3bdad8ea347835b770df61969"
@@ -855,6 +1005,16 @@
       "path": "source-archives/nom-language-0.1.0.crate",
       "bytes": 7648,
       "sha256": "2de2bc5b451bfedaef92c90b8939a8fff5770bdcc1fafd6239d086aab8fa6b29"
+    },
+    {
+      "path": "source-archives/objc2-0.6.5.crate",
+      "bytes": 276781,
+      "sha256": "08849bbd4767dfae9457696856ae1c84fe4e0281bbe4a7abff2d0e06fb7981f8"
+    },
+    {
+      "path": "source-archives/rustls-platform-verifier-android-0.2.0.crate",
+      "bytes": 16451,
+      "sha256": "eec689c0bc40ff2458a5977b6619cb718087084a18e02a131c599b62d05e1a5f"
     },
     {
       "path": "source-archives/selectors-0.38.0.crate",
@@ -947,6 +1107,16 @@
       "sha256": "97488346bfa63645747326c0f3ba7e96822868b9f72743090819a5b1a5ae519c"
     },
     {
+      "path": "upstream/dropbox/rust-alloc-no-stdlib/0a81fd6928ea3b33c8cd484aa4575d50ffb98012/LICENSE",
+      "bytes": 1483,
+      "sha256": "c0c56f26d9c051cac4d200c34c84e7ae9aaa853e01a982a1df08b09931e518ae"
+    },
+    {
+      "path": "upstream/dropbox/rust-alloc-no-stdlib/0a81fd6928ea3b33c8cd484aa4575d50ffb98012/alloc-stdlib/Cargo.toml",
+      "bytes": 697,
+      "sha256": "13c6e8d5ec2e75ae6b66542498e049e1100e71ef25e29ccb9cb083b40d6279ea"
+    },
+    {
       "path": "upstream/dropbox/rust-alloc-no-stdlib/ae42d22078b98549e987d2f03d12df7b984fde47/LICENSE",
       "bytes": 1483,
       "sha256": "c0c56f26d9c051cac4d200c34c84e7ae9aaa853e01a982a1df08b09931e518ae"
@@ -955,6 +1125,66 @@
       "path": "upstream/dropbox/rust-alloc-no-stdlib/ae42d22078b98549e987d2f03d12df7b984fde47/alloc-stdlib/Cargo.toml",
       "bytes": 697,
       "sha256": "77cff698112ee833c7c2e2b42c2b51677502ee04ca4a0c213155e3494a80fec3"
+    },
+    {
+      "path": "upstream/jni-rs/jni-rs/33045a124105c939d1e2cbdcb5a39e5d868ffa03/Cargo.toml",
+      "bytes": 654,
+      "sha256": "1d950cf4f7fb6584187a3705c37611f9b5b5cd1cdcaf3a3326a4b60abc29aff5"
+    },
+    {
+      "path": "upstream/jni-rs/jni-rs/33045a124105c939d1e2cbdcb5a39e5d868ffa03/LICENSE-APACHE",
+      "bytes": 10847,
+      "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+    },
+    {
+      "path": "upstream/jni-rs/jni-rs/33045a124105c939d1e2cbdcb5a39e5d868ffa03/LICENSE-MIT",
+      "bytes": 1104,
+      "sha256": "fea1d5bf3dd71605ce5d7d2ff695c1837e914c77195e523a86b5391716477960"
+    },
+    {
+      "path": "upstream/jni-rs/jni-rs/33045a124105c939d1e2cbdcb5a39e5d868ffa03/crates/jni-macros/Cargo.toml",
+      "bytes": 678,
+      "sha256": "cfa3ca54bc23baa582a42df863f397debe8c4312a80ead221e8e049b834f93b5"
+    },
+    {
+      "path": "upstream/jni-rs/jni-rs/5ae9458a4ec44c5318f37ddc7569c1d4ae8a69e7/Cargo.toml",
+      "bytes": 654,
+      "sha256": "83fb01ea19de610d7c177f50959f5b76ae1cf83571a838aff43dc4914af870bc"
+    },
+    {
+      "path": "upstream/jni-rs/jni-rs/5ae9458a4ec44c5318f37ddc7569c1d4ae8a69e7/LICENSE-APACHE",
+      "bytes": 10847,
+      "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+    },
+    {
+      "path": "upstream/jni-rs/jni-rs/5ae9458a4ec44c5318f37ddc7569c1d4ae8a69e7/LICENSE-MIT",
+      "bytes": 1104,
+      "sha256": "fea1d5bf3dd71605ce5d7d2ff695c1837e914c77195e523a86b5391716477960"
+    },
+    {
+      "path": "upstream/jni-rs/jni-rs/5ae9458a4ec44c5318f37ddc7569c1d4ae8a69e7/crates/jni/Cargo.toml",
+      "bytes": 2401,
+      "sha256": "420d0c6c04c3579946386ceea541bf5dd5f564b6b190e76568cce83bad0b9db3"
+    },
+    {
+      "path": "upstream/jni-rs/jni-sys/64d77b7a5f119d7b55b4e2c169a4668067ff59e6/Cargo.toml",
+      "bytes": 666,
+      "sha256": "193ab6fe89ccbbed7ea68c3bf611cf098253e811824c7079fba6979737fff1e7"
+    },
+    {
+      "path": "upstream/jni-rs/jni-sys/64d77b7a5f119d7b55b4e2c169a4668067ff59e6/LICENSE-APACHE",
+      "bytes": 11358,
+      "sha256": "c6596eb7be8581c18be736c846fb9173b69eccf6ef94c5135893ec56bd92ba08"
+    },
+    {
+      "path": "upstream/jni-rs/jni-sys/64d77b7a5f119d7b55b4e2c169a4668067ff59e6/LICENSE-MIT",
+      "bytes": 1071,
+      "sha256": "1d85bd754b04ceec93e98e890edd1fa3c6a22e81bcb32135806beeccefa51cd1"
+    },
+    {
+      "path": "upstream/jni-rs/jni-sys/64d77b7a5f119d7b55b4e2c169a4668067ff59e6/jni-sys-macros/Cargo.toml",
+      "bytes": 473,
+      "sha256": "6501ef93eff9b37ab65ec846bd06992d79cc28d8ef1f02f13b0488ff441ed90a"
     },
     {
       "path": "upstream/knurling-rs/defmt/4a8cdb44891ed57b8ff5a023b6bec7137c48708f/LICENSE-APACHE",
@@ -1035,6 +1265,21 @@
       "path": "upstream/madsmtm/objc2/8d214f5477365ffcbcbb7de058c86ed9a518efb7/crates/objc2-encode/Cargo.toml",
       "bytes": 1137,
       "sha256": "12972b1faf213492f9e78226f23642c461284b739f7be5437d9401465a2869a6"
+    },
+    {
+      "path": "upstream/madsmtm/objc2/d7d2fa23ceaa5e6096c923b081040e5d81b3b9df/Cargo.toml",
+      "bytes": 38056,
+      "sha256": "f93fce3a2814c16597140137b109c53042c0ae74909fd123a8a4d1f7d35090da"
+    },
+    {
+      "path": "upstream/madsmtm/objc2/d7d2fa23ceaa5e6096c923b081040e5d81b3b9df/LICENSE.md",
+      "bytes": 1339,
+      "sha256": "7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54"
+    },
+    {
+      "path": "upstream/madsmtm/objc2/d7d2fa23ceaa5e6096c923b081040e5d81b3b9df/crates/objc2/Cargo.toml",
+      "bytes": 7515,
+      "sha256": "4a1e1561612efc4a8aea4dd574c781f6215fa5416696425227558fc782353cba"
     },
     {
       "path": "upstream/napi-rs/napi-rs/37109f133043aff379a38edfb8b1548e7e9309e5/Cargo.toml",
@@ -1190,6 +1435,26 @@
       "path": "upstream/rust-bakery/nom/2cec1b3e4c9ccac62c902d60c00de6d1549ccbe1/nom-language/src/precedence/tests.rs",
       "bytes": 1786,
       "sha256": "bec5f416d2e300e664ba1d974d3fdc1e731fca98d87cb32d9d7b29b462df14ec"
+    },
+    {
+      "path": "upstream/rustls/rustls-platform-verifier/252e25161a91af476cbea620e29d277592d27ec7/Cargo.toml",
+      "bytes": 104,
+      "sha256": "5c47afb1a10db977965be6be81fe4e17a5fdea95a506dfc5cfe8daf5f5708fc1"
+    },
+    {
+      "path": "upstream/rustls/rustls-platform-verifier/252e25161a91af476cbea620e29d277592d27ec7/LICENSE-APACHE",
+      "bytes": 11357,
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+    },
+    {
+      "path": "upstream/rustls/rustls-platform-verifier/252e25161a91af476cbea620e29d277592d27ec7/LICENSE-MIT",
+      "bytes": 1066,
+      "sha256": "1c7cf76689c837a68ed8d704994e52a0f2940c087958f860d17f3186afbdcc0c"
+    },
+    {
+      "path": "upstream/rustls/rustls-platform-verifier/252e25161a91af476cbea620e29d277592d27ec7/android-release-support/Cargo.toml",
+      "bytes": 552,
+      "sha256": "e78f460d378e8fbf3cb90e96a249c8d23cd7cfc97e83cd7b95d979472de4adad"
     },
     {
       "path": "upstream/servo/stylo/34d25f741765a0bdb894f8271852e633299352d8/selectors/Cargo.toml",
