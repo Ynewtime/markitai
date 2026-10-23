@@ -105,10 +105,9 @@ class PackageValidationTests(unittest.TestCase):
         for windows, root, home, environ, url, checkout in [
             (False, "/home/ci/checkout", "/home/ci", {"CARGO_HOME": "/opt/cargo"}, "/home/ci", "/home/ci/checkout"),
             (True, "C:\\Users\\ci\\checkout", "C:\\Users\\ci", {}, "/C:/Users/ci", "/C:/Users/ci/checkout"),
-            (True, "C:\\Users\\Test User\\checkout", "C:\\Users\\Test User", {}, "/c:/users/Test%20User",
-             "/C:/Users/Test%20User/checkout"),
-            (True, "D:\\a\\checkout", "C:\\Users\\测试", {"RUSTUP_HOME": "D:\\rustup"}, "/C:/Users/%E6%B5%8B%E8%AF%95",
-             "/d:/a/checkout"),
+            (True, "C:\\Users\\a b\\checkout", "C:\\Users\\a b", {}, "/c:/users/A%20B", "/C:/Users/a%20b/checkout"),
+            (True, "D:\\a\\checkout", "E:\\用户\\测试", {"RUSTUP_HOME": "D:\\rustup"},
+             "/E:/%E7%94%A8%E6%88%B7/%E6%B5%8B%E8%AF%95", "/d:/a/checkout"),
         ]:
             with self.subTest(root=root):
                 registry = (environ["CARGO_HOME"] if environ.get("CARGO_HOME") else url + "/.cargo") + "/registry"
