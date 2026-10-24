@@ -748,7 +748,8 @@ export function ModelsSettings({
     if (!provider || (!selected.size && !dropped.size) || revision === null || addBusy || !weightValid) return;
     let credentials: Partial<NewDeployment>;
     try {
-      credentials = deploymentCredentials(provider, draftKey, login === null ? draftBase : "");
+      const found = region?.kept && draftBase.trim() === region.base ? region.base : undefined;
+      credentials = deploymentCredentials(provider, draftKey, login === null ? draftBase : "", found);
     } catch (error) {
       await fail(error);
       return;

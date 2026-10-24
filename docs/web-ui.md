@@ -463,8 +463,8 @@ refused it (contract v1.21 `endpoints`, else the address the page asked). Moonsh
 AI and Kimi Code keys belong to a region: when the default endpoint refuses a
 new connection's key and the provider's other region lists its models
 (`api_base`, contract v1.21), the page fills that address into API address and
-says so, and the models are saved with it (a saved connection is told to change
-its address instead). Their rejected-key hints also say that a Kimi Code
+says so, and the models are saved with it, also for a key the server reads from
+its environment (a saved connection is told to change its address instead). Their rejected-key hints also say that a Kimi Code
 membership key belongs under Kimi Code and a Kimi platform key under Moonshot AI.
 
 ## Job controls

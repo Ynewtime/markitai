@@ -21,6 +21,17 @@ test("selecting an environment card then loading and adding uses only its approv
   });
 });
 
+test("an environment card's models keep the other region discovery found, and only that address", () => {
+  const card: ProviderCard = { ...common, id: "env:moonshot", provider: "moonshot", label: "Moonshot AI", kind: "environment", credential: "env:MOONSHOT_API_KEY" };
+  assert.deepEqual(deploymentCredentials(card, "", "https://api.moonshot.cn/v1", "https://api.moonshot.cn/v1"), {
+    provider: "moonshot", credential_provider_id: "env:moonshot", api_base: "https://api.moonshot.cn/v1",
+  });
+  // A draft address without a found region still sends the identifier alone.
+  assert.deepEqual(deploymentCredentials(card, "", "https://api.moonshot.cn/v1"), {
+    provider: "moonshot", credential_provider_id: "env:moonshot",
+  });
+});
+
 test("saved and legacy deployment cards retain their connection identifiers without draft credentials", () => {
   const saved = { ...common, kind: "configured", provider_id: "p123" };
   const legacy = { ...common, kind: "configured", provider_id: "legacy:d456", deployment_id: "d456" };

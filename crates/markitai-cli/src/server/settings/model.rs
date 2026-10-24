@@ -506,6 +506,9 @@ pub(super) fn create(
         return Err(invalid("send one credential reference"));
     }
     let mut provider_id = None;
+    let environment = provider_ref
+        .as_deref()
+        .is_some_and(|id| id.starts_with("env:"));
     let fallback = if let Some(id) = provider_ref {
         if id.starts_with("env:") {
             environment_connection(&id)?
@@ -551,7 +554,15 @@ pub(super) fn create(
         fallback["api_base"].clone()
     };
     refuse_ambient_login_address(&model, base.as_str())?;
-    if let Some(old_provider) = fallback["provider"].as_str() {
+    // The server's key for a provider that issues keys per region may go to
+    // that provider's other region, where discovery found its models.
+    let region = environment
+        && !supplied_key
+        && fallback["provider"].as_str() == Some(name.as_str())
+        && base.as_str().is_some_and(|base| {
+            markitai_core::provider_management::provider_region_base(&name, base)
+        });
+    if let Some(old_provider) = fallback["provider"].as_str().filter(|_| !region) {
         check_reuse(
             old_provider,
             &name,

@@ -85,7 +85,11 @@ another region's key with HTTP 401: Moonshot's open platform at
 base variable) that the default endpoint refuses tries the other region; when
 that one lists the models, the answer carries its address as `api_base` (contract
 v1.21), which the workbench fills into the new connection's address so its
-models are saved with it. A request that names an address is sent there only.
+models are saved with it. That includes a key the server reads from the
+provider's variable (`MOONSHOT_API_KEY`, `KIMI_API_KEY`): its models are added
+with `credential_provider_id: "env:<provider>"` and that `api_base`, the one
+address other than its own that the settings API lets the server's key go to.
+A request that names an address is sent there only.
 
 A connection check reuses native deployment resolution, endpoint construction
 and provider payload construction. It requests exactly `Reply with exactly OK.`

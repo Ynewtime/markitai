@@ -292,6 +292,16 @@ fn lookup(provider: &str) -> Option<&'static ProviderEntry> {
 /// Discovery bases; Gemini and Ollama inference use different endpoint paths.
 /// The other OpenAI-compatible prefixes list `/models` beside their inference
 /// endpoint.
+/// Whether `base` is one of the endpoints of a provider that issues keys per
+/// region (Moonshot AI, Kimi Code): discovery sends a key that the default
+/// endpoint refuses to these too, and names the one that lists its models.
+pub fn provider_region_base(provider: &str, base: &str) -> bool {
+    let base = base.trim().trim_end_matches('/');
+    crate::llm::providers::regions(provider)
+        .iter()
+        .any(|region| region.base == base)
+}
+
 pub fn provider_default_base(provider: &str) -> Option<&'static str> {
     match provider {
         "openai" => Some("https://api.openai.com/v1"),

@@ -836,6 +836,39 @@ fn environment_provider_references_are_named_not_arbitrary_variables() {
 }
 
 #[test]
+fn an_environment_key_is_saved_at_its_providers_other_region_only() {
+    let (_dir, store) = setup(json!({"llm":{"model_list":[]}}));
+    ok(store.mutate(Mutation::Add(json!({
+        "model_name":"default",
+        "model":"moonshot/kimi-k3",
+        "credential_provider_id":"env:moonshot",
+        "api_base":"https://api.moonshot.cn/v1"
+    }))));
+    let params = &saved(&store)["llm"]["model_list"][0]["litellm_params"];
+    assert_eq!(params["api_base"], "https://api.moonshot.cn/v1");
+    assert_eq!(params["use_environment_credentials"], true);
+    assert!(params["api_key"].is_null());
+    // Another address, another provider's region, or another provider's key: as before.
+    for (model, base) in [
+        ("moonshot/kimi-k3", "https://api.example.test/v1"),
+        ("moonshot/kimi-k3", "https://api.kimi.com/coding/v1"),
+        ("kimi_code/k3", "https://api.kimi.com/coding/v1"),
+    ] {
+        let refused = store
+            .mutate(Mutation::Add(json!({
+                "model_name":"default",
+                "model":model,
+                "credential_provider_id":"env:moonshot",
+                "api_base":base
+            })))
+            .err()
+            .unwrap();
+        assert_eq!(refused.status.as_u16(), 422, "{model} {base}");
+        assert_eq!(refused.detail, model::KEY_REUSE, "{model} {base}");
+    }
+}
+
+#[test]
 fn unprefixed_model_keeps_openai_identity_through_save_discovery_and_probe() {
     let (_dir, store) = setup(json!({"llm":{"model_list":[]}}));
     let view = ok(store.mutate(Mutation::Add(json!({

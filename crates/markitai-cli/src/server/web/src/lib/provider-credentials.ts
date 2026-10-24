@@ -32,8 +32,13 @@ export function discoveryRequest(provider: ProviderCard, key: string, base: stri
   return { provider: provider.provider, ...(apiKey ? { api_key: apiKey } : {}), ...(apiBase ? { api_base: apiBase } : {}), refresh };
 }
 
-export function deploymentCredentials(provider: ProviderCard, key: string, base: string): Partial<NewDeployment> {
+/** `region`: the provider's other region that discovery found the key's
+ * models at (v1.21); the one address an environment card's key may move to. */
+export function deploymentCredentials(provider: ProviderCard, key: string, base: string, region?: string): Partial<NewDeployment> {
   const reference = providerReference(provider);
+  if (provider.kind === "environment" && region) {
+    return { provider: provider.provider, credential_provider_id: reference.provider_id, api_base: literal(region) };
+  }
   if (reference.provider_id) return { provider: provider.provider, credential_provider_id: reference.provider_id };
   if (reference.deployment_id) return { provider: provider.provider, credential_deployment_id: reference.deployment_id };
   const apiKey = literal(key);

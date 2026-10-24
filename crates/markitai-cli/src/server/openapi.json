@@ -1541,7 +1541,7 @@
           "api_key": { "type": "string", "description": "A literal key or `env:NAME`" },
           "api_base": { "type": "string" },
           "weight": { "type": "integer", "minimum": 0, "maximum": 100, "default": 1 },
-          "credential_provider_id": { "type": "string" },
+          "credential_provider_id": { "type": "string", "description": "A saved connection's id, or `env:<provider>` for an environment card. With an environment card, `api_base` may only be one of that provider's documented region endpoints (Moonshot AI, Kimi Code; v1.21), the address a discovery returned as `api_base`; any other address is 422 `invalid_settings_request`" },
           "credential_deployment_id": { "type": "string" },
           "expected_revision": { "type": "string" }
         }
