@@ -30,9 +30,10 @@ against the release's `SHA256SUMS`, and install `markitai`, `mkai` and
 `markitai-mcp` for the current user, without administrator rights. Releases
 cover macOS 11+ (Apple silicon, Intel), Linux with glibc 2.28+ (x86-64,
 ARM64) and Windows (x64, ARM64). Python users can instead run
-`pip install markitai` or `uv tool install markitai`: PyPI has wheels for the
-same six platforms (Python 3.10+); elsewhere pip keeps markitai 1.x. Manual
-downloads, updates and uninstalling are in the
+`pip install markitai` or `uv tool install markitai` (Python 3.10+). PyPI has
+wheels for these six platforms only and no 1.x any more: elsewhere pip has
+nothing to install and leaves an installed 1.x as it is. Manual downloads,
+updates, uninstalling and going back to 1.x are in the
 [installation steps](docs/quickstart.md#1-install).
 
 The archives include license notices and selected Markdown guides for offline

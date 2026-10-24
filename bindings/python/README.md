@@ -5,13 +5,14 @@ carries its Rust engine as a native extension: the `markitai` command (alias
 `mkai`), the MCP server `markitai-mcp` and a Python API, with no other Python
 dependency. Python 3.10 or later on macOS 11+ (Apple silicon and Intel),
 Linux with glibc 2.28+ (x86-64 and ARM64) and Windows (x64 and ARM64).
-PyPI has wheels for these six platforms only. Elsewhere (musl/Alpine, an older
-glibc or macOS, 32-bit Windows, other CPUs, free-threaded Python) pip finds no
-2.x release it can install, so it installs or keeps markitai 1.x (on Python
-3.11-3.13). To use 2.x there, build it from the source archive on the
+PyPI has wheels for these six platforms only, and no markitai 1.x any more.
+Elsewhere (musl/Alpine, an older glibc or macOS, 32-bit Windows, other CPUs,
+free-threaded Python) pip has nothing to install and leaves an installed 1.x
+as it is. To use 2.x there, build it from the source archive on the
 [GitHub Release](https://github.com/Ynewtime/markitai/releases):
 `pip install markitai-<version>.tar.gz` needs Rust 1.92 or later and a long,
-memory-hungry build.
+memory-hungry build. 1.x installs from its Git tag
+([going back to 1.x](https://markitai.dev/guide/upgrading#going-back-to-1x)).
 
 ```sh
 pip install markitai          # or: uv tool install markitai

@@ -50,7 +50,7 @@ curl -fsSL https://markitai.dev/setup.sh | sh -s -- --uninstall
 
 解压到一个新文件夹，文件放在一起，再把该文件夹加进 `PATH`。用 `sha256sum -c SHA256SUMS --ignore-missing` 校验下载（macOS：`grep <archive> SHA256SUMS | shasum -a 256 -c`），用 `gh attestation verify <archive> --repo Ynewtime/markitai` 核实来源。
 
-**pip 或 uv。** PyPI 上的 `markitai` 包带的是同一个程序，安装同样的三个命令（需要 Python 3.10 或更高版本；附带 [Python API](/zh/guide/python-api)）。PyPI 只有这六个平台的 wheel，没有源码包，所以在其他平台上 pip 会安装或保留 markitai 1.x：
+**pip 或 uv。** PyPI 上的 `markitai` 包带的是同一个程序，安装同样的三个命令（需要 Python 3.10 或更高版本；附带 [Python API](/zh/guide/python-api)）。PyPI 只有这六个平台的 wheel，也不再有 1.x：在其他平台上 pip 无包可装，已安装的 1.x 保持不动（[从 tag 安装 1.x](/zh/guide/upgrading#going-back-to-1x)）。
 
 ```bash
 uv tool install markitai     # 或：pipx install markitai、pip install markitai

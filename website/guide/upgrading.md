@@ -14,11 +14,11 @@ flowchart TD
   S --> R["2.x staged, then<br/>uv's 1.x uninstalled"]
 ```
 
-pip, pipx and uv get 2.0 only on the platforms with [wheels](/guide/getting-started#install); elsewhere they keep 1.x.
+pip, pipx and uv get 2.0 only on the platforms with [wheels](/guide/getting-started#install); elsewhere they find nothing (PyPI no longer has 1.x) and leave an installed 1.x as it is.
 
 ### Going back to 1.x
 
-[Uninstall](/guide/getting-started#install) 2.0, then run the command setup prints for a 1.x `MARKITAI_VERSION` (it pins pymupdf4llm below 2, which breaks 1.2.0's PDFs):
+[Uninstall](/guide/getting-started#install) 2.0, then install 1.2.0 from its Git tag, as setup suggests for a 1.x `MARKITAI_VERSION` (pymupdf4llm 2 breaks its PDFs):
 
 ```bash
 uv tool install "git+https://github.com/Ynewtime/markitai@v1.2.0#subdirectory=packages/markitai" --with "pymupdf4llm<2"

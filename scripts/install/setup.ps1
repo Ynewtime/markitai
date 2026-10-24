@@ -44,7 +44,8 @@ $ProgressPreference = "SilentlyContinue"
 
 $RepositoryReleases = "https://github.com/Ynewtime/markitai/releases"
 $ScriptUrl = "https://markitai.dev/setup.ps1"
-# The last 1.x release, from its tag: pymupdf4llm 2 breaks its PDF support.
+# The last 1.x release, from its tag (PyPI no longer has 1.x); pymupdf4llm 2
+# breaks its PDF support.
 $Python1xInstall = 'uv tool install "git+https://github.com/Ynewtime/markitai@v1.2.0#subdirectory=packages/markitai" --with "pymupdf4llm<2"'
 $Targets = @{ "AMD64" = "x86_64-pc-windows-msvc"; "ARM64" = "aarch64-pc-windows-msvc" }
 $Executables = @("markitai.exe", "mkai.exe", "markitai-mcp.exe")
@@ -162,7 +163,7 @@ function Msg {
             "error_install" { '\u65e0\u6cd5\u5b89\u88c5\u5230\u6b64\u76ee\u5f55' }
             "error_no_asset" { '\u8be5\u7248\u672c\u6ca1\u6709\u6b64\u5e73\u53f0\u7684\u5f52\u6863' }
             "error_os_windows" { '\u6b64\u811a\u672c\u7528\u4e8e Windows\uff1bmacOS \u548c Linux \u8bf7\u4f7f\u7528 setup.sh' }
-            "error_python_version" { 'markitai 1.x \u662f Python \u5305\uff1b\u8bf7\u7528 uv tool install \u6216 pip \u5b89\u88c5\u8be5\u7248\u672c' }
+            "error_python_version" { 'markitai 1.x \u662f Python \u5305\uff0c\u5df2\u4e0d\u5728 PyPI \u4e0a\uff1b\u8bf7\u4ece Git tag \u5b89\u88c5 1.2.0' }
             "error_run" { '\u4e0b\u8f7d\u7684 markitai \u65e0\u6cd5\u5728\u6b64\u7cfb\u7edf\u8fd0\u884c' }
             "error_shared_folder" { '\u6b64\u76ee\u5f55\u5df2\u6709\u4e0e markitai \u5b89\u88c5\u6587\u4ef6\u540c\u540d\u7684\u6587\u4ef6\uff1b\u8bf7\u4f7f\u7528\u7a7a\u76ee\u5f55\u6216\u4e13\u7528\u76ee\u5f55' }
             "error_version" { 'MARKITAI_VERSION \u5e94\u4e3a X.Y.Z \u5f62\u5f0f' }
@@ -245,7 +246,7 @@ function Msg {
         "error_no_asset" { "This release has no archive for this platform" }
         "error_checksum" { "SHA-256 mismatch; the download was deleted" }
         "error_run" { "The downloaded markitai does not run on this system" }
-        "error_python_version" { "markitai 1.x is the Python package; install that release with uv tool install or pip" }
+        "error_python_version" { "markitai 1.x is the Python package and no longer on PyPI; install 1.2.0 from its Git tag" }
         "error_version" { "MARKITAI_VERSION must look like X.Y.Z" }
         "error_shared_folder" { "This folder already holds files of the names markitai installs; use an empty or dedicated folder" }
         "error_install" { "Could not install into this folder" }

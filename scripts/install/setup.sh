@@ -27,7 +27,8 @@ set -eu
 
 REPOSITORY_RELEASES="https://github.com/Ynewtime/markitai/releases"
 SCRIPT_URL="https://markitai.dev/setup.sh"
-# The last 1.x release, from its tag: pymupdf4llm 2 breaks its PDF support.
+# The last 1.x release, from its tag (PyPI no longer has 1.x); pymupdf4llm 2
+# breaks its PDF support.
 PYTHON_1X_INSTALL='uv tool install "git+https://github.com/Ynewtime/markitai@v1.2.0#subdirectory=packages/markitai" --with "pymupdf4llm<2"'
 
 detect_lang() {
@@ -92,7 +93,7 @@ msg() {
             error_no_asset) echo "该版本没有此平台的归档" ;;
             error_checksum) echo "SHA-256 不匹配，下载的文件已删除" ;;
             error_run) echo "下载的 markitai 无法在此系统运行" ;;
-            error_python_version) echo "markitai 1.x 是 Python 包；请用 uv tool install 或 pip 安装该版本" ;;
+            error_python_version) echo "markitai 1.x 是 Python 包，已不在 PyPI 上；请从 Git tag 安装 1.2.0" ;;
             error_version) echo "MARKITAI_VERSION 应为 X.Y.Z 形式" ;;
             error_install) echo "无法安装到此目录" ;;
             error_foreign_folder) echo "此目录不是安装脚本创建的，而每次安装都会替换它；请移走后重新运行安装脚本" ;;
@@ -152,7 +153,7 @@ msg() {
         error_no_asset) echo "This release has no archive for this platform" ;;
         error_checksum) echo "SHA-256 mismatch; the download was deleted" ;;
         error_run) echo "The downloaded markitai does not run on this system" ;;
-        error_python_version) echo "markitai 1.x is the Python package; install that release with uv tool install or pip" ;;
+        error_python_version) echo "markitai 1.x is the Python package and no longer on PyPI; install 1.2.0 from its Git tag" ;;
         error_version) echo "MARKITAI_VERSION must look like X.Y.Z" ;;
         error_install) echo "Could not install into this folder" ;;
         error_foreign_folder) echo "Setup did not create this folder and replaces it on every install; move it away and run setup again" ;;

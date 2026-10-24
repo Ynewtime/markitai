@@ -14,11 +14,11 @@ flowchart TD
   S --> R["先暂存 2.x，<br/>再卸载 uv 的 1.x"]
 ```
 
-pip、pipx 和 uv 只在有 [wheel](/zh/guide/getting-started#install) 的平台上装到 2.0；在其他平台上它们保留 1.x。
+pip、pipx 和 uv 只在有 [wheel](/zh/guide/getting-started#install) 的平台上装到 2.0；在其他平台上它们无包可装（PyPI 已不再有 1.x），已安装的 1.x 保持不动。
 
-### 退回 1.x
+### 退回 1.x {#going-back-to-1x}
 
-先[卸载](/zh/guide/getting-started#install) 2.0，再运行安装脚本在 `MARKITAI_VERSION` 指定 1.x 时打印的命令（它把 pymupdf4llm 固定在 2 以下，2 会让 1.2.0 的 PDF 出错）：
+先[卸载](/zh/guide/getting-started#install) 2.0，再从 Git tag 安装 1.2.0，即 `MARKITAI_VERSION` 指定 1.x 时安装脚本给出的命令（pymupdf4llm 2 会让它的 PDF 出错）：
 
 ```bash
 uv tool install "git+https://github.com/Ynewtime/markitai@v1.2.0#subdirectory=packages/markitai" --with "pymupdf4llm<2"

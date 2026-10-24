@@ -22,10 +22,12 @@ macOS 11+ (arm64, x86-64), Linux with glibc 2.28+ (x86-64, ARM64) and Windows
 pip install markitai                     # or: uv tool install markitai
 ```
 
-PyPI carries no source distribution, so on any other platform pip installs or
-keeps markitai 1.x; the release's source archive (`markitai-<version>.tar.gz`
-on [GitHub Releases](https://github.com/Ynewtime/markitai/releases)) builds
-there with Rust. Node.js and Go are not published to npm or a Go module proxy:
+PyPI carries no source distribution and no markitai 1.x any more, so on any
+other platform pip has nothing to install and leaves an installed 1.x as it
+is ([rolling back](quickstart.md#rolling-back-to-1x) installs 1.x from its Git
+tag); the release's source archive (`markitai-<version>.tar.gz` on
+[GitHub Releases](https://github.com/Ynewtime/markitai/releases)) builds there
+with Rust. Node.js and Go are not published to npm or a Go module proxy:
 build them, or a wheel for another target, from a checkout with Rust 1.92 or
 later (development uses 1.99.1); each build compiles the Rust core once in the
 `release` profile and takes several minutes.
