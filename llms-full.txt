@@ -77,8 +77,10 @@ errors carry `isError: true`; do not parse progress text as tool results.
 
 ## Offline and optional components
 
-Local text conversion needs no provider access. macOS defaults to Vision OCR;
-Windows/Linux use local Paddle and built-in hayro PDF rendering. Paddle models
+Local text conversion needs no provider access. Local OCR uses the portable
+Paddle engine on every platform; on macOS `MARKITAI_OCR_BACKEND=vision` picks the
+Vision framework instead, which also reads when the Paddle models cannot be
+downloaded. Windows/Linux use built-in hayro PDF rendering. Paddle models
 are separate downloads. `markitai doctor --json` checks readiness;
 `doctor --fix` can download missing models and repair safely managed corrupt
 models. Prepare them before going offline; never bypass an unsafe-path error.
