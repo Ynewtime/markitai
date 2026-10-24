@@ -1,6 +1,6 @@
 # 输出 Profile
 
-[预设](./configuration.md#预设)决定跑哪些功能；profile 为某个消费者改写写出的文件。不设 profile 时不改写任何内容。
+[预设](./configuration.md#presets)决定跑哪些功能；profile 为某个消费者改写写出的文件。不设 profile 时不改写任何内容。
 
 ```mermaid
 flowchart LR
