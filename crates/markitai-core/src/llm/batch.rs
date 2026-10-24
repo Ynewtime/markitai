@@ -4,6 +4,13 @@ use crate::{ConversionFailure, DetailedResult};
 use serde::{Deserialize, Serialize};
 
 const PLAN_VERSION: u32 = 1;
+/// The marker rules of plans frozen from 2.0.1 on (`chunks::Rules::Readable`);
+/// a plan without the field was frozen by 2.0.0 (`chunks::Rules::Whole`).
+const MARKER_RULES: u8 = 2;
+
+fn whole_marker_rules() -> u8 {
+    1
+}
 const MAX_DOCUMENT_BYTES: usize = 8 * 1024 * 1024;
 
 /// The endpoint is configuration identity, never a provider-returned download URL.
@@ -235,6 +242,7 @@ impl Session {
         };
         let mut plan = Plan {
             version: PLAN_VERSION,
+            marker_rules: MARKER_RULES,
             endpoint: self.identity.clone(),
             markdown: markdown.into(),
             source: source.into(),
@@ -276,6 +284,10 @@ pub enum Prepared {
 #[serde(deny_unknown_fields)]
 pub struct Plan {
     version: u32,
+    // How the request's markers were made: a pending batch frozen by 2.0.0
+    // is checked against its own markers when 2.0.1 collects it.
+    #[serde(default = "whole_marker_rules")]
+    marker_rules: u8,
     endpoint: Endpoint,
     markdown: String,
     source: String,
@@ -299,6 +311,7 @@ impl Plan {
 
     pub fn validate(&self) -> Result<()> {
         if self.version != PLAN_VERSION
+            || !(1..=MARKER_RULES).contains(&self.marker_rules)
             || crate::provider_batch::Api::for_provider(&self.endpoint.provider).is_none()
             || (self.endpoint.provider == "anthropic"
                 && self
@@ -322,7 +335,7 @@ impl Plan {
                 .is_none_or(Vec::is_empty)
             || self.cache_key.len() > 256
             || self.pool.len() > 256
-            || chunks::Protected::new(&self.markdown).split().len() != 1
+            || self.protected().split().len() != 1
         {
             return Err(Error::InvalidInput(
                 "Frozen Provider Batch plan is invalid".into(),
@@ -481,8 +494,18 @@ impl Plan {
         result.map_err(|error| ConversionFailure { error, usage })
     }
 
+    /// The document's markers under the rules the request was written with.
+    fn protected(&self) -> chunks::Protected {
+        let rules = if self.marker_rules == 1 {
+            chunks::Rules::Whole
+        } else {
+            chunks::Rules::Readable
+        };
+        chunks::Protected::with_rules(&self.markdown, rules)
+    }
+
     fn answer(&self, value: &Value, cached: bool) -> Result<document::Answer> {
-        let protected = chunks::Protected::new(&self.markdown);
+        let protected = self.protected();
         document::checked(
             document::parse_value(value, cached)?,
             &protected,
@@ -499,7 +522,7 @@ impl Plan {
         cache_hit: bool,
     ) -> DecodedDocument {
         // answer() proved the exact marker sequence before restoration.
-        let protected = chunks::Protected::new(&self.markdown);
+        let protected = self.protected();
         let mut markdown = crate::markdown::normalize(
             &protected
                 .restore(&answer.markdown)
@@ -869,6 +892,83 @@ mod tests {
             decoded.usage.cost_usd
         );
         assert!(decoded.usage.cost_complete());
+    }
+
+    /// A batch submitted with 2.0.0 and collected after the upgrade: its
+    /// plan has no `marker_rules` and its request carries the whole link as
+    /// one marker (the recording, unchanged). The paid answer is checked
+    /// against those markers and decodes; read with 2.0.1's markers it would
+    /// be refused.
+    #[test]
+    fn a_plan_frozen_by_2_0_0_reads_its_answer_with_its_own_markers() {
+        let fixture = |name: &str| {
+            std::fs::read_to_string(
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/fixtures/anthropic-batches/recorded")
+                    .join(name),
+            )
+            .unwrap()
+        };
+        let cfg = json!({"llm":{"model_list":[{"litellm_params":{"model":"anthropic/claude-haiku-5-5","api_key":"fixture-api-secret","max_tokens":1024}}]},"cache":{"enabled":false}});
+        let session = Session::configured(&cfg, &HashMap::new()).unwrap();
+        let text = "# Release notes\n\nThe importer keeps [the changelog](https://example.test/changelog) linked.\n\n```python\nprint(\"unchanged code\")\n```\n\nPlain prose that a model may tidy up.\n";
+        let Prepared::Request(current) = session
+            .prepare(
+                text,
+                "inputs/release-notes.md",
+                &serde_json::Map::new(),
+                &cfg,
+            )
+            .unwrap()
+        else {
+            panic!("cache is disabled");
+        };
+        let id = "69e09eb66ddf4601aaa461af0324f81b-1";
+        let recorded: Value = serde_json::from_str(&fixture("create-request.json")).unwrap();
+        let sent = recorded["requests"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["custom_id"] == id)
+            .unwrap();
+        // The plan as 2.0.0 saved it: the same fields without marker_rules,
+        // and the request it sent.
+        let mut saved = serde_json::to_value(&*current).unwrap();
+        assert_eq!(saved["marker_rules"], 2);
+        saved.as_object_mut().unwrap().remove("marker_rules");
+        saved["request"] = sent["params"].clone();
+        let frozen: Plan = serde_json::from_value(saved).unwrap();
+        assert_eq!(frozen.request(id).unwrap(), *sent);
+        // 2.0.0's markers are the ones the recorded request carries.
+        let old = chunks::Protected::with_rules(text, chunks::Rules::Whole);
+        assert_eq!(sent["params"]["messages"][0]["content"], old.text);
+        assert!(!old.text.contains("[the changelog]"));
+        let line = fixture("results.jsonl")
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap())
+            .find(|row| row["custom_id"] == id)
+            .unwrap();
+        let item = crate::provider_batch::ResultItem {
+            custom_id: id.into(),
+            http_status: Some(200),
+            body: Some(line["result"]["message"].clone()),
+            error: None,
+            request_id: None,
+        };
+        let decoded = frozen.decode(&item, &cfg).unwrap();
+        assert!(
+            decoded
+                .markdown
+                .contains("[the changelog](https://example.test/changelog)")
+        );
+        assert!(decoded.markdown.contains("print(\"unchanged code\")"));
+        // The same answer against a plan frozen with 2.0.1's markers is refused.
+        assert!(current.decode(&item, &cfg).is_err());
+        // An unknown rules number is not guessed at.
+        let mut future = serde_json::to_value(&*current).unwrap();
+        future["marker_rules"] = json!(3);
+        let future: Plan = serde_json::from_value(future).unwrap();
+        assert!(future.request(id).is_err());
     }
 
     #[test]

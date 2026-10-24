@@ -144,8 +144,24 @@ pub(super) struct Protected {
     ranges: Vec<std::ops::Range<usize>>,
 }
 
+/// How a document becomes the model's text. A Provider Batch plan records
+/// the rules its request was written with, so an answer collected after an
+/// upgrade is checked and restored against the same markers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Rules {
+    /// markitai 2.0.0: a link and every HTML tag are one marker each.
+    Whole,
+    /// From 2.0.1: a link's words and attribute-less styling tags stay
+    /// readable; only the link's address is a marker.
+    Readable,
+}
+
 impl Protected {
     pub fn new(source: &str) -> Self {
+        Self::with_rules(source, Rules::Readable)
+    }
+
+    pub(super) fn with_rules(source: &str, rules: Rules) -> Self {
         let digest = crate::hex(Sha256::digest(source.as_bytes()));
         let mut prefix = format!("⟦MKTI:{}:", &digest[..16]);
         while source.contains(&prefix) {
@@ -195,7 +211,7 @@ impl Protected {
             .into_iter()
             .chain(std::iter::once(source.len()..source.len()))
         {
-            inline_ranges(source, cursor, range.start, &mut ranges, 0);
+            inline_ranges(source, cursor, range.start, &mut ranges, 0, rules);
             cursor = range.end;
         }
         crate::sort::by_key(&mut ranges, |r| r.start);
@@ -822,6 +838,7 @@ fn inline_ranges(
     end: usize,
     ranges: &mut Vec<std::ops::Range<usize>>,
     depth: u8,
+    rules: Rules,
 ) {
     let source = &full[start..end];
     let index = InlineIndex::new(source);
@@ -884,6 +901,7 @@ fn inline_ranges(
             if next.is_none() {
                 html_failed_until = scanned;
             } else if let Some(end) = next
+                && rules == Rules::Readable
                 && let Some((name, closing, attributed)) = styling_tag(&source[i..end])
             {
                 let open = styled.entry(name).or_default();
@@ -925,8 +943,16 @@ fn inline_ranges(
                         && bytes[label] == b'('
                         && after > label + 2
                         && depth < LINK_DEPTH
+                        && rules == Rules::Readable
                     {
-                        inline_ranges(full, start + open + 1, start + label - 1, ranges, depth + 1);
+                        inline_ranges(
+                            full,
+                            start + open + 1,
+                            start + label - 1,
+                            ranges,
+                            depth + 1,
+                            rules,
+                        );
                         ranges.push(start + label + 1..start + after - 1);
                         i = after;
                         continue;

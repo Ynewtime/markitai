@@ -22,7 +22,9 @@ OpenAI's Batch API and Anthropic's Message Batches are implemented; see
 `markitai --llm-batch --resume -o output-directory` selects the unique unfinished
 native job. INPUT is optional and, when supplied, must match the recorded resolved
 scope; it may have been deleted. Frozen plans and request bytes are reused without
-source discovery or reconversion. No pending job returns an explicit error instead
+source discovery or reconversion. Each plan records how its protected markers were
+made, so a job submitted with markitai 2.0.0 and collected by a later version checks
+and restores its answers against the markers its requests carried. No pending job returns an explicit error instead
 of silently starting a fresh submission. Rejected/completed jobs are not selected.
 
 Prepared work rebuilds missing JSONL only from saved plans. An uploaded file is
