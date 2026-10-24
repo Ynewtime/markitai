@@ -1398,14 +1398,15 @@
       },
       "ItemResult": {
         "type": "object",
-        "required": ["name", "variant", "markdown", "artifacts", "truncated", "markdown_bytes"],
+        "required": ["name", "variant", "markdown", "artifacts", "truncated", "markdown_bytes", "markdown_lines"],
         "properties": {
           "name": { "type": "string" },
           "variant": { "type": "string", "enum": ["base", "llm"] },
           "markdown": { "type": "string" },
           "artifacts": { "type": "array", "items": { "$ref": "#/components/schemas/Artifact" } },
           "truncated": { "type": "boolean", "description": "`markdown` was cut to `max_bytes`" },
-          "markdown_bytes": { "type": "integer", "description": "Size of the whole selected Markdown" }
+          "markdown_bytes": { "type": "integer", "description": "Size of the whole selected Markdown" },
+          "markdown_lines": { "type": "integer", "description": "v1.23. Lines of the whole selected Markdown (line breaks, plus a last line without one), also for an excerpt" }
         }
       },
       "HistoryEntry": {

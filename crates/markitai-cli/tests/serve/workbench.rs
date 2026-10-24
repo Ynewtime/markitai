@@ -158,12 +158,15 @@ fn a_result_excerpt_stops_at_a_line_and_reports_the_whole_size() {
     assert_eq!(whole["truncated"], false);
     let size = whole["markdown"].as_str().unwrap().len();
     assert_eq!(whole["markdown_bytes"], size);
+    let lines = whole["markdown"].as_str().unwrap().lines().count();
+    assert_eq!(whole["markdown_lines"], lines);
     assert!(size > 16384);
     for limit in [1024, 4000, 16384] {
         let excerpt = server.json(&format!("{path}?max_bytes={limit}"));
         let text = excerpt["markdown"].as_str().unwrap();
         assert_eq!(excerpt["truncated"], true);
         assert_eq!(excerpt["markdown_bytes"], size);
+        assert_eq!(excerpt["markdown_lines"], lines);
         assert!(
             text.len() <= limit && text.len() >= limit * 3 / 4,
             "{limit}"

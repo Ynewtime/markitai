@@ -700,6 +700,11 @@ export const zh: Dict = {
   showItem: "查看该项",
   showItems: "查看这些项",
   resultStart: "结果开头",
+  requestShow: "查看请求参数",
+  requestHide: "收起请求参数",
+  startViews: "结果开头的显示方式",
+  startLines: (shown: number, total: number | null) =>
+    total === null ? `前 ${shown} 行` : shown < total ? `前 ${shown} 行 / 共 ${total.toLocaleString("zh-CN")} 行` : `共 ${total.toLocaleString("zh-CN")} 行`,
   openInPreview: "在预览中打开",
   failedHeading: (n: number) => `${n} 个失败`,
   stoppedCount: (n: number) => `${n} 项在转换前已停止。`,

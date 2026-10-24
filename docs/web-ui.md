@@ -171,10 +171,17 @@ files wait on Convert); typing URLs is Convert's job.
 - **Details** shows the item: its state in a sentence
   ("Converted with LLM in 14.6 s · 12 images", or the failure in plain words), the
   facts (source and its size, output, what else was saved, models, cost,
-  options, finished, kept until; a long output name stays on one line and gives
+  finished, kept until; a long output name stays on one line and gives
   up its middle, `2025年度…披露全文.pdf.llm.md`), its notices grouped by kind, and
   the start of the result with its front matter and its own pictures, in the same
-  centred reading column as Preview (the whole card opens Preview). Options is
+  centred reading column as Preview (the whole card opens Preview). A small
+  Rendered | Source switch heads that start (Rendered first; only for Markdown
+  output): Source shows its first 12 lines as written, numbered, the front matter
+  muted, with "First 12 of N lines" on the right (N from `markdown_lines`, else
+  counted by the page when it has the whole text). Above the state sentence, a quiet
+  **Show request options** row (a terminal mark in the status mark's column, a
+  chevron; `aria-expanded`; open or folded is remembered per browser,
+  `localStorage['markitai.request']`) opens, under that sentence,
   the conversion as its command line on the composer's dark strip
   (`$ markitai notes.pdf -o output/ --preset rich --keep-base`, wrapping between
   flags, a copy icon at its end) with the settings no flag sets as `key value`
@@ -183,7 +190,7 @@ files wait on Convert); typing URLs is Convert's job.
   only what differs from markitai's defaults; a job recorded before that shows
   its request's own options (OCR language and every-page OCR as chips), and an
   older CLI history entry, which kept only its preset and switches, its short
-  summary (`Rich · LLM`). A conversion with LLM also saves the Markdown before
+  summary as an Options fact (`Rich · LLM`). A conversion with LLM also saves the Markdown before
   LLM, so its command line carries `--keep-base` and reproduces the same files.
   A model answer that was requested again and then used is
   no notice (the terminal shows it with `-v`; the cost counts both requests). A
@@ -767,7 +774,8 @@ saves `…/document`, the options' Text only sets `text_only`; contract v1.20 ad
 job options `format` (under `document_json`), `ocr_lang` (with `ocr_languages` and
 `ocr_lang` in the capabilities), `ocr_all_pages` and `page_markers`, and the same
 keys as saved defaults; contract v1.22 adds `settings`, read when present, to jobs
-and items); a missing feature hides its control instead of failing (no Stop
+and items, and v1.23 `markdown_lines` to a result, so the Details count the lines of
+an output whose start is an excerpt); a missing feature hides its control instead of failing (no Stop
 remaining, no Compare, archives saved through the page, history read job by job,
 images read from the file route).
 `docs_url` points the Docs link at the backend's own documentation (both servers name

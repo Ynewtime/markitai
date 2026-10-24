@@ -95,11 +95,12 @@ workbench relies on; they are not a byte-for-byte contract of every payload.
    Slow subscribers receive a fresh snapshot after a bounded event-buffer
    overrun.
 5. `GET /api/jobs/{job_id}/items/{item_id}/result` returns `name`, selected
-   `variant`, `markdown`, downloadable `{relpath,size}` artifacts, `truncated`
-   and `markdown_bytes` (the size of the whole Markdown). `?max_bytes=N`
-   (N ≥ 1024, else 422 `invalid_max_bytes`) returns only the start of the
-   Markdown, at most N bytes, ending at a line break in its last quarter when
-   there is one and never inside a UTF-8 sequence; `artifacts` stays complete.
+   `variant`, `markdown`, downloadable `{relpath,size}` artifacts, `truncated`,
+   `markdown_bytes` (the size of the whole Markdown) and `markdown_lines` (its
+   lines). `?max_bytes=N` (N ≥ 1024, else 422 `invalid_max_bytes`) returns
+   only the start of the Markdown, at most N bytes, ending at a line break in
+   its last quarter when there is one and never inside a UTF-8 sequence;
+   `artifacts`, `markdown_bytes` and `markdown_lines` stay those of the whole.
    Fetch an artifact through `GET /api/jobs/{job_id}/files/{relpath}`. Download
    all output files through `GET /api/jobs/{job_id}/archive` after completion, or
    one item's through `GET /api/jobs/{job_id}/items/{item_id}/archive`: every

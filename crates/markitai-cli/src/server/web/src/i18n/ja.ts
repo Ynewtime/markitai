@@ -721,6 +721,11 @@ export const ja: Dict = {
   showItem: "この項目を表示",
   showItems: "これらの項目を表示",
   resultStart: "結果の冒頭",
+  requestShow: "リクエストのパラメータを表示",
+  requestHide: "リクエストのパラメータを閉じる",
+  startViews: "結果の冒頭の表示",
+  startLines: (shown: number, total: number | null) =>
+    total === null ? `先頭 ${shown} 行` : shown < total ? `先頭 ${shown} 行 / 全 ${total.toLocaleString("ja-JP")} 行` : `全 ${total.toLocaleString("ja-JP")} 行`,
   openInPreview: "プレビューで開く",
   failedHeading: (n: number) => `${n} 件失敗`,
   stoppedCount: (n: number) => `${n} 件は変換前に停止しました。`,

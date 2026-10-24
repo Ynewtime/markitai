@@ -750,6 +750,12 @@ export const en = {
   showItem: "Show item",
   showItems: "Show items",
   resultStart: "Start of the result",
+  requestShow: "Show request options",
+  requestHide: "Hide request options",
+  startViews: "Show the start of the result",
+  /** Source shows the first lines of a result with `total` lines (null: not reported); Rendered, only `total`. */
+  startLines: (shown: number, total: number | null) =>
+    total === null ? `First ${shown} lines` : shown < total ? `First ${shown} of ${total.toLocaleString("en-US")} lines` : total === 1 ? "1 line" : `${total.toLocaleString("en-US")} lines`,
   openInPreview: "Open in Preview",
   failedHeading: (n: number) => (n === 1 ? "1 failed" : `${n} failed`),
   stoppedCount: (n: number) => (n === 1 ? "1 item was stopped before conversion." : `${n} items were stopped before conversion.`),

@@ -23,8 +23,9 @@ import { typeset } from "../lib/math.ts";
 import { groupNotices, type NoticeGroup } from "../lib/notices.ts";
 import { copyText } from "../lib/clipboard.ts";
 import type { PresetTable } from "../lib/options.ts";
-import { requestView, wrapUnits } from "../lib/request.ts";
-import { cachedExcerpt, loadExcerpt, resultKey } from "../lib/results.ts";
+import { readRequestOpen, storeRequestOpen } from "../lib/peek-pref.ts";
+import { requestView, wrapUnits, type RequestView } from "../lib/request.ts";
+import { cachedExcerpt, loadExcerpt, resultKey, sourceStart } from "../lib/results.ts";
 import { canRetry, isPreviewable, type SessionItem } from "../lib/session.ts";
 import type { MenuDanger } from "./action-menu.tsx";
 import { FileName } from "./file-name.tsx";
@@ -182,63 +183,94 @@ function keptUntil(ctx: InspectorContext, finishedAt: string | null): string | n
   return fmtDay(ms + ctx.retentionDays * 86_400_000, ctx.locale);
 }
 
-/** The Options fact: the request as its command line with a copy button, and the settings no flag
- * sets as chips. An older CLI history entry kept only its preset and switches: it keeps its summary. */
-function RequestFact({ ctx, inputs, options, settings, url, origin }: { ctx: InspectorContext; inputs: string[]; options: JobOptions | null | undefined; settings: JobSettings | null | undefined; url: boolean; origin: "web" | "cli" }) {
-  const { t } = ctx;
+type RequestArgs = { inputs: string[]; options: JobOptions | null | undefined; settings: JobSettings | null | undefined; url: boolean; origin: "web" | "cli" };
+
+/** The request as its command line and the settings no flag sets as chips; null for an older CLI
+ * history entry, which kept only its preset and switches (its summary stays an Options fact). */
+function requestOf(ctx: InspectorContext, args: RequestArgs): RequestView | null {
+  return args.origin === "cli" && !args.settings ? null : requestView(args.inputs, args.options, args.settings, args.url, ctx.presets);
+}
+
+/** Details' request options, open or folded: one choice for this browser, not per conversion. */
+function useRequestOpen(): [boolean, () => void] {
+  const [open, setOpen] = useState(readRequestOpen);
+  return [
+    open,
+    () => {
+      storeRequestOpen(!open);
+      setOpen(!open);
+    },
+  ];
+}
+
+/** The first row of Details: a quiet text button whose terminal mark sits in the status mark's column. */
+function RequestToggle({ t, open, onToggle, controls }: { t: Dict; open: boolean; onToggle: () => void; controls: string }) {
+  return (
+    <button type="button" class="req-toggle" aria-expanded={open} aria-controls={open ? controls : undefined} onClick={onToggle}>
+      <span class="req-mark" aria-hidden="true">
+        <Icon name="Terminal" size={14} />
+      </span>
+      <span>{open ? t.requestHide : t.requestShow}</span>
+      <span class="req-caret" aria-hidden="true">
+        <Icon name="CaretDown" size={12} />
+      </span>
+    </button>
+  );
+}
+
+/** The request on the composer's dark strip with a copy button, and the settings no flag sets as chips under it. */
+function RequestStrip({ t, view, id }: { t: Dict; view: RequestView; id: string }) {
   const [copied, setCopied] = useState<"copied" | "failed" | null>(null);
   useEffect(() => {
     if (copied === null) return;
     const timer = setTimeout(() => setCopied(null), 1600);
     return () => clearTimeout(timer);
   }, [copied]);
-  const view = origin === "cli" && !settings ? null : requestView(inputs, options, settings, url, ctx.presets);
-  if (!view) {
-    const summary = optionsText(t, { options });
-    return summary ? (
-      <>
-        <dt>{t.factOptions}</dt>
-        <dd>{summary}</dd>
-      </>
-    ) : null;
-  }
   const copy = () => void copyText(view.command).then((ok) => setCopied(ok ? "copied" : "failed"));
   const label = copied === "copied" ? t.copied : copied === "failed" ? t.copyFailed : t.copyCommand;
   return (
+    <div id={id} class="insp-request">
+      <div class="request-line">
+        <code class="request-command" role="group" tabIndex={0} aria-label={t.cliAria}>
+          <span class="cli-prompt" aria-hidden="true">
+            ${" "}
+          </span>
+          {wrapUnits(view.words).map((unit, index) => (
+            <span key={index}>
+              {index > 0 && " "}
+              <span class="request-unit">{unit}</span>
+            </span>
+          ))}
+        </code>
+        <button type="button" class={copied === "copied" ? "icon-btn request-copy is-done" : "icon-btn request-copy"} aria-label={label} title={label} onClick={copy}>
+          <Icon name={copied === "copied" ? "Check" : "Copy"} size={14} />
+        </button>
+        <span class="sr-only" aria-live="polite">
+          {copied === "copied" ? t.copied : copied === "failed" ? t.copyFailed : ""}
+        </span>
+      </div>
+      {view.chips.length > 0 && (
+        <ul class="request-chips" aria-label={t.requestSettings}>
+          {view.chips.map((chip) => (
+            <li key={chip.key} class="request-chip">
+              <span class="request-chip-key">{chip.key}</span> {chip.value}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/** An older CLI history entry's options: its short summary, as a fact. */
+function OptionsFact({ t, options }: { t: Dict; options: JobOptions | null | undefined }) {
+  const summary = optionsText(t, { options });
+  return summary ? (
     <>
       <dt>{t.factOptions}</dt>
-      <dd class="fact-request">
-        <div class="request-line">
-          <code class="request-command" role="group" tabIndex={0} aria-label={t.cliAria}>
-            <span class="cli-prompt" aria-hidden="true">
-              ${" "}
-            </span>
-            {wrapUnits(view.words).map((unit, index) => (
-              <span key={index}>
-                {index > 0 && " "}
-                <span class="request-unit">{unit}</span>
-              </span>
-            ))}
-          </code>
-          <button type="button" class={copied === "copied" ? "icon-btn request-copy is-done" : "icon-btn request-copy"} aria-label={label} title={label} onClick={copy}>
-            <Icon name={copied === "copied" ? "Check" : "Copy"} size={14} />
-          </button>
-          <span class="sr-only" aria-live="polite">
-            {copied === "copied" ? t.copied : copied === "failed" ? t.copyFailed : ""}
-          </span>
-        </div>
-        {view.chips.length > 0 && (
-          <ul class="request-chips" aria-label={t.requestSettings}>
-            {view.chips.map((chip) => (
-              <li key={chip.key} class="request-chip">
-                <span class="request-chip-key">{chip.key}</span> {chip.value}
-              </li>
-            ))}
-          </ul>
-        )}
-      </dd>
+      <dd>{summary}</dd>
     </>
-  );
+  ) : null;
 }
 
 function optionsText(t: Dict, item: { options?: SessionItem["options"] | null }): string {
@@ -352,9 +384,21 @@ function NoticeList({ t, groups, docsUrl, where, onShow, onOpen }: { t: Dict; gr
   );
 }
 
-/** The first blocks of a result, with the item's own pictures as small figures. */
-function Excerpt({ ctx, item, onOpen }: { ctx: InspectorContext; item: SessionItem; onOpen: () => void }) {
+/** Rendered or Source for the start of a result: Rendered unless chosen otherwise on this page. */
+type StartView = "rendered" | "source";
+let startView: StartView = "rendered";
+
+/** The first blocks of a result, with the item's own pictures as small figures, or (Source) its
+ * first lines as written. Either card opens Preview. */
+function Excerpt({ ctx, item, headingId, onOpen }: { ctx: InspectorContext; item: SessionItem; headingId: string; onOpen: () => void }) {
   const { t } = ctx;
+  const [view, setView] = useState<StartView>(startView);
+  const choose = (value: StartView) => {
+    startView = value;
+    setView(value);
+  };
+  // Only a Markdown text has a source to show; another output keeps the plain heading.
+  const markdown = /\.md$/i.test(item.output ?? "");
   const key = resultKey(item);
   const [result, setResult] = useState<ItemResult | null>(() => cachedExcerpt(key));
   const [error, setError] = useState<unknown>(null);
@@ -375,6 +419,7 @@ function Excerpt({ ctx, item, onOpen }: { ctx: InspectorContext; item: SessionIt
   }, [key]);
   const split = useMemo(() => (result ? splitFrontmatter(result.markdown) : null), [result]);
   const front = useMemo(() => cardFacts(parseFrontMatter(split?.frontmatter ?? null), split?.body ?? ""), [split]);
+  const source = useMemo(() => (result && markdown ? sourceStart(result) : null), [result, markdown]);
   useEffect(() => {
     const target = body.current;
     if (!target || !split || !result) return;
@@ -422,18 +467,66 @@ function Excerpt({ ctx, item, onOpen }: { ctx: InspectorContext; item: SessionIt
       loads?.dispose();
     };
   }, [split, result, item.jobId, item.output, item.name, t]);
-  if (error) return <p class="pane-note line-error">{ctx.describe(error).text}</p>;
-  if (!result || !split) return <Skeleton label={t.loading} kind="list" />;
-  return (
-    <div class="excerpt is-link">
-      {/* The whole card opens Preview; its properties control stays above this button. */}
-      <button type="button" class="excerpt-open" onClick={onOpen}>
-        <span class="sr-only">{t.openInPreview}</span>
-      </button>
-      {front && <FrontCard t={t} front={front} compact />}
-      {/* A picture of the result's start: nothing in it is read or reached by the keyboard. */}
-      <div ref={body} class="doc-body excerpt-body" aria-hidden="true" inert />
+  const shownSource = markdown && view === "source";
+  const head = markdown ? (
+    <div class="start-head">
+      <h3 id={headingId} class="sr-only">
+        {t.resultStart}
+      </h3>
+      <span class="seg start-views" role="group" aria-label={t.startViews}>
+        {(["rendered", "source"] as const).map((value) => (
+          <button key={value} type="button" class={view === value ? "is-on" : undefined} aria-pressed={view === value} onClick={() => choose(value)}>
+            {value === "rendered" ? t.rendered : t.source}
+          </button>
+        ))}
+      </span>
+      {source && (source.total !== null || shownSource) && (
+        <span class="start-count">{shownSource ? t.startLines(source.lines.length, source.total) : t.startLines(source.total ?? 0, source.total)}</span>
+      )}
     </div>
+  ) : (
+    <h3 id={headingId}>{t.resultStart}</h3>
+  );
+  if (error)
+    return (
+      <>
+        {head}
+        <p class="pane-note line-error">{ctx.describe(error).text}</p>
+      </>
+    );
+  if (!result || !split)
+    return (
+      <>
+        {head}
+        <Skeleton label={t.loading} kind="list" />
+      </>
+    );
+  return (
+    <>
+      {head}
+      <div class="excerpt is-link">
+        {/* The whole card opens Preview; its properties control stays above this button. */}
+        <button type="button" class="excerpt-open" onClick={onOpen}>
+          <span class="sr-only">{t.openInPreview}</span>
+        </button>
+        {/* Rendered stays drawn while Source shows, so switching back is immediate. */}
+        <div hidden={shownSource}>
+          {front && <FrontCard t={t} front={front} compact />}
+          {/* A picture of the result's start: nothing in it is read or reached by the keyboard. */}
+          <div ref={body} class="doc-body excerpt-body" aria-hidden="true" inert />
+        </div>
+        {shownSource && source && (
+          <ol class="start-source" aria-hidden="true" inert>
+            {source.lines.map((line, index) => (
+              <li key={index} class={line.front ? "is-front" : undefined}>
+                <span class="start-no">{index + 1}</span>
+                <span class="start-text">{line.text}</span>
+              </li>
+            ))}
+          </ol>
+        )}
+      </div>
+    </>
   );
 }
 
@@ -556,6 +649,8 @@ export function ItemInspector({
     shots > 0 ? t.screenshotsSaved(shots) : null,
   ].filter(Boolean);
   const url = item.kind === "url" && /^https?:\/\//i.test(item.name) ? item.name : null;
+  const request = requestOf(ctx, { inputs: [item.name], options: item.options ?? job?.options, settings: item.settings ?? (item.options ? null : job?.settings), url: item.kind === "url", origin: job?.origin ?? "web" });
+  const [requestOpen, toggleRequest] = useRequestOpen();
   return (
     <section class={peek ? "insp is-peek" : "insp"} aria-labelledby={peek ? undefined : headingId}>
       <ActionError t={t} failure={ctx.failure?.key === item.key ? ctx.failure : null} />
@@ -567,10 +662,12 @@ export function ItemInspector({
             <span class="insp-name">{readable(item.name)}</span>
           </h2>
         )}
+        {request && <RequestToggle t={t} open={requestOpen} onToggle={toggleRequest} controls={`${headingId}-request`} />}
         <p class={failed ? "insp-line is-error" : "insp-line"}>
           {peek && <StatusGlyph glyph={glyph} label={statusWord(t, glyph)} />}
           {itemLine(ctx, item, elapsed, images)}
         </p>
+        {request && requestOpen && <RequestStrip t={t} view={request} id={`${headingId}-request`} />}
       </header>
       {job?.persistenceError && <ConditionLine tone="error" text={persistenceText(locale, job.persistenceError).text} />}
       {!ctx.llmReady && item.status === "done" && !item.llmEnhanced && !item.skipped && (
@@ -630,7 +727,7 @@ export function ItemInspector({
         )}
         <dt>{t.factCost}</dt>
         <dd class={cost.kind === "unknown" && itemCostPhase(item) === "amount" ? "is-unknown" : undefined}>{itemCostText(t, item)}</dd>
-        <RequestFact ctx={ctx} inputs={[item.name]} options={item.options ?? job?.options} settings={item.settings ?? (item.options ? null : job?.settings)} url={item.kind === "url"} origin={job?.origin ?? "web"} />
+        {!request && <OptionsFact t={t} options={item.options ?? job?.options} />}
         {item.finishedAt && (
           <>
             <dt>{t.factFinished}</dt>
@@ -652,8 +749,7 @@ export function ItemInspector({
       )}
       {isPreviewable(item) && (
         <section class="insp-section" aria-labelledby={`${headingId}-start`}>
-          <h3 id={`${headingId}-start`}>{t.resultStart}</h3>
-          <Excerpt ctx={ctx} item={item} onOpen={() => actions.preview(item)} />
+          <Excerpt ctx={ctx} item={item} headingId={`${headingId}-start`} onOpen={() => actions.preview(item)} />
         </section>
       )}
     </section>
@@ -720,6 +816,14 @@ export function JobInspector({
   const running = job.status === "running";
   const kept = keptUntil(ctx, job.finishedAt);
   const preset = presetOf(job.options);
+  const request = requestOf(ctx, {
+    inputs: items.length <= 3 ? items.map((item) => item.name) : [],
+    options: job.options,
+    settings: job.settings,
+    url: items.length > 0 && items.every((item) => item.kind === "url"),
+    origin: job.origin,
+  });
+  const [requestOpen, toggleRequest] = useRequestOpen();
   return (
     <section class={peek ? "insp is-peek" : "insp"} aria-labelledby={peek ? undefined : headingId}>
       <ActionError t={t} failure={ctx.failure?.key === `job:${job.jobId}` ? ctx.failure : null} />
@@ -729,11 +833,19 @@ export function JobInspector({
             <span class="insp-name">{label}</span>
           </h2>
         )}
+        {request && <RequestToggle t={t} open={requestOpen} onToggle={toggleRequest} controls={`${headingId}-request`} />}
         <p class="insp-line">
+          {/* under the request's terminal mark, the submission's own mark keeps the two texts in one column */}
+          {request && peek && (
+            <span class="condition-mark" aria-hidden="true">
+              <Icon name="Files" size={14} />
+            </span>
+          )}
           {t.itemsCount(items.length)}
           {preset && ` · ${t.presetName(preset)}`}
           {job.createdAt && ` · ${fmtWhen(job.createdAt, locale)}`}
         </p>
+        {request && requestOpen && <RequestStrip t={t} view={request} id={`${headingId}-request`} />}
       </header>
       <ProgressStrip t={t} items={items} />
       {job.persistenceError && <ConditionLine tone="error" text={persistenceText(locale, job.persistenceError).text} />}
@@ -743,14 +855,7 @@ export function JobInspector({
           {totalCostText(t, items, cost)}
           {cost.kind === "unknown" && cost.unknownItems > 0 && <span class="fact-dim"> · {t.costUnknownItems(cost.unknownItems)}</span>}
         </dd>
-        <RequestFact
-          ctx={ctx}
-          inputs={items.length <= 3 ? items.map((item) => item.name) : []}
-          options={job.options}
-          settings={job.settings}
-          url={items.length > 0 && items.every((item) => item.kind === "url")}
-          origin={job.origin}
-        />
+        {!request && <OptionsFact t={t} options={job.options} />}
         {!running && job.durationMs !== null && (
           <>
             <dt>{t.factTook}</dt>

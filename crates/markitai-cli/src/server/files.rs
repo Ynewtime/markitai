@@ -271,6 +271,24 @@ fn excerpt(bytes: &[u8], limit: usize) -> Option<&str> {
     }
 }
 
+/// The lines of a text read in chunks: its line breaks, plus a last line
+/// without one (an empty text has none).
+fn line_count(mut reader: impl Read) -> std::io::Result<u64> {
+    let mut buffer = vec![0; 64 * 1024];
+    let (mut lines, mut last) = (0u64, b'\n');
+    loop {
+        let read = match reader.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(read) => read,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error),
+        };
+        lines += buffer[..read].iter().filter(|byte| **byte == b'\n').count() as u64;
+        last = buffer[read - 1];
+    }
+    Ok(lines + u64::from(last != b'\n'))
+}
+
 /// A done item's result as `result` reads it, resolved under `job.access`:
 /// the Markdown it shows and where its artifacts come from.
 struct Shown {
@@ -441,6 +459,12 @@ pub(super) async fn result(
             }
             None => fs::read_to_string(&shown.path).map_err(ApiError::internal)?,
         };
+        // The whole Markdown's lines, which an excerpt alone cannot tell.
+        let lines = match excerpted {
+            Some(_) => line_count(File::open(&shown.path).map_err(ApiError::internal)?),
+            None => line_count(markdown.as_bytes()),
+        }
+        .map_err(ApiError::internal)?;
         let mut artifacts = Vec::new();
         for relative in shown.artifacts(excerpted.is_none().then_some(markdown.as_str()))? {
             if let Ok(path) = store::safe_file(&shown.out, &relative) {
@@ -459,7 +483,8 @@ pub(super) async fn result(
         };
         Ok(Json(
             json!({"name":shown.item.name,"variant":shown.variant,"markdown":markdown,
-            "artifacts":artifacts,"truncated":truncated,"markdown_bytes":size}),
+            "artifacts":artifacts,"truncated":truncated,"markdown_bytes":size,
+            "markdown_lines":lines}),
         ))
     })
     .await
@@ -885,6 +910,23 @@ mod excerpt_tests {
         );
         assert_eq!(excerpt(b"short\n", 1024), Some("short\n"));
         assert_eq!(excerpt(b"ab\xffcd", 1024), None);
+    }
+
+    #[test]
+    fn a_line_count_counts_a_last_line_without_its_break() {
+        for (text, lines) in [
+            ("", 0),
+            ("a", 1),
+            ("a\n", 1),
+            ("a\n\nb", 3),
+            ("a\r\nb\r\n", 2),
+        ] {
+            assert_eq!(line_count(text.as_bytes()).unwrap(), lines, "{text:?}");
+            assert_eq!(text.lines().count() as u64, lines, "{text:?}");
+        }
+        // Chunks end anywhere: a long text counts the same as its lines.
+        let long = "line of the notes\n".repeat(10_000) + "end";
+        assert_eq!(line_count(long.as_bytes()).unwrap(), 10_001);
     }
 
     /// A result file is never sent as a script or style sheet the

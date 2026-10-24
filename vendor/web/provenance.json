@@ -156,9 +156,9 @@
     "source": "https://registry.npmjs.org/@phosphor-icons/react/-/react-2.1.10.tgz",
     "package_integrity": "sha512-vt8Tvq8GLjheAZZYa+YG/pW7HDbov8El/MANW8pOAz4eGxrwhnbfrQZq0Cp4q8zBEu8NIhHdnr+r8thnfRSNYA==",
     "member": "package/dist/defs/*.es.js (path data of the listed icons)",
-    "bytes": 26681,
-    "sha256": "44c300f90afff1319f14b16ba457f2d34b7ace263b2a0af7f58f17ecfc3a3582",
-    "obtained": "generated: the SVG path strings of 70 icons were extracted from the members below; bundled into dist/app.js",
+    "bytes": 26840,
+    "sha256": "978d4689b05f73a1e148988f3eab427c3eebf8fc7ddde341027b50820ae73d18",
+    "obtained": "generated: the SVG path strings of 71 icons were extracted from the members below; bundled into dist/app.js",
     "derived_from": [
       {
         "member": "package/dist/defs/FileText.es.js",
@@ -499,6 +499,11 @@
         "member": "package/dist/defs/MarkdownLogo.es.js",
         "bytes": 3666,
         "sha256": "d7f8bbb15c61bd911f61b621a2cb7c69369df96d5b86902559310c61dad56ec5"
+      },
+      {
+        "member": "package/dist/defs/Terminal.es.js",
+        "bytes": 1923,
+        "sha256": "007ce924ac1ab5a3a8c7a5916d1706a793ee4dc6060168904476bbd548ab979b"
       }
     ]
   },

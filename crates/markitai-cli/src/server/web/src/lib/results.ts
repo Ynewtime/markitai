@@ -63,3 +63,27 @@ export function loadExcerpt(item: SessionItem, supported: boolean): Promise<Item
     return value;
   });
 }
+
+/** Lines of a text as the server counts `markdown_lines`: its line breaks, plus a last line without one. */
+export const lineCount = (text: string): number => (text === "" ? 0 : text.split("\n").length - (text.endsWith("\n") ? 1 : 0));
+
+/** Lines Details' Source shows. */
+export const START_LINES = 12;
+
+export interface SourceStart {
+  /** The first lines, those of the front matter (from its `---` to its closing line) marked. */
+  lines: { text: string; front: boolean }[];
+  /** The whole result's lines; null for an excerpt whose server did not count them. */
+  total: number | null;
+}
+
+/** The start of a result as Details' Source shows it. */
+export function sourceStart(result: Pick<ItemResult, "markdown" | "truncated" | "markdown_lines">, count = START_LINES): SourceStart {
+  const total = result.markdown_lines ?? (result.truncated ? null : lineCount(result.markdown));
+  const head = result.markdown.split(/\r?\n/, Math.min(count, total ?? count));
+  const opens = head[0]?.replace(/^\uFEFF/, "").trimEnd() === "---";
+  const close = opens ? head.findIndex((line, index) => index > 0 && /^(---|\.\.\.)\s*$/.test(line)) : -1;
+  // a front matter that closes after the shown lines covers all of them
+  const last = opens && close === -1 ? head.length : close;
+  return { lines: head.map((text, index) => ({ text, front: index <= last })), total };
+}

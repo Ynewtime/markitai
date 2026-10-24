@@ -1617,11 +1617,47 @@ main:focus {
   font-size: var(--text-sm);
   font-variant-numeric: tabular-nums;
 }
-/* the request as its command line, on the dark strip of the composer's, and
+/* Details' first row: a quiet text button whose terminal mark shares the status mark's 18 px column
+   and gap, so both texts start at one x */
+.req-toggle {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+  margin: 0 0 2px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-3);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.req-toggle:hover {
+  color: var(--text-1);
+}
+.req-mark {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+}
+.req-caret {
+  display: inline-grid;
+  place-items: center;
+  transition: transform var(--dur-base) var(--ease-out);
+}
+.req-toggle[aria-expanded="true"] .req-caret {
+  transform: rotate(180deg);
+}
+/* opened: the request as its command line, on the dark strip of the composer's, and
    the settings no flag sets as quiet chips under it */
-.facts dd.fact-request {
+.insp-request {
   display: grid;
   gap: 8px;
+  margin-top: 12px;
 }
 .request-line {
   display: flex;
@@ -1861,6 +1897,57 @@ main:focus {
 }
 .legend-queued i {
   background: var(--hairline-strong);
+}
+/* the start of the result: Rendered | Source on the left, its line count on the right */
+.start-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.seg.start-views button {
+  height: 24px;
+  padding: 0 10px;
+  font-size: var(--text-sm);
+}
+.start-count {
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-3);
+}
+/* Source: the first lines as written, numbered, the front matter muted; a long line ends in an ellipsis */
+.start-source {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: 20px;
+  color: var(--text-1);
+}
+.start-source li {
+  display: grid;
+  grid-template-columns: 2.5ch minmax(0, 1fr);
+  gap: 12px;
+}
+.start-no {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-4);
+  user-select: none;
+}
+.start-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: pre;
+}
+.start-source li.is-front .start-text {
+  color: var(--text-3);
 }
 .excerpt {
   position: relative;
@@ -6225,6 +6312,12 @@ input[type="password"],
   outline: 2px solid var(--text-2);
   outline-offset: -2px;
 }
+/* borderless and unpadded: its ring sits outside the text */
+.req-toggle:focus-visible {
+  border-radius: var(--r-xs);
+  outline: 2px solid var(--text-2);
+  outline-offset: 2px;
+}
 .row:focus-visible,
 .group-head:focus-visible {
   outline: 2px solid var(--text-1);
@@ -6465,10 +6558,11 @@ input[type="password"],
   .facts {
     grid-template-columns: 92px minmax(0, 1fr);
   }
-  /* the command line takes the whole width under its label */
-  .facts dd.fact-request {
-    grid-column: 1 / -1;
-    margin-top: -2px;
+  /* a finger reaches the request toggle from 8 px around it */
+  .req-toggle::after {
+    content: "";
+    position: absolute;
+    inset: -8px -6px;
   }
   .insp-title {
     font-size: var(--text-lg);

@@ -181,6 +181,8 @@ export interface ItemResult {
   truncated?: boolean;
   /** Size of the whole selected Markdown. */
   markdown_bytes?: number;
+  /** v1.23: lines of the whole selected Markdown, also for an excerpt. */
+  markdown_lines?: number;
 }
 
 export interface PresetFeatures {
