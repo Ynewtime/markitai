@@ -35,26 +35,35 @@ Controls share one scale: buttons 28 px with 13 px labels (36 px on a phone),
 one filled button per area, secondary actions as outlined buttons and the rest
 in "⋯"; every choice of two or three (status filters, presets, File, Base | LLM,
 language and theme) is the same segmented group, and the option toggles one-segment
-groups in the same design. A single choice of more than three (URL, Output, the provider
+groups in the same design. A single choice of more than three (the provider
 groups when more than three are offered) is a menu button instead: the current value and a
 chevron, opening a menu whose entries are radio items with a check on the current one
 (arrow keys, Home/End, Escape; a choice that can't be used stays listed, dimmed, its
-reason in its description). On a phone the options' buttons, toggles, segments and menu
-buttons are 28 px tall with 11 px labels, 8 px sides and 6 px apart;
+reason in its description). On a phone the preset's segments are 28 px tall with 11 px
+labels and 8 px sides;
 on a phone the short text actions (Full details, Show items, breadcrumbs) answer
 taps across 44 px.
 
 **Convert** (`/`) is a headline, one sentence and the composer: the URL field
 (Enter converts, Shift+Enter starts a new line, a pasted list grows the field up
 to six rows), Options, Upload (files) and Folder on the left, Convert on the
-right, and the options drawer, which ends with the equivalent CLI command line.
-The options start from the server's defaults (its configuration: `llm.enabled`,
+right. Options opens the conversion options in a dialog (a sheet from the bottom
+edge on a phone, closed by dragging its handle down, tapping outside or Esc; a
+480 px dialog near the top elsewhere), and carries a dot while the choices differ
+from the defaults. The dialog's first page has the preset and one row per group
+(Enhance, Images, Output, then under Advanced URL, Files, Pages, Other) with its
+value, in full text colour when it differs from the defaults; a row opens the
+group in the same dialog (Back returns), as a list with a check for a single
+choice or switches, each with a short line under its name, and a choice applies
+at once. A choice the server can't offer stays dimmed with its reason (LLM
+without a model links to Settings → Models; Cloudflare without its setup). The
+foot keeps the equivalent CLI command on one line with Copy, and Reset to
+defaults / Save as default. The options start from the server's defaults (its configuration: `llm.enabled`,
 `ocr.enabled`, `image.alt_enabled`, `image.desc_enabled`, `screenshot.enabled`,
 `screenshot.screenshot_only`, `llm.pure`, `cache.no_cache`, `image.compress`,
 `output.profile`, `fetch.strategy`, and with contract v1.20 `output.format`,
 `ocr.lang`, `ocr.per_page_routing`, `output.page_markers`), or for a user token its own defaults over
-them. A row above the command line says whether the choices are those defaults;
-Reset to defaults returns to them, and Save as default makes the current choices
+them. Reset to defaults returns to them, and Save as default makes the current choices
 the defaults: the admin's go into `config.json` (the command line reads them
 too), a user token's into its own settings (Use the server's defaults removes
 them). Cloudflare is never a default: it asks for a confirmation each time.
@@ -62,14 +71,13 @@ Other also offers Text only (images and PDFs as the recognised text alone, see
 [images](images.md#text-only)) when the backend reports `features.text_only`;
 it is sent as `text_only` only when chosen and is not one of the saved defaults.
 Contract v1.20 fills in the rest of what a conversion can produce, each shown only
-when the backend reports its feature: a `{ } JSON` switch after the Output
+when the backend reports its feature: a JSON switch under the Output
 profiles (`format: "json"`, `features.document_json`) also saves each result's
 [document JSON](json-output.md) as `<name>.json` beside its Markdown, in the
 result's files, its .zip and the command line (`-f json`). While OCR is on and LLM
-off, a picker after OCR names the local engine and its language (`Local ·
-Automatic language`, `ocr_lang`, from the server's `ocr_languages`; the automatic
-`en` reads Chinese, English and Japanese, see [OCR](ocr.md#languages)). Advanced
-gains a Pages row: Page Markers (`page_markers`, `--page-markers`; on and locked
+off, an OCR language row under OCR opens the local engine's languages
+(`ocr_lang`, from the server's `ocr_languages`; the automatic `en` reads Chinese,
+English and Japanese, see [OCR](ocr.md#languages)). Advanced gains a Pages group: Page Markers (`page_markers`, `--page-markers`; on and locked
 while the profile is RAG, which keeps its own) and OCR Every Page
 (`ocr_all_pages`, `ocr.per_page_routing: false`, only while OCR is on, see
 [PDF OCR](pdf-ocr.md)). The OCR settings appear in the command line as one
@@ -77,7 +85,7 @@ while the profile is RAG, which keeps its own) and OCR Every Page
 analysis, not the JSON output.
 Files and folders waiting for Convert appear in it relative to the folder that
 holds them (`./notes.pdf`, a picked folder as `./Field trip/`, quoted for the
-shell), with an (i) beside Copy: run it in that folder, since a browser never
+shell), with an (i) before Copy: run it in that folder, since a browser never
 tells a page where a chosen file lives.
 On a phone the composer is lighter: the tools are bare 32 px icons (each keeps
 its name for assistive technology and as a tooltip) and Convert is a square arrow.
@@ -724,8 +732,9 @@ for the tab as described above.
 
 ## Cloudflare processing
 
-The URL strategy and file backend selectors offer Cloudflare when the service
-reports its local configuration ready. That check makes no cloud request: it
+The URL strategy and file backend lists offer Cloudflare when the service
+reports its local configuration ready (otherwise it stays listed, dimmed, with the
+reason under it). That check makes no cloud request: it
 does not verify the token's permissions, account quota or Cloudflare availability.
 Configure credentials on the server as described under
 [remote services](fetch.md#remote-services); the workbench neither accepts nor

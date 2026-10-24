@@ -133,16 +133,6 @@ export function changeAdvanced<K extends keyof Advanced>(value: Advanced, key: K
   return changed;
 }
 
-export function hasAdvancedChoices(value: Advanced): boolean {
-  return (
-    (["screenshotOnly", "pure", "textOnly", "noCache", "noCompress", "strategy", "backend"] as const).some(
-      (key) => value[key] !== ADVANCED_DEFAULTS[key],
-    ) ||
-    value.pageMarkers === true ||
-    value.ocrAllPages === true
-  );
-}
-
 export function emptyOptions(): JobOptions {
   return {
     preset: null,
@@ -364,4 +354,55 @@ export function sameAsDefaults(state: Composer, defaults: ConvertDefaults, table
     // A v1.20 default the composer has not set yet still holds.
     OFFERED_KEYS.every((key) => mine[key] === undefined || mine[key] === defaults[key])
   );
+}
+
+/** What a backend without `/api/convert-defaults` converts with: the minimal preset, nothing else on. */
+export const BUILTIN_DEFAULTS: ConvertDefaults = {
+  llm: false,
+  ocr: false,
+  alt: false,
+  desc: false,
+  screenshot: false,
+  screenshot_only: false,
+  pure: false,
+  no_cache: false,
+  no_compress: false,
+  profile: null,
+  strategy: "auto",
+};
+
+export type OptionKey = (typeof DEFAULT_KEYS)[number] | (typeof OFFERED_KEYS)[number] | "backend" | "text_only";
+
+/** The options dialog's groups and the keys each one shows. */
+export const OPTION_GROUPS = {
+  enhance: ["llm", "ocr", "ocr_lang"],
+  images: ["alt", "desc", "screenshot"],
+  output: ["profile", "format"],
+  url: ["strategy"],
+  files: ["backend"],
+  pages: ["page_markers", "ocr_all_pages"],
+  other: ["screenshot_only", "pure", "text_only", "no_cache", "no_compress"],
+} as const satisfies Record<string, readonly OptionKey[]>;
+export type OptionGroup = keyof typeof OPTION_GROUPS;
+
+/** The choices that differ from these defaults, as sameAsDefaults counts them, plus the per-request
+ * ones no default holds (Cloudflare, Text only): the dot on Options and the bright values in its dialog. */
+export function changedOptions(state: Composer, defaults: ConvertDefaults, table: PresetTable = BUILTIN_PRESETS): Set<OptionKey> {
+  const a = state.advanced;
+  const local = { ...state, advanced: { ...a, strategy: a.strategy === "cloudflare" ? defaults.strategy : a.strategy, backend: "native" as const } };
+  const mine = defaultsOf(local, table) as ConvertDefaults;
+  const analysis = mine.llm && !mine.pure;
+  const changed = new Set<OptionKey>();
+  for (const key of DEFAULT_KEYS) if (!((key === "alt" || key === "desc") && !analysis) && mine[key] !== defaults[key]) changed.add(key);
+  for (const key of OFFERED_KEYS) if (mine[key] !== undefined && mine[key] !== defaults[key]) changed.add(key);
+  if (a.strategy === "cloudflare") changed.add("strategy");
+  if (a.backend !== "native") changed.add("backend");
+  if (a.textOnly) changed.add("text_only");
+  return changed;
+}
+
+/** A group's value on the dialog's first page: its single choice, or the switches that are on
+ * joined with " · ", or Off. */
+export function groupValue(parts: string[], off: string): string {
+  return parts.length ? parts.join(" · ") : off;
 }
