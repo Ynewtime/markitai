@@ -12,10 +12,12 @@
 // items are checked); Space checks the focused row, Shift extends from the last
 // one checked, Ctrl/⌘+A checks everything listed, Escape clears and Delete asks
 // to delete. Enter still opens. Items still converting cannot be checked.
+// The filter row starts with a box over the boxes' column (SelectAll): it
+// checks everything listed, or clears once everything is.
 import { memo } from "preact/compat";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { Dict, Locale } from "../i18n/index.ts";
-import { isGroup, jobKey, navigationOrder, presetOf, submissionLabel, type Submission } from "../lib/conversions.ts";
+import { checkState, deletable, isGroup, jobKey, navigationOrder, presetOf, submissionLabel, type CheckState, type Submission } from "../lib/conversions.ts";
 import { fmtClock } from "../lib/format.ts";
 import { groupNotices, rowWarnings } from "../lib/notices.ts";
 import type { SessionItem } from "../lib/session.ts";
@@ -27,10 +29,7 @@ import { Icon } from "./icons.tsx";
 export const rowId = (key: string): string => `row-${key.replace(/[^\w-]/g, "-")}`;
 
 /** A row's box: null when nothing can be selected (a phone outside Select mode). */
-export type Check = "on" | "off" | "mixed" | "locked" | null;
-
-/** Converting or waiting: it cannot be deleted yet. */
-export const deletable = (item: SessionItem): boolean => item.status !== "running" && item.status !== "queued";
+export type Check = CheckState | null;
 
 function CheckBox({ check, label }: { check: Check; label: string }) {
   if (check === null) return null;
@@ -39,6 +38,26 @@ function CheckBox({ check, label }: { check: Check; label: string }) {
       {check === "on" && <Icon name="Check" size={11} />}
       {check === "mixed" && <span class="check-dash" />}
     </span>
+  );
+}
+
+/** The box over the rows' boxes: a checkbox for everything listed, "mixed" while part of it is checked. */
+export function SelectAll({ t, state, onToggle }: { t: Dict; state: CheckState; onToggle: () => void }) {
+  const locked = state === "locked";
+  return (
+    <button
+      type="button"
+      role="checkbox"
+      class={`row-check select-all is-${locked ? "off" : state}`}
+      aria-checked={state === "mixed" ? "mixed" : state === "on"}
+      aria-label={t.selectAllListed}
+      title={t.selectAllListed}
+      disabled={locked}
+      onClick={onToggle}
+    >
+      {state === "on" && <Icon name="Check" size={11} />}
+      {state === "mixed" && <span class="check-dash" />}
+    </button>
   );
 }
 
@@ -181,13 +200,7 @@ export function ConversionList({
     }
     return [];
   };
-  const checkOf = (items: SessionItem[]): Check => {
-    if (!selecting) return null;
-    const open = items.filter(deletable);
-    if (!open.length) return "locked";
-    const on = open.filter((item) => checked.has(item.key)).length;
-    return on === 0 ? "off" : on === open.length ? "on" : "mixed";
-  };
+  const checkOf = (items: SessionItem[]): Check => (selecting ? checkState(items, checked) : null);
   // Shift extends from the last row checked, over the rows in view order.
   const [anchor, setAnchor] = useState<string | null>(null);
   const toggle = (key: string, extend: boolean) => {

@@ -894,6 +894,7 @@ export const en = {
   selectionAria: "Selected conversions",
   selectedCount: (n: number) => `${n} selected`,
   selectAllN: (n: number) => `Select all ${n}`,
+  selectAllListed: "Select all listed",
   clearSelection: "Clear",
   deleteSelected: "Delete",
   // round 19: convert kept originals again, as a new batch
