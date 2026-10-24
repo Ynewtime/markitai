@@ -97,3 +97,15 @@ test("a request naming a preset this page does not know spells its switches out 
   const table = { team: { llm: true, ocr: true, alt: false, desc: false, screenshot: false } };
   assert.equal(requestView(["notes.pdf"], team, null, false, table)?.command, "markitai notes.pdf -o output/ --preset team");
 });
+
+test("the copied command quotes every value", () => {
+  // A configured preset with a space, or one a shell would expand, stays one quoted word.
+  const table = { "team notes": { llm: true, ocr: false, alt: false, desc: false, screenshot: false }, "$(x)": { llm: false, ocr: true, alt: false, desc: false, screenshot: false } };
+  const team = { ...emptyOptions(), preset: "team notes", llm: true, ocr: false, alt: false, desc: false, screenshot: false };
+  assert.equal(requestView(["a.pdf"], team, null, false, table)?.command, "markitai a.pdf -o output/ --preset 'team notes'");
+  assert.equal(requestView(["a.pdf"], team, { "llm.enabled": true }, false, table)?.command, "markitai a.pdf -o output/ --preset 'team notes'");
+  const odd = { ...emptyOptions(), preset: "$(x)", llm: false, ocr: true, alt: false, desc: false, screenshot: false };
+  assert.equal(requestView(["a.pdf"], odd, null, false, table)?.command, "markitai a.pdf -o output/ --preset '$(x)'");
+  // The flag keeps its quoted value when the line wraps.
+  assert.deepEqual(wrapUnits(requestView(["a.pdf"], team, null, false, table)?.words ?? []).slice(-1), ["--preset 'team notes'"]);
+});

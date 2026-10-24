@@ -45,12 +45,12 @@ export function requestFlags(options: JobOptions, table: PresetTable = BUILTIN_P
   const named = namedPreset(options, preset, table);
   const features = named ?? { llm: false, ocr: false, alt: false, desc: false, screenshot: false };
   const words: string[] = [];
-  if (named !== null && preset !== null) words.push("--preset", preset);
+  if (named !== null && preset !== null) words.push("--preset", shellQuote(preset));
   for (const key of FEATURES) {
     const value = options[key];
     if (value !== null && value !== undefined && value !== features[key]) words.push(value ? `--${key}` : `--no-${key}`);
   }
-  if (options.profile !== null) words.push("--profile", options.profile);
+  if (options.profile !== null) words.push("--profile", shellQuote(options.profile));
   if (options.format === "json") words.push("-f", "json");
   if (options.page_markers) words.push("--page-markers");
   // Not part of a preset; false is the documented default and stays implicit.
@@ -59,8 +59,8 @@ export function requestFlags(options: JobOptions, table: PresetTable = BUILTIN_P
   if (options.text_only) words.push("--text-only");
   if (options.no_cache) words.push("--no-cache");
   if (options.no_compress) words.push("--no-compress");
-  if (options.strategy !== null && options.strategy !== "auto") words.push("--strategy", options.strategy);
-  if (options.backend !== null && options.backend !== "native") words.push("--backend", options.backend);
+  if (options.strategy !== null && options.strategy !== "auto") words.push("--strategy", shellQuote(options.strategy));
+  if (options.backend !== null && options.backend !== "native") words.push("--backend", shellQuote(options.backend));
   // OCR settings without a flag of their own; "en" is the default language policy.
   const ocr: Record<string, string | boolean> = {};
   if (options.ocr_lang && options.ocr_lang !== "en") ocr.lang = options.ocr_lang;

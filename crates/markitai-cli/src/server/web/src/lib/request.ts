@@ -54,13 +54,13 @@ function settingsFlags(settings: JobSettings, options: JobOptions | null, url: b
   // The preset the request named, while the job's five switches still equal it.
   const preset = (options?.preset ?? null) as Preset | null;
   const named = namedPreset({ ...(options ?? ({} as JobOptions)), ...features }, preset, table);
-  if (named !== null && preset !== null) words.push("--preset", preset);
+  if (named !== null && preset !== null) words.push("--preset", shellQuote(preset));
   else for (const [key, value] of Object.entries(features)) if (value) words.push(`--${key}`);
   if (take("llm.keep_base") === true) words.push("--keep-base");
   if (take("llm.pure") === true) words.push("--pure");
   if (take("screenshot.screenshot_only") === true) words.push("--screenshot-only");
   const profile = take("output.profile");
-  if (typeof profile === "string") words.push("--profile", profile);
+  if (typeof profile === "string") words.push("--profile", shellQuote(profile));
   if (take("output.format") === "json") words.push("-f", "json");
   if (take("output.page_markers") === true) words.push("--page-markers");
   if (take("output.text_only") === true) words.push("--text-only");
@@ -68,7 +68,7 @@ function settingsFlags(settings: JobSettings, options: JobOptions | null, url: b
   if (take("image.compress") === false) words.push("--no-compress");
   // The URL strategy says nothing about a file.
   const strategy = take("fetch.strategy");
-  if (url && typeof strategy === "string") words.push("--strategy", strategy);
+  if (url && typeof strategy === "string") words.push("--strategy", shellQuote(strategy));
   if (take("fetch.cloudflare.convert_enabled") === true) words.push("--backend", "cloudflare");
   return { words, used };
 }
