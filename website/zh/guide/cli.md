@@ -193,7 +193,7 @@ markitai ./docs -o ./output --resume
 
 - 跳过已完成的条目，重试失败和中断的，捡起新文件。只适用于目录和 `.urls` 列表（单个文件或 URL 以退出码 `1` 停止）；按 Ctrl-C 时会保存进度。
 - 重试的条目覆盖自己的输出（不会多出 `.v2`）；没记下输出名的条目按 `output.on_conflict` 处理，因此绝不覆盖不是这次批量写的文件。
-- 用同一条命令再运行。换了功能开关（`--llm`、`--ocr`、`--screenshot`、`--alt`、`--desc`）或改变输出的设置（`--profile`、与 `--llm` 同用的 `--keep-base` 或 `--pure`、`--screenshot-only`、`-s`、`-f json`、`--text-only`、页码标记、wikilink）时找不到已保存的状态：运行会开始一个新批次，全部重新转换（已有文件按 `output.on_conflict` 处理）。换回原来的选项，原来的进度仍能找到。
+- 用同一条命令再运行。换了功能开关（`--llm`、`--ocr`、`--screenshot`、`--alt`、`--desc`）或改变输出的设置（`--profile`、`--keep-base` 或 `--pure`（有无 `--llm` 都算）、`--screenshot-only`、`-s`、`-f json`、`--text-only`、页码标记、wikilink）时找不到已保存的状态：运行会开始一个新批次，全部重新转换（已有文件按 `output.on_conflict` 处理）。换回原来的选项，原来的进度仍能找到。
 - 续跑察觉不到换了模型或提示词：要全部重做，请换一个新的输出目录。
 
 ### `--record-history` {#record-history}

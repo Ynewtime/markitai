@@ -193,7 +193,7 @@ markitai ./docs -o ./output --resume
 
 - Skips completed items, retries failed and interrupted ones, adds new files. Directories and `.urls` lists only (a single file or URL exits `1`); Ctrl-C saves progress.
 - A retried item overwrites its own output (no `.v2`); one with no recorded name follows `output.on_conflict`, so it never overwrites a file the batch did not write.
-- Run the same command again. With other feature switches (`--llm`, `--ocr`, `--screenshot`, `--alt`, `--desc`) or other output settings (`--profile`, `--keep-base` or `--pure` with `--llm`, `--screenshot-only`, `-s`, `-f json`, `--text-only`, page markers, wikilinks) the saved state is not found: the run starts a fresh batch and converts everything again (existing files follow `output.on_conflict`). Going back to the original options finds the progress again.
+- Run the same command again. With other feature switches (`--llm`, `--ocr`, `--screenshot`, `--alt`, `--desc`) or other output settings (`--profile`, `--keep-base` or `--pure` (with or without `--llm`), `--screenshot-only`, `-s`, `-f json`, `--text-only`, page markers, wikilinks) the saved state is not found: the run starts a fresh batch and converts everything again (existing files follow `output.on_conflict`). Going back to the original options finds the progress again.
 - Resume does not notice a new model or prompt: use a new output folder to redo everything.
 
 ### `--record-history` {#record-history}
