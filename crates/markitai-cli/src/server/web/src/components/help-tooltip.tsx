@@ -1,7 +1,7 @@
 // A help bubble for one control: shown on hover, focus or tap, positioned in
 // the viewport (above unless it does not fit), gone a few seconds after it
-// opens unless the pointer rests on it, on Escape, on a click elsewhere, or
-// when another help bubble opens. A row's bubble can also list its choices, or
+// opens unless the pointer rests on it, on Escape (which then does nothing else: the dialog or page under it stays),
+// on a click elsewhere, or when another help bubble opens. A row's bubble can also list its choices, or
 // be a short list of lines (the warnings of a conversion).
 import type { ComponentChildren } from "preact";
 import { createPortal } from "preact/compat";
@@ -217,8 +217,13 @@ function useBubble({
       cancelHide();
       setOpen(false);
     };
+    // Escape closes the bubble only: caught first (window, capture) so the dialog, sheet or
+    // settings page under it never sees it.
     const escape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") dismiss();
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      dismiss();
     };
     const other = (event: Event) => {
       if ((event as CustomEvent<string>).detail !== id) dismiss();
@@ -229,7 +234,7 @@ function useBubble({
     };
     window.addEventListener("markitai:help", other);
     window.addEventListener("pointerdown", away);
-    window.addEventListener("keydown", escape);
+    window.addEventListener("keydown", escape, true);
     // A pointer resting on the anchor or the bubble keeps it; leaving hides it.
     const timer = setTimeout(() => {
       if (!hovered.current) dismiss();
@@ -238,7 +243,7 @@ function useBubble({
       clearTimeout(timer);
       window.removeEventListener("markitai:help", other);
       window.removeEventListener("pointerdown", away);
-      window.removeEventListener("keydown", escape);
+      window.removeEventListener("keydown", escape, true);
     };
   }, [open, id, extraMs]);
 

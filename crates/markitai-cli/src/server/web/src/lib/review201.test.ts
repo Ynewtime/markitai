@@ -18,3 +18,12 @@ test("M4: the (i) beside a label is a small round target again, 24 px on a phone
   const phone = css.slice(css.indexOf("@media screen and (max-width: 760px) {\n  /* an (i)"));
   assert.match(block(".opt-help::after", phone), /inset: -3px;/);
 });
+
+test("M3: Escape on an open (i) bubble closes the bubble only", () => {
+  const tip = read("../components/help-tooltip.tsx");
+  // caught first, on the window in the capture phase, and not passed on to the dialog or page under it
+  assert.match(tip, /window\.addEventListener\("keydown", escape, true\);/);
+  assert.match(tip, /window\.removeEventListener\("keydown", escape, true\);/);
+  const escape = tip.slice(tip.indexOf("const escape = (event: KeyboardEvent)"), tip.indexOf("const other ="));
+  assert.match(escape, /event\.preventDefault\(\);\s*event\.stopImmediatePropagation\(\);\s*dismiss\(\);/);
+});
