@@ -1155,6 +1155,9 @@ mod error_code_tests {
             retried["items"][0]["settings"],
             json!({"cache.enabled":false,"output.profile":"obsidian"})
         );
+        // The job still tells what its submission ran with.
+        assert_eq!(retried["settings"], expected, "{retried}");
+        assert_eq!(retried["options"], done["options"]);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -1300,7 +1300,7 @@
               "created_at": { "type": "string" },
               "finished_at": { "type": ["string", "null"] },
               "options": { "$ref": "#/components/schemas/JobOptions" },
-              "settings": { "oneOf": [{ "$ref": "#/components/schemas/JobSettings" }, { "type": "null" }], "description": "v1.22. What the job (its latest retry, if any) ran with" },
+              "settings": { "oneOf": [{ "$ref": "#/components/schemas/JobSettings" }, { "type": "null" }], "description": "v1.22. What the job's submission ran with; a retried item's own settings are on the item" },
               "items": { "type": "array", "items": { "$ref": "#/components/schemas/Item" } },
               "label": { "type": ["string", "null"], "description": "The label the job was submitted with; null when none" }
             }
