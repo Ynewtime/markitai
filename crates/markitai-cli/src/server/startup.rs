@@ -1,11 +1,13 @@
 //! What `markitai serve` tells the person who started it. The lines are built by
 //! pure functions so wording, language and warnings can be tested.
 //!
-//! The first line (`Markitai server listening on …`) and the token line
-//! (`Remote access token: …`) are read by scripts and stay English in every
-//! language; the sentences around them follow the terminal language. Each line
-//! has a [`Kind`] that decides how the terminal shows it: an address to open
-//! sits on a line of its own, never wrapped, so it copies back whole.
+//! Every line follows the terminal language and the CLI's terminal style: the
+//! title carries the listening address, the items below it the token, where to
+//! open the workbench, where data lives and how to stop. Scripts read the
+//! title, which ends with `http://ADDRESS`, and the token line, which ends with
+//! the token, in every language. Each line has a [`Kind`] that decides how the
+//! terminal shows it: an address to open sits on a line of its own, never
+//! wrapped, so it copies back whole.
 use super::launch;
 use crate::app::i18n::{Lang, text};
 use std::{
@@ -43,11 +45,15 @@ pub(super) fn network_address() -> Option<IpAddr> {
 /// How a startup line is shown.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Kind {
-    /// A line scripts read: as it is, never wrapped.
-    Scripted,
-    /// A sentence at column 0.
-    Plain,
-    /// `! sentence` at column 0.
+    /// `◆ sentence http://ADDRESS`, never wrapped: scripts read the address.
+    Title,
+    /// `  • label: token`, never wrapped: scripts read the token.
+    Token,
+    /// `  • sentence`.
+    Fact,
+    /// `  → sentence`: what to do next.
+    Action,
+    /// `  ! sentence`.
     Warning,
     /// A further sentence of the warning above, under its text.
     More,
@@ -63,8 +69,10 @@ pub(super) fn lines(lang: Lang, startup: &Startup<'_>) -> Vec<(Kind, String)> {
         network,
     } = *startup;
     let mut lines = vec![(
-        Kind::Scripted,
-        format!("Markitai server listening on http://{address}"),
+        Kind::Title,
+        text!(lang =>
+            "Markitai server listening on http://{address}",
+            "Markitai 服务正在监听 http://{address}"),
     )];
     if exposed(address) {
         if token.is_some() {
@@ -87,13 +95,16 @@ pub(super) fn lines(lang: Lang, startup: &Startup<'_>) -> Vec<(Kind, String)> {
         }
     }
     if let Some(token) = token {
-        lines.push((Kind::Scripted, format!("Remote access token: {token}")));
+        lines.push((
+            Kind::Token,
+            text!(lang => "Access token: {token}", "访问令牌：{token}"),
+        ));
     }
     // Every API client authenticates, including this computer's browser. A
     // fragment keeps the token out of the initial HTTP request and access log.
     let local = launch::browser_url(address, token);
     lines.push((
-        Kind::Plain,
+        Kind::Action,
         text!(lang => "Open in your browser:", "在浏览器中打开："),
     ));
     lines.push((Kind::Address, local));
@@ -102,7 +113,7 @@ pub(super) fn lines(lang: Lang, startup: &Startup<'_>) -> Vec<(Kind, String)> {
     {
         let remote = launch::address_url(SocketAddr::new(ip, address.port()), token);
         lines.push((
-            Kind::Plain,
+            Kind::Action,
             if token.is_some() {
                 text!(lang =>
                     "From another device on your network (this address contains the access token):",
@@ -117,13 +128,13 @@ pub(super) fn lines(lang: Lang, startup: &Startup<'_>) -> Vec<(Kind, String)> {
     }
     let data = data.display();
     lines.push((
-        Kind::Plain,
+        Kind::Fact,
         text!(lang =>
-            "Jobs and history are stored in {data}",
-            "任务和历史保存在 {data}"),
+            "Jobs and history: {data}",
+            "任务和历史：{data}"),
     ));
     lines.push((
-        Kind::Plain,
+        Kind::Fact,
         text!(lang =>
             "Press Ctrl-C to stop; running conversions finish and history is saved first.",
             "按 Ctrl-C 停止；正在转换的任务会先完成，历史也会先保存。"),
@@ -187,19 +198,16 @@ mod tests {
             lines,
             [
                 (
-                    Kind::Scripted,
+                    Kind::Title,
                     "Markitai server listening on http://127.0.0.1:3600".into()
                 ),
-                (Kind::Scripted, "Remote access token: secret".into()),
-                (Kind::Plain, "Open in your browser:".into()),
+                (Kind::Token, "Access token: secret".into()),
+                (Kind::Action, "Open in your browser:".into()),
                 // The local browser receives a fragment token too.
                 (Kind::Address, "http://127.0.0.1:3600/#token=secret".into()),
+                (Kind::Fact, "Jobs and history: /tmp/home/serve/jobs".into()),
                 (
-                    Kind::Plain,
-                    "Jobs and history are stored in /tmp/home/serve/jobs".into()
-                ),
-                (
-                    Kind::Plain,
+                    Kind::Fact,
                     "Press Ctrl-C to stop; running conversions finish and history is saved first."
                         .into()
                 ),
@@ -210,7 +218,7 @@ mod tests {
     }
 
     #[test]
-    fn the_scripted_lines_do_not_change_with_the_language() {
+    fn every_line_follows_the_language_and_keeps_its_value_last() {
         let data = Path::new("/tmp/serve/jobs");
         let english = lines(
             Lang::En,
@@ -221,11 +229,28 @@ mod tests {
             &startup("127.0.0.1:3600", Some("secret"), None, data),
         );
         assert_eq!(english.len(), chinese.len());
-        assert_eq!(english[..2], chinese[..2]);
-        assert_eq!(chinese[2].1, "在浏览器中打开：");
-        assert_eq!(english[3], chinese[3]);
-        assert!(chinese[4].1.contains("/tmp/serve/jobs"));
-        assert!(chinese[5].1.contains("Ctrl-C"));
+        assert_eq!(
+            chinese,
+            [
+                (
+                    Kind::Title,
+                    "Markitai 服务正在监听 http://127.0.0.1:3600".into()
+                ),
+                (Kind::Token, "访问令牌：secret".into()),
+                (Kind::Action, "在浏览器中打开：".into()),
+                (Kind::Address, "http://127.0.0.1:3600/#token=secret".into()),
+                (Kind::Fact, "任务和历史：/tmp/serve/jobs".into()),
+                (
+                    Kind::Fact,
+                    "按 Ctrl-C 停止；正在转换的任务会先完成，历史也会先保存。".into()
+                ),
+            ]
+        );
+        // What scripts read ends both lines in either language.
+        for lines in [&english, &chinese] {
+            assert!(lines[0].1.ends_with(" http://127.0.0.1:3600"));
+            assert!(lines[1].1.ends_with("secret"));
+        }
     }
 
     #[test]
@@ -241,8 +266,8 @@ mod tests {
         assert!(text[1].starts_with("Binding to 0.0.0.0:3600 makes this server reachable"));
         assert_eq!(lines[2].0, Kind::More);
         assert!(text[2].contains("like a password"));
-        assert_eq!(text[3], "Remote access token: a b");
-        assert_eq!(text[4], "Open in your browser:");
+        assert_eq!(lines[3], (Kind::Token, "Access token: a b".into()));
+        assert_eq!(lines[4], (Kind::Action, "Open in your browser:".into()));
         assert_eq!(
             lines[5],
             (Kind::Address, "http://127.0.0.1:3600/#token=a+b".into())
@@ -261,10 +286,7 @@ mod tests {
         for lang in [Lang::En, Lang::Zh] {
             let lines = lines(lang, &startup("0.0.0.0:3600", None, Some("10.0.0.5"), data));
             let text = texts(&lines);
-            assert!(
-                text.iter()
-                    .all(|line| !line.contains("Remote access token"))
-            );
+            assert!(lines.iter().all(|(kind, _)| *kind != Kind::Token));
             let (kind, warning) = lines
                 .iter()
                 .find(|(_, line)| line.contains("--no-auth"))

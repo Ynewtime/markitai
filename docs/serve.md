@@ -851,15 +851,16 @@ others); every workbench response revalidates against a content ETag
 the system to open the workbench, passing the startup token in the URL fragment;
 with `--no-open` it does not open anything.
 
-At startup the service prints, on stderr: `Markitai server listening on http://ADDRESS`
-and, unless `--no-auth`, `Remote access token: …` (these two lines are scripted
-against, stay English in every language and are never wrapped); the address to
-open in a browser, on a line of its own under `Open in your browser:` so it copies
-whole (with the token in its fragment for local and remote browsers alike, unless
-`--no-auth` was explicitly selected); the directory
-that holds jobs and history (`MARKITAI_HOME/serve/jobs`, shown absolute); and a
-Ctrl-C hint. The other sentences follow the terminal language (`MARKITAI_LANG`,
-then `LANG`, then `LC_ALL`, Chinese for a `zh` prefix). When the listener is not
+At startup the service prints, on stderr, in the terminal language and the
+CLI's [terminal style](cli.md): a title with the address it listens on
+(`◆ Markitai server listening on http://ADDRESS`); unless `--no-auth`, the access
+token (`  • Access token: …`); the address to open in a browser, on a line of its
+own under `→ Open in your browser:` so it copies whole (with the token in its
+fragment for local and remote browsers alike, unless `--no-auth` was explicitly
+selected); the directory that holds jobs and history (`MARKITAI_HOME/serve/jobs`,
+shown absolute); and a Ctrl-C hint. In every language the title ends with
+`http://ADDRESS` and the token line with the token, and neither is wrapped, so
+scripts can read them (`MARKITAI_SERVE_TOKEN` pins the token). When the listener is not
 loopback-only (`--host 0.0.0.0`, a network address) it first warns
 (`! Binding to …`) that the service is reachable from the network and that the token is the credential; with
 `--no-auth` the warning says anyone who can reach the address can convert files and

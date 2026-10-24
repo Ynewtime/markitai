@@ -277,28 +277,37 @@ async fn serve(cfg: Value, source: SettingsSource, options: ServeOptions) -> Res
         },
     ) {
         // As written: redaction would drop the token from the addresses.
-        use crate::app::logging::{Shape, console};
+        use crate::app::logging::{Shape, blank, console};
+        use crate::term::{Mark, Tone};
+        let unwrapped = |mark, indent, tone| Shape {
+            mark: Some(mark),
+            indent,
+            tone,
+            wrap: false,
+        };
         let shape = match kind {
-            startup::Kind::Scripted => Shape {
-                indent: 0,
-                tone: None,
-                ..Shape::COMMAND
-            },
-            startup::Kind::Plain => Shape::PLAIN,
-            startup::Kind::Warning => Shape::verdict(crate::term::Mark::Warning),
-            startup::Kind::More => Shape::under(2),
-            startup::Kind::Address => Shape {
-                indent: 4,
-                ..Shape::COMMAND
-            },
+            startup::Kind::Title => unwrapped(Mark::Title, 0, Some(Tone::Structure)),
+            startup::Kind::Token => unwrapped(Mark::Info, 2, None),
+            startup::Kind::Fact => Shape::item(Mark::Info),
+            startup::Kind::Action => Shape::item(Mark::Action),
+            startup::Kind::Warning => Shape::item(Mark::Warning),
+            startup::Kind::More => Shape::under(4),
+            startup::Kind::Address => Shape::COMMAND,
         };
         console(shape, &line);
+        if kind == startup::Kind::Title {
+            blank();
+        }
     }
     if !options.no_open {
         let url = launch::browser_url(address, token.as_deref());
         if let Err(error) = launch::open_browser(&url) {
-            eprintln!(
-                "Warning: Could not open a browser: {error}; open the address above manually."
+            crate::app::logging::shaped(
+                crate::app::logging::Shape::item(crate::term::Mark::Warning),
+                &format!("Warning: Could not open a browser: {error}; open the address above manually."),
+                Some(&crate::app::i18n::text!(lang =>
+                    "Could not open a browser: {error}; open the address above manually.",
+                    "无法打开浏览器：{error}；请手动打开上面的地址。")),
             );
         }
     }
@@ -324,7 +333,8 @@ async fn serve(cfg: Value, source: SettingsSource, options: ServeOptions) -> Res
         crate::app::logging::shaped(
             crate::app::logging::Shape::item(crate::term::Mark::Action),
             "Server stopping: draining active conversions and saving history.",
-            None,
+            (lang == crate::app::i18n::Lang::Zh)
+                .then_some("正在停止服务：等待进行中的转换完成并保存历史。"),
         );
     })
     .await;

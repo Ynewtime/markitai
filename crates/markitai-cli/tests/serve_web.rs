@@ -70,8 +70,8 @@ impl Server {
         loop {
             let text = output.lock().unwrap_or_else(|e| e.into_inner()).clone();
             if let Some(port) = text.lines().find_map(|line| {
-                line.strip_prefix("Markitai server listening on http://127.0.0.1:")
-                    .and_then(|value| value.parse().ok())
+                line.split_once("Markitai server listening on http://127.0.0.1:")
+                    .and_then(|(_, value)| value.parse().ok())
             }) {
                 server.port = port;
                 return server;

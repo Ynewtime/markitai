@@ -81,8 +81,8 @@ impl Server {
                 server.log.lock().unwrap()
             );
             if let Some(port) = server.log.lock().unwrap().lines().find_map(|line| {
-                line.strip_prefix("Markitai server listening on http://127.0.0.1:")
-                    .and_then(|p| p.parse().ok())
+                line.split_once("Markitai server listening on http://127.0.0.1:")
+                    .and_then(|(_, p)| p.parse().ok())
             }) {
                 break port;
             }

@@ -112,8 +112,8 @@ impl Server {
             }
             let text = server.captured.lock().unwrap();
             let found = text.lines().find_map(|line| {
-                line.strip_prefix("Markitai server listening on http://127.0.0.1:")
-                    .and_then(|s| s.parse().ok())
+                line.split_once("Markitai server listening on http://127.0.0.1:")
+                    .and_then(|(_, s)| s.parse().ok())
             });
             if let Some(port) = found {
                 server.port = port;
