@@ -114,8 +114,10 @@ fn set_up_once() {
             })
             .collect();
         let rgb: Vec<u8> = rgba
-            .chunks_exact(4)
-            .flat_map(|p| [p[0], p[1], p[2]])
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .flat_map(|&[r, g, b, _]| [r, g, b])
             .collect();
         let mut sink = std::io::sink();
         for (pixels, alpha) in [(&rgb, false), (&rgba, true)] {
