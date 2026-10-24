@@ -2,8 +2,8 @@
 // why: not installed, not a release the adapter speaks, not signed in, or
 // failed; with the command to run on the machine the server runs on, one click
 // to copy it, and the markitai.dev setup guide at the section for the cause.
-// The server's own sentence stays under
-// "Provider's message".
+// The server's sentence is markitai's own (no runtime output is passed on), so
+// it is never shown as the provider's message.
 import { useState } from "preact/hooks";
 import type { Dict } from "../i18n/index.ts";
 import { copyText } from "../lib/clipboard.ts";
@@ -11,6 +11,9 @@ import type { Locale } from "../i18n/locale.ts";
 import { runtimeGuide } from "../lib/guides.ts";
 import type { RuntimeFailure } from "../lib/model-test.ts";
 import { Icon } from "./icons.tsx";
+
+/** Claude Code signed in, but not with a subscription (an API key, a cloud): the server says so in its own words. */
+const NOT_SUBSCRIPTION = /non-subscription/i;
 
 export function RuntimeNotice({ t, failure, provider, locale }: { t: Dict; failure: RuntimeFailure; provider: string; locale: Locale }) {
   const [copied, setCopied] = useState(false);
@@ -29,7 +32,9 @@ export function RuntimeNotice({ t, failure, provider, locale }: { t: Dict; failu
       : failure.reason === "runtime_unsupported"
         ? t.runtimeUnsupportedText(failure.installed, failure.required)
         : failure.reason === "not_signed_in"
-          ? t.notSignedInText
+          ? NOT_SUBSCRIPTION.test(failure.detail)
+            ? t.notSubscriptionText
+            : t.notSignedInText
           : t.runtimeFailedText;
   const guide = runtimeGuide(locale, provider, failure.reason);
   return (
@@ -66,12 +71,6 @@ export function RuntimeNotice({ t, failure, provider, locale }: { t: Dict; failu
             <span class="sr-only"> {t.opensNewTab}</span>
           </a>
         </p>
-        {failure.detail && (
-          <details class="test-failure-detail">
-            <summary>{t.testFailDetail}</summary>
-            <p>{failure.detail}</p>
-          </details>
-        )}
       </div>
     </div>
   );

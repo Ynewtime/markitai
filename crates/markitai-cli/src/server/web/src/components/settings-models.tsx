@@ -10,7 +10,7 @@ import type { Deployment, DiscoveryResult, ModelShare, NewDeployment, ProviderCa
 import { NARROW, useMedia } from "../hooks/use-media.ts";
 import type { Dict, Locale } from "../i18n/index.ts";
 import { serviceNote } from "../i18n/errors.ts";
-import { addingIsBlocked, listFailure, runtimeFailure, testFailure, type TestFailure } from "../lib/model-test.ts";
+import { addingIsBlocked, listFailure, providerWords, regionBlocked, runtimeFailure, testFailure, type TestFailure } from "../lib/model-test.ts";
 import { endpointFor, modelName, pickerRows, refusedHosts, removals } from "../lib/models.ts";
 import { isSubscription, listsModels, ownEndpointLogin, usesCloudCredentials } from "../lib/provider-catalog.ts";
 import {
@@ -400,12 +400,18 @@ export function ModelsSettings({
         const failure = testFailure(result);
         if (shared) failure.variable = null;
         setFailures((previous) => ({ ...previous, [key]: failure }));
+        // Only the provider's or the network's own words open under Details, never markitai's sentence.
+        const words = shared ? null : providerWords(failure.detail, failure.reason, t.testFailTitle(failure.reason));
         toast({
           id: TEST_TOAST,
           tone: "error",
           title: `${t.testFailTitle(failure.reason)} · ${t.testFailFor(model)}`,
-          text: shared ? t.sharedTestFailHint(failure.reason) : t.testFailHint(failure.reason, failure.variable, model),
-          ...(failure.detail && !shared ? { detail: failure.detail } : {}),
+          text: shared
+            ? t.sharedTestFailHint(failure.reason)
+            : regionBlocked(failure.detail)
+              ? t.modelRegionBlocked(model)
+              : t.testFailHint(failure.reason, failure.variable, model, words !== null),
+          ...(words ? { detail: words.text } : {}),
         });
       }
     } catch (error) {
@@ -726,6 +732,9 @@ export function ModelsSettings({
     // `load` reads the current draft; the guard above keys the request by provider.
   }, [adding, provider, autoLoads, discovery, discovering]);
 
+  /** What a failed model list adds from the provider or the network (never markitai's own sentence). */
+  const listed = discovery ? listFailure(discovery) : null;
+  const listWords = discovery && listed ? providerWords(discovery.detail, listed.reason, t.testFailTitle(listed.reason)) : null;
   /** The address this page's models are at; the rows of its model list, as the picker shows them. */
   const endpoint = endpointFor(draftBase, provider?.api_base);
   const pageRows = () =>
@@ -1305,10 +1314,10 @@ export function ModelsSettings({
                           provider.provider,
                         )}
                       </p>
-                      {discovery.detail && (
+                      {listWords && (
                         <details class="test-failure-detail">
-                          <summary>{t.testFailDetail}</summary>
-                          <p>{discovery.detail}</p>
+                          <summary>{listWords.kind === "connection" ? t.connectionDetail : t.testFailDetail}</summary>
+                          <p>{listWords.text}</p>
                         </details>
                       )}
                     </div>

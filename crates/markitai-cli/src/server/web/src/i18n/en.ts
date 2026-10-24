@@ -327,8 +327,9 @@ export const en = {
   runtimeUnsupportedText: (installed: string | null, required: string) => `${installed ? `Version ${installed} is installed. ` : ""}This needs ${required}. Install that release on the machine where the server runs, then reload the list.`,
   notSignedInTitle: (name: string) => `${name} is not signed in`,
   notSignedInText: "Sign in on the machine where the server runs, then reload the list.",
+  notSubscriptionText: "It is signed in, but not with a subscription (an API key or a cloud login does not count). Sign in with the subscription on the machine where the server runs, then reload the list.",
   runtimeFailedTitle: (name: string) => `${name} did not answer`,
-  runtimeFailedText: "It is installed, but it failed to start or answer. Its message is below. Fix it on the server, then reload the list.",
+  runtimeFailedText: "It is installed, but it failed to start or answer. Check it on the server (the setup guide says how), then reload the list.",
   runtimeStepInstall: "Install",
   runtimeStepSignIn: "Sign in",
   runtimeSetupGuide: "Setup guide",
@@ -483,7 +484,7 @@ export const en = {
       network: "Provider unreachable",
       timeout: "No answer in time",
     })[reason] ?? "Provider error",
-  testFailHint: (reason: string, variable: string | null, model: string) =>
+  testFailHint: (reason: string, variable: string | null, model: string, detailShown = true) =>
     reason === "no_key"
       ? variable
         ? `${variable} is not set on the server. Set it where markitai serve runs and restart the server, or add a key to this model's connection.`
@@ -494,9 +495,12 @@ export const en = {
           rate_limited: "The provider is limiting requests, or the account has no quota or balance left. Try again later, or check the account.",
           network: "The server could not reach the provider. Check the address and the server's network or proxy.",
           timeout: "The provider did not answer in time. Try again; if it keeps happening, check the provider's status.",
-        }) as Record<string, string>)[reason] ?? "The provider answered with an error. Its message is below.",
+        }) as Record<string, string>)[reason] ?? (detailShown ? "The provider answered with an error. Its message is below." : "The provider answered with an error."),
   testFailFor: (model: string) => `Test of ${model}`,
   testFailDetail: "Provider's message",
+  /** The network stack's account of a connection that failed (not the provider's words). */
+  connectionDetail: "Connection error",
+  modelRegionBlocked: (model: string) => `The provider does not serve ${model} in the server's region. Choose another model, or reach the provider from a supported region.`,
   discoveryFailHint: (reason: string, variable: string | null, hosts: string[] = [], provider = "") =>
     reason === "no_key"
       ? variable

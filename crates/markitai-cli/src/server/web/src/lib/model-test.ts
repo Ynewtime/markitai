@@ -79,3 +79,62 @@ export function listFailure(result: Pick<DiscoveryResult, "status" | "detail" | 
   if (!told && !/discovery (?:failed|returned|timed out|request failed)/i.test(result.detail ?? "")) return null;
   return testFailure({ detail: result.detail ?? "", reason: result.reason, key_variable: result.key_variable });
 }
+
+/** Words a failure carries from outside markitai, for the "Provider's message" disclosure: the provider's
+ * HTTP answer (status with its message or error code), or what the network stack said about a connection
+ * that failed (`connection`). */
+export interface ProviderWords {
+  kind: "provider" | "connection";
+  text: string;
+}
+
+/** markitai's own sentences for a failure (the Rust core's fixed texts): the heading and hint already say them. */
+const OWN_TEXT = [
+  /^Model (?:discovery|connection)(?: test)? (?:timed out|could not complete|failed|request failed)$/,
+  /\bis not set on the server\b/,
+  /needs an API key, and none is set/,
+  /^An API endpoint is required$/,
+  /^Too many model discovery requests are active$/,
+  /^Provider endpoint is not a valid/,
+  /^Proxy settings are malformed$/,
+  /^Cannot (?:create|read) model (?:discovery|connection)/,
+  /^Model (?:discovery|connection) (?:response|exceeds|returned an invalid|request refused|credentials)/,
+  /^Model identifier is invalid/,
+  /^Model API key is not available$/,
+  /^This model (?:provider is not supported|needs an API key)/,
+  /^Model credentials or endpoint configuration are invalid/,
+  // A subscription runtime's (Claude Code, Copilot, Codex): no runtime output is passed on.
+  /\bis not signed in\b|non-subscription|was not found on the server's PATH|points to a file that does not exist/,
+  /the adapter needs|not a release the adapter speaks|did not answer in time|returned an invalid or (?:conflicting|unsupported)/,
+];
+
+/** Fixed phrases that replace a provider's words for a recognized refusal (region, quota, missing model). */
+const OWN_REFUSALS = new Set([
+  "the model is not available in this region",
+  "the account's quota or billing does not allow this request",
+  "the model is unavailable",
+]);
+
+const fold = (text: string) => text.replace(/[\s.。]+/g, " ").trim().toLowerCase();
+
+/** What a failure's detail adds from the provider or the network, or null when it is markitai's own sentence
+ * or repeats `heading`. Text in no known shape (an older backend's) is kept as the provider's. */
+export function providerWords(detail: string | null | undefined, reason: string, heading = ""): ProviderWords | null {
+  const text = (detail ?? "").trim();
+  if (!text || (heading && fold(text) === fold(heading))) return null;
+  const http = /^Model (?:discovery|connection) returned (HTTP \d{3})(?::\s*([\s\S]*)|\s+(\([^)]*\)))?$/.exec(text);
+  if (http) {
+    const [, status, said, code] = http;
+    if (said !== undefined) return said.trim() && !OWN_REFUSALS.has(said.trim()) ? { kind: "provider", text: `${status}: ${said.trim()}` } : null;
+    if (code) return { kind: "provider", text: `${status} ${code}` };
+    // A bare status only adds something when the heading names no status of its own.
+    return reason === "provider_error" ? { kind: "provider", text: status! } : null;
+  }
+  const failed = /^Model (?:discovery|connection) request failed: ([\s\S]+)$/.exec(text);
+  if (failed) return /^the address redirected/.test(failed[1]!) ? null : { kind: "connection", text: failed[1]!.trim() };
+  if (OWN_TEXT.some((pattern) => pattern.test(text))) return null;
+  return { kind: "provider", text };
+}
+
+/** markitai's phrase for a model the provider serves in other regions only. */
+export const regionBlocked = (detail: string | null | undefined): boolean => /: the model is not available in this region$/.test(detail ?? "");

@@ -304,8 +304,9 @@ export const zh: Dict = {
   runtimeUnsupportedText: (installed, required) => `${installed ? `当前安装的是 ${installed}。` : ""}需要 ${required}。请在运行服务器的机器上安装该版本，然后重新加载列表。`,
   notSignedInTitle: (name) => `${name} 尚未登录`,
   notSignedInText: "请在运行服务器的机器上登录，然后重新加载列表。",
+  notSubscriptionText: "它已登录，但不是订阅登录（API 密钥或云平台登录不算）。请在运行服务器的机器上用订阅登录，然后重新加载列表。",
   runtimeFailedTitle: (name) => `${name} 没有响应`,
-  runtimeFailedText: "它已安装，但启动或响应失败，详细信息见下方。请在服务器上修复后重新加载列表。",
+  runtimeFailedText: "它已安装，但启动或响应失败。请在服务器上检查（方法见设置指南），然后重新加载列表。",
   runtimeStepInstall: "安装",
   runtimeStepSignIn: "登录",
   runtimeSetupGuide: "设置指南",
@@ -448,7 +449,7 @@ export const zh: Dict = {
       network: "无法连接服务商",
       timeout: "响应超时",
     })[reason] ?? "服务商返回错误",
-  testFailHint: (reason, variable, model) =>
+  testFailHint: (reason, variable, model, detailShown = true) =>
     reason === "no_key"
       ? variable
         ? `服务器上未设置 ${variable}。请在运行 markitai serve 的环境中设置它并重启服务，或为该模型的连接添加密钥。`
@@ -459,9 +460,11 @@ export const zh: Dict = {
           rate_limited: "服务商正在限制请求，或账户的额度、余额已用完。请稍后重试，或检查账户。",
           network: "服务器无法连接到服务商。请检查接口地址以及服务器的网络或代理。",
           timeout: "服务商没有及时响应。请重试；如果反复出现，请查看服务商的状态。",
-        }) as Record<string, string>)[reason] ?? "服务商返回了错误，原文见下方。",
+        }) as Record<string, string>)[reason] ?? (detailShown ? "服务商返回了错误，原文见下方。" : "服务商返回了错误。"),
   testFailFor: (model) => `${model} 的测试`,
   testFailDetail: "服务商原文",
+  connectionDetail: "连接错误",
+  modelRegionBlocked: (model) => `服务商不在服务器所在的区域提供 ${model}。请换一个模型，或从受支持的区域访问服务商。`,
   discoveryFailHint: (reason, variable, hosts = [], provider = "") =>
     reason === "no_key"
       ? variable

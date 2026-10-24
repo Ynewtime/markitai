@@ -320,8 +320,9 @@ export const ja: Dict = {
   runtimeUnsupportedText: (installed: string | null, required: string) => `${installed ? `現在は ${installed} がインストールされています。` : ""}必要なのは ${required} です。サーバーを動かしているマシンにそのリリースをインストールしてから、一覧を再読み込みしてください。`,
   notSignedInTitle: (name: string) => `${name} にサインインしていません`,
   notSignedInText: "サーバーを動かしているマシンでサインインしてから、一覧を再読み込みしてください。",
+  notSubscriptionText: "サインインしていますが、サブスクリプションではありません（API キーやクラウドのログインは対象外です）。サーバーを動かしているマシンでサブスクリプションでサインインしてから、一覧を再読み込みしてください。",
   runtimeFailedTitle: (name: string) => `${name} が応答しませんでした`,
-  runtimeFailedText: "インストールされていますが、起動または応答に失敗しました。メッセージは下にあります。サーバー上で直してから、一覧を再読み込みしてください。",
+  runtimeFailedText: "インストールされていますが、起動または応答に失敗しました。サーバー上で確認し（方法はセットアップガイドにあります）、一覧を再読み込みしてください。",
   runtimeStepInstall: "インストール",
   runtimeStepSignIn: "サインイン",
   runtimeSetupGuide: "セットアップガイド",
@@ -476,7 +477,7 @@ export const ja: Dict = {
       network: "プロバイダーに接続できません",
       timeout: "時間内に応答がありません",
     })[reason] ?? "プロバイダーのエラー",
-  testFailHint: (reason: string, variable: string | null, model: string) =>
+  testFailHint: (reason: string, variable: string | null, model: string, detailShown = true) =>
     reason === "no_key"
       ? variable
         ? `サーバーに ${variable} が設定されていません。markitai serve を実行している環境で設定してサーバーを再起動するか、このモデルの接続にキーを追加してください。`
@@ -487,9 +488,11 @@ export const ja: Dict = {
           rate_limited: "プロバイダーがリクエストを制限しているか、アカウントのクォータまたは残高が不足しています。しばらくしてから再試行するか、アカウントを確認してください。",
           network: "サーバーからプロバイダーに接続できませんでした。アドレスと、サーバーのネットワークまたはプロキシを確認してください。",
           timeout: "プロバイダーが時間内に応答しませんでした。再試行し、繰り返す場合はプロバイダーの状態を確認してください。",
-        }) as Record<string, string>)[reason] ?? "プロバイダーがエラーを返しました。原文は下にあります。",
+        }) as Record<string, string>)[reason] ?? (detailShown ? "プロバイダーがエラーを返しました。原文は下にあります。" : "プロバイダーがエラーを返しました。"),
   testFailFor: (model: string) => `${model} のテスト`,
   testFailDetail: "プロバイダーの原文",
+  connectionDetail: "接続エラー",
+  modelRegionBlocked: (model: string) => `プロバイダーはサーバーのリージョンで ${model} を提供していません。別のモデルを選ぶか、対応するリージョンからプロバイダーに接続してください。`,
   discoveryFailHint: (reason: string, variable: string | null, hosts: string[] = [], provider = "") =>
     reason === "no_key"
       ? variable

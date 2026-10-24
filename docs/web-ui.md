@@ -417,11 +417,13 @@ runtime cannot list models says the cause instead of one generic error
 file), not a release the adapter speaks (naming the installed one when known),
 not signed in, or installed but failing. It shows the command to run on the
 machine where the server runs (install the pinned release, or the sign-in
-command) with a copy button, a Setup guide link to the markitai.dev section
+command) with a copy button and a Setup guide link to the markitai.dev section
 for the cause (`/guide/subscriptions` or `/guide/subscription-chatgpt`, under
 `/zh/` for the Chinese page, at `#install`, `#sign-in` or `#troubleshooting`;
-`website/tests` checks every one against the site) and the server's own
-sentence under Provider's message. Adding a model by hand is switched off, with
+`website/tests` checks every one against the site). The server's sentence is
+markitai's own (no runtime output is passed on), so it is not shown as the
+provider's message; a Claude login that is not a subscription gets its own line.
+Adding a model by hand is switched off, with
 the reason beside it, for the first three: they are certain to fail until
 someone runs a command, so a saved model would only fail every conversion that
 routes to it, and reloading the list (the ↻ button) re-checks once the command
@@ -445,7 +447,12 @@ MOONSHOT_API_KEY where markitai serve runs …`). A hand-written model that the
 server serves with its key variable shows `From DEEPSEEK_API_KEY` in Edit, and
 a model list that cannot be loaded says why in the model test's categories (no
 key, key rejected, rate limited, unreachable, no answer in time, provider
-error), with the provider's message folded; a rejected key names the hosts that
+error). Folded under Provider's message is only what the provider itself said
+(its HTTP status with its message or error code; a bare status only for a
+provider error), under Connection error what the network reported (`connection
+refused`, a TLS failure); markitai's own sentences (a timeout, a key variable not
+set, an unreadable answer) and text that repeats the heading open nothing, and a
+model test's toast follows the same rule. A rejected key names the hosts that
 refused it (contract v1.21 `endpoints`, else the address the page asked). Moonshot
 AI and Kimi Code keys belong to a region: when the default endpoint refuses a
 new connection's key and the provider's other region lists its models
