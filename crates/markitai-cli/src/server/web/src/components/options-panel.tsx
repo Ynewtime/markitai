@@ -28,7 +28,7 @@ import { UploadPicker } from "./file-picker.tsx";
 import { HelpTooltip, helpItemText, type HelpItem } from "./help-tooltip.tsx";
 import type { IconName } from "./icon-paths.ts";
 import { Icon } from "./icons.tsx";
-import { OcrLanguageMenu } from "./pick-menu.tsx";
+import { ChoiceMenu, OcrLanguageMenu, SEGMENTS_MAX } from "./pick-menu.tsx";
 import type { DefaultsControl } from "../hooks/use-convert-defaults.ts";
 
 const BACKENDS: ConversionBackend[] = ["native", "cloudflare"];
@@ -82,16 +82,7 @@ function Chip({
   );
 }
 
-function Segments<T extends string | null>({
-  labelledBy,
-  value,
-  choices,
-  label,
-  help,
-  disabled,
-  focusableDisabled = false,
-  onPick,
-}: {
+interface ChoiceProps<T extends string | null> {
   labelledBy: string;
   /** null selects no choice: the row is in a state none of them describe. */
   value: T | null;
@@ -101,7 +92,9 @@ function Segments<T extends string | null>({
   disabled?: (choice: T) => boolean;
   focusableDisabled?: boolean;
   onPick: (choice: T) => void;
-}) {
+}
+
+function Segments<T extends string | null>({ labelledBy, value, choices, label, help, disabled, focusableDisabled = false, onPick }: ChoiceProps<T>) {
   const describedBy = (choice: T) => `${labelledBy}-${choice ?? "default"}`;
   return (
     <>
@@ -126,6 +119,22 @@ function Segments<T extends string | null>({
           );
         })}
       </span>
+      {choices.map((choice) => (
+        <Described key={choice ?? "default"} id={describedBy(choice)} item={help(choice)} />
+      ))}
+    </>
+  );
+}
+
+/** One choice of several: segments up to three choices, a menu button with the current one beyond (owner
+ * rule, 2026-10-24). `name` is the row's label, read before the menu button's value. */
+function Choice<T extends string | null>(props: ChoiceProps<T> & { name: string }) {
+  if (props.choices.length <= SEGMENTS_MAX) return <Segments {...props} />;
+  const { labelledBy, name, value, choices, label, help, disabled, onPick } = props;
+  const describedBy = (choice: T) => `${labelledBy}-${choice ?? "default"}`;
+  return (
+    <>
+      <ChoiceMenu name={name} value={value} choices={choices} label={label} describedBy={describedBy} disabled={disabled} onPick={onPick} />
       {choices.map((choice) => (
         <Described key={choice ?? "default"} id={describedBy(choice)} item={help(choice)} />
       ))}
@@ -350,7 +359,8 @@ export function OptionsPanel({
                 <div class="opt-controls">
                   {/* Only a request that still equals a preset marks it: a
                       customized set leaves all three plain and says so itself. */}
-                  <Segments
+                  <Choice
+                    name={t.preset}
                     labelledBy={`${id}-preset`}
                     value={matched}
                     choices={PRESETS}
@@ -449,7 +459,8 @@ export function OptionsPanel({
                   helpLabel={t.helpLabel}
                 />
                 <div class="opt-controls">
-                  <Segments
+                  <Choice
+                    name={t.advOutput}
                     labelledBy={`${id}-output`}
                     value={state.profile}
                     choices={PROFILES}
@@ -500,7 +511,8 @@ export function OptionsPanel({
                       helpLabel={t.helpLabel}
                     />
                     <div class="opt-controls">
-                      <Segments
+                      <Choice
+                        name={t.advStrategy}
                         labelledBy={`${id}-strategy`}
                         value={a.strategy}
                         choices={strategies}
@@ -516,7 +528,8 @@ export function OptionsPanel({
                   {!localOnly && <div class="opt-row">
                     <RowLabel id={`${id}-backend`} text={t.advBackend} hint={t.helpBackend} items={BACKENDS.map(backendHelp)} helpLabel={t.helpLabel} />
                     <div class="opt-controls">
-                      <Segments
+                      <Choice
+                        name={t.advBackend}
                         labelledBy={`${id}-backend`}
                         value={a.backend}
                         choices={BACKENDS}

@@ -224,6 +224,18 @@ export function Shell({ t, route, version, docsUrl, sourceUrl, active, total, co
             <Logo size={26} />
             <span class="brand-name">Markitai</span>
           </a>
+          {/* Docs and GitHub are links, not settings: two quiet icons at the bar's end */}
+          <span class="phone-links">
+            <a class="icon-btn" href={docsUrl} target="_blank" rel="noopener noreferrer" aria-label={t.docsLabel} aria-describedby="phone-links-note">
+              <Icon name="BookOpen" size={19} />
+            </a>
+            <a class="icon-btn" href={sourceUrl} target="_blank" rel="noopener noreferrer" aria-label="GitHub" aria-describedby="phone-links-note">
+              <Icon name="GithubLogo" size={19} />
+            </a>
+            <span id="phone-links-note" hidden>
+              {t.opensNewTab}
+            </span>
+          </span>
         </header>
         <main id="main" tabIndex={-1}>
           {children}

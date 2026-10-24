@@ -16,13 +16,15 @@ its own Models and Edit config for them, see [Access token](#access-token)), and
 (`2.0.1`) in small muted text beside Docs and the commit it was built from beside GitHub (`-dirty` after
 it when built with uncommitted changes), and under them, as small muted text centred rather than a row,
 `Build: 20261017 19:54`, the build's date and time in the viewer's time zone (the label stays `Build:` in every
-language; the full stamp with seconds and offset is the tooltip). The Settings list on a phone ends with the Docs
-and GitHub rows and the same centred `Build:` line under the list; the icon rail leaves it out. Its button collapses it to a 60px icon rail; each entry
+language; the full stamp with seconds and offset is the tooltip); the icon rail leaves it out. Its button collapses it to a 60px icon rail; each entry
 keeps its name for assistive technology and shows it as a tooltip on hover and
 keyboard focus, and the choice is remembered in this browser. On phones the
-sidebar gives way to a top bar and a bottom tab bar (Convert, Conversions,
-Settings); Settings there is one list (the same sections, Docs,
-GitHub) with the version centred below it. Every view is an address (`/`, `/jobs`, `/settings/models`,
+sidebar gives way to a top bar, with Docs (book) and GitHub (GitHub mark) as
+two muted 44 px icon buttons at its end, and a bottom tab bar (Convert, Conversions,
+Settings); Settings there is the list of the same sections, then one centred muted
+monospace line, `2.0.1 · b73d56f7 · 20261024 18:38` (version, commit linking to GitHub,
+build time). Docs opens markitai.dev in Chinese (`/zh/`) when the page is Chinese and the
+backend's `docs_url` is markitai.dev; any other `docs_url` opens as it is. Every view is an address (`/`, `/jobs`, `/settings/models`,
 `/settings/appearance`, `/settings/access`, `/settings/config`), so reloads, Back and new tabs keep
 it. Any other address opens the workbench (with status 404) on "Page not found",
 with the way to Convert and Conversions. On a wide window every page is one
@@ -31,8 +33,14 @@ Settings pages 760 px, Conversions 1280 px).
 
 Controls share one scale: buttons 28 px with 13 px labels (36 px on a phone),
 one filled button per area, secondary actions as outlined buttons and the rest
-in "⋯"; every choice (status filters, provider groups, the options' segments,
-Base | LLM, language and theme, the option toggles) is the same segmented group;
+in "⋯"; every choice of two or three (status filters, presets, File, Base | LLM,
+language and theme) is the same segmented group, and the option toggles one-segment
+groups in the same design. A single choice of more than three (URL, Output, the provider
+groups when more than three are offered) is a menu button instead: the current value and a
+chevron, opening a menu whose entries are radio items with a check on the current one
+(arrow keys, Home/End, Escape; a choice that can't be used stays listed, dimmed, its
+reason in its description). On a phone the options' buttons, toggles, segments and menu
+buttons are 28 px tall with 11 px labels, 8 px sides and 6 px apart;
 on a phone the short text actions (Full details, Show items, breadcrumbs) answer
 taps across 44 px.
 
@@ -219,7 +227,12 @@ tags inline (`gardening · community beds · …`; else the summary) and Summary
 end when there is one, with no title of its own (the body's heading is the title).
 The whole line is one button (a click anywhere on it, Enter or Space) that opens it into a
 two-column properties table (closing with its own rule; a rule that opens the body right after the front matter is not drawn a second time) (Summary, Tags as chips, Source, Processed and every
-other key; one key width with a rule between key and value, long keys and values
+other key; every key markitai writes is named in the interface's language and its own values by name
+(`fetch_strategy: playwright` is "Fetched with · Playwright", `content_profile: social_post` "Content
+type · Social post", the file's word in the tooltip), other keys as written; a row another row
+already says is left out: the final address (`source_url`) or the canonical link when it is the
+source's, `renderer` when it is the fetch method, `domain` when it is the source's host, and an X
+post's `author_name` joins its handle, "Lumen Dev (@lumen_dev)"; the file keeps every key; one key width with a rule between key and value, long keys and values
 wrapped) whose `Properties · N` header row, anywhere on it, folds it again; the
 choice holds for the tab's session (`sessionStorage['markitai.front']`) and in
 Preview, Compare and the Details excerpt alike. Tables over 500 rows show their first 500 rows under a

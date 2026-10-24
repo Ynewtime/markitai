@@ -6,7 +6,7 @@
 import { useEffect, useId, useState } from "preact/hooks";
 import type { Dict } from "../i18n/index.ts";
 import { frontOpen, onFrontOpen, setFrontOpen } from "../lib/front-pref.ts";
-import { frontLine, frontRows, type FrontRow } from "../lib/front-rows.ts";
+import { frontLine, frontRows, frontValue, type FrontRow } from "../lib/front-rows.ts";
 import type { FrontMatter } from "../lib/frontmatter.ts";
 import { Icon } from "./icons.tsx";
 
@@ -25,7 +25,7 @@ function when(value: string): string {
   }
 }
 
-function Value({ row }: { row: FrontRow }) {
+function Value({ t, row }: { t: Dict; row: FrontRow }) {
   if (row.kind === "tags")
     return (
       <ul class="front-tags">
@@ -46,7 +46,9 @@ function Value({ row }: { row: FrontRow }) {
         {when(row.value)}
       </time>
     );
-  return <>{row.value}</>;
+  const shown = frontValue(t, row.key, row.value);
+  // a named value keeps the file's own word in its tooltip
+  return shown === row.value ? <>{row.value}</> : <span title={row.value}>{shown}</span>;
 }
 
 export function FrontCard({ t, front, compact = false }: { t: Dict; front: FrontMatter; compact?: boolean }) {
@@ -68,7 +70,7 @@ export function FrontCard({ t, front, compact = false }: { t: Dict; front: Front
             <div key={row.key} class="front-row">
               <dt>{t.frontKey(row.key)}</dt>
               <dd>
-                <Value row={row} />
+                <Value t={t} row={row} />
               </dd>
             </div>
           ))}

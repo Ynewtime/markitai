@@ -12,6 +12,7 @@ import { arrangeProviders, atOwnEndpoint, iconKey, providerLabel, savedAuth, typ
 import { BrandIcon, useBrandMarks } from "./brand-icon.tsx";
 import { ConfirmPopover } from "./confirm-popover.tsx";
 import { Icon } from "./icons.tsx";
+import { ChoiceMenu, SEGMENTS_MAX } from "./pick-menu.tsx";
 
 export { providerLabel };
 
@@ -140,20 +141,24 @@ export function ProviderPicker({
           {t.providersAll(view.all.length)}
         </h2>
         {view.filters.length > 1 && (
-          <div class="provider-filter">
-            <div class="chips" role="group" aria-label={t.providerFilterAria}>
-              {view.filters.map((value) => (
-                <button
-                  key={value}
-                  type="button"
-                  class={shown === value ? "filter-chip is-on" : "filter-chip"}
-                  aria-pressed={shown === value}
-                  onClick={() => setFilter(value)}
-                >
-                  {t.providerFilter(value)}
-                </button>
-              ))}
-            </div>
+          <div class={view.filters.length > SEGMENTS_MAX ? "provider-filter is-menu" : "provider-filter"}>
+            {view.filters.length > SEGMENTS_MAX ? (
+              <ChoiceMenu name={t.providerFilterAria} value={shown} choices={view.filters} label={(value) => t.providerFilter(value)} onPick={setFilter} />
+            ) : (
+              <div class="chips" role="group" aria-label={t.providerFilterAria}>
+                {view.filters.map((value) => (
+                  <button
+                    key={value}
+                    type="button"
+                    class={shown === value ? "filter-chip is-on" : "filter-chip"}
+                    aria-pressed={shown === value}
+                    onClick={() => setFilter(value)}
+                  >
+                    {t.providerFilter(value)}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         )}
         {view.all.length > 0 ? (

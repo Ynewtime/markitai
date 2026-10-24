@@ -31,6 +31,7 @@ import { apiErrorText } from "./i18n/errors.ts";
 import { LANG_TAGS } from "./i18n/locale.ts";
 import { versionLine } from "./lib/build.ts";
 import { isFailed, isJobKey, jobKey, submissions, type Filter, type LabelWords } from "./lib/conversions.ts";
+import { docsHome } from "./lib/docs.ts";
 import { download } from "./lib/download.ts";
 import { addStaged, oversized, removeStaged, type StagedSubmission, type Walked } from "./lib/files.ts";
 import { basename, displayName, fmtBytes } from "./lib/format.ts";
@@ -129,7 +130,7 @@ export function App() {
       : userModels
         ? ["appearance", "models", ...(features?.user_config === true ? (["config"] as const) : [])]
         : ["appearance"];
-  const docsUrl = caps?.docs_url && /^https:\/\//.test(caps.docs_url) ? caps.docs_url : DEFAULT_DOCS;
+  const docsUrl = docsHome(caps?.docs_url && /^https:\/\//.test(caps.docs_url) ? caps.docs_url : DEFAULT_DOCS, locale);
   const sourceUrl = caps?.source_url && /^https:\/\//.test(caps.source_url) ? caps.source_url : DEFAULT_SOURCE;
 
   // ---- composer options: v1.17 backends give their defaults (below); older ones, the last choice in this browser
@@ -867,7 +868,7 @@ export function App() {
     page =
       section === null ? (
         <div class="page">
-          <SettingsIndex t={t} version={versionInfo} docsUrl={docsUrl} sourceUrl={sourceUrl} sections={sections} user={role === "user"} onNavigate={navigate} />
+          <SettingsIndex t={t} version={versionInfo} sourceUrl={sourceUrl} sections={sections} user={role === "user"} onNavigate={navigate} />
         </div>
       ) : caps === null && !unauthorized && ADMIN_SECTIONS.has(section) ? (
         // Who is asking is not known yet: an admin page waits rather than ask as the wrong one.

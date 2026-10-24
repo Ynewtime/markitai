@@ -2,7 +2,7 @@
 // language, Models (see settings-models), Access token and Edit config (see
 // settings-config); Access token and Edit config only for the admin token, Models
 // for a user token too (v1.15: its own models and the shared ones). On phones
-// `/settings` lists the sections and the external links in one list.
+// `/settings` lists the sections, then one line with the version, the commit and the build time.
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { createUserToken, fetchUserTokens, regenerateToken, revokeUserToken } from "../api/client.ts";
 import { hasToken, setToken } from "../api/token.ts";
@@ -473,7 +473,7 @@ function NewToken({ t, token, heading: title, onDone }: { t: Dict; token: Regene
 }
 
 /** Phones: the section list behind the tab bar's Settings. */
-export function SettingsIndex({ t, version, docsUrl, sourceUrl, sections, user = false, onNavigate }: { t: Dict; version: VersionLine | null; docsUrl: string; sourceUrl: string; sections: Section[]; user?: boolean; onNavigate: (route: Route) => void }) {
+export function SettingsIndex({ t, version, sourceUrl, sections, user = false, onNavigate }: { t: Dict; version: VersionLine | null; sourceUrl: string; sections: Section[]; user?: boolean; onNavigate: (route: Route) => void }) {
   const entries: Record<Section, [IconName, string]> = {
     appearance: ["Palette", t.navAppearanceShort],
     models: ["Cpu", t.navModels],
@@ -498,6 +498,7 @@ export function SettingsIndex({ t, version, docsUrl, sourceUrl, sections, user =
       </a>
     </li>
   );
+  const commit = version && commitLabel(version);
   return (
     <section class="settings-page" aria-labelledby="settings-index-title">
       <div class="page-head">
@@ -505,41 +506,26 @@ export function SettingsIndex({ t, version, docsUrl, sourceUrl, sections, user =
       </div>
       <ul class="settings-index">
         {sections.map((section) => entry(section, ...entries[section]))}
-        <li>
-          <a href={docsUrl} target="_blank" rel="noopener noreferrer">
-            <Icon name="BookOpen" size={18} />
-            <span class="index-copy">
-              <span class="index-label">{t.docsLabel}</span>
-            </span>
-            {version && (
-              <span class="nav-tag" title={t.buildTitle(version.parts)}>
-                {version.parts.version}
-              </span>
-            )}
-            <Icon name="ArrowSquareOut" size={14} />
-            <span class="sr-only"> {t.opensNewTab}</span>
-          </a>
-        </li>
-        <li>
-          <a href={sourceUrl} target="_blank" rel="noopener noreferrer">
-            <Icon name="GithubLogo" size={18} />
-            <span class="index-copy">
-              <span class="index-label">GitHub</span>
-            </span>
-            {version && commitLabel(version) && (
-              <span class="nav-tag" title={t.buildTitle(version.parts)}>
-                {commitLabel(version)}
-              </span>
-            )}
-            <Icon name="ArrowSquareOut" size={14} />
-            <span class="sr-only"> {t.opensNewTab}</span>
-          </a>
-        </li>
       </ul>
-      {/* not a list item: plain muted text centred under the list (one English label in every language) */}
-      {version?.parts.date && (
-        <p class="build-line" title={t.buildTitle(version.parts)}>
-          Build: {version.parts.date}
+      {/* not a list item: one quiet line under the list, version · commit · build time (the commit opens GitHub) */}
+      {version && (
+        <p class="build-line is-index" title={t.buildTitle(version.parts)}>
+          {version.parts.version}
+          {commit && (
+            <>
+              <span aria-hidden="true"> · </span>
+              <a class="build-commit" href={sourceUrl} target="_blank" rel="noopener noreferrer">
+                {commit}
+                <span class="sr-only"> GitHub {t.opensNewTab}</span>
+              </a>
+            </>
+          )}
+          {version.parts.date && (
+            <>
+              <span aria-hidden="true"> · </span>
+              {version.parts.date}
+            </>
+          )}
         </p>
       )}
     </section>

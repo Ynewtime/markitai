@@ -1,6 +1,13 @@
 // Addresses in the backend's own documentation, from `docs_url`: a page beside an `index.md` address (Rust's
 // Markdown docs), or under `guide/` of a site root such as `https://markitai.dev` or `https://markitai.dev/`
 // (Python's VitePress site). Any other address is kept as it is.
+import type { Locale } from "../i18n/locale.ts";
+
+/** The docs in the page's language: markitai.dev keeps its Chinese pages under `/zh/` (it has no Japanese
+ * ones); any other address is kept as it is. */
+export const docsHome = (docsUrl: string, locale: Locale): string =>
+  locale === "zh" && /^https:\/\/markitai\.dev\/?$/.test(docsUrl) ? "https://markitai.dev/zh/" : docsUrl;
+
 export const docsPage = (docsUrl: string, page: string): string => {
   if (/\/index\.md$/.test(docsUrl)) return docsUrl.replace(/index\.md$/, `${page}.md`);
   const root = /^(https:\/\/[^/?#]+)(\/[^?#]*)?$/.exec(docsUrl);

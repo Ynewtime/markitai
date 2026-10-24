@@ -147,6 +147,80 @@ export function OcrLanguageMenu({
   );
 }
 
+/** Groups of more than this many single choices are a menu button, smaller ones segments (owner rule, 2026-10-24). */
+export const SEGMENTS_MAX = 3;
+
+/** One choice of several as a menu button: the current value and a chevron; the menu checks the current
+ * one. A disabled choice stays reachable (aria-disabled) so its description can say why. */
+export function ChoiceMenu<T extends string | null>({
+  name,
+  value,
+  choices,
+  label,
+  describedBy,
+  disabled,
+  class: extra,
+  onPick,
+}: {
+  /** What the group sets ("URL"), read before the value. */
+  name: string;
+  value: T | null;
+  choices: readonly T[];
+  label: (choice: T) => string;
+  describedBy?: (choice: T) => string;
+  disabled?: (choice: T) => boolean;
+  class?: string;
+  onPick: (choice: T) => void;
+}) {
+  const menu = useMenu();
+  const current = choices.find((choice) => choice === value);
+  return (
+    <span ref={menu.root} class={extra ? `menu-wrap ${extra}` : "menu-wrap"} onKeyDown={menu.onKeyDown}>
+      <button
+        ref={menu.trigger}
+        type="button"
+        class="opt-choice"
+        aria-haspopup="menu"
+        aria-expanded={menu.open}
+        aria-describedby={current !== undefined ? describedBy?.(current) : undefined}
+        onClick={() => menu.setOpen((open) => !open)}
+      >
+        <span class="sr-only">{name}: </span>
+        <span class="opt-choice-value">{current !== undefined ? label(current) : "—"}</span>
+        <Icon name="CaretDown" size={11} />
+      </button>
+      {menu.open && (
+        <div class="menu is-start opt-choice-menu" role="menu" aria-label={name}>
+          {choices.map((choice) => {
+            const off = disabled?.(choice) ?? false;
+            return (
+              <button
+                key={choice ?? "default"}
+                type="button"
+                role="menuitemradio"
+                aria-checked={choice === value}
+                aria-disabled={off || undefined}
+                aria-describedby={describedBy?.(choice)}
+                tabIndex={-1}
+                onClick={() => {
+                  if (off) return;
+                  onPick(choice);
+                  menu.close();
+                }}
+              >
+                <span class="menu-check" aria-hidden="true">
+                  {choice === value && <Icon name="Check" size={13} />}
+                </span>
+                <span>{label(choice)}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </span>
+  );
+}
+
 export interface DownloadEntry {
   key: string;
   label: string;
