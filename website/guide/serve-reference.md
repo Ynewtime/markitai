@@ -58,7 +58,7 @@ On a phone, tap **Select** first; **Stop remaining** sits in the header of the f
 
 - The header's arrows or ↑/↓ move between items; the expand button (or **F**) fills the browser and back, remembered per browser.
 - The header has **Download** (the Markdown; its caret offers JSON, all files as a .zip, or Choose files…) and, when it is the fix, **Retry**, **Add a model** or **Enable OCR and retry**; "⋯" holds **Enhance with LLM**, **Run again**, **Re-convert**, **Retry without LLM** and Delete.
-- Details shows the options as the equivalent command line, with a copy button, and the settings no flag sets (`image.format webp`) as chips: only what differs from the defaults, the server's configuration included. Jobs from before 2.0.1 show the options their request named.
+- Details shows the options as the equivalent command line, with a copy button, and the settings no flag sets (`image.format webp`) as chips: only what differs from the defaults, the server's configuration included. A conversion with LLM also saves the Markdown before LLM, so its command line carries `--keep-base` and reproduces the same files. Jobs from before 2.0.1 show the options their request named.
 - Details also shows how long the item is kept and the start of the result. A failed action shows an error that stays until you close it; a failed rerun that kept the earlier result says so in Details.
 
 **Preview.** "⋯" adds Copy and Export PDF with an optional header and footer. **Files** lists the original, then every result file, each with its own download, and **Download all (.zip)** of the result with its original.

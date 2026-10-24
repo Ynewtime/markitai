@@ -175,7 +175,9 @@ files wait on Convert); typing URLs is Convert's job.
   only what differs from markitai's defaults; a job recorded before that shows
   its request's own options (OCR language and every-page OCR as chips), and an
   older CLI history entry, which kept only its preset and switches, its short
-  summary (`Rich · LLM`). A model answer that was requested again and then used is
+  summary (`Rich · LLM`). A conversion with LLM also saves the Markdown before
+  LLM, so its command line carries `--keep-base` and reproduces the same files.
+  A model answer that was requested again and then used is
   no notice (the terminal shows it with `-v`; the cost counts both requests). A
   submission's window shows its progress as one bar (done, failed, stopped,
   converting, waiting) with Retry failed, Download .zip, Stop remaining and Delete,
