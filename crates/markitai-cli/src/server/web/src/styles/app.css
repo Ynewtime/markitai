@@ -428,12 +428,18 @@ textarea {
 
 /* ------------------------------------------------------------ layout */
 
+/* the usual visually hidden box: the -1px margin keeps one placed after the page's last line (the
+   live regions) from making every page scroll by a pixel */
 .sr-only {
   position: absolute;
   width: 1px;
   height: 1px;
+  margin: -1px;
+  padding: 0;
   overflow: hidden;
+  border: 0;
   clip: rect(0, 0, 0, 0);
+  clip-path: inset(50%);
   white-space: nowrap;
 }
 .copy-buffer {

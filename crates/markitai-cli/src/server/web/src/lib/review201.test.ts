@@ -102,3 +102,8 @@ test("L11: the properties line and its chevrons highlight on hover only where a 
     assert.ok(!outside.includes(`\n${selector} {`), selector);
   }
 });
+
+test("L12: a visually hidden box takes no room after the page's last line", () => {
+  const hidden = block(".sr-only");
+  for (const rule of ["margin: -1px;", "padding: 0;", "border: 0;", "clip-path: inset(50%);", "width: 1px;", "height: 1px;"]) assert.ok(hidden.includes(rule), rule);
+});
