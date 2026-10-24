@@ -459,7 +459,10 @@ fn read_job(path: &Path) -> Value {
     );
     assert_eq!(meta["status"], "done");
     assert!(stamp(&meta["created_at"]) <= stamp(&meta["finished_at"]));
-    keys(&meta["options"], &["preset", "llm", "ocr", "origin"]);
+    keys(
+        &meta["options"],
+        &["preset", "llm", "ocr", "origin", "settings"],
+    );
     assert_eq!(meta["options"]["origin"], "cli");
     assert!(meta["options"]["preset"].is_null() || meta["options"]["preset"].is_string());
     assert!(meta["options"]["llm"].is_boolean() && meta["options"]["ocr"].is_boolean());
@@ -716,9 +719,10 @@ fn all_four_modes_publish_one_job_with_mode_appropriate_names_and_real_outputs()
             std::fs::read(job.join("out").join(item["output"].as_str().unwrap())).unwrap(),
             std::fs::read(original).unwrap()
         );
+        // The fixture configuration's own values are what the run converted with.
         assert_eq!(
             meta["options"],
-            json!({"preset":null,"llm":false,"ocr":false,"origin":"cli"})
+            json!({"preset":null,"llm":false,"ocr":false,"origin":"cli","settings":{"cache.enabled":false,"fetch.strategy":"static","image.compress":false,"image.filter.min_area":1,"image.filter.min_height":1,"image.filter.min_width":1}})
         );
         assert!(!job.join("uploads").exists());
     }

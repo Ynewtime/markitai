@@ -122,10 +122,15 @@ fn history_with_items_carries_each_jobs_snapshot_rows() {
     assert_eq!(full[0]["options"], snapshot["options"]);
     assert_eq!(full[0]["options"]["profile"], "rag");
     assert_eq!(full[0]["items"][0]["options"]["profile"], "rag");
+    // What the job converted with comes with its items, beside its options.
+    assert_eq!(full[0]["settings"], snapshot["settings"]);
+    assert_eq!(full[0]["settings"]["output.profile"], "rag");
+    assert_eq!(full[0]["items"][0]["settings"]["output.profile"], "rag");
     // The summary fields are the same with or without the items.
     let mut summary = full[0].clone();
     summary.as_object_mut().unwrap().remove("items");
     summary.as_object_mut().unwrap().remove("options");
+    summary.as_object_mut().unwrap().remove("settings");
     assert_eq!(summary, plain[0]);
     assert_eq!(server.json("/api/history?include=other"), plain);
     // The uploaded size is reported per file item.

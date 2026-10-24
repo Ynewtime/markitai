@@ -412,6 +412,20 @@ use `item.options ?? job.options`, remove any consent field and obtain fresh
 [Cloudflare confirmation](#cloudflare-request-authorization) before a rerun.
 The small queued-item response returned by creation or retry is unchanged.
 
+Contract v1.22 adds `settings` beside `options` on a job snapshot, each of its
+items and history entries listed with their items: what that job or item last
+converted with, as dotted configuration keys whose values differ from
+markitai's defaults (`{"llm.enabled":true,"image.format":"webp","cache.no_cache":true}`),
+the server's configuration included. Only a fixed list of keys that shape a
+result is read: model switches and limits, OCR language, screenshots, image
+format, quality, size and filters, output profile, format, page markers, text
+only and wiki links, cache, the PDF hidden-text policy, fetch strategy and
+backend; a custom prompt is `"custom"`. Credentials, addresses, headers and
+prompt text never appear. A retry records its own, an enhancement its own
+without changing the repeat selections, and CLI runs recorded with
+`--record-history` record theirs. `null` (or a missing field) marks a job
+recorded before 2.0.1. Like `options`, it is a record, not authorization.
+
 Both operations reconvert the original retained upload or refetch the original
 URL. Enhancement is an explicit one-off attempt that turns the LLM on: an item
 converted without it (`llm: false`, preset `minimal`) is enhanced by a bare

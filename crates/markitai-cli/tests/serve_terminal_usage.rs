@@ -488,6 +488,8 @@ fn paid_auth_failure_including_zero_tokens_survives_events_get_and_restart() {
         assert_eq!(saved(&service.folder(&id))["items"][0], {
             let mut expected = item.clone();
             expected["options"] = saved(&service.folder(&id))["items"][0]["options"].clone();
+            // `settings` is saved inside the options and read out beside them.
+            expected.as_object_mut().unwrap().remove("settings");
             expected
         });
         service.stop();

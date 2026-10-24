@@ -49,6 +49,7 @@ impl JobData {
             .and_then(|id| self.item_options.get(id))
             .unwrap_or(&self.options);
         item["options"] = public_options(saved);
+        item["settings"] = settings(saved);
         item
     }
 
@@ -65,6 +66,7 @@ impl JobData {
         value["created_at"] = json!(self.created_at);
         value["finished_at"] = json!(self.finished_at);
         value["options"] = public_options(&self.options);
+        value["settings"] = settings(&self.options);
         value["items"] = self.item_payloads();
         if let Some(error) = &self.persistence_error {
             value["persistence_error"] = json!(error);
@@ -176,6 +178,7 @@ impl JobData {
     pub fn history_with_items(&self) -> Value {
         let mut value = self.history();
         value["options"] = public_options(&self.options);
+        value["settings"] = settings(&self.options);
         value["items"] = self.item_payloads();
         value
     }
@@ -540,6 +543,16 @@ fn public_options(saved: &Value) -> Value {
         }
     }
     options
+}
+
+/// What a job or item ran with (`job_settings`), as saved beside its options;
+/// `null` for a job recorded before it was kept.
+fn settings(saved: &Value) -> Value {
+    saved
+        .get("settings")
+        .filter(|settings| settings.is_object())
+        .cloned()
+        .unwrap_or(Value::Null)
 }
 
 #[cfg(test)]
