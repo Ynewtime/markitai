@@ -49,7 +49,8 @@ taps across 44 px.
 to six rows), Options, Upload (files) and Folder on the left, Convert on the
 right. Options opens the conversion options in a dialog (a sheet from the bottom
 edge on a phone, closed by dragging its handle down, tapping outside or Esc; a
-480 px dialog near the top elsewhere), and carries a dot while the choices differ
+480 px dialog near the top elsewhere; the browser's Back closes either and stays on
+Convert, as it closes the conversion window), and carries a dot while the choices differ
 from the defaults. The dialog's first page has the preset and one row per group
 (Enhance, Images, Output, then under Advanced URL, Files, Pages, Other) with its
 value, in full text colour when it differs from the defaults; a row opens the

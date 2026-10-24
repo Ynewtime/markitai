@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import type { CloudflareCapability } from "../api/types.ts";
 import type { Dict } from "../i18n/index.ts";
 import { cloudflareReason } from "../lib/cloudflare.ts";
+import { listEntry, OPTIONS_ENTRY } from "../lib/route.ts";
 import { cliCommand, stagedPaths } from "../lib/cli.ts";
 import { BUILTIN_DEFAULTS, BUILTIN_PRESETS, changedOptions, matchingPreset, resolveOptions, type Composer, type PresetTable } from "../lib/options.ts";
 import { UploadPicker } from "./file-picker.tsx";
@@ -90,7 +91,39 @@ export function OptionsPanel({
   useEffect(() => {
     if (openRequest > 0) setOpen(true);
   }, [openRequest]);
+  // The dialog has a history entry of its own, as the conversion window has: Back (or the swipe)
+  // closes it and stays on Convert, and closing it by hand goes back over that entry. An entry
+  // left from before a reload is dropped, so it never takes a Back of its own.
+  const pushed = useRef(false);
+  // Leaving for Settings from the dialog waits for Back over its entry, so the two never race.
+  const backing = useRef(false);
+  const afterClose = useRef<(() => void) | null>(null);
+  useEffect(() => {
+    if (listEntry()?.wb === OPTIONS_ENTRY) history.replaceState(null, "", location.href);
+  }, []);
+  useEffect(() => {
+    if (!open) return;
+    history.pushState({ wb: OPTIONS_ENTRY }, "", location.href);
+    pushed.current = true;
+    const onPop = () => {
+      if (listEntry()?.wb === OPTIONS_ENTRY) return;
+      pushed.current = false;
+      backing.current = false;
+      setOpen(false);
+      const next = afterClose.current;
+      afterClose.current = null;
+      if (next) next();
+      else requestAnimationFrame(() => trigger.current?.focus());
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, [open]);
   const close = () => {
+    if (pushed.current && listEntry()?.wb === OPTIONS_ENTRY) {
+      backing.current = true;
+      history.back();
+      return;
+    }
     setOpen(false);
     requestAnimationFrame(() => trigger.current?.focus());
   };
@@ -148,7 +181,13 @@ export function OptionsPanel({
           presets={presets}
           llmReady={llmReady}
           needsModel={modelNote}
-          onAddModel={onAddModel}
+          onAddModel={
+            onAddModel &&
+            (() => {
+              if (backing.current) afterClose.current = onAddModel;
+              else onAddModel();
+            })
+          }
           cloudflare={cloudflare}
           command={command}
           pathsNote={paths.length > 0}

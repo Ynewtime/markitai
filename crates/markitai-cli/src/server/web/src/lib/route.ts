@@ -66,6 +66,8 @@ export function listQuery(state: ListState): string {
 export const DIALOG_ENTRY = "dialog";
 export const SUMMARY_ENTRY = "summary";
 export const ONLY_ENTRY = "only";
+/** The Convert page's options dialog: Back closes it instead of leaving the page. */
+export const OPTIONS_ENTRY = "options";
 
 export interface ListEntry {
   wb?: string;

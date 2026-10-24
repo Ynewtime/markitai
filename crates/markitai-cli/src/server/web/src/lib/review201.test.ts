@@ -33,3 +33,15 @@ test("L8: a bubble opened from the keyboard stays while focus is on its control"
   const timer = tip.slice(tip.indexOf("const timer = setTimeout"), tip.indexOf("AUTO_HIDE_MS + extraMs"));
   assert.match(timer, /!hovered\.current && !anchor\.current\?\.querySelector\(":focus-visible"\) && !anchor\.current\?\.matches\(":focus-visible"\)/);
 });
+
+test("M2: the options dialog has a history entry, so Back closes it and stays on Convert", () => {
+  const panel = read("../components/options-panel.tsx");
+  assert.match(panel, /history\.pushState\(\{ wb: OPTIONS_ENTRY \}, "", location\.href\);/);
+  // Back (popstate off the entry) closes the dialog; closing by hand goes back over the entry
+  assert.match(panel, /const onPop = \(\) => \{\s*if \(listEntry\(\)\?\.wb === OPTIONS_ENTRY\) return;/);
+  assert.match(panel, /if \(pushed\.current && listEntry\(\)\?\.wb === OPTIONS_ENTRY\) \{\s*backing\.current = true;\s*history\.back\(\);/);
+  // an entry left from before a reload is dropped
+  assert.match(panel, /if \(listEntry\(\)\?\.wb === OPTIONS_ENTRY\) history\.replaceState\(null, "", location\.href\);/);
+  // "Add a model" leaves only after that Back
+  assert.match(panel, /if \(backing\.current\) afterClose\.current = onAddModel;\s*else onAddModel\(\);/);
+});
