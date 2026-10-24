@@ -208,14 +208,15 @@ fn options(cli: &Cli, cfg: &Value, scope: &Scope) -> Value {
 /// had: a resumed run with another of them is another batch and converts its
 /// items again. Python markitai's five (`pure`, `keep_base`,
 /// `screenshot_only`, `profile` and a `-s` strategy, under its names), then
-/// this implementation's own output settings.
+/// this implementation's own output settings. `--pure` and `--keep-base`
+/// count with or without `--llm`: without a model, `--pure` still drops the
+/// front matter, and each flag selects the same batch either way.
 fn output_options(cli: &Cli, cfg: &Value) -> Vec<(&'static str, Value)> {
-    let llm = config::enabled(cfg, "/llm/enabled");
     let mut options = Vec::new();
-    if llm && config::enabled(cfg, "/llm/pure") {
+    if config::enabled(cfg, "/llm/pure") {
         options.push(("pure", json!(true)));
     }
-    if llm && config::enabled(cfg, "/llm/keep_base") {
+    if config::enabled(cfg, "/llm/keep_base") {
         options.push(("keep_base", json!(true)));
     }
     if config::enabled(cfg, "/screenshot/screenshot_only") {
@@ -2836,13 +2837,14 @@ mod resume_options_tests {
                 "text_only"
             ]
         );
-        // Pure and keep-base mean nothing without a model.
+        // Pure and keep-base count without a model too.
         cfg["llm"]["enabled"] = json!(false);
-        assert!(
-            !output_options(&cli(&[]), &cfg)
-                .iter()
-                .any(|(key, _)| matches!(*key, "pure" | "keep_base"))
-        );
+        let names: Vec<_> = output_options(&cli(&[]), &cfg)
+            .into_iter()
+            .map(|(key, _)| key)
+            .filter(|key| matches!(*key, "pure" | "keep_base"))
+            .collect();
+        assert_eq!(names, ["pure", "keep_base"]);
         // Each changes the state's file name; the default keeps it.
         let scope = Scope::new(Mode::Directory, root.path(), &root.path().join("out")).unwrap();
         let hash = |options: Value| codec::task_hash(&scope, &options).unwrap();

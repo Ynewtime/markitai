@@ -1028,6 +1028,60 @@ fn resume_with_different_saved_options_refuses_and_keeps_the_saved_progress() {
 }
 
 #[test]
+fn pure_and_keep_base_select_their_own_batch_without_a_model() {
+    let root = tempfile::tempdir().unwrap();
+    let server = Server::start();
+    configure(root.path(), &server, false);
+    write(root.path(), "input/a.txt", "MARKERXA first file.");
+    let out = root.path().join("out");
+    let states = || {
+        std::fs::read_dir(out.join(".markitai/states"))
+            .unwrap()
+            .filter(|entry| {
+                entry
+                    .as_ref()
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .ends_with(".state.json")
+            })
+            .count()
+    };
+    let run = |args: &[&str]| {
+        let mut all = vec!["input", "-o", "out", "--json"];
+        all.extend_from_slice(args);
+        envelope(invoke(root.path(), &all), 0)
+    };
+    run(&[]);
+    assert_eq!(states(), 1);
+    // `--pure` writes no front matter even without `--llm`: another batch,
+    // which converts the item again and finds its own progress next time.
+    let pure = run(&["--resume", "--pure"]);
+    assert_eq!(pure["items"][0]["earlier_run"], false, "{pure}");
+    let written = std::fs::read_to_string(
+        root.path()
+            .join(pure["items"][0]["output"].as_str().unwrap()),
+    )
+    .unwrap();
+    assert!(
+        written.contains("MARKERXA") && !written.starts_with("---"),
+        "{written}"
+    );
+    assert_eq!(states(), 2);
+    let again = run(&["--resume", "--pure"]);
+    assert_eq!(again["items"][0]["earlier_run"], true, "{again}");
+    assert_eq!(states(), 2);
+    // `--keep-base` selects its own batch as it does with `--llm`.
+    let keep = run(&["--resume", "--keep-base"]);
+    assert_eq!(keep["items"][0]["earlier_run"], false, "{keep}");
+    assert_eq!(states(), 3);
+    // The default run still finds its own progress.
+    let default = run(&["--resume"]);
+    assert_eq!(default["items"][0]["earlier_run"], true, "{default}");
+    assert_eq!(states(), 3);
+}
+
+#[test]
 fn resume_dry_run_and_empty_inputs_do_not_create_persistence_shells() {
     let root = tempfile::tempdir().unwrap();
     let server = Server::start();

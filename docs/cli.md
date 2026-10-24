@@ -153,11 +153,11 @@ MARKITAI_LANG=zh markitai doctor
 - macOS/Linux/Windows 均支持批量恢复。用原命令加 `--resume`，保留兼容的完成项、
   重试未完成项并发现新增输入。状态及其文件名记录功能开关（`--llm`、`--ocr`、
   `--screenshot`、`--alt`、`--desc`）、输入输出路径及目录扫描深度/glob，以及不是默认值的
-  改变输出的设置（`--profile`、与 `--llm` 同用的 `--keep-base`/`--pure`、`--screenshot-only`、
+  改变输出的设置（`--profile`、`--keep-base`/`--pure`（有无 `--llm` 都算）、`--screenshot-only`、
   `-s`，以及 `-f json`、`--text-only`、`output.page_markers`、`output.wikilinks`），与 Python 版
-  markitai 一致；不记录文件并发（`-j`），也不是整个配置文件的比较。换一种设置续跑找不到原来的
-  状态，就是另一个批次：退出码 0，重新转换各项（已有文件按 `output.on_conflict` 处理）；
-  回到原设置仍找到原来的进度。
+  markitai 一致（Python 版只在带 `--llm` 时记录 `--keep-base`/`--pure`）；不记录文件并发（`-j`），
+  也不是整个配置文件的比较。换一种设置续跑找不到原来的状态，就是另一个批次：退出码 0，
+  重新转换各项（已有文件按 `output.on_conflict` 处理）；回到原设置仍找到原来的进度。
   更换模型或 prompt 后要重新转换时，使用新的输出目录并省略 `--resume`。
   Unix 首次中断停止派发并等待在途工作，再次中断终止所启动的外部进程组。
   详见[恢复状态](state-storage.md)。
