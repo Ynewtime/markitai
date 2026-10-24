@@ -11,7 +11,7 @@ import { NARROW, useMedia } from "../hooks/use-media.ts";
 import type { Dict, Locale } from "../i18n/index.ts";
 import { serviceNote } from "../i18n/errors.ts";
 import { addingIsBlocked, listFailure, runtimeFailure, testFailure, type TestFailure } from "../lib/model-test.ts";
-import { endpointFor, modelName, pickerRows, removals } from "../lib/models.ts";
+import { endpointFor, modelName, pickerRows, refusedHosts, removals } from "../lib/models.ts";
 import { isSubscription, listsModels, ownEndpointLogin, usesCloudCredentials } from "../lib/provider-catalog.ts";
 import {
   CredentialInputError,
@@ -507,6 +507,9 @@ export function ModelsSettings({
   const [draftBase, setDraftBase] = useState("");
   const [discovery, setDiscovery] = useState<DiscoveryResult | null>(null);
   const [discovering, setDiscovering] = useState(false);
+  /** The provider's other region that listed the key's models (v1.21): a new
+   * connection keeps that address, a saved one is told to move. */
+  const [region, setRegion] = useState<{ base: string; kept: boolean } | null>(null);
   const [selected, setSelected] = useState(new Set<string>());
   /** Models this group and endpoint already route that the reader unticked. */
   const [dropped, setDropped] = useState(new Set<string>());
@@ -646,6 +649,7 @@ export function ModelsSettings({
     setProvider(null);
     resetConnection();
     setDiscovery(null);
+    setRegion(null);
     setSelected(new Set());
     setDropped(new Set());
     setListError(null);
@@ -655,6 +659,7 @@ export function ModelsSettings({
     setProvider(null);
     resetConnection();
     setDiscovery(null);
+    setRegion(null);
     setSelected(new Set());
     setDropped(new Set());
     setListError(null);
@@ -687,6 +692,7 @@ export function ModelsSettings({
     setDraftKey("");
     setDraftBase("");
     setDiscovery(null);
+    setRegion(null);
     setSelected(new Set());
     setDropped(new Set());
     setListError(null);
@@ -700,6 +706,12 @@ export function ModelsSettings({
     try {
       const result = await discoverModels(discoveryRequest(from, draftKey, login === null ? draftBase : "", refresh));
       setDiscovery(result);
+      const elsewhere = result.status !== "unavailable" ? result.api_base : undefined;
+      if (elsewhere) {
+        const kept = from.provider_id === undefined && from.deployment_id === undefined;
+        if (kept) setDraftBase(elsewhere);
+        setRegion({ base: elsewhere, kept });
+      } else setRegion((current) => (current?.kept && draftBase.trim() === current.base ? current : null));
       const available = new Set(result.models.map((candidate) => candidate.model));
       setSelected((previous) => new Set([...previous].filter((model) => available.has(model))));
       // Unticked saved models stay unticked: a saved row the list lacks is still on the page.
@@ -1288,7 +1300,14 @@ export function ModelsSettings({
                         <strong>{t.testFailTitle(listFailure(discovery)!.reason)}</strong>
                         <span class="test-failure-model">{t.modelsUnavailable}</span>
                       </p>
-                      <p>{t.discoveryFailHint(listFailure(discovery)!.reason, listFailure(discovery)!.variable)}</p>
+                      <p>
+                        {t.discoveryFailHint(
+                          listFailure(discovery)!.reason,
+                          listFailure(discovery)!.variable,
+                          refusedHosts(discovery.endpoints, endpoint || provider.default_base || ""),
+                          provider.provider,
+                        )}
+                      </p>
                       {discovery.detail && (
                         <details class="test-failure-detail">
                           <summary>{t.testFailDetail}</summary>
@@ -1301,6 +1320,12 @@ export function ModelsSettings({
                   <div class={discovery.status === "unavailable" ? "discovery-note is-error" : "discovery-note"} role={discovery.status === "unavailable" ? "alert" : "status"}>
                     <strong>{discovery.status === "unavailable" ? t.modelsUnavailable : t.modelsPartial}</strong>
                     {discovery.detail && <span title={serviceNote(locale, discovery.detail).detail || undefined}>{serviceNote(locale, discovery.detail).text}</span>}
+                  </div>
+                )}
+                {discovery && region && (!region.kept || draftBase.trim() === region.base) && (
+                  <div class="discovery-note" role="status">
+                    <strong>{region.kept ? t.regionMovedTitle : t.regionElsewhereTitle}</strong>
+                    <span>{region.kept ? t.regionMoved(region.base) : t.regionElsewhere(region.base)}</span>
                   </div>
                 )}
                 {/* An unavailable catalogue still leaves manual model entry. */}

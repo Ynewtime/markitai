@@ -1657,7 +1657,9 @@
             "description": "What to run on the machine where `markitai serve` runs: `install` (a command that installs a release the adapter speaks) or `sign_in` (the login command)",
             "properties": { "kind": { "type": "string", "enum": ["install", "sign_in"] }, "command": { "type": "string" } }
           },
-          "key_variable": { "type": "string", "description": "With `no_key`, the name of the environment variable the key would come from, when one is named; never its value" }
+          "key_variable": { "type": "string", "description": "With `no_key`, the name of the environment variable the key would come from, when one is named; never its value" },
+          "api_base": { "type": "string", "description": "v1.21. A provider that issues keys per region (Moonshot AI: `https://api.moonshot.ai/v1`, `https://api.moonshot.cn/v1`; Kimi Code: `https://api.kimi.com/coding/v1`, `https://api.kimi.ai/coding/v1`), asked without an address: its default endpoint refused the key (HTTP 401 or 403) and this other region's endpoint listed the models. A connection saved with this key should keep this address" },
+          "endpoints": { "type": "array", "items": { "type": "string" }, "description": "v1.21, with `key_rejected`: the endpoints that refused the key, in the order tried (the default one, then the provider's other regions when it has them), userinfo and secret query values masked" }
         }
       },
       "ProbeRequest": {

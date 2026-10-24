@@ -4,6 +4,17 @@
 
 const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
 
+/** What else a key refused by Moonshot's open platform or Kimi Code may be: the other region, or the sibling service. */
+const kimiKeyHint = (provider: string, region = false): string =>
+  provider === "moonshot"
+    ? `${region ? " A Moonshot key works only in its own region: a key from platform.kimi.com (China) needs the address https://api.moonshot.cn/v1, one from platform.kimi.ai https://api.moonshot.ai/v1." : ""} A Kimi Code membership key belongs under Kimi Code.`
+    : provider === "kimi_code"
+      ? " A Kimi platform key (platform.kimi.com or platform.kimi.ai) belongs under Moonshot AI; Kimi Code keys are created in the Kimi Code console."
+      : "";
+
+/** The endpoints that refused a key, as one phrase. */
+const keyRefusedBy = (hosts: string[]) => `${hosts.join(" and ")} refused the key.`;
+
 export const en = {
   // header and footer
   homeAria: "Markitai home",
@@ -478,7 +489,7 @@ export const en = {
         ? `${variable} is not set on the server. Set it where markitai serve runs and restart the server, or add a key to this model's connection.`
         : "No API key is set for this model. Add one to its connection, or set the provider's key variable where markitai serve runs."
       : (({
-          key_rejected: "The provider refused the key. Check that it is correct, still active and allowed to use this model; a model without a key of its own uses the key variable set on the server.",
+          key_rejected: `The provider refused the key. Check that it is correct, still active and allowed to use this model; a model without a key of its own uses the key variable set on the server.${kimiKeyHint(model.split("/")[0] ?? "", true)}`,
           model_not_found: `The provider does not offer ${model} to this key. Check the model ID.`,
           rate_limited: "The provider is limiting requests, or the account has no quota or balance left. Try again later, or check the account.",
           network: "The server could not reach the provider. Check the address and the server's network or proxy.",
@@ -486,17 +497,23 @@ export const en = {
         }) as Record<string, string>)[reason] ?? "The provider answered with an error. Its message is below.",
   testFailFor: (model: string) => `Test of ${model}`,
   testFailDetail: "Provider's message",
-  discoveryFailHint: (reason: string, variable: string | null) =>
+  discoveryFailHint: (reason: string, variable: string | null, hosts: string[] = [], provider = "") =>
     reason === "no_key"
       ? variable
         ? `${variable} is not set on the server, so the list was not requested. Set it where markitai serve runs and restart the server, or add a key to this connection.`
         : "This connection has no key, so the list was not requested. Add a key to it."
+      : reason === "key_rejected"
+        ? `${hosts.length ? keyRefusedBy(hosts) : "The provider refused the key."} Check that it is correct and still active.${kimiKeyHint(provider)}`
       : (({
-          key_rejected: "The provider refused the key. Check that it is correct and still active.",
           rate_limited: "The provider is limiting requests, or the account has no quota left. Try again later.",
           network: "The server could not reach the provider. Check the address and the server's network or proxy.",
           timeout: "The provider did not answer in time. Try again.",
         }) as Record<string, string>)[reason] ?? "The provider answered with an error. You can still add model IDs by hand below.",
+  /** Discovery found the key's region (v1.21 `api_base`). */
+  regionMovedTitle: "Address set for this key",
+  regionElsewhereTitle: "This key works at another address",
+  regionMoved: (base: string) => `This key is from ${base}: the API address is set to it, and the models you add use it.`,
+  regionElsewhere: (base: string) => `This key works at ${base}, not at this connection's address. Change the address to ${base} before adding models.`,
   save: "Save",
   saving: "Saving…",
   saved: "Saved",

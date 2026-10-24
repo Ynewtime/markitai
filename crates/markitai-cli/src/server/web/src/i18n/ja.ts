@@ -1,6 +1,17 @@
 // Japanese interface copy. Short noun/verb labels, polite です/ます sentences, full-width 、。（）「」, half-width spaces around Latin words and numbers, "·" between facts.
 import type { Dict } from "./en.ts";
 
+/** What else a key refused by Moonshot's open platform or Kimi Code may be: the other region, or the sibling service. */
+const kimiKeyHint = (provider: string, region = false) =>
+  provider === "moonshot"
+    ? `${region ? "Moonshot のキーは発行したリージョンでのみ使えます。platform.kimi.com（中国）のキーはアドレス https://api.moonshot.cn/v1、platform.kimi.ai のキーは https://api.moonshot.ai/v1 を使います。" : ""}Kimi Code 会員のキーは「Kimi Code」で追加してください。`
+    : provider === "kimi_code"
+      ? "Kimi プラットフォーム（platform.kimi.com または platform.kimi.ai）のキーは「Moonshot AI」で追加してください。Kimi Code のキーは Kimi Code コンソールで作成します。"
+      : "";
+
+/** The endpoints that refused a key, as one phrase. */
+const keyRefusedBy = (hosts: string[]) => `${hosts.join(" と ")} がキーを拒否しました。`;
+
 export const ja: Dict = {
   // header and footer
   homeAria: "Markitai ホーム",
@@ -471,7 +482,7 @@ export const ja: Dict = {
         ? `サーバーに ${variable} が設定されていません。markitai serve を実行している環境で設定してサーバーを再起動するか、このモデルの接続にキーを追加してください。`
         : "このモデルには使える API キーがありません。接続にキーを追加するか、markitai serve を実行している環境でプロバイダーのキー変数を設定してください。"
       : (({
-          key_rejected: "プロバイダーがキーを拒否しました。キーが正しく、有効で、このモデルを使えるか確認してください。専用のキーがないモデルは、サーバーに設定されたキー変数を使います。",
+          key_rejected: `プロバイダーがキーを拒否しました。キーが正しく、有効で、このモデルを使えるか確認してください。専用のキーがないモデルは、サーバーに設定されたキー変数を使います。${kimiKeyHint(model.split("/")[0] ?? "", true)}`,
           model_not_found: `このキーでは ${model} を利用できません。モデル ID を確認してください。`,
           rate_limited: "プロバイダーがリクエストを制限しているか、アカウントのクォータまたは残高が不足しています。しばらくしてから再試行するか、アカウントを確認してください。",
           network: "サーバーからプロバイダーに接続できませんでした。アドレスと、サーバーのネットワークまたはプロキシを確認してください。",
@@ -479,17 +490,22 @@ export const ja: Dict = {
         }) as Record<string, string>)[reason] ?? "プロバイダーがエラーを返しました。原文は下にあります。",
   testFailFor: (model: string) => `${model} のテスト`,
   testFailDetail: "プロバイダーの原文",
-  discoveryFailHint: (reason: string, variable: string | null) =>
+  discoveryFailHint: (reason: string, variable: string | null, hosts: string[] = [], provider = "") =>
     reason === "no_key"
       ? variable
         ? `サーバーで ${variable} が設定されていないため、一覧を要求しませんでした。markitai serve を実行する環境で設定してサーバーを再起動するか、この接続にキーを追加してください。`
         : "この接続にはキーがないため、一覧を要求しませんでした。キーを追加してください。"
+      : reason === "key_rejected"
+        ? `${hosts.length ? keyRefusedBy(hosts) : "プロバイダーがキーを拒否しました。"}キーが正しく、まだ有効か確認してください。${kimiKeyHint(provider)}`
       : (({
-          key_rejected: "プロバイダーがキーを拒否しました。キーが正しく、まだ有効か確認してください。",
           rate_limited: "プロバイダーがリクエストを制限しているか、アカウントの残量がありません。しばらくしてから再試行してください。",
           network: "サーバーがプロバイダーに接続できませんでした。アドレスとサーバーのネットワークまたはプロキシを確認してください。",
           timeout: "プロバイダーが時間内に応答しませんでした。再試行してください。",
         }) as Record<string, string>)[reason] ?? "プロバイダーがエラーを返しました。下でモデル ID を手動で追加できます。",
+  regionMovedTitle: "キーに合わせてアドレスを設定しました",
+  regionElsewhereTitle: "このキーは別のアドレスで有効です",
+  regionMoved: (base: string) => `このキーは ${base} のものです。API アドレスをこのアドレスにしました。追加するモデルもこのアドレスを使います。`,
+  regionElsewhere: (base: string) => `このキーは ${base} で有効で、この接続のアドレスでは使えません。モデルを追加する前に、アドレスを ${base} に変更してください。`,
   save: "保存",
   saving: "保存しています…",
   saved: "保存しました",

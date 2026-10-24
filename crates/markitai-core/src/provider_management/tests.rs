@@ -351,8 +351,22 @@ fn a_failed_discovery_says_why_in_the_probes_reasons() {
             "Model discovery response has no model list",
         ),
     ] {
-        let (result, requests) = discovered(keyed.clone(), reply(status, body));
+        let (mut result, requests) = discovered(keyed.clone(), reply(status, body));
         assert_eq!(requests.len(), 1, "{status}");
+        // A refused key names the endpoint that refused it.
+        let endpoints = result.as_object_mut().unwrap().remove("endpoints");
+        if reason == "key_rejected" {
+            let endpoints = endpoints.unwrap();
+            assert_eq!(endpoints.as_array().unwrap().len(), 1, "{status}");
+            assert!(
+                endpoints[0]
+                    .as_str()
+                    .unwrap()
+                    .starts_with("http://127.0.0.1:")
+            );
+        } else {
+            assert_eq!(endpoints, None, "{status}");
+        }
         assert_eq!(
             result,
             json!({"provider":"openai","status":"unavailable","source":"live_api","authoritative":false,
@@ -1187,4 +1201,139 @@ fn a_users_discovery_and_test_never_reach_this_machine() {
         discover_explicit(&json!({"provider":"custom","api_base":server.base,"api_key":"k"}))
             .unwrap();
     assert!(found.to_string().contains("local-model"), "{found}");
+}
+
+#[test]
+fn a_key_refused_at_one_region_is_tried_at_the_others_and_names_the_one_that_listed() {
+    let refused = || {
+        reply(
+            401,
+            r#"{"error":{"message":"Invalid Authentication","type":"invalid_authentication_error"}}"#,
+        )
+    };
+    let kimi_list = || {
+        reply(
+            200,
+            r#"{"object":"list","data":[{"id":"k3","display_name":"Kimi K3","context_length":1048576,"supports_image_in":true,"supports_reasoning":true},{"id":"kimi-for-coding","context_length":262144,"supports_image_in":false}]}"#,
+        )
+    };
+    let first = Mock::new(move |_| refused());
+    let second = Mock::new(move |_| kimi_list());
+    let (a, b) = (format!("{}/v1", first.base), format!("{}/v1", second.base));
+    let list = |base: &str| {
+        discover_explicit(
+            &json!({"provider":"kimi_code","api_key":"fake-kimi-key","api_base":base,"refresh":true}),
+        )
+    };
+    let found = regional_list(&a, &[b.as_str()], list).unwrap();
+    assert_eq!(found["status"], "ok");
+    assert_eq!(found["api_base"], b);
+    assert!(found.get("endpoints").is_none());
+    assert_eq!(
+        found["models"],
+        json!([
+            {"model":"kimi_code/k3","label":"Kimi K3","supports_vision":true},
+            {"model":"kimi_code/kimi-for-coding","label":"kimi-for-coding","supports_vision":false}
+        ])
+    );
+    // Kimi lists its models as an OpenAI-compatible API does: a bearer key.
+    let sent = second.requests()[0].to_ascii_lowercase();
+    assert!(sent.starts_with("get /v1/models "), "{sent}");
+    assert!(
+        sent.contains("authorization: bearer fake-kimi-key"),
+        "{sent}"
+    );
+    assert!(
+        !sent.contains("x-api-key") && !sent.contains("anthropic-version"),
+        "{sent}"
+    );
+
+    // Refused everywhere: the first refusal, naming each endpoint in order.
+    let third = Mock::new(move |_| refused());
+    let c = format!("{}/v1", third.base);
+    let none = regional_list(&a, &[c.as_str()], list).unwrap();
+    assert_eq!(none["reason"], "key_rejected");
+    assert_eq!(
+        none["detail"],
+        "Model discovery returned HTTP 401: Invalid Authentication"
+    );
+    assert_eq!(none["endpoints"], json!([a, c]));
+    assert!(none.get("api_base").is_none());
+
+    // A list at the first endpoint, or another failure there, tries nothing else.
+    let before = (first.requests().len(), second.requests().len());
+    let listed = regional_list(&b, &[a.as_str()], list).unwrap();
+    assert_eq!(listed["status"], "ok");
+    assert!(listed.get("api_base").is_none());
+    let broken = Mock::new(|_| reply(500, "{}"));
+    let d = format!("{}/v1", broken.base);
+    let failed = regional_list(&d, &[b.as_str()], list).unwrap();
+    assert_eq!(failed["reason"], "provider_error");
+    assert!(failed.get("endpoints").is_none());
+    assert_eq!(first.requests().len(), before.0);
+    assert_eq!(second.requests().len(), before.1 + 1);
+    // Another region that fails otherwise keeps the refusal.
+    let kept = regional_list(&a, &[d.as_str()], list).unwrap();
+    assert_eq!(kept["reason"], "key_rejected");
+    assert_eq!(kept["endpoints"], json!([a]));
+}
+
+#[test]
+fn a_discovery_aimed_at_an_address_or_without_a_key_tries_no_other_region() {
+    // An address of its own is the one asked: Moonshot's refusal there is final.
+    let (result, requests) = discovered(
+        json!({"provider":"moonshot","api_key":"fake-moonshot-key"}),
+        reply(
+            401,
+            r#"{"error":{"message":"Invalid Authentication","type":"invalid_authentication_error"}}"#,
+        ),
+    );
+    assert_eq!(requests.len(), 1);
+    assert_eq!(result["reason"], "key_rejected");
+    assert_eq!(result["endpoints"].as_array().unwrap().len(), 1);
+    assert!(result.get("api_base").is_none());
+    // The regions, the documented default first.
+    let bases = |prefix| {
+        crate::llm::providers::regions(prefix)
+            .iter()
+            .map(|region| region.base)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        bases("moonshot"),
+        ["https://api.moonshot.ai/v1", "https://api.moonshot.cn/v1"]
+    );
+    assert_eq!(
+        bases("kimi_code"),
+        [
+            "https://api.kimi.com/coding/v1",
+            "https://api.kimi.ai/coding/v1"
+        ]
+    );
+    assert_eq!(
+        provider_default_base("moonshot"),
+        Some(bases("moonshot")[0])
+    );
+    assert_eq!(
+        provider_default_base("kimi_code"),
+        Some(bases("kimi_code")[0])
+    );
+    assert!(bases("openai").is_empty());
+    // Kimi Code is offered beside Moonshot under its own mark and key variable.
+    let kimi = provider_entry("kimi_code").unwrap();
+    assert_eq!(
+        (kimi.label, kimi.group, kimi.icon),
+        ("Kimi Code", "makers", Some("kimi"))
+    );
+    assert_eq!(kimi.key_variables, ["KIMI_API_KEY"]);
+    assert_eq!(
+        kimi.base_variables,
+        ["KIMI_CODE_API_BASE", "KIMI_CODE_BASE_URL"]
+    );
+    assert!(kimi.discovery && !kimi.key_optional && !kimi.compatible);
+    let moonshot = provider_entry("moonshot").unwrap();
+    assert!(moonshot.discovery && moonshot.compatible);
+    // Nothing is sent without a key.
+    let result = discover_explicit(&json!({"provider":"kimi_code"})).unwrap();
+    assert_eq!(result["reason"], "no_key");
 }

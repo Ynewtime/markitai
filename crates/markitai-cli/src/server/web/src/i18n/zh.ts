@@ -2,6 +2,17 @@
 // English, the proper noun is always "LLM", and "·" separates facts.
 import type { Dict } from "./en.ts";
 
+/** What else a key refused by Moonshot's open platform or Kimi Code may be: the other region, or the sibling service. */
+const kimiKeyHint = (provider: string, region = false): string =>
+  provider === "moonshot"
+    ? `${region ? "Moonshot 的密钥只在签发它的区域有效：platform.kimi.com（中国）的密钥使用地址 https://api.moonshot.cn/v1，platform.kimi.ai 的密钥使用 https://api.moonshot.ai/v1。" : ""}Kimi Code 会员的密钥请在「Kimi Code」中添加。`
+    : provider === "kimi_code"
+      ? "Kimi 开放平台（platform.kimi.com 或 platform.kimi.ai）的密钥请在「Moonshot AI」中添加；Kimi Code 的密钥在 Kimi Code 控制台创建。"
+      : "";
+
+/** The endpoints that refused a key, as one phrase. */
+const keyRefusedBy = (hosts: string[]) => `${hosts.join(" 和 ")} 拒绝了这个密钥。`;
+
 export const zh: Dict = {
   homeAria: "Markitai 首页",
   docsLabel: "文档",
@@ -443,7 +454,7 @@ export const zh: Dict = {
         ? `服务器上未设置 ${variable}。请在运行 markitai serve 的环境中设置它并重启服务，或为该模型的连接添加密钥。`
         : "该模型没有可用的 API 密钥。请为它的连接添加密钥，或在运行 markitai serve 的环境中设置服务商的密钥变量。"
       : (({
-          key_rejected: "服务商拒绝了这个密钥。请确认密钥正确、仍然有效且有权使用该模型；没有单独密钥的模型会使用服务器上设置的密钥变量。",
+          key_rejected: `服务商拒绝了这个密钥。请确认密钥正确、仍然有效且有权使用该模型；没有单独密钥的模型会使用服务器上设置的密钥变量。${kimiKeyHint(model.split("/")[0] ?? "", true)}`,
           model_not_found: `服务商没有向这个密钥提供 ${model}。请检查模型 ID。`,
           rate_limited: "服务商正在限制请求，或账户的额度、余额已用完。请稍后重试，或检查账户。",
           network: "服务器无法连接到服务商。请检查接口地址以及服务器的网络或代理。",
@@ -451,17 +462,22 @@ export const zh: Dict = {
         }) as Record<string, string>)[reason] ?? "服务商返回了错误，原文见下方。",
   testFailFor: (model) => `${model} 的测试`,
   testFailDetail: "服务商原文",
-  discoveryFailHint: (reason, variable) =>
+  discoveryFailHint: (reason, variable, hosts = [], provider = "") =>
     reason === "no_key"
       ? variable
         ? `服务器上未设置 ${variable}，因此没有请求模型列表。请在运行 markitai serve 的环境中设置它并重启服务器，或为这个连接添加密钥。`
         : "这个连接没有密钥，因此没有请求模型列表。请为它添加密钥。"
+      : reason === "key_rejected"
+        ? `${hosts.length ? keyRefusedBy(hosts) : "服务商拒绝了这个密钥。"}请确认密钥正确且仍然有效。${kimiKeyHint(provider)}`
       : (({
-          key_rejected: "服务商拒绝了这个密钥。请确认密钥正确且仍然有效。",
           rate_limited: "服务商正在限流，或账户额度已用完。请稍后再试。",
           network: "服务器无法连接到服务商。请检查地址以及服务器的网络或代理。",
           timeout: "服务商没有及时响应。请重试。",
         }) as Record<string, string>)[reason] ?? "服务商返回了错误。你仍可以在下方手动添加模型 ID。",
+  regionMovedTitle: "已按密钥填入地址",
+  regionElsewhereTitle: "这个密钥属于另一个地址",
+  regionMoved: (base) => `这个密钥属于 ${base}，已填入 API 地址，添加的模型会使用该地址。`,
+  regionElsewhere: (base) => `这个密钥在 ${base} 有效，而不是这个连接的地址。添加模型前，请把地址改为 ${base}。`,
   save: "保存",
   saving: "保存中…",
   saved: "已保存",

@@ -526,8 +526,11 @@ fn discover_with_environment(
         };
     // Built-in and additional providers share inference's endpoint variables.
     let base_variable = discovery_base_variable(&provider, &env);
-    let base = resolve(field(request, "api_base")?, base_variable, &env)?
-        .or_else(|| provider_default_base(&provider).map(str::to_owned));
+    let addressed = resolve(field(request, "api_base")?, base_variable, &env)?;
+    // No address given: a key the default endpoint refuses may be one of the
+    // provider's other regions (see `regions`).
+    let regional = addressed.as_ref().is_none_or(|base| base.trim().is_empty());
+    let base = addressed.or_else(|| provider_default_base(&provider).map(str::to_owned));
     if let Some(base) = &base {
         checked_url(base)?;
     }
@@ -544,28 +547,73 @@ fn discover_with_environment(
     let keyless_variable = allow_environment
         .then(|| entry.key_variables.first().copied())
         .flatten();
-    if public_only {
-        // Never answered from, nor stored for, another caller's list.
-        return Ok(discovery::load(
-            &provider,
-            &base,
-            key.as_deref(),
-            bearer,
-            keyless_variable,
-            true,
-        )
-        .unwrap_or_else(|failed| failed));
+    let list = |base: &str| -> Result<Value> {
+        if public_only {
+            // Never answered from, nor stored for, another caller's list.
+            return Ok(discovery::load(
+                &provider,
+                base,
+                key.as_deref(),
+                bearer,
+                keyless_variable,
+                true,
+            )
+            .unwrap_or_else(|failed| failed));
+        }
+        cache::global().discover(&provider, base, key.as_deref(), refresh, || {
+            discovery::load(
+                &provider,
+                base,
+                key.as_deref(),
+                bearer,
+                keyless_variable,
+                false,
+            )
+        })
+    };
+    let others: Vec<&str> = if regional && key.is_some() {
+        crate::llm::providers::regions(&provider)
+            .iter()
+            .map(|region| region.base)
+            .filter(|other| *other != base)
+            .collect()
+    } else {
+        Vec::new()
+    };
+    regional_list(&base, &others, list)
+}
+
+/// The list at `base`, else, while each endpoint refuses the key, at the
+/// next of `others`: a list found there names its address as `api_base`,
+/// for the connection to keep. A refusal names every endpoint that refused
+/// the key as `endpoints`, in the order tried.
+fn regional_list(
+    base: &str,
+    others: &[&str],
+    list: impl Fn(&str) -> Result<Value>,
+) -> Result<Value> {
+    let refused = |result: &Value| result["reason"] == ProbeReason::KeyRejected.name();
+    let mut result = list(base)?;
+    let mut endpoints = vec![base];
+    for other in others {
+        if !refused(&result) {
+            break;
+        }
+        let next = list(other)?;
+        if refused(&next) {
+            endpoints.push(other);
+        } else if next["status"] != "unavailable" {
+            result = next;
+            result["api_base"] = (*other).into();
+        }
     }
-    cache::global().discover(&provider, &base, key.as_deref(), refresh, || {
-        discovery::load(
-            &provider,
-            &base,
-            key.as_deref(),
-            bearer,
-            keyless_variable,
-            false,
-        )
-    })
+    if refused(&result) {
+        result["endpoints"] = endpoints
+            .iter()
+            .map(|endpoint| crate::output::masked_url(endpoint))
+            .collect();
+    }
+    Ok(result)
 }
 
 /// A discovery that has no key while its provider needs one, found before
