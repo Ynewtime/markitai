@@ -43,7 +43,7 @@ The details behind the [web workspace guide](/guide/serve): access rules, user t
 - A row above the command line says whether the options are the server's, yours or changed, with **Reset to defaults** and **Save as default**.
 - The admin's saved choice goes to `config.json` and applies to the next conversion; a user token's is kept in its own file (**Use the server's defaults** undoes it). Cloudflare is never a default.
 
-**Conversions.** Submissions are named after the folder or `.urls` list they came from. **New conversion** leads back to Convert. To delete several items, check them with the box at the left of a row or a submission's header, then **Delete** in the bar that appears and confirm; items still converting cannot be checked.
+**Conversions.** Submissions are named after the folder or `.urls` list they came from. **New conversion** leads back to Convert. To delete several items, check them with the box at the left of a row or a submission's header (the box at the start of the filter row checks everything listed), then **Delete** in the bar that appears and confirm; items still converting cannot be checked.
 
 | Key | In the list |
 |-----|-------------|
