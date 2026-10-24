@@ -3569,6 +3569,24 @@ kbd {
   display: inline-flex;
   min-width: 0;
 }
+/* the (i) beside a label or heading (InfoTip): a small round target that answers a finger
+   across 24 px on a phone without moving the line */
+.opt-help {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin: -2px 0;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: var(--text-3);
+  cursor: help;
+  transition: color var(--dur-fast) ease;
+}
 
 .seg button:disabled {
   color: var(--text-4);
@@ -6249,6 +6267,7 @@ input[type="password"],
     background: var(--accent-hover);
     color: var(--accent-contrast);
   }
+  .opt-help:hover,
   .text-link:hover,
   .crumbs button:hover,
   .tab:hover {
@@ -6400,6 +6419,7 @@ input[type="password"],
   outline: 2px solid var(--text-1);
   outline-offset: -2px;
 }
+.opt-help:focus-visible,
 .weight-pill:focus-visible,
 .weight-pill.is-editing:focus-within {
   outline: 2px solid var(--text-2);
@@ -6433,6 +6453,12 @@ input[type="password"],
 /* ------------------------------------------- phone tier, ≤760px */
 
 @media screen and (max-width: 760px) {
+  /* an (i) answers a finger across 24 px around its 18 px circle */
+  .opt-help::after {
+    content: "";
+    position: absolute;
+    inset: -3px;
+  }
   .shell,
   :root[data-rail] .shell {
     grid-template-columns: minmax(0, 1fr);
