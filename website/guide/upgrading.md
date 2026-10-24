@@ -16,7 +16,7 @@ flowchart TD
 
 pip, pipx and uv get 2.0 only on the platforms with [wheels](/guide/getting-started#install); elsewhere they find nothing (PyPI no longer has 1.x) and leave an installed 1.x as it is.
 
-### Going back to 1.x
+### Going back to 1.x {#going-back-to-1x}
 
 [Uninstall](/guide/getting-started#install) 2.0, then install 1.2.0 from its Git tag, as setup suggests for a 1.x `MARKITAI_VERSION` (pymupdf4llm 2 breaks its PDFs):
 
