@@ -298,7 +298,7 @@ fn learned_browser_domains_list_and_clear_in_chinese() {
 }
 
 #[test]
-fn config_path_and_validate_speak_chinese_but_keep_paths_and_errors() {
+fn config_path_and_validate_speak_chinese_but_keep_paths_and_keys() {
     let dir = tempfile::tempdir().unwrap();
     let path = run(dir.path(), ZH, &["config", "path"]);
     assert!(path.status.success());
@@ -338,7 +338,15 @@ fn config_path_and_validate_speak_chinese_but_keep_paths_and_errors() {
     let english = run(dir.path(), EN, &["config", "validate"]);
     assert_eq!(invalid.status.code(), Some(1));
     assert_eq!(invalid.status.code(), english.status.code());
-    assert_eq!(invalid.stderr, english.stderr);
+    // The reason is in the terminal language; the key stays as written.
+    assert_eq!(
+        String::from_utf8(english.stderr).unwrap(),
+        "✗ batch.concurrency must be at least 1\n"
+    );
+    assert_eq!(
+        String::from_utf8(invalid.stderr).unwrap(),
+        "✗ batch.concurrency 不能小于 1\n"
+    );
     assert!(invalid.stdout.is_empty());
 }
 
