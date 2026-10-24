@@ -95,7 +95,7 @@ No preset turns on OCR: you pick it yourself. Picking a preset resets those five
 
 ## LLM Settings
 
-**Settings → Models** edits the same configuration as `markitai config`, for web jobs and later CLI runs alike. **Add models** opens a picker of about 95 providers: enter a key (and an address for a server of your own), then pick models from the provider's list or type their IDs. A key variable set on the server (`OPENAI_API_KEY`, ...) shows up as a ready connection. Stored keys are only ever shown masked (`sk…7890`).
+**Settings → Models** edits the same configuration as `markitai config`, for web jobs and later CLI runs alike. **Add models** opens a picker of about 95 providers: enter a key (and an address for a server of your own), then pick models from the provider's list or type their IDs. A key variable set on the server (`OPENAI_API_KEY`, ...) shows up as a ready connection; the (i) beside a key field names the variable. Kimi's open platform and Kimi Code are one **Kimi** card: paste either key and its models are saved under the service that accepts it. Stored keys are only ever shown masked (`sk…7890`).
 
 **Test** says why a model failed: no key, key rejected, unknown model, rate-limited, unreachable, timed out, or another provider error, with the provider's own message.
 

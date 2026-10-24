@@ -16,6 +16,7 @@ import { fmtClock } from "../lib/format.ts";
 import { copyText } from "../lib/clipboard.ts";
 import { qrModules, qrPath } from "../lib/qr.ts";
 import { ConfirmPopover } from "./confirm-popover.tsx";
+import { InfoTip } from "./help-tooltip.tsx";
 import { Icon } from "./icons.tsx";
 import type { IconName } from "./icon-paths.ts";
 
@@ -92,14 +93,12 @@ export function AppearanceSettings({
         <div class="setting">
           <div class="setting-copy">
             <h2 id="language-label">{t.langAria}</h2>
-            <p>{t.languageHint}</p>
           </div>
           <Choice label={t.langAria} value={locale} options={LOCALES.map((value) => ({ value, label: LANGUAGE_NAMES[value], lang: LANGUAGE_TAGS[value] }))} onChange={onLocale} />
         </div>
         <div class="setting">
           <div class="setting-copy">
             <h2>{t.themeAria}</h2>
-            <p>{t.themeHint}</p>
           </div>
           <Choice label={t.themeAria} value={theme} options={THEMES.map((value) => ({ value, label: names[value], icon: icons[value] }))} onChange={setTheme} />
         </div>
@@ -162,10 +161,12 @@ function UserTokens({ t, locale, describe }: { t: Dict; locale: Locale; describe
   };
   return (
     <section class="access-section user-tokens" aria-labelledby="user-tokens-title">
-      <h2 id="user-tokens-title" class="group-title">
-        {t.userTokensTitle}
-      </h2>
-      <p class="field-hint">{t.userTokensText}</p>
+      <div class="group-head-row">
+        <h2 id="user-tokens-title" class="group-title">
+          {t.userTokensTitle}
+        </h2>
+        <InfoTip label={t.userTokensInfo} text={t.userTokensText} />
+      </div>
       {fresh?.token ? (
         <NewToken
           t={t}
@@ -473,13 +474,13 @@ function NewToken({ t, token, heading: title, onDone }: { t: Dict; token: Regene
 
 /** Phones: the section list behind the tab bar's Settings. */
 export function SettingsIndex({ t, version, docsUrl, sourceUrl, sections, user = false, onNavigate }: { t: Dict; version: VersionLine | null; docsUrl: string; sourceUrl: string; sections: Section[]; user?: boolean; onNavigate: (route: Route) => void }) {
-  const entries: Record<Section, [IconName, string, string]> = {
-    appearance: ["Palette", t.navAppearanceShort, t.appearanceHint],
-    models: ["Cpu", t.navModels, user ? t.userModelsHint : t.modelsHint],
-    access: ["Key", t.navAccess, t.accessHint],
-    config: ["FileCode", t.navConfig, user ? t.userConfigHint : t.configHint],
+  const entries: Record<Section, [IconName, string]> = {
+    appearance: ["Palette", t.navAppearanceShort],
+    models: ["Cpu", t.navModels],
+    access: ["Key", t.navAccess],
+    config: ["FileCode", user ? t.navConfigUser : t.navConfig],
   };
-  const entry = (section: Section, icon: IconName, label: string, hint: string) => (
+  const entry = (section: Section, icon: IconName, label: string) => (
     <li key={section}>
       <a
         href={`/settings/${section}`}
@@ -492,7 +493,6 @@ export function SettingsIndex({ t, version, docsUrl, sourceUrl, sections, user =
         <Icon name={icon} size={18} />
         <span class="index-copy">
           <span class="index-label">{label}</span>
-          <span class="index-hint">{hint}</span>
         </span>
         <Icon name="CaretRight" size={14} />
       </a>

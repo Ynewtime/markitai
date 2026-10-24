@@ -4,13 +4,9 @@
 
 const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
 
-/** What else a key refused by Moonshot's open platform or Kimi Code may be: the other region, or the sibling service. */
-const kimiKeyHint = (provider: string, region = false): string =>
-  provider === "moonshot"
-    ? `${region ? " A Moonshot key works only in its own region: a key from platform.kimi.com (China) needs the address https://api.moonshot.cn/v1, one from platform.kimi.ai https://api.moonshot.ai/v1." : ""} A Kimi Code membership key belongs under Kimi Code.`
-    : provider === "kimi_code"
-      ? " A Kimi platform key (platform.kimi.com or platform.kimi.ai) belongs under Moonshot AI; Kimi Code keys are created in the Kimi Code console."
-      : "";
+/** A refused Moonshot model's key may be from the other region: the address each region's keys use. */
+const kimiKeyHint = (provider: string): string =>
+  provider === "moonshot" ? " A platform.kimi.com (China) key needs https://api.moonshot.cn/v1; others use https://api.moonshot.ai/v1." : "";
 
 /** The endpoints that refused a key, as one phrase. */
 const keyRefusedBy = (hosts: string[]) => `${hosts.join(" and ")} refused the key.`;
@@ -61,9 +57,9 @@ export const en = {
   defaultsSave: "Save as default",
   defaultsReset: "Reset to defaults",
   defaultsUseServer: "Use the server's defaults",
-  defaultsScopeServer: "Saved to the server's config.json: new conversions here, and the command line, start from these choices.",
-  defaultsScopeUser: "Saved for your token only: your new conversions start from these choices.",
-  defaultsNoCloudflare: "Cloudflare can't be a default: it asks for your confirmation each time.",
+  defaultsScopeServer: "Saved to config.json: the command line uses them too.",
+  defaultsScopeUser: "Saved for your token only.",
+  defaultsNoCloudflare: "Cloudflare can't be a default: it asks each time.",
   defaultsStale: "The defaults changed meanwhile and were reloaded. Save again to replace them.",
   defaultsSavedServer: "Saved as the server's defaults",
   defaultsSavedOwn: "Saved as your defaults",
@@ -83,8 +79,8 @@ export const en = {
   ocr: "OCR",
   helpOcr:
     "Recognize scans with the local OCR engine, or send page images to a vision model when LLM is on, with possible extra costs.",
-  advVlmOcr: "LLM + OCR sends page images to a vision model (VLM-OCR) and may incur more model costs.",
-  advLocalOcr: "OCR without LLM uses the local OCR engine of this computer.",
+  advVlmOcr: "VLM-OCR: page images go to the vision model, at model cost.",
+  advLocalOcr: "The server's local OCR engine.",
   advNeedsModel: "Add a model in Settings → Models to use LLM features.",
   advNeedsModelAdmin: "No model serves your token yet. Ask the server's admin to share one.",
   advImages: "Images",
@@ -163,11 +159,9 @@ export const en = {
   helpCache: "Fetch and process afresh instead of reading cache, possibly incurring new model costs while still saving results.",
   advNoCompress: "No Image Compression",
   helpCompress: "Keep extracted images uncompressed for larger output, while retaining screenshot safety limits.",
-  advSourceExclusive: "Plain mode and screenshot source are alternatives; selecting one turns the other off.",
-  advScreenshotOnlyHint: "Read page screenshots with a vision-capable model instead of the text layer.",
-  advCaptureOnly:
-    "Without LLM: URLs capture screenshots (the web result adds a Markdown wrapper); files still use their normal converter.",
-
+  advSourceExclusive: "Plain mode and screenshot source exclude each other.",
+  advScreenshotOnlyHint: "Reads page screenshots with the vision model.",
+  advCaptureOnly: "Without LLM, URLs are captured as screenshots; files convert as usual.",
   // feedback under the composer
   submitting: "Uploading and creating the task…",
   uploadProgress: (percent: number, sent: string, total: string) => `Uploading ${percent}% · ${sent} of ${total}`,
@@ -269,9 +263,9 @@ export const en = {
   previewRendering: "Rendering…",
   exportPdf: "Export PDF",
   pdfCustomHeaderFooter: "Custom header and footer",
-  pdfPrintDialogHint: "When enabled, turn off the browser's own headers and footers in the print dialog.",
+  pdfPrintDialogHint: "Turn off the browser's own headers and footers when printing.",
   exportPdfAsk: "Export PDF…",
-  pdfFurnitureWhat: "Puts Markitai and the document's name at the top of the PDF, and its source at the end. ",
+  pdfFurnitureWhat: "Markitai and the name at the top, the source at the end. ",
   pdfPrint: "Print…",
   pdfPreparedBy: "Prepared with Markitai",
   pdfSource: "Source",
@@ -322,20 +316,20 @@ export const en = {
   modelCatalogLoading: "Loading available models…",
   // v1.18: a subscription runtime that lists no models says why
   runtimeMissingTitle: (name: string) => `${name} is not installed on the server`,
-  runtimeMissingText: "markitai serve could not find it. Install it on the machine where the server runs, then reload the list.",
+  runtimeMissingText: "Install it where markitai serve runs, then reload the list.",
   runtimeUnsupportedTitle: (name: string) => `${name} is not a supported version`,
-  runtimeUnsupportedText: (installed: string | null, required: string) => `${installed ? `Version ${installed} is installed. ` : ""}This needs ${required}. Install that release on the machine where the server runs, then reload the list.`,
+  runtimeUnsupportedText: (installed: string | null, required: string) => `${installed ? `${installed} is installed; ` : ""}needs ${required}. Install it on the server, then reload the list.`,
   notSignedInTitle: (name: string) => `${name} is not signed in`,
-  notSignedInText: "Sign in on the machine where the server runs, then reload the list.",
-  notSubscriptionText: "It is signed in, but not with a subscription (an API key or a cloud login does not count). Sign in with the subscription on the machine where the server runs, then reload the list.",
+  notSignedInText: "Sign in on the server, then reload the list.",
+  notSubscriptionText: "Signed in, but not with a subscription. Sign in with one on the server, then reload the list.",
   runtimeFailedTitle: (name: string) => `${name} did not answer`,
-  runtimeFailedText: "It is installed, but it failed to start or answer. Check it on the server (the setup guide says how), then reload the list.",
+  runtimeFailedText: "Installed, but it did not start or answer. See the setup guide, then reload the list.",
   runtimeStepInstall: "Install",
   runtimeStepSignIn: "Sign in",
   runtimeSetupGuide: "Setup guide",
   copyCommand: "Copy command",
-  addBlockedByRuntime: (name: string) => `Adding models is off until ${name} works. Fix it above, then reload the list.`,
-  addWarnByRuntime: (name: string) => `${name} did not answer, so a model added by hand may not work until it does.`,
+  addBlockedByRuntime: (name: string) => `Models can be added once ${name} works.`,
+  addWarnByRuntime: (name: string) => `${name} did not answer: a model added by hand may not work yet.`,
   noListUntilRuntime: "No models can be listed until the runtime works.",
   modelsUnavailable: "Models could not be loaded",
   modelsPartial: "Some models may be missing",
@@ -356,30 +350,20 @@ export const en = {
   },
   providerDetailHint: (
     kind: string,
-    provider: string,
+    _provider: string,
     source: string,
-    {
-      local = false,
-      manualOnly = false,
-      needsBase = false,
-      subscription = false,
-      cloud = false,
-    }: { local?: boolean; manualOnly?: boolean; needsBase?: boolean; subscription?: boolean; cloud?: boolean } = {},
+    { subscription = false, cloud = false }: { local?: boolean; manualOnly?: boolean; needsBase?: boolean; subscription?: boolean; cloud?: boolean } = {},
   ) => {
-    if (subscription) return "Uses the official app's sign-in on the server; its models load automatically.";
-    if (cloud) return "Uses the cloud credentials the server finds; a key below is optional. Add the model IDs you want to use below.";
-    if (manualOnly) return "This provider does not list its models. Add the model IDs you want to use below.";
-    if (kind === "configured") return "Available models load automatically from this saved connection.";
-    if (kind === "environment") return `Using credentials from ${source}.`;
-    if (needsBase) return "Enter your server's address to load the models it serves.";
-    if (provider === "ollama") return "Using the default local Ollama endpoint.";
-    if (local) return "Using the default local endpoint; a key is needed only if the server asks for one.";
-    return "Enter the connection details to load available models.";
+    // Only what the fields below don't already say; most pages need no line at all.
+    if (subscription) return "Signs in with the official app on the server.";
+    if (cloud) return "Uses the server's cloud credentials; a key is optional.";
+    if (kind === "environment") return `Using ${source}`;
+    return "";
   },
   optionalKeyVariable: (variable: string) => `${variable} (optional)`,
   /** Kimi's terms for the membership, under Kimi Code's key field: the text before the link, the link (to Moonshot AI), the text after. */
-  kimiCodeTerms: ["Kimi Code membership is for interactive use only; for batch conversions use a ", "Kimi platform", " key (Moonshot AI)."] as [string, string, string],
-  keyVariableHint: (variable: string) => `Or set ${variable} where markitai serve runs and restart it; the provider then appears under Saved, with no key to paste.`,
+  keyVariableHint: (variables: string[]) => `Or set ${variables.join(" or ")} on the server and restart.`,
+  keyVariableInfo: "Key from the server's environment",
   ownEndpointNote: (label: string, credential: string) => `Uses this server's ${credential} at ${label}'s own endpoint.`,
   googleLogin: "Google login",
   manualModelsOnly: "No model list from this provider · add a model ID below",
@@ -436,7 +420,7 @@ export const en = {
   deleteModelTitle: (model: string) => `Delete ${model}?`,
   deleteModelDescription: "The provider credentials will be kept for adding models later.",
   setStatusNone: "No models configured",
-  modelsEmptyText: "Models clean up the Markdown, describe images and read scanned pages. Markitai converts files without them.",
+  modelsEmptyText: "For LLM enhancement and image descriptions. Converting works without them.",
   setSourceLbl: "Source",
   openConfigFile: "Open the config file in your editor",
   setApiKey: "API key",
@@ -459,9 +443,7 @@ export const en = {
   editAddress: "Edit",
   resetAddress: "Reset to default",
   addressKeyLabel: "API key for this address",
-  addressKeyNote: "The saved key is never sent to a new address.",
-  addressNoKeyNote: "Leave the key blank to connect without one.",
-  maskedAddressNote: "Parts shown as … are hidden. Leave the address as it is to keep them, or type the whole new address.",
+  maskedAddressNote: "Parts shown as … are hidden: keep them as they are, or type the whole address.",
   maskedAddress: "Type the whole address: its hidden parts (…) cannot be saved.",
   keyRequired: "Enter an API key.",
   endpointKeyRequired: "Enter an API key for the new address. The saved key is never sent to a new address.",
@@ -489,37 +471,41 @@ export const en = {
   testFailHint: (reason: string, variable: string | null, model: string, detailShown = true) =>
     reason === "no_key"
       ? variable
-        ? `${variable} is not set on the server. Set it where markitai serve runs and restart the server, or add a key to this model's connection.`
-        : "No API key is set for this model. Add one to its connection, or set the provider's key variable where markitai serve runs."
+        ? `${variable} is not set on the server. Set it and restart, or add a key to the connection.`
+        : "This model has no API key. Add one to its connection."
       : (({
-          key_rejected: `The provider refused the key. Check that it is correct, still active and allowed to use this model; a model without a key of its own uses the key variable set on the server.${kimiKeyHint(model.split("/")[0] ?? "", true)}`,
+          key_rejected: `The provider refused the key. Check that it is correct and may use this model.${kimiKeyHint(model.split("/")[0] ?? "")}`,
           model_not_found: `The provider does not offer ${model} to this key. Check the model ID.`,
-          rate_limited: "The provider is limiting requests, or the account has no quota or balance left. Try again later, or check the account.",
+          rate_limited: "The provider is limiting requests, or the account is out of quota. Try again later.",
           network: "The server could not reach the provider. Check the address and the server's network or proxy.",
-          timeout: "The provider did not answer in time. Try again; if it keeps happening, check the provider's status.",
+          timeout: "The provider did not answer in time. Try again.",
         }) as Record<string, string>)[reason] ?? (detailShown ? "The provider answered with an error. Its message is below." : "The provider answered with an error."),
   testFailFor: (model: string) => `Test of ${model}`,
   testFailDetail: "Provider's message",
   /** The network stack's account of a connection that failed (not the provider's words). */
   connectionDetail: "Connection error",
   modelRegionBlocked: (model: string) => `The provider does not serve ${model} in the server's region. Choose another model, or reach the provider from a supported region.`,
-  discoveryFailHint: (reason: string, variable: string | null, hosts: string[] = [], provider = "") =>
+  discoveryFailHint: (reason: string, variable: string | null, hosts: string[] = [], _provider = "") =>
     reason === "no_key"
       ? variable
-        ? `${variable} is not set on the server, so the list was not requested. Set it where markitai serve runs and restart the server, or add a key to this connection.`
-        : "This connection has no key, so the list was not requested. Add a key to it."
+        ? `${variable} is not set on the server. Set it and restart, or add a key here.`
+        : "This connection has no key. Add one."
       : reason === "key_rejected"
-        ? `${hosts.length ? keyRefusedBy(hosts) : "The provider refused the key."} Check that it is correct and still active.${kimiKeyHint(provider)}`
+        ? `${hosts.length ? keyRefusedBy(hosts) : "The provider refused the key."} Check that it is correct and still active.`
       : (({
           rate_limited: "The provider is limiting requests, or the account has no quota left. Try again later.",
           network: "The server could not reach the provider. Check the address and the server's network or proxy.",
           timeout: "The provider did not answer in time. Try again.",
-        }) as Record<string, string>)[reason] ?? "The provider answered with an error. You can still add model IDs by hand below.",
+        }) as Record<string, string>)[reason] ?? "The provider answered with an error. Model IDs can still be added below.",
   /** Discovery found the key's region (v1.21 `api_base`). */
   regionMovedTitle: "Address set for this key",
   regionElsewhereTitle: "This key works at another address",
-  regionMoved: (base: string) => `This key is from ${base}: the API address is set to it, and the models you add use it.`,
-  regionElsewhere: (base: string) => `This key works at ${base}, not at this connection's address. Change the address to ${base} before adding models.`,
+  regionElsewhere: (base: string) => `This key works at ${base}. Change the address to it before adding models.`,
+  kimiPlatform: "Kimi Platform",
+  kimiBaseAuto: "Found from the key",
+  kimiFound: (service: string): string => (service === "kimi_code" ? "Kimi Code membership key" : "Kimi Platform key"),
+  kimiMemberTerms: "Interactive use only, by Kimi's terms. Batch conversions need a platform key.",
+  kimiRefused: "Neither the Kimi Platform nor Kimi Code accepted this key. Check that it is correct and still active.",
   save: "Save",
   saving: "Saving…",
   saved: "Saved",
@@ -542,17 +528,17 @@ export const en = {
   cloudflareLocalTitle: "Continue with these options?",
   cloudflareContinue: "Continue conversion",
   cloudflareConfirm: "Send and convert",
-  cloudflareScope: "Selected URLs and supported files may be sent to Cloudflare using this server’s account. Confirm the scope before each request.",
-  cloudflareCharges: "Cloudflare may charge fees. They are not included in the LLM subtotal shown here.",
-  cloudflareNativeHint: "The selected files keep the native reader. Choosing Cloudflare does not turn off OCR or screenshots.",
+  cloudflareScope: "URLs and supported files go to Cloudflare on this server's account, once you confirm.",
+  cloudflareCharges: "Cloudflare may charge fees, not included in the LLM cost shown.",
+  cloudflareNativeHint: "These files keep the native reader; OCR and screenshots still apply.",
   cloudflareScopeCounts: (urls: number, candidates: number, files: number, native: number) => [
     urls > 0 ? `${urls} ${urls === 1 ? "URL" : "URLs"}` : "",
     candidates > 0 ? `Up to ${candidates} selected ${candidates === 1 ? "file" : "files"} may be sent${files > 0 ? ` (${files} ${files === 1 ? "name matches" : "names match"} supported formats)` : ""}` : "",
     native > 0 ? `${native} ${native === 1 ? "file keeps" : "files keep"} the native reader` : "",
   ].filter(Boolean).join(" · ") || "These sources do not use Cloudflare with the current options.",
-  cloudflareScopeHint: "You authorize supported content among the selected files. Names only estimate support; the reader checks the actual format and may recognize other selected files. OCR and screenshots use the native reader.",
-  cloudflareRetry: "This sends the original source again and may incur additional Cloudflare charges.",
-  cloudflareOnce: "Your confirmation applies only to the scope shown here. Cancel sends nothing.",
+  cloudflareScopeHint: "Only supported files among those selected are sent; the reader checks each file's real format. OCR and screenshots stay on the native reader.",
+  cloudflareRetry: "This sends the original again, possibly at another charge.",
+  cloudflareOnce: "For this request only. Cancel sends nothing.",
   cloudflareUnavailable: "Cloudflare is unavailable for this request.",
   cloudflareReason: (reason: string): string => ({
     incompatible_strategy: "Cloudflare file conversion cannot be combined with the Jina or Defuddle URL strategy. Change one of these options to continue.",
@@ -562,7 +548,7 @@ export const en = {
     client_not_trusted: "This connection is not authorized to request Cloudflare processing.",
     unavailable: "Cloudflare capabilities are unavailable. Refresh the page to check again.",
   } as Record<string, string>)[reason] ?? "Cloudflare is unavailable.",
-  cloudflareSetup: "Configure fetch.cloudflare.account_id and fetch.cloudflare.api_token on the server. An administrator must permit remote processing. Local configuration checks do not verify Cloudflare API permissions.",
+  cloudflareSetup: "Set fetch.cloudflare.account_id and fetch.cloudflare.api_token on the server; an admin must allow remote processing.",
   // shell and navigation
   skipToContent: "Skip to content",
   sidebarAria: "Sidebar",
@@ -589,8 +575,8 @@ export const en = {
   summaryRunning: (done: number, total: number, running: number, queued: number) =>
     [`${done} of ${total} converted`, ...(running ? [`${running} converting`] : []), ...(queued ? [`${queued} waiting`] : [])].join(", ") + ".",
   emptyTitle: "No conversions yet",
-  emptyText: "Paste URLs or drop files above to convert them.",
-  emptyTextKept: (days: number) => `Paste URLs or drop files above to convert them. Conversions are kept for ${days} days.`,
+  emptyText: "Paste URLs or drop files above.",
+  emptyTextKept: (days: number) => `Paste URLs or drop files above. Kept for ${days} days.`,
   listBlockedTitle: "Conversions can't be shown",
   goneTitle: "This conversion no longer exists",
   goneText: "It was deleted, or removed with old history.",
@@ -729,9 +715,9 @@ export const en = {
       case "hidden_sheet":
         return "Hidden worksheets are left out of the output";
       case "first_conversion":
-        return "First conversion since installing: the libraries conversions use load once (several seconds on macOS); later conversions start right away.";
+        return "First conversion since installing: its libraries load once (seconds on macOS).";
       case "first_ocr":
-        return "First OCR use since installing: the OCR libraries and models load once (up to a minute on macOS); later OCR conversions start right away.";
+        return "First OCR since installing: its models load once (up to a minute on macOS).";
       case "pdf_scanned":
         return count === 1 ? "This PDF is scanned: turn on OCR and convert again" : `${count} PDFs are scanned: turn on OCR and convert them again`;
       case "ocr_blank":
@@ -846,20 +832,15 @@ export const en = {
     )[reason] ?? "The original cannot be shown here.",
 
   // settings pages
-  modelsHint: "Connections and models for LLM enhancement",
-  appearanceHint: "Language and light or dark theme",
-  accessHint: "The token this tab uses with the service",
-  languageHint: "The language of this workbench in this browser.",
-  themeHint: "Follow the system, or always use light or dark.",
   accessHeld: "This tab is signed in with the access token.",
   accessNone: "This tab has no access token.",
   accessRefused: "The server refused this tab's token.",
   accessRefusedHint: "Paste a new token.",
-  accessExplain: "Paste the token from the link markitai serve printed.",
+  accessExplain: "From the link markitai serve printed.",
   signOutTab: "Sign out of this tab",
   signOutTabHint: "Forgets the token in this tab only; the server and other tabs keep it.",
   regenerateTitle: "Regenerate token",
-  regenerateText: "Makes a new access token for this server. Every other tab and device is signed out and must sign in again with the new token; this tab stays signed in.",
+  regenerateText: "Signs out every other tab and device; this tab stays signed in.",
   regenerateButton: "Regenerate token…",
   regenerateConfirmTitle: "Regenerate the access token?",
   regenerateConfirmText: "Every other tab and device is signed out at once and must sign in again with the new token.",
@@ -871,11 +852,11 @@ export const en = {
   newTokenOnce: "Shown once. Keep it like a password.",
   qrLabel: "QR code of the sign-in link",
   signInDevice: "Sign in on another device",
-  signInDeviceNetwork: "Scan with a phone on the same network, or open this link. It contains the token.",
-  signInDeviceHere: "This server is reached at this address. Scan or open the link where it can be reached; it contains the token.",
+  signInDeviceNetwork: "Scan on the same network, or open the link. It contains the token.",
+  signInDeviceHere: "Scan or open the link where this address is reachable. It contains the token.",
   copyLink: "Copy link",
-  tokenUntilRestart: "Lasts until the server stops; the next start makes a new token.",
-  tokenUntilRestartVariable: (variable: string) => `Lasts until the server stops; the next start uses ${variable} again. Change ${variable} to keep a new token.`,
+  tokenUntilRestart: "Lasts until the server stops.",
+  tokenUntilRestartVariable: (variable: string) => `Lasts until the server stops; then ${variable} applies again.`,
   done: "Done",
   tokenSaved: "Token saved.",
 
@@ -911,14 +892,14 @@ export const en = {
   deletedSome: (done: number, failed: number, name: string, why: string) => `${done} deleted · ${failed} not deleted${name ? `: ${name}` : ""}${why ? ` · ${why}` : ""}`,
   originalPageInfo: "About this view",
   navConfig: "Edit config",
-  configHint: "The configuration file, as text",
   adminOnlyTitle: "Admin token needed",
   adminOnlyText: "This page belongs to the server's admin. Your token converts, keeps your own conversions and has models of its own.",
   userAccessTitle: "Access",
-  userAccessText: "This tab uses a user token: it converts and sees its own conversions. Models and other settings need the admin token.",
-  userAccessNamed: (label: string) => `This tab uses the user token “${label}”: it converts and sees its own conversions. Models and other settings need the admin token.`,
+  userAccessText: "A user token: it converts and sees its own conversions.",
+  userAccessNamed: (label: string) => `User token “${label}”: it converts and sees its own conversions.`,
   userTokensTitle: "User tokens",
-  userTokensText: "A user token converts and sees, downloads and deletes only its own conversions, and can add models of its own. It cannot open your models, Access token or Edit config. Tokens last until you revoke them.",
+  userTokensText: "A user token converts and sees only its own conversions, and may add its own models. It can't open your settings. It lasts until you revoke it.",
+  userTokensInfo: "About user tokens",
   userTokenLabel: "Name",
   userTokenPlaceholder: "Who or what it is for",
   userTokenCreate: "Create token",
@@ -945,25 +926,24 @@ export const en = {
   shareSharedHint: "Users' conversions in this workbench may use it too; its key stays on the server",
   shareNowShared: (model: string) => `${model} is shared with users`,
   shareNowPrivate: (model: string) => `${model} is private again`,
-  shareNote: "A shared model also serves your users' conversions here, and nothing else. Its key and address stay on the server; users see only which model it is.",
   sharedByAdmin: "Shared by the admin",
-  sharedByAdminText: "Your conversions can use these too. Their keys stay on the server.",
+  sharedByAdminText: "Their keys stay on the server.",
   userModelsNone: "No models yet",
-  userModelsEmptyText: "Add a model with your own API key to use LLM features in your conversions. Only your conversions use it, and its key is never shown again.",
+  userModelsEmptyText: "Add a model with your own key. Only your conversions use it.",
   userModelsOwnNone: "No models of your own",
   userModelsOwn: (n: number) => `${n} ${plural(n, "model", "models")} of your own`,
-  userModelsRouting: "Your conversions use your models and the shared ones as one group, picked by weight; when one fails, another is tried. Weight 0 turns a model off for your conversions.",
-  userModelsHint: "Your own models, and the ones the admin shares",
+  userModelsRouting: "Your models and the shared ones form one group, picked by weight; when one fails, another is tried. Weight 0 turns one off.",
+  routingInfo: "How models are picked",
   configAbsent: "not created yet",
   configLoadFailed: "Could not read the configuration",
   configUnreadableTitle: "The file is not valid JSON",
   configUnreadableText: (problem: string) => `Fix it in a text editor, then reload this page. ${problem}`,
-  configReadOnly: "Model settings for this session come from the command line, so this file cannot be saved here. Edit it in a text editor and restart without those options.",
-  configMasked: (n: number) => `${n} ${plural(n, "secret is", "secrets are")} shown masked (like sk…7890). Leave a masked value where it is to keep it; type a new value or an env: reference to replace it.`,
-  configEndings: (name: string) => `This file uses ${name} line endings; saving keeps them.`,
+  configReadOnly: "Read-only: model settings come from the command line. Edit the file in a text editor and restart without them.",
+  configMasked: (n: number) => `${n} ${plural(n, "secret is", "secrets are")} masked (like sk…7890): leave them as they are to keep them.`,
+  configEndings: (name: string) => `${name} line endings are kept.`,
   configEndingsMixed: (counts: { crlf: number; lf: number; cr: number }, newline: string) =>
-    `This file mixes line endings (${[counts.crlf && `${counts.crlf} CRLF`, counts.lf && `${counts.lf} LF`, counts.cr && `${counts.cr} CR`].filter(Boolean).join(", ")}). Saving keeps each line's own; a changed line keeps the one it had, a new line gets ${newline}, the most common.`,
-  configBom: "The file starts with a byte order mark (BOM); saving keeps it.",
+    `Mixed line endings (${[counts.crlf && `${counts.crlf} CRLF`, counts.lf && `${counts.lf} LF`, counts.cr && `${counts.cr} CR`].filter(Boolean).join(", ")}) are kept line by line; new lines get ${newline}.`,
+  configBom: "The byte order mark (BOM) is kept.",
   configEditorLabel: "Configuration (JSON)",
   configValid: "Valid JSON",
   configValidChanged: "Valid JSON · unsaved changes",
@@ -992,11 +972,13 @@ export const en = {
   weightKeysHint: "A whole number from 0 to 100. Enter saves, Esc cancels",
   weightInvalid: "Enter a whole number from 0 to 100",
   // round 18: the weight range, saved models a provider's list names otherwise
-  weightRangeHint: "A whole number from 0 to 100, its share among the models a request picks from; 0 turns it off (it stays saved).",
+  weightRangeHint: "0 to 100: its share among the models a request picks from; 0 turns it off (it stays saved).",
+  weightInfo: "About routing weight",
   savedNotListed: "Saved, not in the provider's current list",
   savedAsAlias: (id: string) => `Saved as ${id}`,
   weightSaved: (model: string, weight: number) => (weight === 0 ? `${model} is off: weight 0` : `${model}: weight ${weight}`),
-  sharedByAdminWeights: "Your conversions can use these too. Their keys stay on the server. The weights here are yours: they change only how often your conversions pick each one.",
+  sharedByAdminWeights: "Their keys stay on the server. Your weights change only your own conversions.",
+  sharedInfo: "About shared models",
   sharedWeightHint: "How often your conversions pick this shared model; only yours. 0 turns it off for you",
   sharedWeightReset: (weight: number) => `Use the admin's ${weight}`,
   sharedWeightResetAria: (shown: string, model: string) => `${shown} for ${model}`,
@@ -1007,10 +989,9 @@ export const en = {
       ? "The provider is limiting requests or its quota is used up. Try again later; if it keeps failing, tell the admin."
       : "The test ran on the server with the admin's settings, which you cannot see or change. Tell the admin which model failed.",
   navConfigUser: "Edit config",
-  userConfigHint: "Your models and weights, as text",
-  userConfigSubtitle: "Your models, their connections and your weights for shared models. The server's own configuration is the admin's.",
-  userConfigNote: "\"models\" and \"providers\" are your own (the same entries as a config file's llm.model_list and llm.providers). \"shared\" lists the admin's shared models: change only \"weight\" (0 turns one off for you; the admin's value follows the admin again).",
-  userConfigMasked: (n: number) => `${n} ${plural(n, "key is", "keys are")} shown masked (like us…-key). Leave a masked value where it is to keep it; type a new key to replace it.`,
+  userConfigSubtitle: "Your models and weights",
+  userConfigNote: "\"models\" and \"providers\" are yours; in \"shared\", change only \"weight\".",
+  userConfigMasked: (n: number) => `${n} ${plural(n, "key is", "keys are")} masked (like us…-key): leave them as they are to keep them.`,
   userConfigName: "Your models",
   userConfigEditorLabel: "Your models (JSON)",
   userConfigUnreadable: "Your saved models could not be read. Reload the page; if it keeps happening, tell the admin.",

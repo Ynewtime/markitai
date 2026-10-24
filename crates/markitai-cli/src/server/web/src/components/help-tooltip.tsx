@@ -6,6 +6,7 @@
 import type { ComponentChildren } from "preact";
 import { createPortal } from "preact/compat";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
+import { Icon } from "./icons.tsx";
 
 const AUTO_HIDE_MS = 4000;
 /** Reading time added per listed choice. */
@@ -133,6 +134,21 @@ export function HelpTooltip({
           anchor.current?.closest("main") ?? document.body,
         )}
     </span>
+  );
+}
+
+/** A small (i) beside a label or heading whose bubble holds what the page no
+ * longer spells out: a button (keyboard focus opens it, as hover and tap do),
+ * described by the text for screen readers. */
+export function InfoTip({ label, text, class: className = "opt-help", size = 13 }: { label: string; text: string; class?: string; size?: number }) {
+  return (
+    <HelpTooltip text={text}>
+      {(describedBy) => (
+        <button type="button" class={className} aria-label={label} aria-describedby={describedBy}>
+          <Icon name="Info" size={size} />
+        </button>
+      )}
+    </HelpTooltip>
   );
 }
 

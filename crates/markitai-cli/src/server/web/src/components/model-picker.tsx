@@ -10,6 +10,7 @@ import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { Deployment, ModelCandidate } from "../api/types.ts";
 import type { Dict } from "../i18n/index.ts";
 import { manualModelId, parseWeight, pickerRows, stepWeight, WEIGHT_MAX, WEIGHT_PLACEHOLDER } from "../lib/models.ts";
+import { InfoTip } from "./help-tooltip.tsx";
 import { Icon } from "./icons.tsx";
 
 export function ModelPicker({
@@ -221,9 +222,16 @@ export function ModelPicker({
               <input type="text" value={group} onInput={(event) => onGroup(event.currentTarget.value)} />
             </label>
           )}
-          <label class="field">
-            <span class="field-label">{t.weight}</span>
+          <div class="field">
+            {/* What the weight does, behind an (i) by its label; the field is described by the same words. */}
+            <div class="field-label-row">
+              <label class="field-label" for="picker-weight">
+                {t.weight}
+              </label>
+              <InfoTip label={t.weightInfo} text={`${weightHint ?? t.weightHint}${t.toastLead}${t.weightRangeHint}`} />
+            </div>
             <input
+              id="picker-weight"
               type="number"
               inputMode="numeric"
               min={0}
@@ -250,7 +258,7 @@ export function ModelPicker({
               // A valid value settles; an invalid or empty one stays to be corrected.
               onBlur={() => weightDraft !== null && parseWeight(weightDraft) !== null && setWeightDraft(null)}
             />
-          </label>
+          </div>
         </div>
         {(weightError || weightEmpty) && (
           <p id="weight-error" class="config-check is-error weight-error" role="alert">
@@ -258,11 +266,9 @@ export function ModelPicker({
             <span>{t.weightInvalid}</span>
           </p>
         )}
-        <p id="weight-hint" class="field-hint">
-          {weightHint ?? t.weightHint}
-          <br />
-          {t.weightRangeHint}
-        </p>
+        <span id="weight-hint" class="sr-only">
+          {`${weightHint ?? t.weightHint}${t.toastLead}${t.weightRangeHint}`}
+        </span>
       </section>
     </div>
   );

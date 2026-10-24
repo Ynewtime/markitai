@@ -446,10 +446,24 @@ key for it (`Using OPENAI_API_KEY`) and its connection at its own endpoint are
 one row, which says how it authenticates (`Using DEEPSEEK_API_KEY`, `Key saved`,
 `No key`) and its model count; a connection at another address is its own row.
 Common and All mark a saved provider as Added, and choosing it opens that row.
-A provider's key field says where else the key can come from (`Or set
-MOONSHOT_API_KEY where markitai serve runs …`); Kimi Code's adds Kimi's terms
-(the membership is for interactive use only; batch conversions take a Kimi
-platform key), with a link to the Moonshot AI page. A hand-written model that the
+Explanations stay off the page: what a field or heading does sits behind a
+small (i) beside it (`InfoTip` in help-tooltip.tsx: hover, keyboard focus or a
+tap opens it, and it describes its button, and the field it explains, for
+screen readers), and the longer rules live in the guides. A provider's key field
+has one: the server variable that can stand in for the key (`Or set
+DEEPSEEK_API_KEY on the server and restart.`). Moonshot's open platform and Kimi
+Code are one **Kimi** card (`lib/kimi.ts`; the configuration and the CLI keep
+`moonshot/` and `kimi_code/`): Load models sends the pasted key to the open
+platform's regions, then Kimi Code's (Kimi Code first for a key in its
+documented `sk-kimi-` form), each by an ordinary discovery with no address, so
+the key only reaches Kimi's documented hosts; the address that listed the models
+fills API address, a note names the service, and for a Kimi Code membership key
+it adds Kimi's terms in one line (interactive use only; batch conversions take a
+platform key). An address typed by hand gets the one request, to the service its
+host belongs to. The models are saved under that service; its saved connections
+stay separate rows (Kimi Platform, Kimi Code), and the Kimi card opens one only
+once both services have one. A server that lists no Kimi Code card (an older
+backend) keeps its Moonshot card, shown as Kimi Platform. A hand-written model that the
 server serves with its key variable shows `From DEEPSEEK_API_KEY` in Edit, and
 a model list that cannot be loaded says why in the model test's categories (no
 key, key rejected, rate limited, unreachable, no answer in time, provider
@@ -464,8 +478,8 @@ AI and Kimi Code keys belong to a region: when the default endpoint refuses a
 new connection's key and the provider's other region lists its models
 (`api_base`, contract v1.21), the page fills that address into API address and
 says so, and the models are saved with it, also for a key the server reads from
-its environment (a saved connection is told to change its address instead). Their rejected-key hints also say that a Kimi Code
-membership key belongs under Kimi Code and a Kimi platform key under Moonshot AI.
+its environment (a saved connection is told to change its address instead). A
+key that neither Kimi service takes gets one sentence saying so.
 
 ## Job controls
 

@@ -12,6 +12,7 @@ import type { Dict, Locale } from "../i18n/index.ts";
 import { serviceNote } from "../i18n/errors.ts";
 import { addingIsBlocked, listFailure, providerWords, regionBlocked, runtimeFailure, testFailure, type TestFailure } from "../lib/model-test.ts";
 import { endpointFor, modelName, pickerRows, refusedHosts, removals } from "../lib/models.ts";
+import { isKimiCard, kimiOrder, kimiServiceAt, kimiServices, type KimiService } from "../lib/kimi.ts";
 import { isSubscription, listsModels, ownEndpointLogin, usesCloudCredentials } from "../lib/provider-catalog.ts";
 import {
   CredentialInputError,
@@ -24,6 +25,7 @@ import {
   type ProviderDraft,
 } from "../lib/provider-credentials.ts";
 import { ConfirmPopover } from "./confirm-popover.tsx";
+import { InfoTip } from "./help-tooltip.tsx";
 import { Icon } from "./icons.tsx";
 import { ModelPicker } from "./model-picker.tsx";
 import { RuntimeNotice } from "./runtime-notice.tsx";
@@ -200,10 +202,12 @@ function SharedModels({
 }) {
   return (
     <section class="shared-models" aria-labelledby="shared-models-title">
-      <h2 id="shared-models-title" class="group-title">
-        {t.sharedByAdmin}
-      </h2>
-      <p class="field-hint">{models.some((model) => model.default_weight !== undefined) ? t.sharedByAdminWeights : t.sharedByAdminText}</p>
+      <div class="group-head-row">
+        <h2 id="shared-models-title" class="group-title">
+          {t.sharedByAdmin}
+        </h2>
+        <InfoTip label={t.sharedInfo} text={models.some((model) => model.default_weight !== undefined) ? t.sharedByAdminWeights : t.sharedByAdminText} />
+      </div>
       <ul class="model-rows" aria-labelledby="shared-models-title">
         {models.map((model) => {
           // An older backend sends no `default_weight`: its shared models can only be read.
@@ -513,6 +517,10 @@ export function ModelsSettings({
   /** The provider's other region that listed the key's models (v1.21): a new
    * connection keeps that address, a saved one is told to move. */
   const [region, setRegion] = useState<{ base: string; kept: boolean } | null>(null);
+  /** On the Kimi card (lib/kimi.ts): the service that took the key and the address that listed its
+   * models; `refused` once every service refused it. */
+  const [kimiFound, setKimiFound] = useState<{ service: KimiService; base: string } | null>(null);
+  const [kimiRefused, setKimiRefused] = useState(false);
   const [selected, setSelected] = useState(new Set<string>());
   /** Models this group and endpoint already route that the reader unticked. */
   const [dropped, setDropped] = useState(new Set<string>());
@@ -524,6 +532,11 @@ export function ModelsSettings({
   const autoLoaded = useRef<string | null>(null);
   const existing =
     provider !== null && (provider.provider_id !== undefined || provider.deployment_id !== undefined || provider.kind === "environment");
+  // The Kimi card asks for a key once; the models go under the service that takes it.
+  const services = useMemo(() => kimiServices(providers), [providers]);
+  const kimi = isKimiCard(provider) && services !== null;
+  /** The provider this page's models are saved under: on the Kimi card, the service found for the key. */
+  const target = kimi && kimiFound ? services![kimiFound.service] : provider;
   const ollama = provider?.provider === "ollama";
   // A local server with a known address (Ollama, LM Studio) needs no key.
   const local = provider?.key_optional === true;
@@ -653,6 +666,8 @@ export function ModelsSettings({
     resetConnection();
     setDiscovery(null);
     setRegion(null);
+    setKimiFound(null);
+    setKimiRefused(false);
     setSelected(new Set());
     setDropped(new Set());
     setListError(null);
@@ -663,6 +678,8 @@ export function ModelsSettings({
     resetConnection();
     setDiscovery(null);
     setRegion(null);
+    setKimiFound(null);
+    setKimiRefused(false);
     setSelected(new Set());
     setDropped(new Set());
     setListError(null);
@@ -696,16 +713,57 @@ export function ModelsSettings({
     setDraftBase("");
     setDiscovery(null);
     setRegion(null);
+    setKimiFound(null);
+    setKimiRefused(false);
     setSelected(new Set());
     setDropped(new Set());
     setListError(null);
     autoLoaded.current = null;
   };
 
+  /** Load models on the Kimi card: each service in turn while it refuses the key (each tries its own
+   * regions), or only the address typed by hand. The address that listed the models fills the field. */
+  const loadKimi = async (refresh: boolean) => {
+    if (!services) return;
+    const typed = draftBase.trim() !== "" && draftBase.trim() !== kimiFound?.base ? draftBase.trim() : "";
+    const order = typed ? [kimiServiceAt(typed)] : kimiOrder(draftKey);
+    let result: DiscoveryResult | null = null;
+    let service = order[0]!;
+    for (const next of order) {
+      service = next;
+      result = await discoverModels(discoveryRequest(services[next], draftKey, typed, refresh));
+      if (listFailure(result)?.reason !== "key_rejected") break;
+    }
+    if (!result) return;
+    setDiscovery(result);
+    const available = new Set(result.models.map((candidate) => candidate.model));
+    setSelected((previous) => new Set([...previous].filter((model) => available.has(model))));
+    const refused = listFailure(result)?.reason === "key_rejected";
+    setKimiRefused(refused && !typed);
+    if (result.status === "unavailable") {
+      setKimiFound(null);
+      if (!typed) setDraftBase("");
+      return;
+    }
+    const base = result.api_base ?? (typed || services[service].default_base || "");
+    setKimiFound({ service, base });
+    setDraftBase(base);
+  };
+
   const load = async (refresh = false, from = provider) => {
     if (!from || discovering) return;
     setDiscovering(true);
     setListError(null);
+    if (isKimiCard(from) && services) {
+      try {
+        await loadKimi(refresh);
+      } catch (error) {
+        await fail(error);
+      } finally {
+        setDiscovering(false);
+      }
+      return;
+    }
     try {
       const result = await discoverModels(discoveryRequest(from, draftKey, login === null ? draftBase : "", refresh));
       setDiscovery(result);
@@ -732,24 +790,24 @@ export function ModelsSettings({
     // `load` reads the current draft; the guard above keys the request by provider.
   }, [adding, provider, autoLoads, discovery, discovering]);
 
-  /** Moonshot AI's page, which Kimi Code's terms point batch work to: its saved connection, else its card. */
-  const moonshot = providers.find((card) => card.provider === "moonshot" && manageable(card)) ?? providers.find((card) => card.provider === "moonshot");
   /** What a failed model list adds from the provider or the network (never markitai's own sentence). */
   const listed = discovery ? listFailure(discovery) : null;
   const listWords = discovery && listed ? providerWords(discovery.detail, listed.reason, t.testFailTitle(listed.reason)) : null;
   /** The address this page's models are at; the rows of its model list, as the picker shows them. */
-  const endpoint = endpointFor(draftBase, provider?.api_base);
+  const endpoint = endpointFor(draftBase, target?.api_base);
   const pageRows = () =>
-    provider === null || settings === null
+    target === null || settings === null
       ? []
-      : pickerRows(provider.provider, discovery?.models ?? [], settings.deployments, group, endpoint, provider.default_base);
+      : pickerRows(target.provider, discovery?.models ?? [], settings.deployments, group, endpoint, target.default_base);
 
   const addSelected = async () => {
-    if (!provider || (!selected.size && !dropped.size) || revision === null || addBusy || !weightValid) return;
+    if (!provider || !target || (!selected.size && !dropped.size) || revision === null || addBusy || !weightValid) return;
     let credentials: Partial<NewDeployment>;
     try {
       const found = region?.kept && draftBase.trim() === region.base ? region.base : undefined;
-      credentials = deploymentCredentials(provider, draftKey, login === null ? draftBase : "", found);
+      // A Kimi service found at its default address saves none, as a key pasted on its own card would.
+      const atDefault = kimi && draftBase.trim().replace(/\/+$/, "") === (target.default_base ?? "").replace(/\/+$/, "");
+      credentials = deploymentCredentials(target, draftKey, login === null && !atDefault ? draftBase : "", found);
     } catch (error) {
       await fail(error);
       return;
@@ -895,6 +953,18 @@ export function ModelsSettings({
   };
 
   const label = provider ? providerLabel(t, provider) : "";
+  const detailHint = provider
+    ? t.providerDetailHint(provider.kind, provider.provider, provider.source, {
+        local,
+        manualOnly,
+        needsBase: needsBase && provider.provider !== "azure" && provider.provider !== "custom",
+        subscription,
+        // The login note below says how it connects; a saved connection's key is in its rows above.
+        cloud: cloud && login === null && !saved,
+      })
+    : "";
+  /** The server's key variables this page's key can come from instead (both Kimi services' on the Kimi card). */
+  const keyVariables = provider === null ? [] : kimi ? [services!.moonshot.key_variable, services!.kimi_code.key_variable].filter((name): name is string => Boolean(name)) : provider.key_variable ? [provider.key_variable] : [];
 
   const status = listError && (
     <>
@@ -1096,7 +1166,6 @@ export function ModelsSettings({
                 />
               </div>
               {conn.baseMasked && <p class="conn-note">{t.maskedAddressNote}</p>}
-              <p class="conn-note">{conn.configured ? t.addressKeyNote : t.addressNoKeyNote}</p>
               <div class="form-actions">
                 <button
                   type="submit"
@@ -1200,17 +1269,7 @@ export function ModelsSettings({
                   <div class="provider-detail-head">
                     <div class="provider-detail-copy">
                       <h2 class="group-title">{autoLoads ? t.modelCatalogTitle : t.connectProviderTitle(label)}</h2>
-                      <p>
-                        {t.providerDetailHint(provider.kind, provider.provider, provider.source, {
-                          local,
-                          manualOnly,
-                          needsBase: needsBase && provider.provider !== "azure" && provider.provider !== "custom",
-                          subscription,
-                          // The login note below says how it connects.
-                          // A saved connection's key is in its rows above.
-                          cloud: cloud && login === null && !saved,
-                        })}
-                      </p>
+                      {detailHint && <p>{detailHint}</p>}
                       {(provider.kind === "common" || provider.kind === "compatible") && ((provider.default_base && !baseOptional) || (provider.key_variable && !showsKey)) && (
                         <p class="provider-facts">
                           {/* The address field shows the default itself; the key field names its variable. */}
@@ -1241,41 +1300,27 @@ export function ModelsSettings({
                     <div class={showsKey && (needsBase || baseOptional) ? "field-grid" : "field-grid is-single"}>
                       {showsKey && (
                         <div class="field">
-                          <label class="field-label" for="connect-key">
-                            {t.setApiKey}
-                            <span class="field-required">{keyRequired ? t.requiredField : t.optionalField}</span>
-                          </label>
+                          <div class="field-label-row">
+                            <label class="field-label" for="connect-key">
+                              {t.setApiKey}
+                              <span class="field-required">{keyRequired ? t.requiredField : t.optionalField}</span>
+                            </label>
+                            {/* Where else the key can come from: the server's variable, one (i) on every provider's page. */}
+                            {keyVariables.length > 0 && !existing && <InfoTip label={t.keyVariableInfo} text={t.keyVariableHint(keyVariables)} />}
+                          </div>
                           <input
                             id="connect-key"
                             type="password"
                             value={draftKey}
                             placeholder={t.setKeyPh}
                             autoComplete="off"
-                            aria-describedby={
-                              [provider.key_variable && !existing ? "connect-key-hint" : "", provider.provider === "kimi_code" ? "connect-key-terms" : ""].filter(Boolean).join(" ") ||
-                              undefined
-                            }
+                            aria-describedby={keyVariables.length > 0 && !existing ? "connect-key-hint" : undefined}
                             onInput={(event) => setDraftKey(event.currentTarget.value)}
                           />
-                          {/* Where else the key can come from, under the field it stands in for. */}
-                          {provider.key_variable && !existing && (
-                            <p id="connect-key-hint" class="field-hint key-hint">
-                              {t.keyVariableHint(provider.key_variable)}
-                            </p>
-                          )}
-                          {/* Kimi's terms: the membership serves interactive use, batch work an open-platform key. */}
-                          {provider.provider === "kimi_code" && (
-                            <p id="connect-key-terms" class="field-hint key-hint">
-                              {t.kimiCodeTerms[0]}
-                              {moonshot ? (
-                                <button type="button" class="text-link" onClick={() => choose(moonshot)}>
-                                  {t.kimiCodeTerms[1]}
-                                </button>
-                              ) : (
-                                t.kimiCodeTerms[1]
-                              )}
-                              {t.kimiCodeTerms[2]}
-                            </p>
+                          {keyVariables.length > 0 && !existing && (
+                            <span id="connect-key-hint" class="sr-only">
+                              {t.keyVariableHint(keyVariables)}
+                            </span>
                           )}
                         </div>
                       )}
@@ -1289,7 +1334,9 @@ export function ModelsSettings({
                             type="url"
                             value={draftBase}
                             placeholder={
-                              needsBase
+                              kimi
+                                ? t.kimiBaseAuto
+                                : needsBase
                                 ? provider.provider === "hosted_vllm"
                                   ? "http://127.0.0.1:8000/v1"
                                   : "https://example.com/v1"
@@ -1304,6 +1351,8 @@ export function ModelsSettings({
                     </div>
                   )}
                   {login !== null && <p class="conn-note login-note">{t.ownEndpointNote(label, login === "google" ? t.googleLogin : login)}</p>}
+                  {/* Kimi's terms, on a saved Kimi Code connection: one line. */}
+                  {saved && provider.provider === "kimi_code" && <p class="conn-note">{t.kimiMemberTerms}</p>}
                 </section>
                 {discovering && discovery === null && (
                   <div class="skeleton" role="status">
@@ -1327,12 +1376,14 @@ export function ModelsSettings({
                         <span class="test-failure-model">{t.modelsUnavailable}</span>
                       </p>
                       <p>
-                        {t.discoveryFailHint(
-                          listFailure(discovery)!.reason,
-                          listFailure(discovery)!.variable,
-                          refusedHosts(discovery.endpoints, endpoint || provider.default_base || ""),
-                          provider.provider,
-                        )}
+                        {kimiRefused
+                          ? t.kimiRefused
+                          : t.discoveryFailHint(
+                              listFailure(discovery)!.reason,
+                              listFailure(discovery)!.variable,
+                              refusedHosts(discovery.endpoints, endpoint || target?.default_base || ""),
+                              target?.provider ?? provider.provider,
+                            )}
                       </p>
                       {listWords && (
                         <details class="test-failure-detail">
@@ -1350,8 +1401,16 @@ export function ModelsSettings({
                 )}
                 {discovery && region && (!region.kept || draftBase.trim() === region.base) && (
                   <div class="discovery-note" role="status">
+                    {/* The address field shows where the key belongs; a saved connection is told to move. */}
                     <strong>{region.kept ? t.regionMovedTitle : t.regionElsewhereTitle}</strong>
-                    <span>{region.kept ? t.regionMoved(region.base) : t.regionElsewhere(region.base)}</span>
+                    {!region.kept && <span>{t.regionElsewhere(region.base)}</span>}
+                  </div>
+                )}
+                {/* The Kimi card names the service that took the key; Kimi's terms only for a membership key. */}
+                {discovery && kimi && kimiFound && (
+                  <div class="discovery-note" role="status">
+                    <strong>{t.kimiFound(kimiFound.service)}</strong>
+                    {kimiFound.service === "kimi_code" && <span>{t.kimiMemberTerms}</span>}
                   </div>
                 )}
                 {/* An unavailable catalogue still leaves manual model entry. */}
@@ -1359,7 +1418,7 @@ export function ModelsSettings({
                   <ModelPicker
                     t={t}
                     manualOnly={manualOnly}
-                    provider={provider.provider}
+                    provider={target?.provider ?? provider.provider}
                     candidates={discovery?.models ?? []}
                     deployments={settings.deployments}
                     // A saved provider's page reads its own address: what this
@@ -1374,7 +1433,7 @@ export function ModelsSettings({
                     onSelected={setSelected}
                     onDropped={setDropped}
                     groups={!user}
-                    defaultBase={provider.default_base ?? null}
+                    defaultBase={target?.default_base ?? null}
                     onWeightValid={setWeightValid}
                     {...(discovery && runtimeFailure(discovery)
                       ? addingIsBlocked(runtimeFailure(discovery))
@@ -1398,13 +1457,15 @@ export function ModelsSettings({
               ) : (
                 <>
                   <div class="settings-summary">
-                    <span>{settings.deployments.length === 0 ? t.userModelsOwnNone : user ? t.userModelsOwn(settings.deployments.length) : t.modelsConfigured(settings.deployments.length)}</span>
+                    <span class="summary-label">
+                      {settings.deployments.length === 0 ? t.userModelsOwnNone : user ? t.userModelsOwn(settings.deployments.length) : t.modelsConfigured(settings.deployments.length)}
+                      {user && <InfoTip label={t.routingInfo} text={t.userModelsRouting} />}
+                    </span>
                     <button ref={addButton} type="button" class="btn btn-primary" onClick={() => setAdding(true)}>
                       {t.addModels}
                     </button>
                   </div>
                   {settings.deployments.length > 0 && <div class="model-rows">{settings.deployments.map((deployment) => modelRow(deployment))}</div>}
-                  {canShare && settings.deployments.length > 0 && <p class="field-hint share-note">{t.shareNote}</p>}
                 </>
               )}
               {user && shared.length > 0 && (
@@ -1424,7 +1485,6 @@ export function ModelsSettings({
                   }}
                 />
               )}
-              {user && (settings.deployments.length > 0 || shared.length > 0) && <p class="field-hint routing-note">{t.userModelsRouting}</p>}
               {settings.detected.length > 0 && (
                 <section class="detected">
                   <h2 class="group-title">{t.detectedSession}</h2>

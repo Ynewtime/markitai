@@ -1,13 +1,9 @@
 // Japanese interface copy. Short noun/verb labels, polite です/ます sentences, full-width 、。（）「」, half-width spaces around Latin words and numbers, "·" between facts.
 import type { Dict } from "./en.ts";
 
-/** What else a key refused by Moonshot's open platform or Kimi Code may be: the other region, or the sibling service. */
-const kimiKeyHint = (provider: string, region = false) =>
-  provider === "moonshot"
-    ? `${region ? "Moonshot のキーは発行したリージョンでのみ使えます。platform.kimi.com（中国）のキーはアドレス https://api.moonshot.cn/v1、platform.kimi.ai のキーは https://api.moonshot.ai/v1 を使います。" : ""}Kimi Code 会員のキーは「Kimi Code」で追加してください。`
-    : provider === "kimi_code"
-      ? "Kimi プラットフォーム（platform.kimi.com または platform.kimi.ai）のキーは「Moonshot AI」で追加してください。Kimi Code のキーは Kimi Code コンソールで作成します。"
-      : "";
+/** A refused Moonshot model's key may be from the other region: the address each region's keys use. */
+const kimiKeyHint = (provider: string): string =>
+  provider === "moonshot" ? "platform.kimi.com（中国）のキーは https://api.moonshot.cn/v1、それ以外は https://api.moonshot.ai/v1 を使います。" : "";
 
 /** The endpoints that refused a key, as one phrase. */
 const keyRefusedBy = (hosts: string[]) => `${hosts.join(" と ")} がキーを拒否しました。`;
@@ -58,9 +54,9 @@ export const ja: Dict = {
   defaultsSave: "既定値として保存",
   defaultsReset: "既定値に戻す",
   defaultsUseServer: "サーバーの既定値を使う",
-  defaultsScopeServer: "サーバーの config.json に保存します。ここでの新しい変換とコマンドラインがこの選択から始まります。",
-  defaultsScopeUser: "あなたのトークンだけに保存します。あなたの新しい変換がこの選択から始まります。",
-  defaultsNoCloudflare: "Cloudflare は既定値にできません。毎回確認が必要です。",
+  defaultsScopeServer: "config.json に保存され、コマンドラインでも使われます。",
+  defaultsScopeUser: "あなたのトークンだけに保存されます。",
+  defaultsNoCloudflare: "Cloudflare は既定にできません。毎回確認します。",
   defaultsStale: "既定値がその間に変更されたため再読み込みしました。置き換えるにはもう一度保存してください。",
   defaultsSavedServer: "サーバーの既定値として保存しました",
   defaultsSavedOwn: "あなたの既定値として保存しました",
@@ -80,8 +76,8 @@ export const ja: Dict = {
   ocr: "OCR",
   helpOcr:
     "スキャン画像をローカルの OCR エンジンで認識します。LLM がオンのときはページ画像をビジョンモデルに送信するため、追加の費用が発生する場合があります。",
-  advVlmOcr: "LLM + OCR ではページ画像をビジョンモデルに送信するため（VLM-OCR）、モデルの費用が増える場合があります。",
-  advLocalOcr: "LLM なしの OCR では、このコンピューターのローカル OCR エンジンを使います。",
+  advVlmOcr: "VLM-OCR：ページ画像をビジョンモデルに送り、モデルの費用がかかります。",
+  advLocalOcr: "サーバーのローカル OCR エンジンを使います。",
   advNeedsModel: "LLM の機能を使うには、設定 → モデル でモデルを追加してください。",
   advNeedsModelAdmin: "あなたのトークンで使えるモデルはまだありません。サーバー管理者に共有を依頼してください。",
   advImages: "画像",
@@ -159,11 +155,9 @@ export const ja: Dict = {
   helpCache: "キャッシュを読まずに取得と処理をやり直します。モデルの費用が新たに発生する場合があります。結果は引き続き保存されます。",
   advNoCompress: "画像を圧縮しない",
   helpCompress: "抽出した画像を圧縮せずに残すため、出力が大きくなります。スクリーンショットの安全上の制限は維持されます。",
-  advSourceExclusive: "プレーンモードとスクリーンショットのソースは併用できません。一方を選ぶと、もう一方はオフになります。",
-  advScreenshotOnlyHint: "テキストレイヤーの代わりに、ビジョン対応のモデルでページのスクリーンショットを読み取ります。",
-  advCaptureOnly:
-    "LLM なしの場合：URL はスクリーンショットを取得し（ウェブの結果には Markdown のラッパーが付きます）、ファイルは通常のコンバーターで変換します。",
-
+  advSourceExclusive: "プレーンモードとスクリーンショットソースはどちらか一方です。",
+  advScreenshotOnlyHint: "ページのスクリーンショットをビジョンモデルで読みます。",
+  advCaptureOnly: "LLM なしでは URL はスクリーンショットだけ撮り、ファイルは通常どおり変換します。",
   // feedback under the composer
   submitting: "アップロードしてタスクを作成しています…",
   uploadProgress: (percent: number, sent: string, total: string) => `アップロード中 ${percent}% · ${sent} / ${total}`,
@@ -265,9 +259,9 @@ export const ja: Dict = {
   previewRendering: "レイアウト中…",
   exportPdf: "PDF をエクスポート",
   pdfCustomHeaderFooter: "カスタムのヘッダーとフッター",
-  pdfPrintDialogHint: "オンにした場合は、印刷ダイアログでブラウザー独自のヘッダーとフッターをオフにしてください。",
+  pdfPrintDialogHint: "印刷時はブラウザー自身のヘッダーとフッターをオフにしてください。",
   exportPdfAsk: "PDF をエクスポート…",
-  pdfFurnitureWhat: "PDF の先頭に Markitai と文書名を、末尾に出典を入れます。",
+  pdfFurnitureWhat: "上部に Markitai と文書名、末尾にソースを入れます。",
   pdfPrint: "印刷…",
   pdfPreparedBy: "Markitai で作成",
   pdfSource: "出典",
@@ -315,20 +309,20 @@ export const ja: Dict = {
   connectProviderTitle: (label: string) => `${label} に接続`,
   modelCatalogLoading: "利用可能なモデルを読み込んでいます…",
   runtimeMissingTitle: (name: string) => `サーバーに ${name} がインストールされていません`,
-  runtimeMissingText: "markitai serve が見つけられません。サーバーを動かしているマシンにインストールしてから、一覧を再読み込みしてください。",
+  runtimeMissingText: "markitai serve を実行しているマシンにインストールしてから、一覧を再読み込みしてください。",
   runtimeUnsupportedTitle: (name: string) => `${name} のバージョンは対応していません`,
-  runtimeUnsupportedText: (installed: string | null, required: string) => `${installed ? `現在は ${installed} がインストールされています。` : ""}必要なのは ${required} です。サーバーを動かしているマシンにそのリリースをインストールしてから、一覧を再読み込みしてください。`,
+  runtimeUnsupportedText: (installed, required) => `${installed ? `${installed} がインストールされています。` : ""}${required} が必要です。サーバーにインストールしてから、一覧を再読み込みしてください。`,
   notSignedInTitle: (name: string) => `${name} にサインインしていません`,
-  notSignedInText: "サーバーを動かしているマシンでサインインしてから、一覧を再読み込みしてください。",
-  notSubscriptionText: "サインインしていますが、サブスクリプションではありません（API キーやクラウドのログインは対象外です）。サーバーを動かしているマシンでサブスクリプションでサインインしてから、一覧を再読み込みしてください。",
+  notSignedInText: "サーバーでサインインしてから、一覧を再読み込みしてください。",
+  notSubscriptionText: "サインイン済みですが、サブスクリプションではありません。サーバーでサブスクリプションでサインインしてから、一覧を再読み込みしてください。",
   runtimeFailedTitle: (name: string) => `${name} が応答しませんでした`,
-  runtimeFailedText: "インストールされていますが、起動または応答に失敗しました。サーバー上で確認し（方法はセットアップガイドにあります）、一覧を再読み込みしてください。",
+  runtimeFailedText: "インストール済みですが、起動または応答しませんでした。セットアップガイドを確認してから、一覧を再読み込みしてください。",
   runtimeStepInstall: "インストール",
   runtimeStepSignIn: "サインイン",
   runtimeSetupGuide: "セットアップガイド",
   copyCommand: "コマンドをコピー",
-  addBlockedByRuntime: (name: string) => `${name} が使えるようになるまで、モデルは追加できません。上の手順で直してから、一覧を再読み込みしてください。`,
-  addWarnByRuntime: (name: string) => `${name} が応答しなかったため、手入力で追加したモデルは復旧するまで使えない可能性があります。`,
+  addBlockedByRuntime: (name) => `${name} が使えるようになるとモデルを追加できます。`,
+  addWarnByRuntime: (name) => `${name} が応答しません。手動で追加したモデルはまだ使えないことがあります。`,
   noListUntilRuntime: "ランタイムが使えるようになるまで、モデルを一覧できません。",
   modelsUnavailable: "モデルを読み込めませんでした",
   modelsPartial: "一部のモデルが表示されていない可能性があります",
@@ -346,34 +340,18 @@ export const ja: Dict = {
     if (status === "ready") return "準備完了";
     return status.replaceAll("_", " ");
   },
-  providerDetailHint: (
-    kind: string,
-    provider: string,
-    source: string,
-    {
-      local = false,
-      manualOnly = false,
-      needsBase = false,
-      subscription = false,
-      cloud = false,
-    }: { local?: boolean; manualOnly?: boolean; needsBase?: boolean; subscription?: boolean; cloud?: boolean } = {},
-  ) => {
-    if (subscription) return "サーバー上の公式アプリのサインインを使用します。モデルは自動で読み込まれます。";
-    if (cloud) return "サーバーが見つけたクラウドの認証情報を使用します。下のキーは任意です。使用するモデル ID を下に追加してください。";
-    if (manualOnly) return "このプロバイダーはモデルの一覧を提供していません。使用するモデル ID を下に追加してください。";
-    if (kind === "configured") return "保存済みの接続から、利用可能なモデルを自動で読み込みます。";
-    if (kind === "environment") return `${source} の認証情報を使用しています。`;
-    if (needsBase) return "サーバーのアドレスを入力すると、提供されているモデルを読み込みます。";
-    if (provider === "ollama") return "ローカルの既定の Ollama エンドポイントを使用しています。";
-    if (local) return "ローカルの既定のエンドポイントを使用しています。キーはサーバーが求める場合にのみ必要です。";
-    return "接続情報を入力すると、利用可能なモデルを読み込みます。";
+  providerDetailHint: (kind, _provider, source, { subscription = false, cloud = false } = {}) => {
+    if (subscription) return "サーバー上の公式アプリのサインインを使います。";
+    if (cloud) return "サーバーのクラウド認証情報を使います。キーは任意です。";
+    if (kind === "environment") return `${source} を使用`;
+    return "";
   },
   ownEndpointNote: (label: string, credential: string) =>
     `このサーバーの ${credential}${/[A-Za-z0-9_]$/.test(credential) ? " " : ""}で、${label} 自身のエンドポイントに接続します。`,
   googleLogin: "Google ログイン",
   optionalKeyVariable: (variable: string) => `${variable}（任意）`,
-  kimiCodeTerms: ["Kimi Code 会員は対話的な利用に限られます。一括変換には ", "Kimi プラットフォーム", " のキー（Moonshot AI）を使ってください。"],
-  keyVariableHint: (variable: string) => `または markitai serve を実行する環境で ${variable} を設定して再起動します。プロバイダーが「保存済み」に表示され、キーを貼り付ける必要はありません。`,
+  keyVariableHint: (variables) => `サーバーで ${variables.join(" または ")} を設定して再起動しても使えます。`,
+  keyVariableInfo: "サーバーの環境変数のキー",
   manualModelsOnly: "このプロバイダーからはモデルの一覧を取得できません · 下にモデル ID を追加してください",
   serverAddressRequired: "サーバーのアドレスが必要です",
   searchProviders: (n: number) => `${n} 件のプロバイダーを検索`,
@@ -428,7 +406,7 @@ export const ja: Dict = {
   deleteModelTitle: (model: string) => `${model} を削除しますか？`,
   deleteModelDescription: "プロバイダーの認証情報は保持されるため、後でモデルを追加できます。",
   setStatusNone: "モデルが設定されていません",
-  modelsEmptyText: "モデルは Markdown の整形、画像の説明、スキャンしたページの読み取りに使います。モデルがなくてもファイルは変換できます。",
+  modelsEmptyText: "LLM 強化と画像の説明に使います。なくても変換できます。",
   setSourceLbl: "設定元",
   openConfigFile: "エディターで設定ファイルを開く",
   setApiKey: "API キー",
@@ -451,9 +429,7 @@ export const ja: Dict = {
   editAddress: "編集",
   resetAddress: "既定に戻す",
   addressKeyLabel: "このアドレス用の API キー",
-  addressKeyNote: "保存済みのキーが新しいアドレスに送信されることはありません。",
-  addressNoKeyNote: "キーなしで接続する場合は、空欄のままにしてください。",
-  maskedAddressNote: "… と表示された部分は非表示です。アドレスをそのままにすると保持されます。変更する場合は新しいアドレスを全部入力してください。",
+  maskedAddressNote: "… は隠された部分です。そのままにすると保持され、別のアドレスは全体を入力します。",
   maskedAddress: "アドレスを全部入力してください。非表示の部分（…）は保存できません。",
   keyRequired: "API キーを入力してください。",
   endpointKeyRequired: "新しいアドレス用の API キーを入力してください。保存済みのキーが新しいアドレスに送信されることはありません。",
@@ -478,38 +454,42 @@ export const ja: Dict = {
       network: "プロバイダーに接続できません",
       timeout: "時間内に応答がありません",
     })[reason] ?? "プロバイダーのエラー",
-  testFailHint: (reason: string, variable: string | null, model: string, detailShown = true) =>
+  testFailHint: (reason, variable, model, detailShown = true) =>
     reason === "no_key"
       ? variable
-        ? `サーバーに ${variable} が設定されていません。markitai serve を実行している環境で設定してサーバーを再起動するか、このモデルの接続にキーを追加してください。`
-        : "このモデルには使える API キーがありません。接続にキーを追加するか、markitai serve を実行している環境でプロバイダーのキー変数を設定してください。"
+        ? `サーバーに ${variable} が設定されていません。設定して再起動するか、接続にキーを追加してください。`
+        : "このモデルには API キーがありません。接続にキーを追加してください。"
       : (({
-          key_rejected: `プロバイダーがキーを拒否しました。キーが正しく、有効で、このモデルを使えるか確認してください。専用のキーがないモデルは、サーバーに設定されたキー変数を使います。${kimiKeyHint(model.split("/")[0] ?? "", true)}`,
-          model_not_found: `このキーでは ${model} を利用できません。モデル ID を確認してください。`,
-          rate_limited: "プロバイダーがリクエストを制限しているか、アカウントのクォータまたは残高が不足しています。しばらくしてから再試行するか、アカウントを確認してください。",
-          network: "サーバーからプロバイダーに接続できませんでした。アドレスと、サーバーのネットワークまたはプロキシを確認してください。",
-          timeout: "プロバイダーが時間内に応答しませんでした。再試行し、繰り返す場合はプロバイダーの状態を確認してください。",
+          key_rejected: `プロバイダーがキーを拒否しました。キーが正しく、このモデルを使えるか確認してください。${kimiKeyHint(model.split("/")[0] ?? "")}`,
+          model_not_found: `プロバイダーはこのキーに ${model} を提供していません。モデル ID を確認してください。`,
+          rate_limited: "プロバイダーがリクエストを制限しているか、アカウントの残高がありません。しばらくしてから再試行してください。",
+          network: "サーバーからプロバイダーに接続できませんでした。アドレスとサーバーのネットワークまたはプロキシを確認してください。",
+          timeout: "プロバイダーが時間内に応答しませんでした。再試行してください。",
         }) as Record<string, string>)[reason] ?? (detailShown ? "プロバイダーがエラーを返しました。原文は下にあります。" : "プロバイダーがエラーを返しました。"),
   testFailFor: (model: string) => `${model} のテスト`,
   testFailDetail: "プロバイダーの原文",
   connectionDetail: "接続エラー",
   modelRegionBlocked: (model: string) => `プロバイダーはサーバーのリージョンで ${model} を提供していません。別のモデルを選ぶか、対応するリージョンからプロバイダーに接続してください。`,
-  discoveryFailHint: (reason: string, variable: string | null, hosts: string[] = [], provider = "") =>
+  discoveryFailHint: (reason, variable, hosts = [], _provider = "") =>
     reason === "no_key"
       ? variable
-        ? `サーバーで ${variable} が設定されていないため、一覧を要求しませんでした。markitai serve を実行する環境で設定してサーバーを再起動するか、この接続にキーを追加してください。`
-        : "この接続にはキーがないため、一覧を要求しませんでした。キーを追加してください。"
+        ? `サーバーに ${variable} が設定されていません。設定して再起動するか、ここでキーを追加してください。`
+        : "この接続にはキーがありません。追加してください。"
       : reason === "key_rejected"
-        ? `${hosts.length ? keyRefusedBy(hosts) : "プロバイダーがキーを拒否しました。"}キーが正しく、まだ有効か確認してください。${kimiKeyHint(provider)}`
+        ? `${hosts.length ? keyRefusedBy(hosts) : "プロバイダーがキーを拒否しました。"}キーが正しく、まだ有効か確認してください。`
       : (({
-          rate_limited: "プロバイダーがリクエストを制限しているか、アカウントの残量がありません。しばらくしてから再試行してください。",
-          network: "サーバーがプロバイダーに接続できませんでした。アドレスとサーバーのネットワークまたはプロキシを確認してください。",
+          rate_limited: "プロバイダーがリクエストを制限しているか、アカウントの残高がありません。しばらくしてから再試行してください。",
+          network: "サーバーからプロバイダーに接続できませんでした。アドレスとサーバーのネットワークまたはプロキシを確認してください。",
           timeout: "プロバイダーが時間内に応答しませんでした。再試行してください。",
-        }) as Record<string, string>)[reason] ?? "プロバイダーがエラーを返しました。下でモデル ID を手動で追加できます。",
+        }) as Record<string, string>)[reason] ?? "プロバイダーがエラーを返しました。モデル ID は下で手動追加できます。",
   regionMovedTitle: "キーに合わせてアドレスを設定しました",
   regionElsewhereTitle: "このキーは別のアドレスで有効です",
-  regionMoved: (base: string) => `このキーは ${base} のものです。API アドレスをこのアドレスにしました。追加するモデルもこのアドレスを使います。`,
-  regionElsewhere: (base: string) => `このキーは ${base} で有効で、この接続のアドレスでは使えません。モデルを追加する前に、アドレスを ${base} に変更してください。`,
+  regionElsewhere: (base) => `このキーは ${base} で有効です。モデルを追加する前にアドレスを変更してください。`,
+  kimiPlatform: "Kimi プラットフォーム",
+  kimiBaseAuto: "キーから自動判定",
+  kimiFound: (service) => (service === "kimi_code" ? "Kimi Code 会員のキー" : "Kimi プラットフォームのキー"),
+  kimiMemberTerms: "Kimi の規約により対話的な利用のみです。一括変換にはプラットフォームのキーを使ってください。",
+  kimiRefused: "Kimi プラットフォームも Kimi Code もこのキーを受け付けませんでした。正しく、まだ有効か確認してください。",
   save: "保存",
   saving: "保存しています…",
   saved: "保存しました",
@@ -532,19 +512,17 @@ export const ja: Dict = {
   cloudflareLocalTitle: "このオプションで続行しますか？",
   cloudflareContinue: "変換を続行",
   cloudflareConfirm: "送信して変換",
-  cloudflareScope:
-    "選択した URL と対応ファイルは、このサーバーのアカウントで Cloudflare に送信される場合があります。リクエストのたびに範囲を確認してください。",
-  cloudflareCharges: "Cloudflare の料金が発生する場合があります。ここに表示される LLM の小計には含まれません。",
-  cloudflareNativeHint: "選択したファイルはネイティブのリーダーで読み込みます。Cloudflare を選んでも OCR やスクリーンショットはオフになりません。",
+  cloudflareScope: "確認すると、URL と対応ファイルがこのサーバーのアカウントで Cloudflare に送られます。",
+  cloudflareCharges: "Cloudflare の料金が発生する場合があり、ここに表示される LLM の費用には含まれません。",
+  cloudflareNativeHint: "これらのファイルはネイティブの読み取りのままです。OCR とスクリーンショットはそのまま使えます。",
   cloudflareScopeCounts: (urls: number, candidates: number, files: number, native: number) => [
     urls > 0 ? `URL ${urls} 件` : "",
     candidates > 0 ? `選択したファイルのうち最大 ${candidates} 個を送信する場合があります${files > 0 ? `（${files} 個の名前が対応形式に一致）` : ""}` : "",
     native > 0 ? `${native} 個のファイルはネイティブのリーダーを使用` : "",
   ].filter(Boolean).join(" · ") || "現在のオプションでは、これらのソースに Cloudflare は使われません。",
-  cloudflareScopeHint:
-    "選択したファイルのうち、対応する内容の送信を許可します。名前による判定は目安にすぎず、リーダーが実際の形式を確認するため、選択した他のファイルが対応と判定される場合もあります。OCR とスクリーンショットはネイティブのリーダーを使います。",
-  cloudflareRetry: "元のソースをもう一度送信するため、Cloudflare の追加料金が発生する場合があります。",
-  cloudflareOnce: "この確認は、ここに表示された範囲にのみ適用されます。キャンセルした場合は何も送信されません。",
+  cloudflareScopeHint: "選んだファイルのうち対応するものだけが送られ、実際の形式は読み取り側が確認します。OCR とスクリーンショットはネイティブの読み取りのままです。",
+  cloudflareRetry: "元のソースをもう一度送るため、料金が再び発生する場合があります。",
+  cloudflareOnce: "このリクエストだけに有効です。キャンセルすると何も送りません。",
   cloudflareUnavailable: "このリクエストでは Cloudflare を利用できません。",
   cloudflareReason: (reason: string): string => ({
     incompatible_strategy: "Cloudflare のファイル変換は、Jina または Defuddle の URL 取得方法とは併用できません。続行するには、いずれかのオプションを変更してください。",
@@ -554,8 +532,7 @@ export const ja: Dict = {
     client_not_trusted: "この接続には、Cloudflare での処理をリクエストする権限がありません。",
     unavailable: "Cloudflare の機能を利用できません。ページを再読み込みして、もう一度確認してください。",
   } as Record<string, string>)[reason] ?? "Cloudflare は利用できません。",
-  cloudflareSetup:
-    "サーバーで fetch.cloudflare.account_id と fetch.cloudflare.api_token を設定してください。リモート処理には管理者の許可が必要です。ローカルの設定チェックでは Cloudflare API の権限は検証されません。",
+  cloudflareSetup: "サーバーで fetch.cloudflare.account_id と fetch.cloudflare.api_token を設定し、管理者がリモート処理を許可する必要があります。",
   // shell and navigation
   skipToContent: "本文へスキップ",
   sidebarAria: "サイドバー",
@@ -582,8 +559,8 @@ export const ja: Dict = {
   summaryRunning: (done: number, total: number, running: number, queued: number) =>
     [`${total} 件中 ${done} 件を変換済み`, ...(running ? [`${running} 件変換中`] : []), ...(queued ? [`${queued} 件待機中`] : [])].join("、") + "。",
   emptyTitle: "まだ変換はありません",
-  emptyText: "上に URL を貼り付けるか、ファイルをドロップすると変換できます。",
-  emptyTextKept: (days: number) => `上に URL を貼り付けるか、ファイルをドロップすると変換できます。変換結果は ${days} 日間保存されます。`,
+  emptyText: "上で URL を貼り付けるかファイルをドロップします。",
+  emptyTextKept: (days) => `上で URL を貼り付けるかファイルをドロップします。${days} 日間保持されます。`,
   listBlockedTitle: "変換を表示できません",
   goneTitle: "この変換はもう存在しません",
   goneText: "削除されたか、古い履歴とともに削除されました。",
@@ -719,9 +696,9 @@ export const ja: Dict = {
       case "hidden_sheet":
         return "非表示のワークシートは出力に含まれません";
       case "first_conversion":
-        return "インストール後の初回変換：変換に使うライブラリを一度だけ読み込みます（macOS では数秒かかります）。以降の変換はすぐに始まります。";
+        return "インストール後の初回変換：ライブラリを一度だけ読み込みます（macOS では数秒）。";
       case "first_ocr":
-        return "インストール後の初回 OCR：OCR のライブラリとモデルを一度だけ読み込みます（macOS では最大 1 分かかります）。以降の OCR 変換はすぐに始まります。";
+        return "インストール後の初回 OCR：モデルを一度だけ読み込みます（macOS では最大 1 分）。";
       case "pdf_scanned":
         return count === 1 ? "この PDF はスキャンです。OCR をオンにして変換し直してください" : `${count} 件の PDF はスキャンです。OCR をオンにして変換し直してください`;
       case "ocr_blank":
@@ -827,20 +804,15 @@ export const ja: Dict = {
     )[reason] ?? "ここには原本を表示できません。",
 
   // settings pages
-  modelsHint: "LLM 強化に使う接続とモデル",
-  appearanceHint: "言語と、ライトまたはダークのテーマ",
-  accessHint: "このタブがサービスで使うトークン",
-  languageHint: "このブラウザーで使うワークベンチの言語です。",
-  themeHint: "システムに合わせるか、常にライトまたはダークを使用します。",
   accessHeld: "このタブはアクセストークンでサインインしています。",
   accessNone: "このタブにはアクセストークンがありません。",
   accessRefused: "サーバーがこのタブのトークンを拒否しました。",
   accessRefusedHint: "新しいトークンを貼り付けてください。",
-  accessExplain: "markitai serve が表示したリンクのトークンを貼り付けてください。",
+  accessExplain: "markitai serve が表示したリンクにあります。",
   signOutTab: "このタブからサインアウト",
   signOutTabHint: "このタブのトークンだけを消去します。サーバーと他のタブはそのままです。",
   regenerateTitle: "トークンを再生成",
-  regenerateText: "このサーバーの新しいアクセストークンを作成します。他のすべてのタブとデバイスはサインアウトされ、新しいトークンで再度サインインする必要があります。このタブはサインインしたままです。",
+  regenerateText: "ほかのタブとデバイスはサインアウトされ、このタブはサインインしたままです。",
   regenerateButton: "トークンを再生成…",
   regenerateConfirmTitle: "アクセストークンを再生成しますか？",
   regenerateConfirmText: "他のすべてのタブとデバイスはすぐにサインアウトされ、新しいトークンで再度サインインする必要があります。",
@@ -852,11 +824,11 @@ export const ja: Dict = {
   newTokenOnce: "表示はこの一度だけです。パスワードと同じように扱ってください。",
   qrLabel: "サインインリンクの QR コード",
   signInDevice: "別のデバイスでサインイン",
-  signInDeviceNetwork: "同じネットワークのスマートフォンでスキャンするか、このリンクを開きます。リンクにはトークンが含まれます。",
-  signInDeviceHere: "このサーバーにはこのアドレスで接続します。接続できるデバイスでスキャンするかリンクを開いてください。リンクにはトークンが含まれます。",
+  signInDeviceNetwork: "同じネットワークでスキャンするか、リンクを開きます。リンクにはトークンが含まれます。",
+  signInDeviceHere: "このアドレスに届く場所でスキャンするか、リンクを開きます。リンクにはトークンが含まれます。",
   copyLink: "リンクをコピー",
-  tokenUntilRestart: "サーバーが停止するまで有効です。次回の起動時に新しいトークンが作られます。",
-  tokenUntilRestartVariable: (variable: string) => `サーバーが停止するまで有効です。次回の起動時は再び ${variable} を使います。新しいトークンを使い続けるには ${variable} を変更してください。`,
+  tokenUntilRestart: "サーバーが停止するまで有効です。",
+  tokenUntilRestartVariable: (variable) => `サーバーが停止するまで有効です。その後は ${variable} に戻ります。`,
   done: "完了",
   tokenSaved: "トークンを保存しました。",
 
@@ -891,14 +863,14 @@ export const ja: Dict = {
   deletedSome: (done: number, failed: number, name: string, why: string) => `${done} 件を削除 · ${failed} 件は削除できませんでした${name ? `：${name}` : ""}${why ? ` · ${why}` : ""}`,
   originalPageInfo: "この表示について",
   navConfig: "設定ファイルの編集",
-  configHint: "設定ファイルをテキストで編集",
   adminOnlyTitle: "管理者トークンが必要です",
   adminOnlyText: "このページはサーバー管理者用です。あなたのトークンでは変換、自分の変換の管理、自分のモデルの追加ができます。",
   userAccessTitle: "アクセス",
-  userAccessText: "このタブはユーザートークンを使っています。変換と自分の変換の閲覧ができます。モデルなどの設定には管理者トークンが必要です。",
-  userAccessNamed: (label: string) => `このタブはユーザートークン「${label}」を使っています。変換と自分の変換の閲覧ができます。モデルなどの設定には管理者トークンが必要です。`,
+  userAccessText: "ユーザートークン：変換でき、自分の変換だけが見えます。",
+  userAccessNamed: (label) => `ユーザートークン「${label}」：変換でき、自分の変換だけが見えます。`,
   userTokensTitle: "ユーザートークン",
-  userTokensText: "ユーザートークンは変換ができ、自分の変換だけを閲覧・ダウンロード・削除でき、自分のモデルも追加できます。あなたのモデル、アクセストークン、設定ファイルの編集は開けません。取り消すまで有効です。",
+  userTokensText: "ユーザートークンは変換でき、自分の変換だけが見え、自分のモデルを追加できます。あなたの設定は開けません。取り消すまで有効です。",
+  userTokensInfo: "ユーザートークンについて",
   userTokenLabel: "名前",
   userTokenPlaceholder: "誰が何に使うか",
   userTokenCreate: "トークンを作成",
@@ -924,25 +896,24 @@ export const ja: Dict = {
   shareSharedHint: "このワークベンチのユーザーの変換も使えます。キーはサーバーに残ります",
   shareNowShared: (model: string) => `${model} をユーザーと共有しました`,
   shareNowPrivate: (model: string) => `${model} を非公開に戻しました`,
-  shareNote: "共有したモデルは、このワークベンチでのユーザーの変換にも使われ、それ以外には使われません。キーとアドレスはサーバーに残り、ユーザーにはどのモデルかだけが見えます。",
   sharedByAdmin: "管理者が共有",
-  sharedByAdminText: "あなたの変換でもこれらを使えます。キーはサーバーに残ります。",
+  sharedByAdminText: "キーはサーバーに残ります。",
   userModelsNone: "モデルはまだありません",
-  userModelsEmptyText: "自分の API キーを使うモデルを追加すると、変換で LLM の機能を使えます。使うのはあなたの変換だけで、キーは保存後に再表示されません。",
+  userModelsEmptyText: "自分のキーでモデルを追加します。使うのはあなたの変換だけです。",
   userModelsOwnNone: "自分のモデルはありません",
   userModelsOwn: (n: number) => `自分のモデル ${n} 個`,
-  userModelsRouting: "あなたの変換は、自分のモデルと共有モデルを 1 つのグループとして重みで選びます。失敗したときは別のモデルを試します。重み 0 でそのモデルをあなたの変換では無効にできます。",
-  userModelsHint: "自分のモデルと、管理者が共有するモデル",
+  userModelsRouting: "自分のモデルと共有モデルは一つのグループとして重みで選ばれ、失敗すると別のモデルを試します。重み 0 でオフになります。",
+  routingInfo: "モデルの選ばれ方",
   configAbsent: "未作成",
   configLoadFailed: "設定を読み込めませんでした",
   configUnreadableTitle: "ファイルが正しい JSON ではありません",
   configUnreadableText: (problem: string) => `テキストエディターで修正してから、このページを再読み込みしてください。${problem}`,
-  configReadOnly: "このセッションのモデル設定はコマンドラインから指定されているため、ここでは保存できません。テキストエディターで編集し、それらのオプションなしで再起動してください。",
-  configMasked: (n: number) => `${n} 個のシークレットを伏せて表示しています（sk…7890 など）。伏せた値をそのまま残すと元の値を保持します。新しい値か env: 参照を入力すると置き換えます。`,
-  configEndings: (name: string) => `このファイルの改行コードは ${name} です。保存しても変わりません。`,
-  configEndingsMixed: (counts: { crlf: number; lf: number; cr: number }, newline: string) =>
-    `このファイルには複数の改行コードが混在しています（${[counts.crlf && `CRLF ${counts.crlf} 行`, counts.lf && `LF ${counts.lf} 行`, counts.cr && `CR ${counts.cr} 行`].filter(Boolean).join("、")}）。保存時は各行の改行コードを保ちます。変更した行は元の改行コードのまま、新しい行には最も多い ${newline} を使います。`,
-  configBom: "このファイルはバイトオーダーマーク（BOM）で始まります。保存しても保持されます。",
+  configReadOnly: "読み取り専用：モデル設定はコマンドラインから来ています。テキストエディターでファイルを編集し、それらのオプションなしで再起動してください。",
+  configMasked: (n) => `${n} 件のシークレットは伏せ字です（例 sk…7890）。そのままにすると保持されます。`,
+  configEndings: (name) => `${name} の改行は保持されます。`,
+  configEndingsMixed: (counts, newline) =>
+    `改行が混在しています（${[counts.crlf && `CRLF ${counts.crlf} 行`, counts.lf && `LF ${counts.lf} 行`, counts.cr && `CR ${counts.cr} 行`].filter(Boolean).join("、")}）。行ごとに保持し、新しい行は ${newline} になります。`,
+  configBom: "バイトオーダーマーク（BOM）は保持されます。",
   configEditorLabel: "設定（JSON）",
   configValid: "正しい JSON です",
   configValidChanged: "正しい JSON です · 未保存の変更あり",
@@ -969,11 +940,13 @@ export const ja: Dict = {
   weightFieldLabel: (model: string) => `${model} のルーティングの重み`,
   weightKeysHint: "0 から 100 までの整数。Enter で保存、Esc で取り消し",
   weightInvalid: "0 から 100 までの整数を入力してください",
-  weightRangeHint: "0 から 100 までの整数で、選ばれるモデルの中での割合です。0 でオフになります（保存は残ります）。",
+  weightRangeHint: "0 から 100 の整数で、リクエストが選ぶモデルの中での割合です。0 でオフ（保存は残ります）。",
+  weightInfo: "ルーティングの重みについて",
   savedNotListed: "保存済み（プロバイダーの現在の一覧にはありません）",
   savedAsAlias: (id: string) => `${id} として保存済み`,
   weightSaved: (model: string, weight: number) => (weight === 0 ? `${model} を無効にしました：重み 0` : `${model}：重み ${weight}`),
-  sharedByAdminWeights: "あなたの変換でもこれらを使えます。キーはサーバーに残ります。ここでの重みはあなた専用で、あなたの変換が各モデルを選ぶ頻度だけを変えます。",
+  sharedByAdminWeights: "キーはサーバーに残ります。ここでの重みはあなたの変換だけに効きます。",
+  sharedInfo: "共有モデルについて",
   sharedWeightHint: "あなたの変換がこの共有モデルを選ぶ頻度。あなたにだけ適用されます。0 であなたには無効になります",
   sharedWeightReset: (weight: number) => `管理者の ${weight} に戻す`,
   sharedWeightResetAria: (shown: string, model: string) => `${shown}（${model}）`,
@@ -984,10 +957,9 @@ export const ja: Dict = {
       ? "プロバイダーがリクエストを制限しているか、クォータを使い切っています。しばらくして再試行し、失敗が続く場合は管理者に伝えてください。"
       : "テストはサーバー上で管理者の設定を使って実行されました。その設定は表示も変更もできません。どのモデルが失敗したかを管理者に伝えてください。",
   navConfigUser: "設定の編集",
-  userConfigHint: "自分のモデルと重みをテキストで編集",
-  userConfigSubtitle: "自分のモデル、その接続、共有モデルに付けた自分の重み。サーバー自体の設定は管理者のものです。",
-  userConfigNote: "\"models\" と \"providers\" はあなた自身のものです（設定ファイルの llm.model_list と llm.providers と同じ形）。\"shared\" は管理者が共有するモデルの一覧で、変えられるのは \"weight\" だけです（0 であなたには無効、管理者と同じ値なら再び管理者に従います）。",
-  userConfigMasked: (n: number) => `${n} 件のキーをマスクして表示しています（例：us…-key）。マスクされた値をそのままにすると保存済みのキーが残ります。新しいキーを入力すると置き換わります。`,
+  userConfigSubtitle: "自分のモデルと重み",
+  userConfigNote: "\"models\" と \"providers\" はあなたのものです。\"shared\" では \"weight\" だけを変更します。",
+  userConfigMasked: (n) => `${n} 件のキーは伏せ字です（例 us…-key）。そのままにすると保持されます。`,
   userConfigName: "自分のモデル",
   userConfigEditorLabel: "自分のモデル（JSON）",
   userConfigUnreadable: "保存したモデルを読み込めませんでした。ページを再読み込みしてください。続く場合は管理者に伝えてください。",

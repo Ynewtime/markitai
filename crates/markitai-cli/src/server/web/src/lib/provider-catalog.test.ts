@@ -128,7 +128,7 @@ test("a provider the server refuses an address names its login instead; Bedrock 
 test("the add form sends no address for a provider that takes none", () => {
   // The page passes an empty address for these, whatever the draft held.
   const source = readFileSync(new URL("../components/settings-models.tsx", import.meta.url), "utf8");
-  assert.match(source, /deploymentCredentials\(provider, draftKey, login === null \? draftBase : "", found\)/);
+  assert.match(source, /deploymentCredentials\(target, draftKey, login === null && !atDefault \? draftBase : "", found\)/);
   assert.match(source, /discoveryRequest\(from, draftKey, login === null \? draftBase : "", refresh\)/);
   assert.match(source, /baseOptional = [^;]*login === null;/);
 });

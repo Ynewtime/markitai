@@ -198,6 +198,6 @@ test("the new words exist in every language", () => {
     assert.ok(dict.weightSaved("m", 0) !== dict.weightSaved("m", 2));
     assert.ok(dict.userConfigMasked(2).includes("2"));
     assert.ok(dict.sharedTestFailHint("rate_limited") !== dict.sharedTestFailHint("key_rejected"));
-    for (const key of ["sharedByAdminWeights", "sharedOffForYou", "userConfigSubtitle", "userConfigNote", "userConfigSaved", "userConfigStale", "userConfigHint"] as const) assert.ok(dict[key].length > 4, key);
+    for (const key of ["sharedByAdminWeights", "sharedOffForYou", "userConfigSubtitle", "userConfigNote", "userConfigSaved", "userConfigStale"] as const) assert.ok(dict[key].length > 4, key);
   }
 });

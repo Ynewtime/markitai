@@ -2,13 +2,9 @@
 // English, the proper noun is always "LLM", and "·" separates facts.
 import type { Dict } from "./en.ts";
 
-/** What else a key refused by Moonshot's open platform or Kimi Code may be: the other region, or the sibling service. */
-const kimiKeyHint = (provider: string, region = false): string =>
-  provider === "moonshot"
-    ? `${region ? "Moonshot 的密钥只在签发它的区域有效：platform.kimi.com（中国）的密钥使用地址 https://api.moonshot.cn/v1，platform.kimi.ai 的密钥使用 https://api.moonshot.ai/v1。" : ""}Kimi Code 会员的密钥请在「Kimi Code」中添加。`
-    : provider === "kimi_code"
-      ? "Kimi 开放平台（platform.kimi.com 或 platform.kimi.ai）的密钥请在「Moonshot AI」中添加；Kimi Code 的密钥在 Kimi Code 控制台创建。"
-      : "";
+/** A refused Moonshot model's key may be from the other region: the address each region's keys use. */
+const kimiKeyHint = (provider: string): string =>
+  provider === "moonshot" ? "platform.kimi.com（中国）的密钥使用 https://api.moonshot.cn/v1，其他使用 https://api.moonshot.ai/v1。" : "";
 
 /** The endpoints that refused a key, as one phrase. */
 const keyRefusedBy = (hosts: string[]) => `${hosts.join(" 和 ")} 拒绝了这个密钥。`;
@@ -55,9 +51,9 @@ export const zh: Dict = {
   defaultsSave: "设为默认",
   defaultsReset: "恢复默认",
   defaultsUseServer: "改用服务器的默认设置",
-  defaultsScopeServer: "保存到服务器的 config.json：此处的新转换以及命令行都从这些选项开始。",
-  defaultsScopeUser: "只为你的令牌保存：你的新转换从这些选项开始。",
-  defaultsNoCloudflare: "Cloudflare 不能设为默认：每次都需要你确认。",
+  defaultsScopeServer: "保存到 config.json：命令行也会使用。",
+  defaultsScopeUser: "仅保存给你的令牌。",
+  defaultsNoCloudflare: "Cloudflare 不能设为默认：每次都需要确认。",
   defaultsStale: "默认设置在此期间已被修改，已重新载入。请再次保存以替换。",
   defaultsSavedServer: "已设为服务器的默认设置",
   defaultsSavedOwn: "已设为你的默认设置",
@@ -76,8 +72,8 @@ export const zh: Dict = {
   helpLlm: "用配置的本地或远程模型整理 Markdown，可能产生模型费用。",
   ocr: "OCR",
   helpOcr: "识别扫描内容时，不开 LLM 使用本机 OCR 引擎，开启后将页图发送给视觉模型，可能增加费用。",
-  advVlmOcr: "LLM + OCR 会将页图发给视觉模型（VLM-OCR），可能产生更多模型费用。",
-  advLocalOcr: "不开启 LLM 时，OCR 使用本机的识别引擎。",
+  advVlmOcr: "VLM-OCR：页面图片发送给视觉模型，产生模型费用。",
+  advLocalOcr: "使用服务器的本地 OCR 引擎。",
   advNeedsModel: "在 设置 → 模型 中添加模型后，即可使用 LLM 功能。",
   advNeedsModelAdmin: "目前没有可供你的令牌使用的模型。请让服务器管理员共享一个。",
   advImages: "图片",
@@ -153,10 +149,9 @@ export const zh: Dict = {
   helpCache: "跳过缓存读取并重新获取和处理，可能产生新的模型费用，结果仍可缓存。",
   advNoCompress: "不压缩图片",
   helpCompress: "保留未压缩的提取图片会增大输出体积，截图安全大小限制仍有效。",
-  advSourceExclusive: "纯净模式与截图内容源互斥，开启其中一项会关闭另一项。",
-  advScreenshotOnlyHint: "用支持视觉的模型读取页面截图，而非文本层。",
-  advCaptureOnly: "不开启 LLM 时：URL 保存截图（网页结果另附引用截图的 Markdown）；文件仍通过常规转换器处理。",
-
+  advSourceExclusive: "纯净模式和截图来源只能二选一。",
+  advScreenshotOnlyHint: "用视觉模型读取页面截图。",
+  advCaptureOnly: "不开 LLM 时，网址只截图；文件照常转换。",
   submitting: "正在上传并创建任务…",
   uploadProgress: (percent, sent, total) => `正在上传 ${percent}% · ${sent} / ${total}`,
   uploadUnknown: (sent) => `正在上传 · 已发送 ${sent}`,
@@ -250,9 +245,9 @@ export const zh: Dict = {
   previewRendering: "正在排版…",
   exportPdf: "导出 PDF",
   pdfCustomHeaderFooter: "自定义页眉页脚",
-  pdfPrintDialogHint: "启用后，请在打印对话框中关闭浏览器自带的页眉页脚。",
+  pdfPrintDialogHint: "打印时请关闭浏览器自带的页眉页脚。",
   exportPdfAsk: "导出 PDF…",
-  pdfFurnitureWhat: "在 PDF 开头加上 Markitai 和文档名称，在结尾注明来源。",
+  pdfFurnitureWhat: "顶部显示 Markitai 和文档名，末尾显示来源。",
   pdfPrint: "打印…",
   pdfPreparedBy: "由 Markitai 生成",
   pdfSource: "来源",
@@ -299,20 +294,20 @@ export const zh: Dict = {
   connectProviderTitle: (label) => `连接 ${label}`,
   modelCatalogLoading: "正在加载可用模型…",
   runtimeMissingTitle: (name) => `服务器上没有安装 ${name}`,
-  runtimeMissingText: "markitai serve 找不到它。请在运行服务器的机器上安装，然后重新加载列表。",
+  runtimeMissingText: "请在运行 markitai serve 的机器上安装，然后重新加载列表。",
   runtimeUnsupportedTitle: (name) => `${name} 的版本不受支持`,
-  runtimeUnsupportedText: (installed, required) => `${installed ? `当前安装的是 ${installed}。` : ""}需要 ${required}。请在运行服务器的机器上安装该版本，然后重新加载列表。`,
+  runtimeUnsupportedText: (installed, required) => `${installed ? `当前为 ${installed}，` : ""}需要 ${required}。请在服务器上安装，然后重新加载列表。`,
   notSignedInTitle: (name) => `${name} 尚未登录`,
-  notSignedInText: "请在运行服务器的机器上登录，然后重新加载列表。",
-  notSubscriptionText: "它已登录，但不是订阅登录（API 密钥或云平台登录不算）。请在运行服务器的机器上用订阅登录，然后重新加载列表。",
+  notSignedInText: "请在服务器上登录，然后重新加载列表。",
+  notSubscriptionText: "已登录，但不是订阅登录。请在服务器上用订阅登录，然后重新加载列表。",
   runtimeFailedTitle: (name) => `${name} 没有响应`,
-  runtimeFailedText: "它已安装，但启动或响应失败。请在服务器上检查（方法见设置指南），然后重新加载列表。",
+  runtimeFailedText: "已安装，但没有启动或响应。请按设置指南检查，然后重新加载列表。",
   runtimeStepInstall: "安装",
   runtimeStepSignIn: "登录",
   runtimeSetupGuide: "设置指南",
   copyCommand: "复制命令",
-  addBlockedByRuntime: (name) => `${name} 可用之前无法添加模型。请先按上方说明处理，然后重新加载列表。`,
-  addWarnByRuntime: (name) => `${name} 没有响应，手动添加的模型在它恢复之前可能无法使用。`,
+  addBlockedByRuntime: (name) => `${name} 可用后才能添加模型。`,
+  addWarnByRuntime: (name) => `${name} 没有响应：手动添加的模型可能暂时无法使用。`,
   noListUntilRuntime: "运行时可用之前无法列出模型。",
   modelsUnavailable: "无法加载模型",
   modelsPartial: "部分模型可能未显示",
@@ -330,20 +325,15 @@ export const zh: Dict = {
     if (status === "ready") return "可用";
     return status.replaceAll("_", " ");
   },
-  providerDetailHint: (kind, provider, source, { local = false, manualOnly = false, needsBase = false, subscription = false, cloud = false } = {}) => {
-    if (subscription) return "使用服务器上官方应用的登录状态，模型会自动加载。";
-    if (cloud) return "使用服务器找到的云平台凭据，下方的 key 可不填。请在下方添加要使用的模型 ID。";
-    if (manualOnly) return "这个服务商不提供模型列表，请在下方添加要使用的模型 ID。";
-    if (kind === "configured") return "已从保存的连接自动加载可用模型。";
-    if (kind === "environment") return `使用 ${source} 中的凭据。`;
-    if (needsBase) return "填写服务器地址后加载它提供的模型。";
-    if (provider === "ollama") return "使用本机默认 Ollama 地址。";
-    if (local) return "使用本机默认地址；只有服务器要求时才需要 key。";
-    return "填写连接信息后加载可用模型。";
+  providerDetailHint: (kind, _provider, source, { subscription = false, cloud = false } = {}) => {
+    if (subscription) return "使用服务器上官方应用的登录。";
+    if (cloud) return "使用服务器的云平台凭据，key 可不填。";
+    if (kind === "environment") return `使用 ${source}`;
+    return "";
   },
   optionalKeyVariable: (variable) => `${variable}（可选）`,
-  kimiCodeTerms: ["Kimi Code 会员仅限交互使用；批量转换请用 ", "Kimi 开放平台", "的密钥（Moonshot AI）。"],
-  keyVariableHint: (variable) => `也可以在运行 markitai serve 的环境中设置 ${variable} 并重启；之后该服务商会出现在“已保存”中，无需粘贴密钥。`,
+  keyVariableHint: (variables) => `也可在服务器上设置 ${variables.join(" 或 ")} 并重启。`,
+  keyVariableInfo: "服务器环境变量中的密钥",
   ownEndpointNote: (label, credential) => `使用这台服务器的 ${credential}，只连接 ${label} 自己的接口。`,
   googleLogin: "Google 登录",
   manualModelsOnly: "这个服务商不提供模型列表，请在下方添加模型 ID",
@@ -400,7 +390,7 @@ export const zh: Dict = {
   deleteModelTitle: (model) => `删除 ${model}？`,
   deleteModelDescription: "服务商鉴权信息会保留，之后仍可添加模型。",
   setStatusNone: "未配置模型",
-  modelsEmptyText: "模型用于整理 Markdown、描述图片和识别扫描页。不配置模型，Markitai 也能转换文件。",
+  modelsEmptyText: "用于 LLM 增强和图片描述；不配置也能转换。",
   setSourceLbl: "来源",
   openConfigFile: "在本地编辑器中打开配置文件",
   setApiKey: "API key",
@@ -423,9 +413,7 @@ export const zh: Dict = {
   editAddress: "修改",
   resetAddress: "恢复默认",
   addressKeyLabel: "此地址使用的 API key",
-  addressKeyNote: "已存的 key 不会发送到新地址。",
-  addressNoKeyNote: "key 留空则不带 key 连接。",
-  maskedAddressNote: "显示为 … 的部分已隐藏。保持地址不变即可保留这些部分，或输入完整的新地址。",
+  maskedAddressNote: "… 是已隐藏的部分：保持不变即可保留，或输入完整地址。",
   maskedAddress: "请输入完整地址：隐藏的部分（…）无法保存。",
   keyRequired: "请输入 API key。",
   endpointKeyRequired: "请为新地址输入 API key，已存的 key 不会发送到新地址。",
@@ -453,35 +441,39 @@ export const zh: Dict = {
   testFailHint: (reason, variable, model, detailShown = true) =>
     reason === "no_key"
       ? variable
-        ? `服务器上未设置 ${variable}。请在运行 markitai serve 的环境中设置它并重启服务，或为该模型的连接添加密钥。`
-        : "该模型没有可用的 API 密钥。请为它的连接添加密钥，或在运行 markitai serve 的环境中设置服务商的密钥变量。"
+        ? `服务器上未设置 ${variable}。设置后重启，或为连接添加密钥。`
+        : "该模型没有 API 密钥。请为它的连接添加密钥。"
       : (({
-          key_rejected: `服务商拒绝了这个密钥。请确认密钥正确、仍然有效且有权使用该模型；没有单独密钥的模型会使用服务器上设置的密钥变量。${kimiKeyHint(model.split("/")[0] ?? "", true)}`,
+          key_rejected: `服务商拒绝了这个密钥。请确认密钥正确且有权使用该模型。${kimiKeyHint(model.split("/")[0] ?? "")}`,
           model_not_found: `服务商没有向这个密钥提供 ${model}。请检查模型 ID。`,
-          rate_limited: "服务商正在限制请求，或账户的额度、余额已用完。请稍后重试，或检查账户。",
+          rate_limited: "服务商正在限制请求，或账户额度已用完。请稍后重试。",
           network: "服务器无法连接到服务商。请检查接口地址以及服务器的网络或代理。",
-          timeout: "服务商没有及时响应。请重试；如果反复出现，请查看服务商的状态。",
+          timeout: "服务商没有及时响应。请重试。",
         }) as Record<string, string>)[reason] ?? (detailShown ? "服务商返回了错误，原文见下方。" : "服务商返回了错误。"),
   testFailFor: (model) => `${model} 的测试`,
   testFailDetail: "服务商原文",
   connectionDetail: "连接错误",
   modelRegionBlocked: (model) => `服务商不在服务器所在的区域提供 ${model}。请换一个模型，或从受支持的区域访问服务商。`,
-  discoveryFailHint: (reason, variable, hosts = [], provider = "") =>
+  discoveryFailHint: (reason, variable, hosts = [], _provider = "") =>
     reason === "no_key"
       ? variable
-        ? `服务器上未设置 ${variable}，因此没有请求模型列表。请在运行 markitai serve 的环境中设置它并重启服务器，或为这个连接添加密钥。`
-        : "这个连接没有密钥，因此没有请求模型列表。请为它添加密钥。"
+        ? `服务器上未设置 ${variable}。设置后重启，或在这里添加密钥。`
+        : "这个连接没有密钥，请添加。"
       : reason === "key_rejected"
-        ? `${hosts.length ? keyRefusedBy(hosts) : "服务商拒绝了这个密钥。"}请确认密钥正确且仍然有效。${kimiKeyHint(provider)}`
+        ? `${hosts.length ? keyRefusedBy(hosts) : "服务商拒绝了这个密钥。"}请确认密钥正确且仍然有效。`
       : (({
           rate_limited: "服务商正在限流，或账户额度已用完。请稍后再试。",
           network: "服务器无法连接到服务商。请检查地址以及服务器的网络或代理。",
           timeout: "服务商没有及时响应。请重试。",
-        }) as Record<string, string>)[reason] ?? "服务商返回了错误。你仍可以在下方手动添加模型 ID。",
+        }) as Record<string, string>)[reason] ?? "服务商返回了错误。仍可在下方手动添加模型 ID。",
   regionMovedTitle: "已按密钥填入地址",
   regionElsewhereTitle: "这个密钥属于另一个地址",
-  regionMoved: (base) => `这个密钥属于 ${base}，已填入 API 地址，添加的模型会使用该地址。`,
-  regionElsewhere: (base) => `这个密钥在 ${base} 有效，而不是这个连接的地址。添加模型前，请把地址改为 ${base}。`,
+  regionElsewhere: (base) => `这个密钥在 ${base} 有效。添加模型前，请把地址改为它。`,
+  kimiPlatform: "Kimi 开放平台",
+  kimiBaseAuto: "按密钥自动识别",
+  kimiFound: (service) => (service === "kimi_code" ? "Kimi Code 会员密钥" : "Kimi 开放平台密钥"),
+  kimiMemberTerms: "按 Kimi 条款仅限交互使用；批量转换请用开放平台密钥。",
+  kimiRefused: "Kimi 开放平台和 Kimi Code 都不接受这个密钥。请确认它正确且仍然有效。",
   save: "保存",
   saving: "保存中…",
   saved: "已保存",
@@ -504,17 +496,17 @@ export const zh: Dict = {
   cloudflareLocalTitle: "按当前选项继续转换？",
   cloudflareContinue: "继续转换",
   cloudflareConfirm: "发送并转换",
-  cloudflareScope: "选定的网址及支持的文件可能通过此服务器的账户发送给 Cloudflare；每次发送前都会确认范围。",
-  cloudflareCharges: "Cloudflare 可能收取费用，未计入这里的 LLM 小计。",
-  cloudflareNativeHint: "所选文件保留原生读取；选择 Cloudflare 不会关闭 OCR 或截图。",
+  cloudflareScope: "确认后，网址和支持的文件会用这台服务器的账户发送给 Cloudflare。",
+  cloudflareCharges: "Cloudflare 可能收取费用，不计入这里显示的 LLM 费用。",
+  cloudflareNativeHint: "这些文件保留原生读取；OCR 和截图照常使用。",
   cloudflareScopeCounts: (urls: number, candidates: number, files: number, native: number) => [
     urls > 0 ? `${urls} 个网址` : "",
     candidates > 0 ? `最多发送 ${candidates} 个选定文件${files > 0 ? `（${files} 个名称符合支持格式）` : ""}` : "",
     native > 0 ? `${native} 个文件保留原生读取` : "",
   ].filter(Boolean).join(" · ") || "当前选项下，这些来源不使用 Cloudflare。",
-  cloudflareScopeHint: "本次授权涵盖所选文件中实际受支持的内容；名称仅用于估计，读取时可能识别出其他选定文件。OCR 和截图使用原生读取。",
-  cloudflareRetry: "这会重新发送原始来源，可能产生额外的 Cloudflare 费用。",
-  cloudflareOnce: "本次确认仅适用于这里确认的范围；取消不会发送。",
+  cloudflareScopeHint: "只发送所选文件中受支持的部分；读取器会检查每个文件的实际格式。OCR 和截图仍用原生读取。",
+  cloudflareRetry: "这会再次发送原件，可能再次收费。",
+  cloudflareOnce: "仅对这次请求有效。取消则不发送任何内容。",
   cloudflareUnavailable: "本次请求无法使用 Cloudflare。",
   cloudflareReason: (reason: string): string => ({
     incompatible_strategy: "Cloudflare 文件转换不能与 Jina 或 Defuddle 网址策略搭配。请更改其中一个选项后再提交。",
@@ -524,7 +516,7 @@ export const zh: Dict = {
     client_not_trusted: "此连接未获准请求 Cloudflare 处理。",
     unavailable: "暂时无法获取 Cloudflare 能力，请刷新页面后重试。",
   } as Record<string, string>)[reason] ?? "Cloudflare 暂不可用。",
-  cloudflareSetup: "请在服务器配置 fetch.cloudflare.account_id 和 fetch.cloudflare.api_token，并由管理员允许远程处理。本地配置检查不代表已验证 Cloudflare API 权限。",
+  cloudflareSetup: "请在服务器上设置 fetch.cloudflare.account_id 和 fetch.cloudflare.api_token，并由管理员允许远程处理。",
   // shell and navigation
   skipToContent: "跳到正文",
   sidebarAria: "侧边栏",
@@ -551,8 +543,8 @@ export const zh: Dict = {
   summaryRunning: (done: number, total: number, running: number, queued: number) =>
     [`已转换 ${done}/${total}`, ...(running ? [`${running} 个正在转换`] : []), ...(queued ? [`${queued} 个等待中`] : [])].join("，") + "。",
   emptyTitle: "还没有转换",
-  emptyText: "在上方粘贴网址或拖入文件即可转换。",
-  emptyTextKept: (days: number) => `在上方粘贴网址或拖入文件即可转换。转换结果保留 ${days} 天。`,
+  emptyText: "在上方粘贴网址或拖入文件。",
+  emptyTextKept: (days) => `在上方粘贴网址或拖入文件。保留 ${days} 天。`,
   listBlockedTitle: "无法显示转换",
   goneTitle: "此转换已不存在",
   goneText: "它已被删除，或随旧记录一起被清理。",
@@ -683,9 +675,9 @@ export const zh: Dict = {
       case "hidden_sheet":
         return "隐藏的工作表不会出现在输出中";
       case "first_conversion":
-        return "安装后首次转换：转换所需的库只加载一次（在 macOS 上需要数秒），之后的转换会立即开始。";
+        return "安装后首次转换：所需的库只加载一次（macOS 上需数秒）。";
       case "first_ocr":
-        return "安装后首次使用 OCR：OCR 的库和模型只加载一次（在 macOS 上最多一分钟），之后的 OCR 转换会立即开始。";
+        return "安装后首次 OCR：模型只加载一次（macOS 上最多一分钟）。";
       case "pdf_scanned":
         return count === 1 ? "这个 PDF 是扫描件：请开启 OCR 后重新转换" : `${count} 个 PDF 是扫描件：请开启 OCR 后重新转换`;
       case "ocr_blank":
@@ -790,20 +782,15 @@ export const zh: Dict = {
     )[reason] ?? "无法在此显示原件。",
 
   // settings pages
-  modelsHint: "用于 LLM 增强的连接和模型",
-  appearanceHint: "语言以及浅色或深色主题",
-  accessHint: "此标签页访问服务所用的令牌",
-  languageHint: "此浏览器中工作台使用的语言。",
-  themeHint: "跟随系统，或始终使用浅色或深色。",
   accessHeld: "这个标签页已用访问令牌登录。",
   accessNone: "此标签页没有访问令牌。",
   accessRefused: "服务器拒绝了此标签页的令牌。",
   accessRefusedHint: "请粘贴新的令牌。",
-  accessExplain: "粘贴 markitai serve 打印的链接中的令牌。",
+  accessExplain: "来自 markitai serve 启动时打印的链接。",
   signOutTab: "退出此标签页",
   signOutTabHint: "只删除这个标签页中的令牌；服务器和其他标签页不受影响。",
   regenerateTitle: "重新生成令牌",
-  regenerateText: "为这个服务器生成新的访问令牌。其他所有标签页和设备都会退出登录，需要用新令牌重新登录；这个标签页保持登录。",
+  regenerateText: "其他标签页和设备都会退出登录；这个标签页保持登录。",
   regenerateButton: "重新生成令牌…",
   regenerateConfirmTitle: "重新生成访问令牌？",
   regenerateConfirmText: "其他所有标签页和设备会立即退出登录，需要用新令牌重新登录。",
@@ -815,11 +802,11 @@ export const zh: Dict = {
   newTokenOnce: "只显示这一次。请像密码一样保管。",
   qrLabel: "登录链接的二维码",
   signInDevice: "在其他设备上登录",
-  signInDeviceNetwork: "用同一网络中的手机扫描，或打开这个链接。链接中包含令牌。",
-  signInDeviceHere: "这个服务器通过这个地址访问。请在能访问它的设备上扫描或打开链接；链接中包含令牌。",
+  signInDeviceNetwork: "用同一网络中的手机扫码，或打开链接。链接包含令牌。",
+  signInDeviceHere: "在能访问这个地址的设备上扫码或打开链接。链接包含令牌。",
   copyLink: "复制链接",
-  tokenUntilRestart: "在服务器停止前有效；下次启动会生成新令牌。",
-  tokenUntilRestartVariable: (variable) => `在服务器停止前有效；下次启动会再次使用 ${variable}。要长期使用新令牌，请修改 ${variable}。`,
+  tokenUntilRestart: "服务器停止前有效。",
+  tokenUntilRestartVariable: (variable) => `服务器停止前有效；之后重新使用 ${variable}。`,
   done: "完成",
   tokenSaved: "令牌已保存。",
 
@@ -852,14 +839,14 @@ export const zh: Dict = {
   deletedSome: (done, failed, name, why) => `已删除 ${done} 个 · ${failed} 个未删除${name ? `：${name}` : ""}${why ? ` · ${why}` : ""}`,
   originalPageInfo: "关于此视图",
   navConfig: "编辑配置",
-  configHint: "以文本方式编辑配置文件",
   adminOnlyTitle: "需要管理员令牌",
   adminOnlyText: "此页面仅供服务器管理员使用。你的令牌可以转换、管理你自己的转换任务，并拥有自己的模型。",
   userAccessTitle: "访问",
-  userAccessText: "此标签页使用用户令牌：可以转换并查看自己的转换任务。模型及其他设置需要管理员令牌。",
-  userAccessNamed: (label) => `此标签页使用用户令牌“${label}”：可以转换并查看自己的转换任务。模型及其他设置需要管理员令牌。`,
+  userAccessText: "用户令牌：可以转换，只能看到自己的转换。",
+  userAccessNamed: (label) => `用户令牌“${label}”：可以转换，只能看到自己的转换。`,
   userTokensTitle: "用户令牌",
-  userTokensText: "用户令牌可以转换，只能查看、下载和删除自己的转换任务，也可以添加自己的模型；不能打开你的模型、访问令牌或编辑配置。令牌在撤销前一直有效。",
+  userTokensText: "用户令牌可以转换，只能看到自己的转换，也可以添加自己的模型；不能打开你的设置。撤销前一直有效。",
+  userTokensInfo: "关于用户令牌",
   userTokenLabel: "名称",
   userTokenPlaceholder: "给谁或做什么用",
   userTokenCreate: "创建令牌",
@@ -885,25 +872,24 @@ export const zh: Dict = {
   shareSharedHint: "此工作台中用户的转换也可使用；密钥留在服务器上",
   shareNowShared: (model: string) => `${model} 已共享给用户`,
   shareNowPrivate: (model: string) => `${model} 已改回私有`,
-  shareNote: "共享的模型也会用于用户在此工作台中的转换。其密钥和地址留在服务器上，用户只能看到是哪个模型。",
   sharedByAdmin: "由管理员共享",
-  sharedByAdminText: "你的转换也可以使用这些模型。它们的密钥留在服务器上。",
+  sharedByAdminText: "它们的密钥保留在服务器上。",
   userModelsNone: "还没有模型",
-  userModelsEmptyText: "添加使用你自己 API 密钥的模型，即可在转换中使用 LLM 功能。只有你的转换会使用它，密钥保存后不会再显示。",
+  userModelsEmptyText: "用你自己的密钥添加模型，只有你的转换会使用它。",
   userModelsOwnNone: "没有你自己的模型",
   userModelsOwn: (n: number) => `你自己的模型 ${n} 个`,
-  userModelsRouting: "你的转换把你的模型和共享模型作为一组，按权重选择；某个失败时会改用另一个。权重为 0 即对你的转换停用该模型。",
-  userModelsHint: "你自己的模型，以及管理员共享的模型",
+  userModelsRouting: "你的模型和共享模型组成一组，按权重选择；一个失败时会换另一个。权重 0 表示关闭。",
+  routingInfo: "如何选择模型",
   configAbsent: "尚未创建",
   configLoadFailed: "无法读取配置",
   configUnreadableTitle: "文件不是有效的 JSON",
   configUnreadableText: (problem) => `请在文本编辑器中修正后重新加载此页面。${problem}`,
-  configReadOnly: "本次会话的模型设置来自命令行参数，因此无法在此保存。请在文本编辑器中修改，并在不带这些参数时重启。",
-  configMasked: (n) => `${n} 个密钥以掩码显示（如 sk…7890）。保持掩码值原样即保留原密钥；输入新值或 env: 引用即可替换。`,
-  configEndings: (name) => `此文件使用 ${name} 换行符，保存时保留。`,
+  configReadOnly: "只读：模型设置来自命令行。请用文本编辑器修改文件，然后不带这些选项重启。",
+  configMasked: (n) => `${n} 个密钥已遮盖（如 sk…7890）：保持不变即可保留。`,
+  configEndings: (name) => `保留 ${name} 换行符。`,
   configEndingsMixed: (counts, newline) =>
-    `此文件混用了多种换行符（${[counts.crlf && `${counts.crlf} 行 CRLF`, counts.lf && `${counts.lf} 行 LF`, counts.cr && `${counts.cr} 行 CR`].filter(Boolean).join("、")}）。保存时每行保留原有的换行符；修改过的行沿用原来的，新增的行使用最常见的 ${newline}。`,
-  configBom: "此文件以字节顺序标记（BOM）开头，保存时保留。",
+    `换行符混用（${[counts.crlf && `${counts.crlf} 行 CRLF`, counts.lf && `${counts.lf} 行 LF`, counts.cr && `${counts.cr} 行 CR`].filter(Boolean).join("，")}），逐行保留；新行使用 ${newline}。`,
+  configBom: "保留字节顺序标记（BOM）。",
   configEditorLabel: "配置（JSON）",
   configValid: "JSON 有效",
   configValidChanged: "JSON 有效 · 有未保存的修改",
@@ -930,11 +916,13 @@ export const zh: Dict = {
   weightFieldLabel: (model) => `${model} 的路由权重`,
   weightKeysHint: "0 到 100 的整数。Enter 保存，Esc 取消",
   weightInvalid: "请输入 0 到 100 的整数",
-  weightRangeHint: "0 到 100 的整数，表示在可选模型中所占的份额；0 表示停用（模型仍保留）。",
+  weightRangeHint: "0 到 100 的整数，决定它在可选模型中的占比；0 表示关闭（仍会保存）。",
+  weightInfo: "关于路由权重",
   savedNotListed: "已保存，但不在服务商当前的列表中",
   savedAsAlias: (id) => `已保存为 ${id}`,
   weightSaved: (model, weight) => (weight === 0 ? `已停用 ${model}：权重 0` : `${model}：权重 ${weight}`),
-  sharedByAdminWeights: "你的转换也可以使用这些模型。它们的密钥留在服务器上。这里的权重只属于你：只影响你的转换选中各模型的频率。",
+  sharedByAdminWeights: "它们的密钥保留在服务器上。这里的权重只影响你自己的转换。",
+  sharedInfo: "关于共享模型",
   sharedWeightHint: "你的转换选中这个共享模型的频率，只对你生效。设为 0 即对你停用",
   sharedWeightReset: (weight) => `改用管理员的 ${weight}`,
   sharedWeightResetAria: (shown, model) => `${shown}（${model}）`,
@@ -945,10 +933,9 @@ export const zh: Dict = {
       ? "服务商正在限制请求或额度已用完。请稍后再试；如果一直失败，请告诉管理员。"
       : "测试在服务器上用管理员的设置运行，你无法查看或修改这些设置。请告诉管理员是哪个模型失败了。",
   navConfigUser: "编辑配置",
-  userConfigHint: "以文本方式编辑你的模型和权重",
-  userConfigSubtitle: "你的模型、它们的连接，以及你给共享模型设的权重。服务器本身的配置属于管理员。",
-  userConfigNote: "\"models\" 和 \"providers\" 是你自己的（与配置文件的 llm.model_list、llm.providers 条目相同）。\"shared\" 列出管理员共享的模型：只改 \"weight\"（0 表示对你停用；与管理员相同的值会重新跟随管理员）。",
-  userConfigMasked: (n) => `${n} 个密钥以掩码显示（如 us…-key）。保留掩码值不动即可保留原密钥；输入新密钥即可替换。`,
+  userConfigSubtitle: "你的模型和权重",
+  userConfigNote: "\"models\" 和 \"providers\" 属于你；\"shared\" 中只改 \"weight\"。",
+  userConfigMasked: (n) => `${n} 个密钥已遮盖（如 us…-key）：保持不变即可保留。`,
   userConfigName: "你的模型",
   userConfigEditorLabel: "你的模型（JSON）",
   userConfigUnreadable: "无法读取你保存的模型。请重新加载页面；如果一直这样，请告诉管理员。",

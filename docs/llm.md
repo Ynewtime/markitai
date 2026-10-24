@@ -291,7 +291,9 @@ or `MOONSHOT_API_BASE=https://api.moonshot.cn/v1` beside `MOONSHOT_API_KEY`. A
 Kimi Code key is `{"model": "kimi_code/k3"}` with `KIMI_API_KEY` set (model IDs
 such as `k3.1-pro`, `k3`, `kimi-for-coding`; the workbench lists the ones the
 key may use). A refused key's error names the other region's address and the
-other service. The workbench's model list tries the other region itself.
+other service. The workbench offers both services as one Kimi card: it tries
+the open platform's regions, then Kimi Code's (Kimi Code first for a key in its
+documented `sk-kimi-` form), and saves the models under the one that lists them.
 
 Kimi Code is reached at its Anthropic-compatible Messages endpoint
 (`…/coding/v1/messages`, `x-api-key`), the one Kimi documents for Claude Code;

@@ -7,16 +7,13 @@
 import { useState } from "preact/hooks";
 import type { ProviderCard } from "../api/types.ts";
 import type { Dict } from "../i18n/index.ts";
-import { arrangeProviders, atOwnEndpoint, iconKey, savedAuth, type ProviderFilter } from "../lib/provider-catalog.ts";
+import { mergeKimi } from "../lib/kimi.ts";
+import { arrangeProviders, atOwnEndpoint, iconKey, providerLabel, savedAuth, type ProviderFilter } from "../lib/provider-catalog.ts";
 import { BrandIcon, useBrandMarks } from "./brand-icon.tsx";
 import { ConfirmPopover } from "./confirm-popover.tsx";
 import { Icon } from "./icons.tsx";
 
-export function providerLabel(t: Dict, card: { provider: string; label: string }): string {
-  if (card.provider === "custom") return t.providerCustom;
-  if (!card.label || card.label === "Unknown provider") return card.provider ? `${t.providerUnknown} (${card.provider})` : t.providerUnknown;
-  return card.label;
-}
+export { providerLabel };
 
 /** A saved provider whose key and address this page can change. */
 export const manageable = (card: ProviderCard): boolean => card.kind === "configured" && card.provider_id !== undefined;
@@ -38,7 +35,7 @@ export function ProviderPicker({
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<ProviderFilter>("all");
   const label = (card: ProviderCard) => providerLabel(t, card);
-  const view = arrangeProviders(providers, { query, filter, label });
+  const view = arrangeProviders(mergeKimi(providers), { query, filter, label });
   const shown = view.filters.includes(filter) ? filter : "all";
   const searching = query.trim() !== "";
   const found = view.saved.length + view.common.length + view.all.length;

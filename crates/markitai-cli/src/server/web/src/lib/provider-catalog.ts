@@ -7,6 +7,17 @@
 // Common is inferred from the eight names and everything else is listed
 // under All providers without a filter.
 import type { ProviderCard } from "../api/types.ts";
+import type { Dict } from "../i18n/index.ts";
+import { isKimiCard } from "./kimi.ts";
+
+/** A card's name in the interface. */
+export function providerLabel(t: Dict, card: { id?: string; provider: string; label: string }): string {
+  if (card.provider === "custom") return t.providerCustom;
+  // Moonshot's open platform is Kimi's now (platform.kimi.com / platform.kimi.ai), beside Kimi Code.
+  if (card.provider === "moonshot" && !isKimiCard(card)) return t.kimiPlatform;
+  if (!card.label || card.label === "Unknown provider") return card.provider ? `${t.providerUnknown} (${card.provider})` : t.providerUnknown;
+  return card.label;
+}
 
 /** The common providers, in the order the picker shows them. */
 export const COMMON_PROVIDERS = ["openai", "anthropic", "gemini", "deepseek", "openrouter", "azure", "ollama", "mistral"];
@@ -158,14 +169,18 @@ export function arrangeProviders(
   const savedRow = new Map<string, ProviderCard>();
   for (const card of saved) if (card.provider !== "custom" && !savedRow.has(card.provider)) savedRow.set(card.provider, card);
   const grouped = cards.some((card) => typeof card.group === "string");
+  // The Kimi card stands for both Kimi services (see kimi.ts): it opens a saved
+  // connection only when both have one, else it asks for another key.
+  const kimi = cards.some(isKimiCard);
+  const kimiRow = savedRow.has("moonshot") && savedRow.has("kimi_code") ? savedRow.get("moonshot") : undefined;
   // One choice per provider: its built-in card, else the first saved or
   // environment connection (whose provider the server no longer offers).
   const choices = new Map<string, ProviderChoice>();
   for (const card of [...cards.filter(builtIn), ...saved]) {
-    if (choices.has(card.provider)) continue;
+    if (choices.has(card.provider) || (kimi && card.provider === "kimi_code")) continue;
     if (!builtIn(card) && !(grouped ? card.group : COMMON_PROVIDERS.includes(card.provider))) continue;
     const common = grouped ? card.group === "common" : COMMON_PROVIDERS.includes(card.provider);
-    const row = savedRow.get(card.provider);
+    const row = isKimiCard(card) ? kimiRow : savedRow.get(card.provider);
     choices.set(card.provider, {
       provider: card.provider,
       label: options.label(card),

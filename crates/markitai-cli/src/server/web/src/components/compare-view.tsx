@@ -24,7 +24,7 @@ import { download } from "../lib/download.ts";
 import { fmtBytes, readable } from "../lib/format.ts";
 import { loadLibraries, shownAs, shownFor } from "../lib/markdown.ts";
 import type { SessionItem } from "../lib/session.ts";
-import { HelpTooltip } from "./help-tooltip.tsx";
+import { InfoTip } from "./help-tooltip.tsx";
 import { Icon } from "./icons.tsx";
 import { Skeleton } from "./skeleton.tsx";
 import { MarkdownView, type Tab } from "./markdown-view.tsx";
@@ -222,7 +222,7 @@ function OriginalHeader({
   return (
     <div class={children ? "orig-head has-tools" : "orig-head"}>
       <span class="orig-label">{t.original}</span>
-      {framed && <InfoTip label={t.originalPageInfo} text={shot ? t.originalShotNote : t.originalPageNote} />}
+      {framed && <InfoTip label={t.originalPageInfo} text={shot ? t.originalShotNote : t.originalPageNote} class="icon-btn info-tip" size={15} />}
       {views && (
         <span class="seg orig-views" role="group" aria-label={t.originalViews}>
           {(["shot", "page"] as const).map((value) => (
@@ -421,19 +421,6 @@ function PageFrame({
         />
       )}
     </div>
-  );
-}
-
-/** A small (i) in a header whose bubble says what the view shows. */
-function InfoTip({ label, text }: { label: string; text: string }) {
-  return (
-    <HelpTooltip text={text}>
-      {(describedBy) => (
-        <button type="button" class="icon-btn info-tip" aria-label={label} aria-describedby={describedBy}>
-          <Icon name="Info" size={15} />
-        </button>
-      )}
-    </HelpTooltip>
   );
 }
 
