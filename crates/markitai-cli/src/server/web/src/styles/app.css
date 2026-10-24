@@ -5041,13 +5041,19 @@ input[type="password"],
   content-visibility: auto;
   contain-intrinsic-size: auto 600px;
 }
-/* A chunk clips what it paints to its own box: the one holding Compare's
-   outline (2 px, 4 px out) is on screen anyway, and paints it whole. Only
-   paint containment goes: the chunk keeps its layout containment, so margins
-   never start collapsing across its edge and nothing moves on hover. */
-.doc-chunk:has(.is-linked) {
-  content-visibility: visible;
-  contain: layout style;
+/* A chunk clips what it paints to its own box, so the box reaches 8 px past
+   its blocks on every side: Compare's outline (2 px, 4 px out) paints inside
+   it, and hovering never changes a chunk's containment (lifting it while a
+   block was outlined left the old outline's edges on screen when the outline
+   moved on). The negative margins put the blocks where they were: next
+   chunks overlap by both paddings (-16 px; sibling margins collapse to the
+   larger), and the first and last give back their 8 px. */
+.doc-chunk {
+  margin: -8px;
+  padding: 8px;
+}
+.doc-chunk + .doc-chunk {
+  margin-top: -16px;
 }
 
 /* Contents: the document's headings beside it; the entry being read is marked. */
