@@ -107,6 +107,29 @@ export function itemOrder(list: Submission[]): SessionItem[] {
   return list.flatMap((submission) => submission.shown);
 }
 
+/** Converting or waiting: it cannot be deleted yet. */
+export const deletable = (item: SessionItem): boolean => item.status !== "running" && item.status !== "queued";
+
+/** What can be checked in the list as filtered: every settled item shown, folded groups' items included. */
+export function checkable(list: Submission[]): SessionItem[] {
+  return list.flatMap((submission) => submission.shown).filter(deletable);
+}
+
+/** A box over these items: "locked" when none of them can be checked, "mixed" while only some are. */
+export type CheckState = "on" | "off" | "mixed" | "locked";
+export function checkState(items: SessionItem[], checked: ReadonlySet<string>): CheckState {
+  const open = items.filter(deletable);
+  if (!open.length) return "locked";
+  const on = open.filter((item) => checked.has(item.key)).length;
+  return on === 0 ? "off" : on === open.length ? "on" : "mixed";
+}
+
+/** The select-all box's click: everything listed when not all of it is checked, else nothing (the bar's Select all N and Clear). */
+export function toggleAll(list: Submission[], checked: ReadonlySet<string>): Set<string> {
+  const listed = checkable(list);
+  return checkState(listed, checked) === "on" ? new Set() : new Set(listed.map((item) => item.key));
+}
+
 export interface Counts {
   total: number;
   done: number;

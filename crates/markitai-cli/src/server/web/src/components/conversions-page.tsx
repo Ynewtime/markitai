@@ -6,13 +6,13 @@
 // anywhere still converts; typing URLs is the Convert page's job.
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { Dict, Locale } from "../i18n/index.ts";
-import { counts, FILTERS, isJobKey, itemOrder, submissionLabel, submissions, type ConvJob, type Filter, type LabelWords } from "../lib/conversions.ts";
+import { checkable, checkState, counts, deletable, FILTERS, isJobKey, itemOrder, submissionLabel, submissions, toggleAll, type ConvJob, type Filter, type LabelWords } from "../lib/conversions.ts";
 import { groupNotices } from "../lib/notices.ts";
 import { listEntry, SUMMARY_ENTRY, type PaneMode } from "../lib/route.ts";
 import { waitingJobs, type SessionItem } from "../lib/session.ts";
 import { ActionMenu } from "./action-menu.tsx";
 import { ConfirmPopover } from "./confirm-popover.tsx";
-import { ConversionList, deletable } from "./conversion-list.tsx";
+import { ConversionList, SelectAll } from "./conversion-list.tsx";
 import { Icon } from "./icons.tsx";
 import { ItemInspector, itemActs, JobInspector, jobActs, Overview, stopAct, type ActSet, type InspectorContext, type ItemActionsApi, type JobActionsApi } from "./inspector.tsx";
 import type { IconName } from "./icon-paths.ts";
@@ -131,7 +131,7 @@ export function ConversionsPage(props: ConversionsPageProps) {
   const [confirming, setConfirming] = useState(false);
   const deleteButton = useRef<HTMLButtonElement>(null);
   const selecting = !phone || selectMode;
-  const listed = useMemo(() => list.flatMap((submission) => submission.shown).filter(deletable), [list]);
+  const listed = useMemo(() => checkable(list), [list]);
   const chosen = useMemo(() => listed.filter((item) => checked.has(item.key)), [listed, checked]);
   // Keys of items that are gone (deleted, or retried into running) drop out.
   useEffect(() => {
@@ -281,7 +281,9 @@ export function ConversionsPage(props: ConversionsPageProps) {
         </div>
       </header>
       {items.length > 0 && (
-        <div class="toolbar">
+        <div class={selecting ? "toolbar has-select-all" : "toolbar"}>
+          {/* Over the rows' boxes: everything the filters list. */}
+          {selecting && <SelectAll t={t} state={checkState(listed, checked)} onToggle={() => setChecked(toggleAll(list, checked))} />}
           <label class="search">
             <Icon name="MagnifyingGlass" size={14} />
             <input type="search" value={query} placeholder={t.filterByName} aria-label={t.filterAria} onInput={(event) => props.onQuery(event.currentTarget.value)} />

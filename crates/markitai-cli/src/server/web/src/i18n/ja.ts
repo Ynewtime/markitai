@@ -855,6 +855,7 @@ export const ja: Dict = {
   selectionAria: "選択した変換",
   selectedCount: (n: number) => `${n} 件を選択`,
   selectAllN: (n: number) => `${n} 件をすべて選択`,
+  selectAllListed: "一覧の項目をすべて選択",
   clearSelection: "解除",
   deleteSelected: "削除",
   reconvert: "再変換",

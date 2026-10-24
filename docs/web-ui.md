@@ -106,7 +106,11 @@ files wait on Convert); typing URLs is Convert's job.
   box stands for its items and shows a dash while only some are checked) selects
   conversions to delete together: the rows carry `aria-checked`, Space checks
   the focused row, Shift (with Space or a click) extends from the last one,
-  Ctrl/⌘+A checks every listed row, Escape clears and Delete asks. A bar at the
+  Ctrl/⌘+A checks every listed row, Escape clears and Delete asks. A box of
+  the same look starts the filter row, over the rows' boxes (`role="checkbox"`,
+  `aria-checked` true, false or `mixed`): it checks every row the name filter
+  and the tab list (a folded submission's items too), or clears once all of them
+  are checked, like the bar's Select all and Clear. A bar at the
   bottom of the window then says how many are checked, with Select all, Clear,
   Delete and, to its right, Re-convert (below); Delete asks first ("Delete 3 conversions? Their Markdown, pictures and
   kept originals are deleted too.") and one notice reports the result, naming

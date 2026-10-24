@@ -1301,6 +1301,20 @@ main:focus {
 .row.is-checked:not(.is-selected) {
   background: var(--mark-wash);
 }
+/* the filter row's box for everything listed starts the row, over the rows' boxes (their 8px inset) */
+.toolbar .select-all {
+  flex: none;
+  margin-left: 8px;
+  padding: 0;
+}
+.select-all:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+.select-all:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 /* the bar for what is checked: it rides the bottom of the window while the list
    scrolls under it, and rests below a short list */
 .select-bar {
@@ -6306,6 +6320,14 @@ input[type="password"],
   .toolbar .select-mode-btn {
     height: 34px;
     margin-left: auto;
+  }
+  /* Select mode: the box and the name filter share the first line; a finger's 44 px target around the box */
+  .toolbar.has-select-all .search {
+    flex: 1 1 calc(100% - 36px);
+    width: auto;
+  }
+  .toolbar .select-all::after {
+    inset: -14px;
   }
   .nm.has-host .mid-host {
     display: none;

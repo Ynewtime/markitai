@@ -816,6 +816,7 @@ export const zh: Dict = {
   selectionAria: "已选的转换任务",
   selectedCount: (n) => `已选 ${n} 项`,
   selectAllN: (n) => `全选 ${n} 项`,
+  selectAllListed: "全选列表中的任务",
   clearSelection: "清除",
   deleteSelected: "删除",
   reconvert: "重新转换",
