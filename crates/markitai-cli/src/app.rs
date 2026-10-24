@@ -70,6 +70,8 @@ mod progress;
 mod reasons;
 #[path = "app/remote_consent.rs"]
 mod remote_consent;
+#[path = "app/usage_zh.rs"]
+mod usage_zh;
 #[path = "app/warnings.rs"]
 mod warnings;
 // Every platform publishes batches with native ownership.
@@ -363,9 +365,12 @@ fn english_command_at_width(width: usize) -> clap::Command {
 /// Clap's built-in range message prints the whole u32 range; say the rule instead.
 fn at_least_one(value: &str) -> Result<u32, String> {
     match value.trim().parse::<u32>() {
-        Ok(0) => Err("must be at least 1".into()),
+        Ok(0) => Err(i18n::text!("must be at least 1", "不能小于 1")),
         Ok(number) => Ok(number),
-        Err(_) => Err("expected a whole number of at least 1".into()),
+        Err(_) => Err(i18n::text!(
+            "expected a whole number of at least 1",
+            "应为不小于 1 的整数"
+        )),
     }
 }
 
@@ -620,9 +625,10 @@ pub fn run(mut arguments: Vec<std::ffi::OsString>) -> i32 {
         return settle_stdout(0);
     }
     if let Some(message) = compat::removed_option(&arguments[1..]) {
-        let _ = cli_command()
-            .error(clap::error::ErrorKind::UnknownArgument, message)
-            .print();
+        let error = cli_command().error(clap::error::ErrorKind::UnknownArgument, message);
+        if !print_usage_error_zh(&error) {
+            let _ = error.print();
+        }
         return 2;
     }
     let mut command = cli_command();
@@ -638,7 +644,11 @@ pub fn run(mut arguments: Vec<std::ffi::OsString>) -> i32 {
             } else {
                 Stream::Stdout
             };
-            error.format(&mut for_stream(command, stream)).exit()
+            let error = error.format(&mut for_stream(command, stream));
+            if error.use_stderr() && print_usage_error_zh(&error) {
+                std::process::exit(error.exit_code());
+            }
+            error.exit()
         });
     // Serve and MCP drain active work on the signals their asynchronous
     // runtime owns; the remaining terminating signals kill external runtimes.
@@ -666,6 +676,22 @@ pub fn run(mut arguments: Vec<std::ffi::OsString>) -> i32 {
         return if code == 0 { 1 } else { code };
     }
     code
+}
+
+/// A usage error in Chinese on stderr, when the terminal language is Chinese
+/// and every line of it has a translation; whether it was printed.
+fn print_usage_error_zh(error: &clap::Error) -> bool {
+    if i18n::lang() != i18n::Lang::Zh {
+        return false;
+    }
+    let Some(text) = usage_zh::render(&error.render().to_string(), Style::stderr()) else {
+        return false;
+    };
+    progress::clear();
+    let mut stderr = io::stderr().lock();
+    let _ = stderr.write_all(text.as_bytes());
+    let _ = stderr.flush();
+    true
 }
 
 /// The first failure writing standard output. Later writes are dropped, and

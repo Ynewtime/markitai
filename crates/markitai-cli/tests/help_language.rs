@@ -332,13 +332,23 @@ fn chinese_help_does_not_change_how_arguments_are_parsed_or_reported() {
         let chinese = run(root.path(), &zh, &args);
         assert_eq!(english.status.code(), chinese.status.code(), "{args:?}");
         assert_eq!(english.stdout, chinese.stdout, "{args:?}");
-        // Usage errors from the parser stay English in both languages.
+        // A usage error from the parser is reported in the terminal language,
+        // with the same lines.
         if english.stderr.starts_with(b"error:") {
-            assert_eq!(english.stderr, chinese.stderr, "{args:?}");
+            let chinese = String::from_utf8(chinese.stderr).unwrap();
+            assert!(chinese.starts_with("错误："), "{args:?}: {chinese}");
+            assert_eq!(
+                String::from_utf8(english.stderr).unwrap().lines().count(),
+                chinese.lines().count(),
+                "{args:?}: {chinese}"
+            );
         }
     }
     let usage = run(root.path(), &zh, &["--bogus"]);
     let message = String::from_utf8(usage.stderr).unwrap();
+    assert!(message.contains("无法识别的参数 '--bogus'"), "{message}");
+    let english = run(root.path(), &en, &["--bogus"]);
+    let message = String::from_utf8(english.stderr).unwrap();
     assert!(
         message.contains("unexpected argument '--bogus'"),
         "{message}"
