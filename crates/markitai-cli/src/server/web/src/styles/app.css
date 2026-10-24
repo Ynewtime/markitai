@@ -2072,8 +2072,9 @@ main:focus {
 }
 .front-table {
   display: grid;
-  /* one key width for every document: long keys wrap inside it, short ones leave no hole */
-  grid-template-columns: 10.5em minmax(0, 1fr);
+  /* one fixed key width for every document and language (a longer key ends in an ellipsis,
+     its whole name as a tooltip); the value column takes the rest and never grows past it */
+  grid-template-columns: 120px minmax(0, 1fr);
   margin: 0;
 }
 .front-row {
@@ -2088,24 +2089,42 @@ main:focus {
   border-bottom: 1px solid var(--hairline);
 }
 .front-table dt {
+  overflow: hidden;
   padding-right: 12px;
-  overflow-wrap: anywhere;
   border-right: 1px solid var(--hairline);
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--text-3);
 }
 .front-table dd {
+  min-width: 0;
   margin: 0;
   padding-left: 14px;
-  overflow-wrap: anywhere;
   color: var(--text-1);
+}
+/* a value on one line: a long one (an address, a title, the tags) scrolls sideways inside its
+   own cell, by touch, trackpad or Shift+wheel, and the page itself never does */
+.front-cell {
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+  white-space: nowrap;
+}
+.front-cell::-webkit-scrollbar {
+  display: none;
+}
+.front-cell.is-more {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
 }
 .front-meta.is-compact {
   margin-bottom: 12px;
 }
 .front-tags {
   display: flex;
-  flex-wrap: wrap;
   gap: 6px;
+  width: max-content;
 }
 .front-tags li {
   padding: 0 8px;
@@ -2115,10 +2134,30 @@ main:focus {
 }
 @media (max-width: 760px) {
   .front-table {
-    grid-template-columns: 8.5em minmax(0, 1fr);
+    grid-template-columns: 92px minmax(0, 1fr);
+  }
+  .front-table dt {
+    padding-right: 10px;
   }
   .front-table dd {
     padding-left: 12px;
+  }
+}
+/* on paper nothing scrolls: keys and values wrap again */
+@media print {
+  .front-table dt,
+  .front-cell {
+    overflow: visible;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .front-tags {
+    flex-wrap: wrap;
+    width: auto;
+  }
+  .front-cell.is-more {
+    -webkit-mask-image: none;
+    mask-image: none;
   }
 }
 /* The Details excerpt opens Preview: the whole card is one button under the properties control. */
@@ -6300,6 +6339,7 @@ input[type="password"],
 .doc-body .table-scroll:focus-visible,
 .front-fold:focus-visible,
 .front-head:focus-visible,
+.front-cell:focus-visible,
 .toc-link:focus-visible,
 .toc-fab:focus-visible,
 .diff-fold:focus-visible,

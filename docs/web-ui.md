@@ -251,8 +251,11 @@ other key; every key markitai writes is named in the interface's language and it
 type · Social post", the file's word in the tooltip), other keys as written; a row another row
 already says is left out: the final address (`source_url`) or the canonical link when it is the
 source's, `renderer` when it is the fetch method, `domain` when it is the source's host, and an X
-post's `author_name` joins its handle, "Lumen Dev (@lumen_dev)"; the file keeps every key; one key width with a rule between key and value, long keys and values
-wrapped) whose `Properties · N` header row, anywhere on it, folds it again; the
+post's `author_name` joins its handle, "Lumen Dev (@lumen_dev)"; the file keeps every key; one fixed key width for every document, 120 px (92 px on a phone),
+with a rule between key and value: a longer key ends in an ellipsis with its whole name as a
+tooltip, and every value stays on one line, a long one (a title, an address, the tags, the
+summary) scrolling sideways inside its own cell and fading at its right edge until scrolled to
+its end, so the page never scrolls sideways; in print both wrap again) whose `Properties · N` header row, anywhere on it, folds it again; the
 choice holds for the tab's session (`sessionStorage['markitai.front']`) and in
 Preview, Compare and the Details excerpt alike. Tables over 500 rows show their first 500 rows under a
 sticky header with "Showing the first 500 of 20,000 rows … Show all rows";

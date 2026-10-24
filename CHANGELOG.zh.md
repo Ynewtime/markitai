@@ -24,7 +24,7 @@ Markitai 2.0.1 是 2.0.0 的修复版本。`image.format: webp` 重新写有损 
 - **工作台：**选项超过三个的单选组改为下拉按钮，显示当前值：URL（自动、静态、Playwright、Defuddle、Jina、Cloudflare）、输出（默认、RAG、Obsidian、OKF；JSON 仍是旁边的开关）以及「添加模型」中的服务商类型。两三个选项的仍为分段按钮。手机上的选项按钮更小（28 px 高，11 px 字号）。
 - **工作台：**手机上的「文档」和 GitHub 改为顶栏右端的两个图标，不再是设置列表中的两行；设置页末尾是一行「版本 · 提交 · 构建时间」。
 - **工作台：**「文档」（侧栏底部、手机顶栏）和费用提示中的价格链接改为打开 markitai.dev，中文界面打开中文页面（`/zh/`；该站没有日文页面，日文界面打开英文站点），不再打开 GitHub 上的英文 Markdown 文档。`GET /api/capabilities` 返回的 `docs_url` 现在是 `"https://markitai.dev/"`，2.0.0 返回的是 `https://github.com/Ynewtime/markitai/blob/main/docs/index.md`。
-- **工作台：**文档上方的属性面板用中文、英文或日文显示 markitai 写入的每个键（`word_count`、`domain`、`source_url`、`content_profile` 等），markitai 自己的取值也显示名称（`social_post` 显示为「社交帖子」）。重复的行不再显示：与来源相同的最终地址或规范链接、与获取方式相同的渲染方式、与来源主机相同的域名；X 帖子的显示名称与账号合为一行。Markdown 文件中的键全部保留。
+- **工作台：**文档上方的属性面板用中文、英文或日文显示 markitai 写入的每个键（`word_count`、`domain`、`source_url`、`content_profile` 等），markitai 自己的取值也显示名称（`social_post` 显示为「社交帖子」）。重复的行不再显示：与来源相同的最终地址或规范链接、与获取方式相同的渲染方式、与来源主机相同的域名；X 帖子的显示名称与账号合为一行。Markdown 文件中的键全部保留。键名列改为更窄的固定宽度（放不下的键名以省略号结尾，悬停显示全名），每个值都只占一行：较长的标题、地址或标签行在自己的单元格内横向滚动，不再换行。
 
 ### 修复
 

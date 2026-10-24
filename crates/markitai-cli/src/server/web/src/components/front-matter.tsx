@@ -2,8 +2,10 @@
 // "Properties · N", the tags inline and a "Summary" mark at its end, no title (the body's
 // own heading is the title). Open: a two-column properties table whose header folds it
 // again. Either way the whole header row is one disclosure button with aria-expanded;
-// the choice lasts for the tab's session.
-import { useEffect, useId, useState } from "preact/hooks";
+// the choice lasts for the tab's session. The table's key column has one fixed width: a key
+// longer than it ends in an ellipsis (its whole name as a tooltip), and a value stays on one
+// line that scrolls sideways inside its own cell.
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "preact/hooks";
 import type { Dict } from "../i18n/index.ts";
 import { frontOpen, onFrontOpen, setFrontOpen } from "../lib/front-pref.ts";
 import { frontLine, frontRows, frontValue, type FrontRow } from "../lib/front-rows.ts";
@@ -51,9 +53,46 @@ function Value({ t, row }: { t: Dict; row: FrontRow }) {
   return shown === row.value ? <>{row.value}</> : <span title={row.value}>{shown}</span>;
 }
 
+/** A value that goes on past its cell's right edge fades there until it is scrolled to its end. */
+function markMore(cell: HTMLElement): void {
+  cell.classList.toggle("is-more", cell.scrollLeft + cell.clientWidth < cell.scrollWidth - 1);
+}
+
+/** A cut key gets its whole name as a tooltip; a cell whose value scrolls is reachable by the
+ * keyboard when nothing in it is (a link already is). */
+function fitTable(table: HTMLElement): void {
+  for (const key of table.querySelectorAll<HTMLElement>("dt")) {
+    if (key.scrollWidth > key.clientWidth + 1) key.title = key.textContent ?? "";
+    else key.removeAttribute("title");
+  }
+  for (const cell of table.querySelectorAll<HTMLElement>(".front-cell")) {
+    if (cell.scrollWidth > cell.clientWidth + 1 && !cell.querySelector("a")) cell.tabIndex = 0;
+    else cell.removeAttribute("tabindex");
+    markMore(cell);
+  }
+}
+
 export function FrontCard({ t, front, compact = false }: { t: Dict; front: FrontMatter; compact?: boolean }) {
   const [open, setOpen] = useFrontOpen();
   const id = useId();
+  const table = useRef<HTMLDListElement>(null);
+  useLayoutEffect(() => {
+    const target = table.current;
+    if (!open || !target) return;
+    const fit = () => fitTable(target);
+    fit();
+    // the web font and the width the table gets can both arrive later
+    void document.fonts?.ready.then(fit);
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(fit);
+    observer?.observe(target);
+    // scroll does not bubble: one capturing listener follows every cell
+    const scrolled = (event: Event) => event.target instanceof HTMLElement && event.target.classList.contains("front-cell") && markMore(event.target);
+    target.addEventListener("scroll", scrolled, { capture: true, passive: true });
+    return () => {
+      observer?.disconnect();
+      target.removeEventListener("scroll", scrolled, { capture: true });
+    };
+  }, [open, front, t]);
   const rows = frontRows(front);
   const line = frontLine(front);
   const classes = ["front-meta", compact ? "is-compact" : "", open ? "is-open" : ""].filter(Boolean).join(" ");
@@ -65,12 +104,14 @@ export function FrontCard({ t, front, compact = false }: { t: Dict; front: Front
           <span class="front-head-label">{t.frontProperties(rows.length)}</span>
           <Icon name="CaretUp" size={12} />
         </button>
-        <dl id={id} class="front-table">
+        <dl id={id} ref={table} class="front-table">
           {rows.map((row) => (
             <div key={row.key} class="front-row">
               <dt>{t.frontKey(row.key)}</dt>
               <dd>
-                <Value t={t} row={row} />
+                <div class="front-cell">
+                  <Value t={t} row={row} />
+                </div>
               </dd>
             </div>
           ))}

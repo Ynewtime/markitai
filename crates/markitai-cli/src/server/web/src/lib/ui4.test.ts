@@ -95,3 +95,25 @@ test("the start of a result switches Rendered and Source, Rendered first; only a
   assert.match(inspector, /<span class="seg start-views" role="group" aria-label=\{t\.startViews\}>/);
   assert.match(inspector, /aria-pressed=\{view === value\}/);
 });
+
+test("properties: one fixed key column (120 px, 92 px on a phone), keys cut with an ellipsis, values on one line that scrolls in its cell", () => {
+  const css = read("../styles/app.css");
+  const rule = (selector: string, from = 0) => {
+    const at = css.indexOf(`\n${selector} {`, from);
+    assert.ok(at >= 0, selector);
+    return css.slice(at + 1, css.indexOf("}", at));
+  };
+  assert.match(rule(".front-table"), /grid-template-columns: 120px minmax\(0, 1fr\);/);
+  const phone = css.indexOf("@media (max-width: 760px) {\n  .front-table {");
+  assert.match(css.slice(phone, css.indexOf("}\n}", phone)), /grid-template-columns: 92px minmax\(0, 1fr\);/);
+  assert.match(rule(".front-table dt"), /overflow: hidden;[\s\S]*text-overflow: ellipsis;\n {2}white-space: nowrap;/);
+  assert.match(rule(".front-cell"), /overflow-x: auto;[\s\S]*overscroll-behavior-x: contain;\n {2}scrollbar-width: none;\n {2}white-space: nowrap;/);
+  assert.match(rule(".front-tags"), /width: max-content;/);
+  assert.ok(!/flex-wrap: wrap/.test(rule(".front-tags")), "the tags stay on one line");
+  // paper cannot scroll: keys and values wrap again in print
+  assert.match(css, /@media print \{\n {2}\.front-table dt,\n {2}\.front-cell \{\n {4}overflow: visible;\n {4}white-space: normal;/);
+  const card = read("../components/front-matter.tsx");
+  assert.match(card, /<dd>\n\s+<div class="front-cell">\n\s+<Value t=\{t\} row=\{row\} \/>/);
+  assert.match(card, /if \(key\.scrollWidth > key\.clientWidth \+ 1\) key\.title = key\.textContent \?\? "";/);
+  assert.match(card, /cell\.classList\.toggle\("is-more"/);
+});
