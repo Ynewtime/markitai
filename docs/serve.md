@@ -859,8 +859,9 @@ own under `→ Open in your browser:` so it copies whole (with the token in its
 fragment for local and remote browsers alike, unless `--no-auth` was explicitly
 selected); the directory that holds jobs and history (`MARKITAI_HOME/serve/jobs`,
 shown absolute); and a Ctrl-C hint. In every language the title ends with
-`http://ADDRESS` and the token line with the token, and neither is wrapped, so
-scripts can read them (`MARKITAI_SERVE_TOKEN` pins the token). When the listener is not
+`http://ADDRESS` and the token line with the token, neither is wrapped and no
+colour code follows either value (also with `FORCE_COLOR`), so scripts can read
+them (`MARKITAI_SERVE_TOKEN` pins the token). When the listener is not
 loopback-only (`--host 0.0.0.0`, a network address) it first warns
 (`! Binding to …`) that the service is reachable from the network and that the token is the credential; with
 `--no-auth` the warning says anyone who can reach the address can convert files and

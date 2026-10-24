@@ -285,8 +285,17 @@ async fn serve(cfg: Value, source: SettingsSource, options: ServeOptions) -> Res
             tone,
             wrap: false,
         };
+        // The title's words are bold and its address, the last word scripts
+        // read, is not: no colour code follows it even with FORCE_COLOR.
+        let line = match (kind, line.rsplit_once(' ')) {
+            (startup::Kind::Title, Some((words, address))) => format!(
+                "{} {address}",
+                crate::term::Style::stderr().paint(Tone::Structure, words)
+            ),
+            _ => line,
+        };
         let shape = match kind {
-            startup::Kind::Title => unwrapped(Mark::Title, 0, Some(Tone::Structure)),
+            startup::Kind::Title => unwrapped(Mark::Title, 0, None),
             startup::Kind::Token => unwrapped(Mark::Info, 2, None),
             startup::Kind::Fact => Shape::item(Mark::Info),
             startup::Kind::Action => Shape::item(Mark::Action),

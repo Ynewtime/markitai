@@ -21,6 +21,15 @@ struct Serve {
 
 impl Serve {
     fn start(home: &Path, language: Option<&str>, args: &[&str]) -> Self {
+        Self::start_with(home, language, &[], args)
+    }
+
+    fn start_with(
+        home: &Path,
+        language: Option<&str>,
+        env: &[(&str, &str)],
+        args: &[&str],
+    ) -> Self {
         let mut command = Command::new(env!("CARGO_BIN_EXE_markitai"));
         console::english(command.env_clear());
         for key in ["PATH", "HOME", "TMPDIR"] {
@@ -35,6 +44,7 @@ impl Serve {
             .current_dir(home)
             .env("MARKITAI_HOME", home.join("home"))
             .env("NO_PROXY", "127.0.0.1,localhost")
+            .envs(env.iter().copied())
             .arg("serve")
             .arg("--no-open")
             .args(args)
@@ -141,6 +151,31 @@ fn a_local_server_prints_the_address_the_data_location_and_how_to_stop() {
     );
     // The data location is real: the service created it.
     assert!(temp.path().join("home/serve/jobs").is_dir());
+}
+
+#[test]
+fn with_colour_forced_the_title_still_ends_with_the_bare_address() {
+    let temp = tempfile::tempdir().unwrap();
+    for language in ["en", "zh"] {
+        let serve = Serve::start_with(
+            temp.path(),
+            Some(language),
+            &[("FORCE_COLOR", "1")],
+            &["--host", "127.0.0.1", "--port", "0"],
+        );
+        let lines = serve.until("Ctrl-C");
+        assert!(lines[0].contains('\x1b'), "colour is on: {lines:?}");
+        // What a script reads: the title's last word and the token line's value.
+        let address = lines[0].split_whitespace().last().unwrap();
+        let port = port_of(address);
+        assert_eq!(address, format!("http://127.0.0.1:{port}"), "{lines:?}");
+        let token = lines[2].split_whitespace().last().unwrap();
+        let token = token.rsplit('：').next().unwrap();
+        assert!(
+            token.len() == 64 && token.chars().all(|c| c.is_ascii_hexdigit()),
+            "{lines:?}"
+        );
+    }
 }
 
 #[test]
