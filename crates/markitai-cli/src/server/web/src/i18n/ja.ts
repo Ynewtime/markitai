@@ -664,6 +664,7 @@ export const ja: Dict = {
   factModels: "モデル",
   factCost: "費用",
   factOptions: "オプション",
+  requestSettings: "フラグのない設定",
   factFinished: "完了日時",
   factTook: "所要時間",
   factKept: "保存期限",

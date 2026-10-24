@@ -41,6 +41,10 @@ export interface JobOptions {
   backend: ConversionBackend | null;
 }
 
+/** v1.22: what a job or item converted with: configuration values that shape a result, by dotted key
+ * (`image.format`, `cache.no_cache`, `llm.enabled`), where they differ from markitai's defaults. */
+export type JobSettings = Record<string, string | number | boolean | null>;
+
 export interface CreatedItem {
   item_id: string;
   name: string;
@@ -100,6 +104,8 @@ export interface RerunFailure {
 export interface ItemPayload {
   /** This item's saved selections, without permission for another request. Older servers omit it. */
   options?: JobOptions;
+  /** v1.22: what this item's latest run converted with; null or missing when it was not recorded. */
+  settings?: JobSettings | null;
   remote_processing?: RemoteProcessing | null;
   item_id: string;
   name: string;
@@ -153,6 +159,8 @@ export interface JobSnapshot extends JobProgress {
   created_at: string;
   finished_at: string | null;
   options: Record<string, unknown>;
+  /** v1.22: what the job converted with. */
+  settings?: JobSettings | null;
   items: ItemPayload[];
   persistence_error?: string;
   /** What the submission is called in the list, if it was named. */
@@ -349,6 +357,8 @@ export interface HistoryEntry {
   label?: string | null;
   /** With `?include=items`. */
   options?: JobOptions;
+  /** With `?include=items` (v1.22). */
+  settings?: JobSettings | null;
   /** With `?include=items`. */
   items?: ItemPayload[];
 }

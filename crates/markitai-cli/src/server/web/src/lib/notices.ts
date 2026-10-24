@@ -162,6 +162,14 @@ export function noticeModels(kind: NoticeKind, text: string): string[] {
   return [];
 }
 
+/** A model answer that could not be used, requested again and answered (both backends' info notice
+ * `llm.answer_retried`, in its 2.0.1 and its earlier wording): nothing is missing and nothing is to be
+ * done, so like the terminal (which shows it with -v only) the workbench does not show it; the cost
+ * already counts the second request. */
+export const isUsedRetry = (text: string): boolean =>
+  /^(?:A model answer could not be used|The provider withheld a model answer )[\s\S]*a later answer was used\.?$/.test(text) ||
+  /^(?:The model's |The provider withheld the )[\s\S]* and a later answer was used\.?$/.test(text);
+
 /** The cost warning is the Cost fact in other words: rows do not mark it again. */
 export const isCostWarning = (text: string): boolean => /^Cost is incomplete: /.test(text);
 
@@ -175,7 +183,7 @@ const isPlacementNotice = (text: string): boolean => /^(?:Embedded )?PDF images 
 /** Warnings a row marks and the Notices filter counts, in the workbench's words. */
 export function rowWarnings(warnings: string[]): string[] {
   const scanned = warnings.some((text) => pdfPageNotice(text) !== null || ocrBlankNotice(text) !== null);
-  return warnings.filter((text) => !isCostWarning(text) && !(scanned && isPlacementNotice(text))).map(uiWording);
+  return warnings.filter((text) => !isCostWarning(text) && !isUsedRetry(text) && !(scanned && isPlacementNotice(text))).map(uiWording);
 }
 
 export function groupNotices(entries: NoticeEntry[]): NoticeGroup[] {
@@ -187,7 +195,7 @@ export function groupNotices(entries: NoticeEntry[]): NoticeGroup[] {
   const scannedItems = new Set(entries.filter((entry) => pdfPageNotice(entry.text.trim()) !== null || ocrBlankNotice(entry.text.trim()) !== null).map((entry) => entry.itemKey));
   for (const entry of entries) {
     const text = uiWording(entry.text.trim());
-    if (!text || (scannedItems.has(entry.itemKey) && isPlacementNotice(text))) continue;
+    if (!text || isUsedRetry(text) || (scannedItems.has(entry.itemKey) && isPlacementNotice(text))) continue;
     const pages = pdfPageNotice(text);
     if (pages) {
       let document = pdf.get(entry.itemKey);

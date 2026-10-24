@@ -166,7 +166,17 @@ files wait on Convert); typing URLs is Convert's job.
   options, finished, kept until; a long output name stays on one line and gives
   up its middle, `2025年度…披露全文.pdf.llm.md`), its notices grouped by kind, and
   the start of the result with its front matter and its own pictures, in the same
-  centred reading column as Preview (the whole card opens Preview). A
+  centred reading column as Preview (the whole card opens Preview). Options is
+  the conversion as its command line on the composer's dark strip
+  (`$ markitai notes.pdf -o output/ --preset rich --keep-base`, wrapping between
+  flags, a copy icon at its end) with the settings no flag sets as `key value`
+  chips under it (`image.format webp`). It comes from what the conversion ran with
+  (`settings`, contract v1.22), the server's configuration included, and lists
+  only what differs from markitai's defaults; a job recorded before that shows
+  its request's own options (OCR language and every-page OCR as chips), and an
+  older CLI history entry, which kept only its preset and switches, its short
+  summary (`Rich · LLM`). A model answer that was requested again and then used is
+  no notice (the terminal shows it with `-v`; the cost counts both requests). A
   submission's window shows its progress as one bar (done, failed, stopped,
   converting, waiting) with Retry failed, Download .zip, Stop remaining and Delete,
   the cost, its failures and the notices of all its items (each notice names the
@@ -727,7 +737,8 @@ What a backend offers beyond the base job API is announced in
 saves `…/document`, the options' Text only sets `text_only`; contract v1.20 adds the
 job options `format` (under `document_json`), `ocr_lang` (with `ocr_languages` and
 `ocr_lang` in the capabilities), `ocr_all_pages` and `page_markers`, and the same
-keys as saved defaults); a missing feature hides its control instead of failing (no Stop
+keys as saved defaults; contract v1.22 adds `settings`, read when present, to jobs
+and items); a missing feature hides its control instead of failing (no Stop
 remaining, no Compare, archives saved through the page, history read job by job,
 images read from the file route).
 `docs_url` points the Docs link at the backend's own documentation. The pricing link

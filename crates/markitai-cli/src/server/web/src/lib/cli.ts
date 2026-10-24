@@ -18,7 +18,7 @@ export function shellQuote(word: string): string {
 /** A preset is named only while the request still equals it. Once the reader
  * changes one of its features the line spells the five features out, so it
  * never claims a preset it then overrides. */
-function namedPreset(options: JobOptions, preset: Preset | null, table: PresetTable): PresetFeatures | null {
+export function namedPreset(options: JobOptions, preset: Preset | null, table: PresetTable): PresetFeatures | null {
   if (preset === null) return null;
   const features = featuresOf(preset, table);
   return FEATURES.every((key) => options[key] === features[key]) ? features : null;
@@ -36,16 +36,16 @@ export function stagedPaths(files: File[]): string[] {
   return paths;
 }
 
-/** `inputs`: staged paths (see stagedPaths) and URLs, in that order. */
-export function cliCommand(inputs: string[], options: JobOptions, table: PresetTable = BUILTIN_PRESETS): string {
+/** The flags of a request (after `-o output/`), and its OCR settings that have no flag of their own. */
+export function requestFlags(options: JobOptions, table: PresetTable = BUILTIN_PRESETS): { words: string[]; ocr: Record<string, string | boolean> } {
   const preset = options.preset as Preset | null;
   const named = namedPreset(options, preset, table);
   const features = named ?? { llm: false, ocr: false, alt: false, desc: false, screenshot: false };
-  const words = ["markitai", ...(inputs.length ? inputs.map(shellQuote) : ["<files-or-urls>"]), "-o", "output/"];
+  const words: string[] = [];
   if (named !== null && preset !== null) words.push("--preset", preset);
   for (const key of FEATURES) {
     const value = options[key];
-    if (value !== null && value !== features[key]) words.push(value ? `--${key}` : `--no-${key}`);
+    if (value !== null && value !== undefined && value !== features[key]) words.push(value ? `--${key}` : `--no-${key}`);
   }
   if (options.profile !== null) words.push("--profile", options.profile);
   if (options.format === "json") words.push("-f", "json");
@@ -62,6 +62,14 @@ export function cliCommand(inputs: string[], options: JobOptions, table: PresetT
   const ocr: Record<string, string | boolean> = {};
   if (options.ocr_lang && options.ocr_lang !== "en") ocr.lang = options.ocr_lang;
   if (options.ocr_all_pages) ocr.per_page_routing = false;
-  if (Object.keys(ocr).length > 0) words.push("--config-json", shellQuote(JSON.stringify({ ocr })));
+  return { words, ocr };
+}
+
+/** `inputs`: staged paths (see stagedPaths) and URLs, in that order. */
+export function cliCommand(inputs: string[], options: JobOptions, table: PresetTable = BUILTIN_PRESETS): string {
+  const words = ["markitai", ...(inputs.length ? inputs.map(shellQuote) : ["<files-or-urls>"]), "-o", "output/"];
+  const flags = requestFlags(options, table);
+  words.push(...flags.words);
+  if (Object.keys(flags.ocr).length > 0) words.push("--config-json", shellQuote(JSON.stringify({ ocr: flags.ocr })));
   return words.join(" ");
 }

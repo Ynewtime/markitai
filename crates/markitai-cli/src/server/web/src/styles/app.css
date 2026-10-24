@@ -420,6 +420,7 @@ textarea {
   color: var(--selection-fg);
 }
 .cli-bar ::selection,
+.request-line ::selection,
 .terminal ::selection {
   background: var(--t-text);
   color: var(--t-bg);
@@ -1621,6 +1622,67 @@ main:focus {
   font-family: var(--font-mono);
   font-size: var(--text-sm);
   font-variant-numeric: tabular-nums;
+}
+/* the request as its command line, on the dark strip of the composer's, and
+   the settings no flag sets as quiet chips under it */
+.facts dd.fact-request {
+  display: grid;
+  gap: 8px;
+}
+.request-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 2px 2px 2px 10px;
+  border: 1px solid var(--t-border);
+  border-radius: var(--r-xs);
+  background: var(--t-bg);
+  color-scheme: dark;
+}
+.request-command {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  line-height: 20px;
+  color: var(--t-text);
+}
+/* the line wraps between words, a flag kept with its value */
+.request-unit {
+  display: inline-block;
+  max-width: 100%;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.request-line .request-copy {
+  color: var(--t-dim);
+}
+.request-line .request-copy:hover,
+.request-line .request-copy.is-done {
+  background: var(--t-border);
+  color: var(--t-text);
+}
+.request-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.request-chip {
+  padding: 0 8px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-xs);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 20px;
+  color: var(--text-2);
+}
+.request-chip-key {
+  color: var(--text-3);
 }
 /* a file name on one line, its middle given up first, then its size */
 .facts dd.fact-file {
@@ -6130,6 +6192,8 @@ input[type="password"],
 /* members of the always-dark cards keep a light ring in both themes */
 .pill-btn:focus-visible,
 .cli-text:focus-visible,
+.request-command:focus-visible,
+.request-line .request-copy:focus-visible,
 .pane.is-source:focus-visible {
   outline: 2px solid var(--t-focus);
   outline-offset: -2px;
@@ -6340,6 +6404,11 @@ input[type="password"],
   }
   .facts {
     grid-template-columns: 92px minmax(0, 1fr);
+  }
+  /* the command line takes the whole width under its label */
+  .facts dd.fact-request {
+    grid-column: 1 / -1;
+    margin-top: -2px;
   }
   .insp-title {
     font-size: var(--text-lg);
