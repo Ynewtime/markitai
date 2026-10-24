@@ -732,6 +732,8 @@ export function ModelsSettings({
     // `load` reads the current draft; the guard above keys the request by provider.
   }, [adding, provider, autoLoads, discovery, discovering]);
 
+  /** Moonshot AI's page, which Kimi Code's terms point batch work to: its saved connection, else its card. */
+  const moonshot = providers.find((card) => card.provider === "moonshot" && manageable(card)) ?? providers.find((card) => card.provider === "moonshot");
   /** What a failed model list adds from the provider or the network (never markitai's own sentence). */
   const listed = discovery ? listFailure(discovery) : null;
   const listWords = discovery && listed ? providerWords(discovery.detail, listed.reason, t.testFailTitle(listed.reason)) : null;
@@ -1248,13 +1250,30 @@ export function ModelsSettings({
                             value={draftKey}
                             placeholder={t.setKeyPh}
                             autoComplete="off"
-                            aria-describedby={provider.key_variable && !existing ? "connect-key-hint" : undefined}
+                            aria-describedby={
+                              [provider.key_variable && !existing ? "connect-key-hint" : "", provider.provider === "kimi_code" ? "connect-key-terms" : ""].filter(Boolean).join(" ") ||
+                              undefined
+                            }
                             onInput={(event) => setDraftKey(event.currentTarget.value)}
                           />
                           {/* Where else the key can come from, under the field it stands in for. */}
                           {provider.key_variable && !existing && (
                             <p id="connect-key-hint" class="field-hint key-hint">
                               {t.keyVariableHint(provider.key_variable)}
+                            </p>
+                          )}
+                          {/* Kimi's terms: the membership serves interactive use, batch work an open-platform key. */}
+                          {provider.provider === "kimi_code" && (
+                            <p id="connect-key-terms" class="field-hint key-hint">
+                              {t.kimiCodeTerms[0]}
+                              {moonshot ? (
+                                <button type="button" class="text-link" onClick={() => choose(moonshot)}>
+                                  {t.kimiCodeTerms[1]}
+                                </button>
+                              ) : (
+                                t.kimiCodeTerms[1]
+                              )}
+                              {t.kimiCodeTerms[2]}
                             </p>
                           )}
                         </div>

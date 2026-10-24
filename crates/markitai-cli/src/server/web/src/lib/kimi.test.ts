@@ -49,3 +49,9 @@ test("Kimi Code has its own brand mark beside Moonshot's", () => {
   assert.ok(BRAND_MARKS.kimi.paths[0] !== BRAND_MARKS.moonshot.paths[0]);
   assert.equal(BRAND_MARKS.kimi.viewBox, "0 0 24 24");
 });
+
+test("Kimi Code's page says the membership is for interactive use and points batch work to Moonshot AI", () => {
+  assert.equal(zh.kimiCodeTerms.join(""), "Kimi Code 会员仅限交互使用；批量转换请用 Kimi 开放平台的密钥（Moonshot AI）。");
+  assert.equal(en.kimiCodeTerms.join(""), "Kimi Code membership is for interactive use only; for batch conversions use a Kimi platform key (Moonshot AI).");
+  for (const dict of [en, zh, ja]) assert.equal(dict.kimiCodeTerms.length, 3);
+});

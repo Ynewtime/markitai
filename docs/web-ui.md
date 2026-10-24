@@ -443,7 +443,9 @@ one row, which says how it authenticates (`Using DEEPSEEK_API_KEY`, `Key saved`,
 `No key`) and its model count; a connection at another address is its own row.
 Common and All mark a saved provider as Added, and choosing it opens that row.
 A provider's key field says where else the key can come from (`Or set
-MOONSHOT_API_KEY where markitai serve runs …`). A hand-written model that the
+MOONSHOT_API_KEY where markitai serve runs …`); Kimi Code's adds Kimi's terms
+(the membership is for interactive use only; batch conversions take a Kimi
+platform key), with a link to the Moonshot AI page. A hand-written model that the
 server serves with its key variable shows `From DEEPSEEK_API_KEY` in Edit, and
 a model list that cannot be loaded says why in the model test's categories (no
 key, key rejected, rate limited, unreachable, no answer in time, provider

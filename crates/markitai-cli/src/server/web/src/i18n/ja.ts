@@ -372,6 +372,7 @@ export const ja: Dict = {
     `このサーバーの ${credential}${/[A-Za-z0-9_]$/.test(credential) ? " " : ""}で、${label} 自身のエンドポイントに接続します。`,
   googleLogin: "Google ログイン",
   optionalKeyVariable: (variable: string) => `${variable}（任意）`,
+  kimiCodeTerms: ["Kimi Code 会員は対話的な利用に限られます。一括変換には ", "Kimi プラットフォーム", " のキー（Moonshot AI）を使ってください。"],
   keyVariableHint: (variable: string) => `または markitai serve を実行する環境で ${variable} を設定して再起動します。プロバイダーが「保存済み」に表示され、キーを貼り付ける必要はありません。`,
   manualModelsOnly: "このプロバイダーからはモデルの一覧を取得できません · 下にモデル ID を追加してください",
   serverAddressRequired: "サーバーのアドレスが必要です",

@@ -342,6 +342,7 @@ export const zh: Dict = {
     return "填写连接信息后加载可用模型。";
   },
   optionalKeyVariable: (variable) => `${variable}（可选）`,
+  kimiCodeTerms: ["Kimi Code 会员仅限交互使用；批量转换请用 ", "Kimi 开放平台", "的密钥（Moonshot AI）。"],
   keyVariableHint: (variable) => `也可以在运行 markitai serve 的环境中设置 ${variable} 并重启；之后该服务商会出现在“已保存”中，无需粘贴密钥。`,
   ownEndpointNote: (label, credential) => `使用这台服务器的 ${credential}，只连接 ${label} 自己的接口。`,
   googleLogin: "Google 登录",

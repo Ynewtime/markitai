@@ -377,6 +377,8 @@ export const en = {
     return "Enter the connection details to load available models.";
   },
   optionalKeyVariable: (variable: string) => `${variable} (optional)`,
+  /** Kimi's terms for the membership, under Kimi Code's key field: the text before the link, the link (to Moonshot AI), the text after. */
+  kimiCodeTerms: ["Kimi Code membership is for interactive use only; for batch conversions use a ", "Kimi platform", " key (Moonshot AI)."] as [string, string, string],
   keyVariableHint: (variable: string) => `Or set ${variable} where markitai serve runs and restart it; the provider then appears under Saved, with no key to paste.`,
   ownEndpointNote: (label: string, credential: string) => `Uses this server's ${credential} at ${label}'s own endpoint.`,
   googleLogin: "Google login",
