@@ -43,7 +43,7 @@ uv tool install "git+https://github.com/Ynewtime/markitai@v1.2.0#subdirectory=pa
 ### Output
 
 - Page and slide number comments are off; `--page-markers` keeps them (the `rag` profile's `<!-- page: N -->` stay).
-- Pictures are named by content (`.markitai/assets/<hash>.jpg`), slides `deck.pptx.page0001.jpg`: take names from the Markdown, `images.json` or `-f json`. `image.format: webp` writes opaque pictures as JPEG below quality 100 ([images](/guide/configuration#image-configuration)).
+- Pictures are named by content (`.markitai/assets/<hash>.jpg`), slides `deck.pptx.page0001.jpg`: take names from the Markdown, `images.json` or `-f json`.
 - Folder batches skip symbolic links unless `output.allow_symlinks: true`.
 - New: `.markitai/ownership/` keeps a rerun from replacing files markitai did not write.
 

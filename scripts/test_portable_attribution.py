@@ -7,7 +7,7 @@ import shutil
 import tempfile
 import unittest
 
-from portable_attribution import HAYRO_NAMES, PADDLE_NAMES, MAX_FILE, portable_files, stage_portable_files
+from portable_attribution import HAYRO_NAMES, LIBWEBP_NAMES, PADDLE_NAMES, MAX_FILE, portable_files, stage_portable_files
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -17,13 +17,15 @@ class PortableAttributionTests(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
-        for name in ["hayro", "paddleocr"]:
+        for name in ["hayro", "paddleocr", "libwebp"]:
             shutil.copytree(ROOT / "licenses" / name, self.root / "source/licenses" / name)
         self.source = self.root / "source"
 
-    def test_all_nine_real_notices_keep_their_original_bytes(self):
+    def test_all_twelve_real_notices_keep_their_original_bytes(self):
         files = portable_files(self.source)
-        expected = {"licenses/hayro/" + name for name in HAYRO_NAMES} | {"licenses/paddleocr/" + name for name in PADDLE_NAMES}
+        expected = ({"licenses/hayro/" + name for name in HAYRO_NAMES} | {"licenses/paddleocr/" + name for name in PADDLE_NAMES}
+                    | {"licenses/libwebp/" + name for name in LIBWEBP_NAMES})
+        self.assertEqual(len(expected), 12)
         self.assertEqual(set(files), expected)
         record = stage_portable_files(self.source, self.root / "package")
         self.assertEqual(set(record), expected)
@@ -34,6 +36,14 @@ class PortableAttributionTests(unittest.TestCase):
         self.assertFalse(any(name.endswith(".onnx") for name in files))
         with self.assertRaises(FileExistsError):
             stage_portable_files(self.source, self.root / "package")
+
+    def test_libwebp_notices_are_the_vendored_release_files(self):
+        upstream = json.loads((ROOT / "vendor/libwebp/UPSTREAM.json").read_text())
+        recorded = {item["path"]: item["sha256"] for item in upstream["copied_files"]}
+        for name in ["COPYING", "PATENTS"]:
+            content = (ROOT / "licenses/libwebp" / name).read_bytes()
+            self.assertEqual(content, (ROOT / "vendor/libwebp" / name).read_bytes())
+            self.assertEqual(hashlib.sha256(content).hexdigest(), recorded[name])
 
     def test_each_missing_notice_is_rejected(self):
         for relative in portable_files(self.source):

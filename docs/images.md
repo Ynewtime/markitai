@@ -271,13 +271,16 @@ attributes, code and comments remain literal.
 
 With compression enabled, maximum width/height use proportional Lanczos resize.
 JPEG uses the configured quality and composites alpha onto white. PNG keeps
-transparency. This build has no lossy WebP encoder: with `image.format: webp`
-and `image.quality` below 100, a picture without transparent pixels is written
-as JPEG at that quality, named `.jpg`, and the document gets one warning
-(`image.webp_as_jpeg`); a picture with transparency, and every picture at
-quality 100, is lossless WebP. Native encoded bytes are not claimed to
-match Pillow's encoders; image-output parity needs pixel/quality measurements in
-addition to the existing strict asset-hash audit.
+transparency. WebP is lossy at the configured quality, 100 included, as in
+Python markitai 1.2: libwebp 1.6.0 (the version Pillow bundles) with Pillow's
+settings, so a WebP file is byte for byte the one Python markitai 1.2 writes
+from the same pixels. Transparency is kept losslessly beside the lossy colour;
+no metadata is written. A WebP picture has at most 16383 pixels on each side
+(lower `image.max_height` for very tall pictures): a larger embedded picture
+keeps its original bytes with a warning, and a larger standalone image is an
+error. JPEG and PNG bytes are not claimed to match Pillow's encoders;
+image-output parity needs pixel/quality measurements in addition to the
+existing strict asset-hash audit.
 
 With compression disabled, supported embedded image bytes remain unchanged.
 The actual decoded format determines the output suffix. Standalone JPEG/PNG/

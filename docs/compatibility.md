@@ -114,12 +114,6 @@ Besides the differences above, scripts written for Python markitai notice these:
   `image.compress` on (the default) PNG and HEIC pictures are written as `.jpg`. Presentation
   screenshots are `<deck>.pptx.page0001.jpg`, not `slide0001`. Read the names
   from the Markdown, `images.json` or `-f json` rather than guessing them.
-- **`image.format: webp`:** Python wrote lossy WebP at `image.quality`. This
-  build has no lossy WebP encoder, so below quality 100 pictures and page
-  screenshots without transparency are written as JPEG at that quality, named
-  `.jpg`, with one warning; pictures with transparency, and everything at
-  quality 100, are lossless WebP, several times larger than Python's. See
-  [images](images.md).
 - **Slide and page images of Office files:** only an installed LibreOffice
   draws them, on every system; Python could also drive an installed Microsoft
   Office (PowerPoint through COM on Windows, through AppleScript on macOS with

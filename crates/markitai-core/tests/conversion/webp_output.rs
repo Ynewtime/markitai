@@ -1,6 +1,6 @@
-//! `image.format: webp` below quality 100 is written as JPEG (this build has
-//! no lossy WebP encoder): names, links and bytes agree, and the document
-//! carries one notice however many pictures or pages it has.
+//! `image.format: webp` page screenshots are lossy WebP at `image.quality`, as
+//! Python markitai 1.2 wrote them: names, links and bytes agree, and there is
+//! no notice.
 use super::*;
 use std::path::Path;
 
@@ -22,39 +22,43 @@ fn run(
 }
 
 #[test]
-fn pdf_webp_screenshots_below_quality_100_are_jpg_with_one_notice() {
+fn pdf_webp_screenshots_are_lossy_webp_at_image_quality() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("mixed.pdf");
     std::fs::write(&path, MIXED).unwrap();
-    for (quality, extension, format, notices) in [
-        (80, "jpg", image::ImageFormat::Jpeg, 1),
-        (100, "webp", image::ImageFormat::WebP, 0),
-    ] {
+    let mut sizes = Vec::new();
+    for quality in [30, 80, 100] {
         let config = json!({"cache":{"enabled":false},"history":{"record":false},"llm":{"enabled":false},"screenshot":{"enabled":true},"image":{"format":"webp","quality":quality}});
         let output = dir.path().join(format!("output-{quality}"));
         let result = run(&path, config, &output).unwrap();
         assert_eq!(result.screenshots.len(), 3);
+        let mut total = 0;
         for capture in &result.screenshots {
-            assert_eq!(capture.extension().unwrap(), extension);
+            assert_eq!(capture.extension().unwrap(), "webp");
+            let bytes = std::fs::read(capture).unwrap();
             assert_eq!(
-                image::guess_format(&std::fs::read(capture).unwrap()).unwrap(),
-                format
+                image::guess_format(&bytes).unwrap(),
+                image::ImageFormat::WebP
             );
+            // Lossy (`VP8 `) at every quality, as Pillow writes it.
+            assert_eq!(&bytes[12..16], b"VP8 ");
+            total += bytes.len();
         }
+        sizes.push(total);
         for page in 1..=3 {
-            let link = format!(".pdf.page{page:04}.{extension})");
+            let link = format!(".pdf.page{page:04}.webp)");
             assert!(result.markdown.contains(&link), "{}", result.markdown);
         }
-        // One notice for the document, not one per page.
-        assert_eq!(
-            result
+        assert!(
+            !result
                 .warnings
                 .iter()
-                .filter(|warning| warning.starts_with("image.format webp:"))
-                .count(),
-            notices,
+                .any(|warning| warning.contains("webp")
+                    || warning.contains("WebP")
+                    || warning.contains("JPEG")),
             "{:?}",
             result.warnings
         );
     }
+    assert!(sizes[0] < sizes[1] && sizes[1] < sizes[2], "{sizes:?}");
 }

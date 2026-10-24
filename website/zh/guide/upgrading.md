@@ -43,7 +43,7 @@ uv tool install "git+https://github.com/Ynewtime/markitai@v1.2.0#subdirectory=pa
 ### 输出
 
 - 页码和幻灯片编号注释默认关闭；`--page-markers` 保留它们（`rag` Profile 的 `<!-- page: N -->` 不变）。
-- 图片按内容命名（`.markitai/assets/<hash>.jpg`），幻灯片图片为 `deck.pptx.page0001.jpg`：图片名请从 Markdown、`images.json` 或 `-f json` 中读取。`image.format: webp` 在质量低于 100 时把不透明的图片写为 JPEG（[图片配置](/zh/guide/configuration#image-configuration)）。
+- 图片按内容命名（`.markitai/assets/<hash>.jpg`），幻灯片图片为 `deck.pptx.page0001.jpg`：图片名请从 Markdown、`images.json` 或 `-f json` 中读取。
 - 文件夹批量转换会跳过符号链接，除非设置 `output.allow_symlinks: true`。
 - 新增：`.markitai/ownership/` 让重跑不会替换不是 markitai 写的文件。
 

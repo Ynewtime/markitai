@@ -17,6 +17,9 @@ base64 = "0.23"
 libc = "0.2"
 tiff = "0.11.3"
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "gif", "bmp", "tiff", "webp"] }
+# Lossy WebP output, as Python markitai 1.2 wrote it with Pillow: libwebp
+# 1.6.0's encoder, vendored C built statically (vendor/libwebp/README.md).
+markitai-webp-sys = { path = "../../vendor/libwebp" }
 resvg = { version = "0.48.1", default-features = false, features = ["text", "system-fonts", "raster-images"] }
 # Same version and features as usvg uses, so SVG fallback checks read cmaps as rendering does.
 skrifa = { version = "0.44", default-features = false, features = ["std"] }

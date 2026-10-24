@@ -4,6 +4,7 @@ mod heif;
 mod resize;
 mod svg;
 mod tiff;
+pub(crate) mod webp;
 
 use crate::{Asset, Document, Error, Result, config, output_profiles};
 use image::{DynamicImage, ImageDecoder, ImageFormat, ImageReader, Rgb, RgbImage};
@@ -135,30 +136,6 @@ fn opaque_rgba(image: &DynamicImage) -> bool {
         .is_some_and(|rgba| rgba.pixels().all(|pixel| pixel.0[3] == 255))
 }
 
-/// Whether any pixel is not fully opaque: an alpha channel that is opaque
-/// everywhere (an RGBA PNG of a photo) shows nothing JPEG would lose.
-fn transparent(image: &DynamicImage) -> bool {
-    match image {
-        _ if !image.color().has_alpha() => false,
-        DynamicImage::ImageRgba8(_) => !opaque_rgba(image),
-        DynamicImage::ImageLumaA8(luma) => luma.pixels().any(|pixel| pixel.0[1] != 255),
-        _ => image.to_rgba8().pixels().any(|pixel| pixel.0[3] != 255),
-    }
-}
-
-/// The notice for `image.format: webp` below quality 100. This build has no
-/// lossy WebP encoder, so such pictures are written as JPEG at that quality
-/// (the extension says so); pictures with transparency, and every picture at
-/// quality 100, are lossless WebP.
-pub(crate) const WEBP_AS_JPEG: &str = "image.format webp: pictures were written as JPEG at image.quality, because this build has no lossy WebP encoder; pictures with transparency stay lossless WebP, and image.quality 100 keeps every picture lossless WebP.";
-
-/// Whether `image.format: webp` is configured with a quality below 100, so
-/// that pictures without transparency are written as JPEG.
-pub(crate) fn webp_as_jpeg(cfg: &Value) -> bool {
-    cfg.pointer("/image/format").and_then(Value::as_str) == Some("webp")
-        && dimension(cfg, "/image/quality", 75) < 100
-}
-
 fn rgb_on_white(image: &DynamicImage) -> RgbImage {
     if !image.color().has_alpha() {
         return image.to_rgb8();
@@ -192,27 +169,21 @@ fn encode_limited(
     let format = if force_png {
         "png"
     } else {
-        match cfg
-            .pointer("/image/format")
+        cfg.pointer("/image/format")
             .and_then(Value::as_str)
             .unwrap_or("jpeg")
-        {
-            // The only WebP encoder here is lossless, many times larger than
-            // the lossy WebP asked for: JPEG at that quality is closer.
-            "webp" if webp_as_jpeg(cfg) && !transparent(image) => "jpeg",
-            format => format,
-        }
     };
-    let jpeg = !matches!(format, "png" | "webp");
+    let quality = dimension(cfg, "/image/quality", 75).clamp(1, 100) as u8;
+    let lossy = format != "png";
     let resized;
     let image = if !force_png && (image.width() > width || image.height() > height) {
-        // JPEG has no alpha, so a picture whose alpha is all opaque is
-        // resized as the RGB it becomes, on several threads and to the same
-        // bytes `image` gives.
+        // JPEG has no alpha and lossy WebP leaves out an alpha channel that
+        // is opaque everywhere, so such a picture is resized as the RGB it
+        // becomes, on several threads and to the same bytes `image` gives.
         let (new_width, new_height) = resize::fit((image.width(), image.height()), width, height);
-        let jpeg = jpeg && (new_width, new_height) != (image.width(), image.height());
+        let lossy = lossy && (new_width, new_height) != (image.width(), image.height());
         resized = match image {
-            DynamicImage::ImageRgb8(rgb) if jpeg => DynamicImage::ImageRgb8(resize::lanczos3_rgb(
+            DynamicImage::ImageRgb8(rgb) if lossy => DynamicImage::ImageRgb8(resize::lanczos3_rgb(
                 rgb.as_raw(),
                 rgb.width(),
                 rgb.height(),
@@ -220,7 +191,7 @@ fn encode_limited(
                 new_width,
                 new_height,
             )),
-            DynamicImage::ImageRgba8(rgba) if jpeg && opaque_rgba(image) => {
+            DynamicImage::ImageRgba8(rgba) if lossy && opaque_rgba(image) => {
                 DynamicImage::ImageRgb8(resize::lanczos3_rgb(
                     rgba.as_raw(),
                     rgba.width(),
@@ -248,14 +219,10 @@ fn encode_limited(
             ("png", "image/png")
         }
         "webp" => {
-            // Lossless: at quality 100, or a picture with transparency.
-            image
-                .write_to(&mut buffer, ImageFormat::WebP)
-                .map_err(error)?;
+            webp::encode(image, quality, &mut buffer).map_err(error)?;
             ("webp", "image/webp")
         }
         _ => {
-            let quality = dimension(cfg, "/image/quality", 75).clamp(1, 100) as u8;
             image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buffer, quality)
                 .encode_image(&rgb_on_white(image))
                 .map_err(error)?;
@@ -735,13 +702,10 @@ pub(crate) fn prepare_assets(doc: &mut Document, cfg: &Value) {
                 replacements.entry(from).or_default();
                 continue;
             }
-            Outcome::Encoded(bytes, extension) => {
-                webp_notice(doc, cfg, extension == "jpg");
-                Asset {
-                    name: format!("{}.{}", asset.name, extension),
-                    bytes,
-                }
-            }
+            Outcome::Encoded(bytes, extension) => Asset {
+                name: format!("{}.{}", asset.name, extension),
+                bytes,
+            },
             Outcome::EncodeFailed => {
                 notice(
                     doc,
@@ -797,9 +761,6 @@ pub(crate) fn extract(
     let mut doc = image_document(path, &name, asset);
     if svg {
         doc.metadata.insert("format".into(), "SVG".into());
-    }
-    if !svg {
-        webp_notice(&mut doc, cfg, image.mime == "image/jpeg");
     }
     if local_ocr {
         let recognized = if tiff::signature(&bytes) {
@@ -1009,7 +970,6 @@ fn extract_heif(
     doc.metadata
         .insert("primary_image".into(), (decoded.info.primary + 1).into());
     primary_notice(&mut doc, decoded.info);
-    webp_notice(&mut doc, cfg, mime == "image/jpeg");
     if local_ocr {
         let recognized = crate::ocr::recognize_rgb(rgb_on_white(&decoded.image), cfg)?;
         if recognized.text.trim().is_empty() {
@@ -1052,14 +1012,6 @@ fn mime_extension(mime: &str) -> &'static str {
     }
 }
 
-/// The WebP notice, once per document, when a picture was `as_jpeg`: encoded
-/// as JPEG because `image.format` is webp below quality 100.
-fn webp_notice(doc: &mut Document, cfg: &Value, as_jpeg: bool) {
-    if as_jpeg && config::enabled(cfg, "/image/compress") && webp_as_jpeg(cfg) {
-        notice(doc, WEBP_AS_JPEG);
-    }
-}
-
 fn ocr_metadata(doc: &mut Document, cfg: &Value) {
     doc.metadata.insert("ocr_used".into(), true.into());
     doc.metadata
@@ -1089,7 +1041,6 @@ fn extract_tiff(
     doc.metadata.insert("page_count".into(), pages.len().into());
     let mut vision = Vec::with_capacity(if local_ocr { 0 } else { pages.len() });
     let mut remaining = tiff::MAX_ENCODED - bytes.len();
-    let mut as_jpeg = false;
     for index in 0..pages.len() {
         let image = pages.decode(index)?;
         let (encoded, extension, mime) = encode_limited(
@@ -1099,7 +1050,6 @@ fn extract_tiff(
             remaining / if local_ocr { 1 } else { 2 },
         )?;
         let name = format!("page{:04}.{extension}", index + 1);
-        as_jpeg |= extension == "jpg";
         doc.markdown.push_str(&format!(
             "\n<!-- Page number: {} -->\n\n![Page {}](.markitai/assets/{name})\n",
             index + 1,
@@ -1161,7 +1111,6 @@ fn extract_tiff(
     if local_ocr {
         ocr_metadata(&mut doc, cfg);
     }
-    webp_notice(&mut doc, cfg, as_jpeg);
     Ok((doc, vision))
 }
 
@@ -1268,7 +1217,7 @@ mod tests {
     }
 
     #[test]
-    fn webp_below_quality_100_is_jpeg_named_jpg_except_with_transparency() {
+    fn webp_is_lossy_at_image_quality_and_keeps_transparency() {
         let gradient = |x: u32, y: u32| [(x * 2) as u8, (y * 2) as u8, 90];
         // An opaque photo, the same photo with an alpha channel opaque
         // everywhere (as Word stores many), and a picture with clear pixels.
@@ -1304,87 +1253,65 @@ mod tests {
             ..Default::default()
         }
         };
-        let cfg = config::normalize(&json!({"image":{"format":"webp","quality":80}})).unwrap();
-        let mut doc = document();
-        prepare_assets(&mut doc, &cfg);
-        let formats: Vec<_> = doc
-            .assets
-            .iter()
-            .map(|asset| {
-                (
-                    asset.name.as_str(),
-                    image::guess_format(&asset.bytes).unwrap(),
-                )
-            })
-            .collect();
-        assert_eq!(
-            formats,
-            [
-                ("p.png.jpg", ImageFormat::Jpeg),
-                ("o.png.jpg", ImageFormat::Jpeg),
-                ("c.png.webp", ImageFormat::WebP),
-            ]
-        );
-        for asset in &doc.assets {
-            assert!(
-                doc.markdown
-                    .contains(&format!("](.markitai/assets/{})", asset.name)),
-                "{}",
-                doc.markdown
-            );
-        }
-        // The transparent picture is still lossless.
-        let decoded = image::load_from_memory(&doc.assets[2].bytes).unwrap();
-        assert_eq!(
-            decoded.to_rgba8(),
-            image::load_from_memory(&clear).unwrap().to_rgba8()
-        );
-        // One notice for the document, not one per picture.
-        assert_eq!(doc.warnings, [WEBP_AS_JPEG]);
-        // Lower quality means smaller JPEG: image.quality is honoured.
-        let mut low = document();
-        prepare_assets(
-            &mut low,
-            &config::normalize(&json!({"image":{"format":"webp","quality":20}})).unwrap(),
-        );
-        assert!(low.assets[0].bytes.len() < doc.assets[0].bytes.len());
-
-        // Quality 100 keeps lossless WebP for every picture, without a notice.
-        let cfg = config::normalize(&json!({"image":{"format":"webp","quality":100}})).unwrap();
-        let mut doc = document();
-        prepare_assets(&mut doc, &cfg);
-        assert!(doc.assets.iter().all(|asset| asset.name.ends_with(".webp")
-            && image::guess_format(&asset.bytes).unwrap() == ImageFormat::WebP));
-        assert!(doc.warnings.is_empty(), "{:?}", doc.warnings);
-        // Only a picture with transparency: WebP, so no notice either.
-        let mut doc = Document {
-            markdown: "![c](.markitai/assets/c.png)\n".into(),
-            assets: vec![Asset {
-                name: "c.png".into(),
-                bytes: clear.clone(),
-            }],
-            ..Default::default()
+        // `VP8 ` is lossy, `VP8L` lossless; `ALPH` holds the transparency.
+        let kind = |bytes: &[u8]| {
+            let chunk = |name: &[u8]| bytes.windows(4).any(|window| window == name);
+            assert!(!chunk(b"VP8L"));
+            (chunk(b"VP8 "), chunk(b"ALPH"))
         };
-        prepare_assets(
-            &mut doc,
-            &config::normalize(&json!({"image":{"format":"webp","quality":80}})).unwrap(),
-        );
-        assert_eq!(doc.assets[0].name, "c.png.webp");
-        assert!(doc.warnings.is_empty(), "{:?}", doc.warnings);
+        let mut sizes = Vec::new();
+        for quality in [20, 80, 100] {
+            let cfg =
+                config::normalize(&json!({"image":{"format":"webp","quality":quality}})).unwrap();
+            let mut doc = document();
+            prepare_assets(&mut doc, &cfg);
+            // Every picture is lossy WebP, named .webp in its file and link,
+            // as Python markitai 1.2 writes it, and without a notice.
+            let names: Vec<_> = doc.assets.iter().map(|asset| asset.name.as_str()).collect();
+            assert_eq!(names, ["p.png.webp", "o.png.webp", "c.png.webp"]);
+            for asset in &doc.assets {
+                assert_eq!(
+                    image::guess_format(&asset.bytes).unwrap(),
+                    ImageFormat::WebP
+                );
+                assert!(
+                    doc.markdown
+                        .contains(&format!("](.markitai/assets/{})", asset.name)),
+                    "{}",
+                    doc.markdown
+                );
+            }
+            assert!(doc.warnings.is_empty(), "{:?}", doc.warnings);
+            // Only the picture with clear pixels keeps an alpha channel,
+            // exactly.
+            let kinds: Vec<_> = doc.assets.iter().map(|asset| kind(&asset.bytes)).collect();
+            assert_eq!(kinds, [(true, false), (true, false), (true, true)]);
+            let decoded = image::load_from_memory(&doc.assets[2].bytes)
+                .unwrap()
+                .to_rgba8();
+            let original = image::load_from_memory(&clear).unwrap().to_rgba8();
+            assert!(
+                decoded
+                    .pixels()
+                    .zip(original.pixels())
+                    .all(|(a, b)| a.0[3] == b.0[3])
+            );
+            sizes.push(doc.assets[0].bytes.len());
+        }
+        // image.quality is honoured.
+        assert!(sizes[0] < sizes[1] && sizes[1] < sizes[2], "{sizes:?}");
 
-        // A standalone picture: its asset, vision payload and notice agree.
+        // A standalone picture: its asset and vision payload agree.
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("photo.png");
         std::fs::write(&path, &photo).unwrap();
         let cfg = config::normalize(&json!({"image":{"format":"webp","quality":80}})).unwrap();
         let (doc, vision) = extract(&path, &cfg, false).unwrap();
-        assert_eq!(doc.assets[0].name, "image.jpg");
-        assert_eq!(
-            image::guess_format(&doc.assets[0].bytes).unwrap(),
-            ImageFormat::Jpeg
-        );
-        assert_eq!(vision[0].mime, "image/jpeg");
-        assert_eq!(doc.warnings, [WEBP_AS_JPEG]);
+        assert_eq!(doc.assets[0].name, "image.webp");
+        assert_eq!(kind(&doc.assets[0].bytes), (true, false));
+        assert_eq!(vision[0].mime, "image/webp");
+        assert_eq!(vision[0].bytes, doc.assets[0].bytes);
+        assert!(doc.warnings.is_empty(), "{:?}", doc.warnings);
     }
 
     #[test]

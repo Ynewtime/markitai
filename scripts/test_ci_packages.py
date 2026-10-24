@@ -390,7 +390,8 @@ class PackageValidationTests(unittest.TestCase):
         files = package_attribution(source)
         expected = {"licenses/hayro/" + name for name in ["LICENSE_FOXIT", "CGATS_LICENSE.txt", "CMAP_LICENSE.txt",
                     "hayro-interpret-assets-README.md", "README.md"]} | {
-                    "licenses/paddleocr/" + name for name in ["PaddleOCR-LICENSE", "RapidOCR-LICENSE", "README.md", "provenance.json"]}
+                    "licenses/paddleocr/" + name for name in ["PaddleOCR-LICENSE", "RapidOCR-LICENSE", "README.md", "provenance.json"]} | {
+                    "licenses/libwebp/" + name for name in ["COPYING", "PATENTS", "README.md"]}
         self.assertTrue(expected <= set(files))
         for name in expected:
             self.assertEqual(files[name], (source / name).read_bytes())

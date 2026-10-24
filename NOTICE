@@ -41,6 +41,12 @@ vendor/rav1d/MARKITAI-PATCH.md. Its Rust API derives from dav1d-rs (MIT,
 Luca Barbato); both notices are in vendor/rav1d/COPYING and
 vendor/rav1d/LICENSE-dav1d-rs.
 
+`image.format: webp` is encoded with the lossy encoder of libwebp 1.6.0
+(BSD-3-Clause, Google Inc.), built statically from the unchanged release
+sources vendored in vendor/libwebp (file list and hashes in
+vendor/libwebp/UPSTREAM.json). Its license and Google's patent grant are in
+licenses/libwebp/COPYING and licenses/libwebp/PATENTS.
+
 The HTML reader resolves Tailwind CSS colour classes and variables in the
 inline SVG drawings it keeps with the default colour palette of Tailwind CSS
 3.4.19 (MIT, Copyright (c) Tailwind Labs, Inc.), embedded as data in
