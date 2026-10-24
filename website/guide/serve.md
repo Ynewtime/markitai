@@ -70,7 +70,7 @@ The token URL is a credential. Whoever holds it can run conversions with your LL
 | **Convert** | Paste URLs (one per line), drop files or a folder, or **Upload**. Nothing is sent before **Convert**. A `.urls` file is a list of URLs, as on the command line |
 | **Options** | Preset, Enhance (LLM, OCR and its language, image analysis), Output (profile, [document JSON](/guide/cli#format)), Advanced (fetch strategy, backend, cache, text only, page markers, OCR on every page), and the equivalent command line to copy. **Save as default** stores your choice |
 | **Conversions** | Every item, grouped by submission, live. Filter by name, Failed or Notices; check rows to delete or **Re-convert** several; **Stop remaining** stops what has not started; "⋯" has **Retry failed** and **Download all** |
-| **Conversion window** | Click an item: **Preview** (Rendered with tables, math and diagrams, Source, Files, Diff), **Compare** (the original beside the Markdown, with matching parts outlined), **Details** (status, sizes, models, cost, notices) |
+| **Conversion window** | Click an item: **Preview** (Rendered with tables, math and diagrams, Source, Files, Diff), **Compare** (the original beside the Markdown, with matching parts outlined), **Details** (status, sizes, models, cost, the options as a command line, notices) |
 | **Settings** | Appearance and language, Models, Access token, Edit config |
 
 In the window, ↑/↓ moves between items, **C** opens Compare, **F** fills the browser and Escape closes it. On a phone the places move to a bottom bar and the window fills the screen.
