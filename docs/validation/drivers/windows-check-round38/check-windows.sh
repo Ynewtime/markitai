@@ -11,7 +11,10 @@ stub=$work/crt-stub
 mkdir -p "$stub" "$work/sqlite-placeholder"
 printf '#pragma once\n#define assert(x) ((void)0)\n' > "$stub/assert.h"
 printf '#pragma once\n#include <stddef.h>\nvoid *memcpy(void *, const void *, size_t);\nvoid *memset(void *, int, size_t);\nvoid *memmove(void *, const void *, size_t);\nint memcmp(const void *, const void *, size_t);\nsize_t strlen(const char *);\n' > "$stub/string.h"
-printf '#pragma once\n#include <stddef.h>\nvoid abort(void);\nvoid *malloc(size_t);\nvoid free(void *);\nunsigned short _byteswap_ushort(unsigned short);\nunsigned long _byteswap_ulong(unsigned long);\nunsigned long long _byteswap_uint64(unsigned long long);\n' > "$stub/stdlib.h"
+printf '#pragma once\n#include <stddef.h>\nvoid abort(void);\nvoid *malloc(size_t);\nvoid *calloc(size_t, size_t);\nvoid *realloc(void *, size_t);\nvoid free(void *);\nint abs(int);\nvoid qsort(void *, size_t, size_t, int (*)(const void *, const void *));\nunsigned short _byteswap_ushort(unsigned short);\nunsigned long _byteswap_ulong(unsigned long);\nunsigned long long _byteswap_uint64(unsigned long long);\n' > "$stub/stdlib.h"
+# libwebp (vendor/libwebp) takes uintptr_t from the MSVC headers and calls these math functions.
+printf '#pragma once\n#include_next <stddef.h>\ntypedef __UINTPTR_TYPE__ uintptr_t;\n' > "$stub/stddef.h"
+printf '#pragma once\ndouble ceil(double);\ndouble exp(double);\ndouble fabs(double);\ndouble floor(double);\ndouble log(double);\ndouble log10(double);\ndouble log2(double);\ndouble pow(double, double);\ndouble round(double);\ndouble sqrt(double);\nfloat expf(float);\nfloat logf(float);\nfloat sqrtf(float);\n' > "$stub/math.h"
 for header in stdio.h ctype.h time.h malloc.h windows.h; do printf '#pragma once\n#include <stddef.h>\n' > "$stub/$header"; done
 export CARGO_NET_OFFLINE=true LIBSQLITE3_SYS_USE_PKG_CONFIG=1
 export SQLITE3_LIB_DIR="$work/sqlite-placeholder" SQLITE3_INCLUDE_DIR="$work/sqlite-placeholder"
