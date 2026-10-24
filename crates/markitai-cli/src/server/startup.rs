@@ -285,7 +285,6 @@ mod tests {
         let data = Path::new("/d");
         for lang in [Lang::En, Lang::Zh] {
             let lines = lines(lang, &startup("0.0.0.0:3600", None, Some("10.0.0.5"), data));
-            let text = texts(&lines);
             assert!(lines.iter().all(|(kind, _)| *kind != Kind::Token));
             let (kind, warning) = lines
                 .iter()
