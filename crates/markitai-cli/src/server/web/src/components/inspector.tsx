@@ -23,7 +23,7 @@ import { typeset } from "../lib/math.ts";
 import { groupNotices, type NoticeGroup } from "../lib/notices.ts";
 import { copyText } from "../lib/clipboard.ts";
 import type { PresetTable } from "../lib/options.ts";
-import { readRequestOpen, storeRequestOpen } from "../lib/peek-pref.ts";
+import { openPreviewAs, readRequestOpen, storeRequestOpen } from "../lib/peek-pref.ts";
 import { requestView, wrapUnits, type RequestView } from "../lib/request.ts";
 import { cachedExcerpt, loadExcerpt, resultKey, sourceStart } from "../lib/results.ts";
 import { watchScrollCells } from "../lib/scroll-cells.ts";
@@ -402,7 +402,7 @@ type StartView = "rendered" | "source";
 let startView: StartView = "rendered";
 
 /** The first blocks of a result, with the item's own pictures as small figures, or (Source) its
- * first lines as written. Either card opens Preview. */
+ * first lines as written. Either card opens Preview in the same view, Rendered or Source. */
 function Excerpt({ ctx, item, headingId, onOpen }: { ctx: InspectorContext; item: SessionItem; headingId: string; onOpen: () => void }) {
   const { t } = ctx;
   const [view, setView] = useState<StartView>(startView);
@@ -519,7 +519,14 @@ function Excerpt({ ctx, item, headingId, onOpen }: { ctx: InspectorContext; item
       {head}
       <div class="excerpt is-link">
         {/* The whole card opens Preview; its properties control stays above this button. */}
-        <button type="button" class="excerpt-open" onClick={onOpen}>
+        <button
+          type="button"
+          class="excerpt-open"
+          onClick={() => {
+            openPreviewAs(shownSource ? "source" : "rendered");
+            onOpen();
+          }}
+        >
           <span class="sr-only">{t.openInPreview}</span>
         </button>
         {/* Rendered stays drawn while Source shows, so switching back is immediate. */}

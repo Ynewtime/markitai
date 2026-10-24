@@ -184,7 +184,8 @@ files wait on Convert); typing URLs is Convert's job.
   (96 px on a phone), a longer label scrolling on one line in its cell; a long output
   name stays on one line and gives up its middle, `2025年度…披露全文.pdf.llm.md`), its notices grouped by kind, and
   the start of the result with its front matter and its own pictures, in the same
-  centred reading column as Preview (the whole card opens Preview). A small
+  centred reading column as Preview (the whole card opens Preview, in Source when
+  the start shows Source, else in Rendered). A small
   Rendered | Source switch heads that start (Rendered first; only for Markdown
   output): Source shows its first 12 lines as written, numbered, the front matter
   muted, with "First 12 of N lines" on the right (N from `markdown_lines`, else

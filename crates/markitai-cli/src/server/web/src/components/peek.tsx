@@ -10,7 +10,7 @@ import { useModal } from "../hooks/use-modal.ts";
 import { useResultDocument } from "../hooks/use-result-document.ts";
 import type { Dict, Locale } from "../i18n/index.ts";
 import { headerActs } from "../lib/acts.ts";
-import { readFull, storeFull } from "../lib/peek-pref.ts";
+import { readFull, storeFull, takePreviewView } from "../lib/peek-pref.ts";
 import { copyText } from "../lib/clipboard.ts";
 import { basename, readable } from "../lib/format.ts";
 import { printDocument, type PrintJob } from "../lib/print.ts";
@@ -385,14 +385,17 @@ function PeekDocument({
   onDownloadAll,
 }: PeekProps & { item: SessionItem; mode: "preview" | "compare"; onTools: (tools: DocTools | null) => void; barHost: HTMLElement | null; compactBar: boolean; wantFiles: boolean; onFilesShown: () => void }) {
   const doc = useResultDocument(item);
-  const [tab, setTab] = useState<Tab>("rendered");
+  // Rendered, or Source when Details' result start asked for it
+  const [tab, setTab] = useState<Tab>(takePreviewView);
+  const shownKey = useRef(item.key);
   // A failed export or download: an error toast, replaced by the next one.
   const setError = useCallback((message: string | null) => (message === null ? dismissToast(DOC_TOAST) : toast({ id: DOC_TOAST, tone: "error", text: message })), []);
   const [furniture, setFurniture] = useState(readFurniture);
   const rendered = useRef<RenderedState>({ printable: null, images: null, complete: null });
   const printing = useRef<PrintJob | null>(null);
   useEffect(() => {
-    setTab("rendered");
+    if (shownKey.current !== item.key) setTab("rendered");
+    shownKey.current = item.key;
     setError(null);
   }, [item.key]);
   useEffect(() => () => printing.current?.cancel(), []);

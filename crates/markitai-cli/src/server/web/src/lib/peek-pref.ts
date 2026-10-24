@@ -35,6 +35,17 @@ export function storeRequestOpen(open: boolean, storage: Pick<Storage, "setItem"
     // A browser without storage keeps the choice for this page only.
   }
 }
+// The view Preview opens with: Details' result start in Source opens Preview's Source (owner,
+// 2026-10-25), anything else Rendered. Kept for this page only and taken by the next Preview.
+let nextView: "rendered" | "source" = "rendered";
+export function openPreviewAs(view: "rendered" | "source"): void {
+  nextView = view;
+}
+export function takePreviewView(): "rendered" | "source" {
+  const view = nextView;
+  nextView = "rendered";
+  return view;
+}
 function safeStorage(): Storage | null {
   try {
     return typeof localStorage === "undefined" ? null : localStorage;
