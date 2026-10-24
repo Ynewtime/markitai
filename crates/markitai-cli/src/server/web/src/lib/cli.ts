@@ -15,6 +15,12 @@ export function shellQuote(word: string): string {
   return SAFE.test(word) ? word : `'${word.replaceAll("'", "'\\''")}'`;
 }
 
+/** An input as the command line names it: quoted, and a name that starts with `-` as `./-name`, so
+ * the shell's word is never read as an option. */
+export function inputWord(input: string): string {
+  return shellQuote(input.startsWith("-") ? `./${input}` : input);
+}
+
 /** A preset is named only while the request still equals it. Once the reader
  * changes one of its features the line spells the five features out, so it
  * never claims a preset it then overrides. A preset this page does not know (a
@@ -70,7 +76,7 @@ export function requestFlags(options: JobOptions, table: PresetTable = BUILTIN_P
 
 /** `inputs`: staged paths (see stagedPaths) and URLs, in that order. */
 export function cliCommand(inputs: string[], options: JobOptions, table: PresetTable = BUILTIN_PRESETS): string {
-  const words = ["markitai", ...(inputs.length ? inputs.map(shellQuote) : ["<files-or-urls>"]), "-o", "output/"];
+  const words = ["markitai", ...(inputs.length ? inputs.map(inputWord) : ["<files-or-urls>"]), "-o", "output/"];
   const flags = requestFlags(options, table);
   words.push(...flags.words);
   if (Object.keys(flags.ocr).length > 0) words.push("--config-json", shellQuote(JSON.stringify({ ocr: flags.ocr })));

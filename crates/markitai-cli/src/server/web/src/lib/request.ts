@@ -4,7 +4,7 @@
 // gives the whole picture, server configuration included; otherwise the
 // request's own options are all that is known, and nothing else is claimed.
 import type { JobOptions, JobSettings, Preset } from "../api/types.ts";
-import { namedPreset, requestFlags, shellQuote } from "./cli.ts";
+import { inputWord, namedPreset, requestFlags, shellQuote } from "./cli.ts";
 import { BUILTIN_PRESETS, type PresetTable } from "./options.ts";
 
 export interface RequestChip {
@@ -97,7 +97,7 @@ export function requestView(
   url: boolean,
   table: PresetTable = BUILTIN_PRESETS,
 ): RequestView | null {
-  const words = ["markitai", ...(inputs.length ? inputs.map(shellQuote) : ["<files-or-urls>"]), "-o", "output/"];
+  const words = ["markitai", ...(inputs.length ? inputs.map(inputWord) : ["<files-or-urls>"]), "-o", "output/"];
   const chips: RequestChip[] = [];
   if (settings) {
     const flags = settingsFlags(settings, options ?? null, url, table);

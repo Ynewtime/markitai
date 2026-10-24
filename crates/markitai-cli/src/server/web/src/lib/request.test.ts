@@ -98,7 +98,7 @@ test("a request naming a preset this page does not know spells its switches out 
   assert.equal(requestView(["notes.pdf"], team, null, false, table)?.command, "markitai notes.pdf -o output/ --preset team");
 });
 
-test("the copied command quotes every value", () => {
+test("the copied command quotes every value and never reads a file name as an option", () => {
   // A configured preset with a space, or one a shell would expand, stays one quoted word.
   const table = { "team notes": { llm: true, ocr: false, alt: false, desc: false, screenshot: false }, "$(x)": { llm: false, ocr: true, alt: false, desc: false, screenshot: false } };
   const team = { ...emptyOptions(), preset: "team notes", llm: true, ocr: false, alt: false, desc: false, screenshot: false };
@@ -108,4 +108,8 @@ test("the copied command quotes every value", () => {
   assert.equal(requestView(["a.pdf"], odd, null, false, table)?.command, "markitai a.pdf -o output/ --preset '$(x)'");
   // The flag keeps its quoted value when the line wraps.
   assert.deepEqual(wrapUnits(requestView(["a.pdf"], team, null, false, table)?.words ?? []).slice(-1), ["--preset 'team notes'"]);
+  // A file named like an option is written as a path; a quoted one stays quoted.
+  assert.equal(requestView(["-o.txt"], emptyOptions(), {}, false)?.command, "markitai ./-o.txt -o output/");
+  assert.equal(requestView(["-v notes.md"], emptyOptions(), {}, false)?.command, "markitai './-v notes.md' -o output/");
+  assert.equal(requestView(["https://example.org/-a"], emptyOptions(), {}, true)?.command, "markitai https://example.org/-a -o output/");
 });
