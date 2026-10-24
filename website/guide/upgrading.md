@@ -1,95 +1,61 @@
 # Upgrading from 1.x
 
-markitai 2.0 is the Python markitai 1.x rewritten in Rust: one native program, no Python to install. The commands (`markitai`, `mkai`, `markitai-mcp`), the configuration file and its keys, and the output layout stay; this page lists what you notice.
+markitai 2.0 is 1.x rewritten in Rust: one native program, no Python, no extras. The commands, `~/.markitai` (configuration, `.env`, caches, history) and the output layout stay.
 
 ## Replace 1.x
-
-Run the setup script. It stages 2.0 first, then removes a Python markitai that uv installed, puts 2.0 in its place and keeps `~/.markitai` (configuration, `.env`, caches, history) as it is:
 
 <!--@include: ../snippets/setup.md-->
 
 ```mermaid
-flowchart LR
-  S[setup script] --> N["2.x staged in<br/>the install folder"]
-  N --> U{"markitai 1.x<br/>from uv?"}
-  U -->|yes| R["uv tool uninstall markitai"]
-  U -->|no| I
-  R --> I["2.x renamed<br/>into place"]
-  I --> K["~/.markitai kept,<br/>read as before"]
+flowchart TD
+  A{"1.x installed with"} -->|"setup script, uv tool"| S["the setup<br/>script above"]
+  A -->|pipx| P["pipx upgrade<br/>markitai"]
+  A -->|"pip, uv add"| W["pip install -U<br/>markitai"]
+  S --> R["2.x staged, then<br/>uv's 1.x uninstalled"]
 ```
 
-| 1.x installed with | Upgrade |
-|--------------------|---------|
-| The 1.x setup script, `uv tool install` | Run the setup script (above) |
-| `pipx install` | `pipx upgrade markitai`, or `pipx uninstall markitai` and the setup script |
-| `pip` / `uv add` in a project | `pip install -U markitai`: the 2.0 wheel carries the CLI and the [Python API](/guide/python-api) |
-
-pip, pipx and uv find 2.0 only on the six platforms PyPI has wheels for (macOS 11+, Linux with glibc 2.28+, Windows; x86-64 and ARM64); elsewhere they keep 1.x. If the new files cannot be staged (an unwritable or full folder), the uv-installed 1.x stays.
+pip, pipx and uv get 2.0 only on the platforms with [wheels](/guide/getting-started#install); elsewhere they find nothing (PyPI no longer has 1.x) and leave an installed 1.x as it is.
 
 ### Going back to 1.x
 
-[Uninstall](/guide/getting-started#install) 2.0, then install the 1.2.0 release from its tag, with the PDF library version it was released with (a plain `markitai==1.2.0` now resolves pymupdf4llm 2, which breaks its PDF support):
+[Uninstall](/guide/getting-started#install) 2.0, then install 1.2.0 from its Git tag, as setup suggests for a 1.x `MARKITAI_VERSION` (pymupdf4llm 2 breaks its PDFs):
 
 ```bash
 uv tool install "git+https://github.com/Ynewtime/markitai@v1.2.0#subdirectory=packages/markitai" --with "pymupdf4llm<2"
 ```
 
-The setup script prints the same command when `MARKITAI_VERSION` names a 1.x release. 1.x history is on the [changelog](/changelog#python-1x).
+## What to check
 
-## What changed
+### Components
 
-| | 1.x | 2.0 |
-|---|---|---|
-| Runtime | Python 3.11–3.13 with extras | One executable; the wheel needs Python 3.10+ and nothing else |
-| Extras | `ocr`, `serve`, `mcp`, `browser`, ... | Built in; `markitai[serve]` and the others still install, adding nothing |
-| Local OCR | RapidOCR (`markitai[ocr]`) | Built in: PaddleOCR models (`markitai doctor --fix` fetches them), or macOS Vision |
-| Browser | Playwright and its Chromium | markitai drives Chrome or Chromium itself; `doctor --fix` installs Chrome's headless shell |
-| PDF engine | PyMuPDF (AGPL-3.0 or commercial) | Native Rust readers; no AGPL component left ([NOTICE](https://github.com/Ynewtime/markitai/blob/main/NOTICE)) |
-| Office page images | LibreOffice, Microsoft Office or PowerPoint | LibreOffice only, on every system |
-| ChatGPT subscription | markitai's own device-code sign-in | The official Codex CLI ([ChatGPT](/guide/subscription-chatgpt)); sign in again |
-| Windows on ARM | Emulated x64 Python | Native ARM64 build |
+- The extras are built in (`markitai[ocr]` and the others install and add nothing). `markitai doctor --fix` fetches the OCR models (PaddleOCR, not RapidOCR) and, without Chrome or Chromium, Chrome's headless shell (not Playwright).
+- PyMuPDF and its AGPL licence are gone ([NOTICE](https://github.com/Ynewtime/markitai/blob/main/NOTICE)); Office page images come from LibreOffice only.
+- ChatGPT subscription: sign in again with the Codex CLI ([ChatGPT](/guide/subscription-chatgpt)).
 
 ### Command line
 
-| Situation | 1.x | 2.0 |
-|-----------|-----|-----|
-| Usage error (unknown option, missing value) | exit `0` or `1` | exit `2` |
-| A picture without `--ocr` or `--llm` | fails, exit `1` | skipped with a warning, exit `0` |
-| `--llm` with no usable model | base Markdown, exit `0` | stops before converting, exit `1` (`--dry-run` warns) |
-| The `✓ Wrote out/a.md` line | stdout | stderr: stdout holds only the document |
-| `doctor --timings`, `doctor --suggest-extras` | available | gone (`--suggest-extras` is refused) |
-| `--resume`, `-g`, `--max-depth`, `--llm-batch-timeout` where they do not apply (a single file; `-g`/`--max-depth` on a `.urls` list; `--llm-batch-timeout` without `--llm-batch`) | ignored | the run stops before converting: exit `1` for `--resume`, `2` for the others ([batch options](/guide/cli#batch-options)) |
-| `--llm-batch` on anything but a directory | exit `1` | exit `2` |
-
-New: `--text-only` (only the recognised text of pictures and PDFs) and `--page-markers`.
+- Usage errors exit `2`, as does `--llm-batch` on anything but a directory ([exit codes](/guide/cli#exit-codes)).
+- `--resume`, `-g`, `--max-depth`, `--llm-batch-timeout` where they do not apply stop the run instead of being ignored: exit `1` for `--resume`, `2` for the others ([batch options](/guide/cli#batch-options)).
+- `--llm` with no usable model stops (exit `1`); a picture without `--ocr` or `--llm` is skipped (exit `0`).
+- `✓ Wrote out/a.md` goes to stderr: stdout holds only the document.
+- Removed: `doctor --timings`, `doctor --suggest-extras`. New: `--text-only`, `--page-markers`.
 
 ### Output
 
-| | 1.x | 2.0 |
-|---|---|---|
-| `<!-- Page number: N -->`, `<!-- Slide number: N -->` | always written | off; `--page-markers` or `output.page_markers` keeps them |
-| Picture names | `report.docx.0001.png` | by content: `.markitai/assets/510f5d9476ab159c03ccda77.jpg`; PNG and HEIC become `.jpg` while `image.compress` is on |
-| Slide images | `deck.pptx.slide0001.jpg` | `deck.pptx.page0001.jpg` |
-| `image.format: webp` | lossy WebP at `image.quality` | below quality 100, pictures and page screenshots without transparency are written as JPEG (`.jpg`, one warning per document); with transparency or at 100, lossless WebP |
-| Symbolic links in a folder batch | followed | skipped (`skip_reason: "symlink"`); `output.allow_symlinks: true` follows them |
-| `.markitai/ownership/` | — | new: records which files markitai wrote, so a rerun never replaces yours |
-
-Read picture names from the Markdown, `images.json` or `-f json` rather than guessing them. The `rag` profile's `<!-- page: N -->` markers are unchanged.
+- Page and slide number comments are off; `--page-markers` keeps them (the `rag` profile's `<!-- page: N -->` stay).
+- Pictures are named by content (`.markitai/assets/<hash>.jpg`), slides `deck.pptx.page0001.jpg`: take names from the Markdown, `images.json` or `-f json`. `image.format: webp` writes opaque pictures as JPEG below quality 100 ([images](/guide/configuration#image-configuration)).
+- Folder batches skip symbolic links unless `output.allow_symlinks: true`.
+- New: `.markitai/ownership/` keeps a rerun from replacing files markitai did not write.
 
 ### Configuration
 
-The same `~/.markitai/config.json`, `./markitai.json` and keys. These behave differently (`markitai config validate` warns about the three that have no effect):
+- `fetch.remote_consent`: a failed local fetch goes to Defuddle, Jina or Cloudflare only after `markitai config set fetch.remote_consent always`.
+- `fetch.fallback_patterns`: only a list you write has an effect.
+- [No effect](/guide/configuration#settings-without-effect) (`markitai config validate` warns): `office.macos_fallback`, `batch.heavy_task_limit`, `image.stdout_fetch_external`.
+- Not read: `MARKITAI_PDF_WORKERS`, `MARKITAI_STATIC_HTTP`, and in the setup script `MARKITAI_USE_MIRROR` (use `MARKITAI_DOWNLOAD_URL`), `MARKITAI_SETUP_LOG`, `MARKITAI_SETUP_MODE`.
 
-| Setting | In 2.0 |
-|---------|--------|
-| `fetch.remote_consent` | The built-in `always` no longer sends a URL to Defuddle, Jina or Cloudflare when local fetching fails. To keep 1.x's fallback, write it yourself: `markitai config set fetch.remote_consent always` |
-| `fetch.fallback_patterns` | The built-in list (x.com, instagram.com, ...) has no effect; a list you write still sends those domains to the browser first |
-| `office.macos_fallback`, `batch.heavy_task_limit`, `image.stdout_fetch_external` | No effect; use `-j` / `batch.concurrency` for the second |
-| `MARKITAI_PDF_WORKERS`, `MARKITAI_STATIC_HTTP` | Not read: PDFs are read in process, with one HTTP client |
-| `MARKITAI_USE_MIRROR`, `MARKITAI_SETUP_LOG`, `MARKITAI_SETUP_MODE` | Gone from the setup script; `MARKITAI_DOWNLOAD_URL` takes a mirror of the releases |
+### Web workspace, MCP, Python
 
-### Web workspace, MCP and Python API
-
-- **`markitai serve`** needs its access token from every client, this machine included (1.x let local scripts in without one). Scripts send `Authorization: Bearer <token>`; `MARKITAI_SERVE_TOKEN` keeps one across restarts ([Web Workspace](/guide/serve#access-token)).
-- **MCP clients** launch `uvx --from markitai markitai-mcp`, or the installed `markitai-mcp` ([MCP Server](/guide/mcp)).
-- **Python**: `convert()`, `aconvert()`, `ConversionOutput` and the exceptions keep their names and fields. `MarkitaiConfig` is no longer a Pydantic model (a bad value raises `ValueError`); `enable_worker_processes()` and the shutdown helpers remain and do nothing; markitai no longer logs through loguru, its notices are in `warnings` ([Python API](/guide/python-api)).
+- `markitai serve` wants its [access token](/guide/serve#access-token) from every client, local scripts too (`Authorization: Bearer <token>`).
+- MCP clients launch `uvx --from markitai markitai-mcp` or the installed `markitai-mcp`.
+- [Python](/guide/python-api): `convert()`, `aconvert()`, `ConversionOutput` and the exceptions stay. `MarkitaiConfig` is not Pydantic (bad values raise `ValueError`); `enable_worker_processes()` and the shutdown helpers do nothing; notices go to `warnings`, not loguru.

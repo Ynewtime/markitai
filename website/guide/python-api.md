@@ -6,7 +6,7 @@
 The Python API is provisional: signatures and fields can change in minor releases. Pin an exact version; the CLI is the stable interface.
 :::
 
-Add it to your project (Python 3.10 or later; wheels for macOS 11+, Linux with glibc 2.28+ and Windows, x86-64 and ARM64 each; PyPI has no source package, so elsewhere pip installs or keeps markitai 1.x, and the release's `markitai-<version>.tar.gz` builds 2.0 with Rust). The [setup script](/guide/getting-started) installs a command, not an importable library:
+Add it to your project (Python 3.10 or later; wheels for macOS 11+, Linux with glibc 2.28+ and Windows, x86-64 and ARM64 each; elsewhere PyPI has nothing to install, not even 1.x, and the release's `markitai-<version>.tar.gz` builds 2.0 with Rust). The [setup script](/guide/getting-started) installs a command, not an importable library:
 
 ```bash
 uv add markitai   # or: pip install markitai

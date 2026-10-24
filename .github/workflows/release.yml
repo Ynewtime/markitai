@@ -339,8 +339,9 @@ jobs:
     permissions:
       id-token: write  # trusted publishing; the action also attests each file
     steps:
-      # Wheels only: without one for its platform, pip keeps 1.x rather than
-      # compiling the sdist (a Rust toolchain download and a long LTO build).
+      # Wheels only: without one for its platform, pip has nothing to install
+      # (PyPI no longer carries 1.x) rather than compiling the sdist (a Rust
+      # toolchain download and a long LTO build).
       # The sdist stays a GitHub Release asset.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:

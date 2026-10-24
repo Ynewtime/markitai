@@ -55,7 +55,7 @@ Markitai 2.0.0 is the first release of the Rust rewrite, and it replaces Python 
 
 - **macOS 15 with Vision (opt-in):** under the default language, Vision may label Japanese text `zh-Hans` and read it as Chinese. Set `ocr.lang: ja` for Japanese images. The default portable engine is not affected.
 - **`image.format: webp` below quality 100:** there is no lossy WebP encoder yet. Pictures without transparency are written as JPEG (`.jpg`, one warning). Pictures with transparency, and anything at quality 100, are written as lossless WebP, which is larger.
-- **PyPI has wheels only**, for the six platforms above. On other platforms pip installs or keeps markitai 1.x. The source archive on this Release builds with Rust 1.92 or later.
+- **PyPI has wheels only**, for the six platforms above, and no 1.x any more. On other platforms pip has nothing to install and leaves an installed 1.x as it is. The source archive on this Release builds with Rust 1.92 or later.
 - **Builds are not signed or notarized.** macOS Gatekeeper blocks an archive downloaded with a browser ([what to do](https://github.com/Ynewtime/markitai/blob/v2.0.0/docs/quickstart.md#unsigned-builds-on-macos)); the setup script is not affected.
 
 #### About these notes
@@ -132,7 +132,7 @@ The detailed notes in the changelog compare 2.0.0 with Python markitai 1.2.0 and
 
 - Setup scripts install a release without Python: `https://markitai.dev/setup.sh` (macOS, Linux) and `https://markitai.dev/setup.ps1` (Windows PowerShell 5.1 and PowerShell 7, x64 and ARM64) download the latest release, or `MARKITAI_VERSION`, check the archive against the release's `SHA256SUMS` and install `markitai`, `mkai` and `markitai-mcp` for the current user (`~/.local/bin`, `%LOCALAPPDATA%\Programs\markitai` added to the user Path). The new files are staged first; only then is a Python markitai 1.x that `uv tool` installed removed, and a failed Windows update puts the previous release back. A receipt lists what they installed, so an update or `--uninstall` (`-Uninstall`) removes only those files and the Path entry setup added; a custom `MARKITAI_INSTALL_DIR` is reused by later runs; `~/.markitai` is kept. With a terminal they offer `markitai doctor --fix`. A failure ends with setup's own message and exit code 1, without PowerShell's error record; pasted into an open window, setup leaves it open.
 - Each GitHub Release carries one CLI archive per platform (`markitai-v<version>-<target>.tar.gz`, `.zip` on Windows) for macOS 11+ (Apple silicon, Intel), Linux with glibc 2.28+ (x86-64, ARM64) and Windows (x64, ARM64), the six wheels and the source distribution, a `SHA256SUMS` over every asset and build-provenance attestations (`gh attestation verify <file> --repo Ynewtime/markitai`). Archives and wheels carry the same license set, the workbench's web libraries and fonts included.
-- PyPI has abi3 wheels (CPython 3.10 or later, 3.14 included) for the same six platforms, and no source distribution: on any other platform pip installs or keeps markitai 1.x instead of compiling 2.0; the Release's source archive builds with Rust 1.92 or later.
+- PyPI has abi3 wheels (CPython 3.10 or later, 3.14 included) for the same six platforms, and no source distribution: on any other platform pip has nothing to install (PyPI no longer carries 1.x) rather than compiling 2.0; the Release's source archive builds with Rust 1.92 or later.
 
 ### Changed
 - The workbench's Images option Description JSON is now called Image Descriptions (zh 图片描述, ja 画像の説明): it describes pictures and is not the document JSON.

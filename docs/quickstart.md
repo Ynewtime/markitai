@@ -113,8 +113,9 @@ packages with their own runtime requirements; see [bindings](bindings.md#install
 
 ### Rolling back to 1.x
 
-To go back to Python markitai 1.2, uninstall as above, then install the 1.2.0
-tag with the PDF library version it was released with:
+To go back to Python markitai 1.2, which is no longer on PyPI, uninstall as
+above, then install the 1.2.0 tag with the PDF library version it was released
+with:
 
 ```sh
 uv tool install "git+https://github.com/Ynewtime/markitai@v1.2.0#subdirectory=packages/markitai" --with "pymupdf4llm<2"

@@ -50,7 +50,7 @@ curl -fsSL https://markitai.dev/setup.sh | sh -s -- --uninstall
 
 Unpack it into a new folder, keep its files together and put the folder on your `PATH`. Check a download with `sha256sum -c SHA256SUMS --ignore-missing` (macOS: `grep <archive> SHA256SUMS | shasum -a 256 -c`), its origin with `gh attestation verify <archive> --repo Ynewtime/markitai`.
 
-**pip or uv.** The `markitai` package on PyPI carries the same program and installs the same three commands (Python 3.10 or later; the [Python API](/guide/python-api) comes with it). PyPI has wheels for the same six platforms and no source package, so anywhere else pip installs or keeps markitai 1.x:
+**pip or uv.** The `markitai` package on PyPI carries the same program and installs the same three commands (Python 3.10 or later; the [Python API](/guide/python-api) comes with it). PyPI has wheels for the same six platforms only, and no 1.x any more: anywhere else pip has nothing to install and leaves an installed 1.x as it is ([1.x from its tag](/guide/upgrading#going-back-to-1x)).
 
 ```bash
 uv tool install markitai     # or: pipx install markitai, pip install markitai

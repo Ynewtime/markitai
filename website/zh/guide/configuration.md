@@ -389,7 +389,7 @@ flowchart LR
 | `llm.pure` | `false` | `--pure` |
 | `llm.keep_base` | `false` | `--keep-base` |
 
-## 图片配置
+## 图片配置 {#image-configuration}
 
 | 设置 | 默认值 | 说明 |
 |------|--------|------|
@@ -646,7 +646,7 @@ markitai ./docs --no-cache-for "*.pdf"
 |------|--------|------|
 | `history.record` | `false` | 把 CLI 运行记入网页工作台历史（`--record-history`） |
 
-## 不再生效的设置
+## 不再生效的设置 {#settings-without-effect}
 
 为兼容 1.x 的文件而保留；设置了它们时 `markitai config validate` 会警告：
 

@@ -55,7 +55,7 @@ Markitai 2.0.0 是 Rust 重写版的首个正式发布，取代 Python 版 marki
 
 - **macOS 15 上的 Vision（需手动选择）：** 在默认语言下，Vision 可能把日文标为 `zh-Hans` 并按中文识别。识别日文图片时请设置 `ocr.lang: ja`。默认的便携引擎不受影响。
 - **`image.format: webp` 且质量低于 100：** 目前没有有损 WebP 编码器。不含透明像素的图片写为 JPEG（`.jpg`，给出一条警告）；含透明像素的图片以及质量为 100 时写为无损 WebP，文件更大。
-- **PyPI 只提供 wheel**，覆盖上述六个平台。在其他平台上，pip 会安装或保留 markitai 1.x。本次发布附带的源码包可用 Rust 1.92 及以上版本构建。
+- **PyPI 只提供 wheel**，覆盖上述六个平台，也不再有 1.x。在其他平台上，pip 无包可装，已安装的 1.x 保持不动。本次发布附带的源码包可用 Rust 1.92 及以上版本构建。
 - **构建未签名，也未经公证。** macOS Gatekeeper 会拦截用浏览器下载的压缩包（[处理方法](https://github.com/Ynewtime/markitai/blob/v2.0.0/docs/quickstart.md#unsigned-builds-on-macos)）；安装脚本不受影响。
 
 #### 关于这份说明
@@ -132,7 +132,7 @@ Markitai 2.0.0 是 Rust 重写版的首个正式发布，取代 Python 版 marki
 
 - 安装脚本无需 Python 即可安装发布版：`https://markitai.dev/setup.sh`（macOS、Linux）和 `https://markitai.dev/setup.ps1`（Windows PowerShell 5.1 和 PowerShell 7，x64 和 ARM64）下载最新发布版或 `MARKITAI_VERSION` 指定的版本，用发布附带的 `SHA256SUMS` 校验压缩包，并为当前用户安装 `markitai`、`mkai` 和 `markitai-mcp`（`~/.local/bin`；`%LOCALAPPDATA%\Programs\markitai`，并加入用户 Path）。新文件先暂存，之后才卸载由 `uv tool` 安装的 Python 版 markitai 1.x；Windows 上更新失败会恢复原来的版本。安装清单记录装了哪些文件，更新或 `--uninstall`（`-Uninstall`）只删除这些文件和安装脚本添加的 Path 条目；自定义的 `MARKITAI_INSTALL_DIR` 会在之后的运行中沿用；`~/.markitai` 保留。在终端中运行时会提议执行 `markitai doctor --fix`。失败时只显示安装脚本自己的提示并以退出码 1 结束，不再附带 PowerShell 的错误记录；粘贴到已打开的窗口中运行时不会关闭该窗口。
 - 每个 GitHub Release 为每个平台提供一个 CLI 压缩包（`markitai-v<版本>-<目标>.tar.gz`，Windows 为 `.zip`），覆盖 macOS 11+（Apple 芯片、Intel）、glibc 2.28+ 的 Linux（x86-64、ARM64）和 Windows（x64、ARM64），另有六个 wheel 和源码包、覆盖全部附件的 `SHA256SUMS` 以及构建来源证明（`gh attestation verify <文件> --repo Ynewtime/markitai`）。压缩包和 wheel 携带同一套许可证文件，包括工作台所用网页库和字体的许可证。
-- PyPI 提供六个平台的 abi3 wheel（CPython 3.10 及以上，含 3.14），不提供源码包：在其他平台上 pip 会安装或保留 markitai 1.x，而不是编译 2.0；发布附带的源码包可用 Rust 1.92 及以上版本构建。
+- PyPI 提供六个平台的 abi3 wheel（CPython 3.10 及以上，含 3.14），不提供源码包：在其他平台上 pip 无包可装（PyPI 已不再有 1.x），而不是编译 2.0；发布附带的源码包可用 Rust 1.92 及以上版本构建。
 
 ### 变更
 - 工作台「图片」中的「描述 JSON」改名为「图片描述」（英文 Image Descriptions，日文 画像の説明）：它是对图片的描述，不是文档 JSON。
