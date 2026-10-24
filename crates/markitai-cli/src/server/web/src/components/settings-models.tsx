@@ -268,12 +268,9 @@ export function ModelsSettings({
   onSaved,
   announce,
   describe,
-  docsUrl = "",
 }: {
   t: Dict;
   locale: Locale;
-  /** The backend's documentation index, for the setup guide of a subscription runtime. */
-  docsUrl?: string;
   /** Whose models: the admin's (the config file), or v1.15 a user token's own plus the shared ones. */
   scope?: ModelsScope;
   /** v1.15: the admin's saved models carry a Private/Shared toggle. */
@@ -1291,7 +1288,7 @@ export function ModelsSettings({
                   </div>
                 )}
                 {discovery && runtimeFailure(discovery) ? (
-                  <RuntimeNotice t={t} failure={runtimeFailure(discovery)!} provider={provider.provider} docsUrl={docsUrl} />
+                  <RuntimeNotice t={t} failure={runtimeFailure(discovery)!} provider={provider.provider} locale={locale} />
                 ) : discovery && listFailure(discovery) ? (
                   <div class="test-failure" role="alert">
                     <Icon name="WarningCircle" size={16} />

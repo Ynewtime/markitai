@@ -14,7 +14,7 @@ flowchart LR
 | Sign in | `markitai auth claude login` | `markitai auth copilot login` |
 | Check | `markitai auth claude status` | `markitai auth copilot status` |
 
-## Install
+## Install {#install}
 
 Install the CLI yourself; markitai finds it on `PATH` (or at `CLAUDE_CLI_PATH`, `COPILOT_CLI_PATH`):
 
@@ -29,7 +29,7 @@ npm install -g @github/copilot@1.0.90-2             # or: curl -fsSL https://gh.
 
 The CLIs update themselves: a newer release is used, with a one-time warning; an older one is refused.
 
-## Sign in
+## Sign in {#sign-in}
 
 Sign in where markitai runs. `markitai auth` alone shows every subscription; `status --json` is for scripts. When the workbench says a subscription "is not installed" or "is not signed in", fix it on the server's machine and reload the model list. markitai never starts a sign-in during a conversion.
 
@@ -37,6 +37,10 @@ Sign in where markitai runs. `markitai auth` alone shows every subscription; `st
 - **Copilot:** a `COPILOT_GITHUB_TOKEN`, `GH_TOKEN` or `GITHUB_TOKEN` with the "Copilot Requests" permission replaces signing in.
 
 With no `llm.model_list` and no `MODEL`, a signed-in subscription joins the automatic model pool (`claude-agent/haiku`, `copilot/auto`). Subscription models take no `api_key`, `api_base`, `max_tokens` or `reasoning_effort`, their cost shows as unknown, and a positive `llm.max_cost_per_document_usd` refuses them ([Prices](/guide/pricing)).
+
+## If it still fails {#troubleshooting}
+
+On the server's machine, `markitai auth claude status` (or `copilot`) shows the CLI release it found and whether it is signed in with a subscription. An older release than the one under [Install](#install) is refused: update it. A CLI outside `PATH` needs `CLAUDE_CLI_PATH` or `COPILOT_CLI_PATH`. Then reload the model list.
 
 ## ChatGPT
 

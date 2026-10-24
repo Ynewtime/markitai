@@ -896,7 +896,6 @@ export function App() {
             locale={locale}
             scope={role === "user" ? "user" : "admin"}
             canShare={role === "admin" && userModels}
-            docsUrl={docsUrl}
             onSaved={refreshCaps}
             announce={announce}
             describe={describe}

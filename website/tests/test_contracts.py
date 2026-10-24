@@ -46,7 +46,7 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
-from urllib.parse import unquote
+from urllib.parse import unquote, urlparse
 
 import pytest
 
@@ -801,6 +801,58 @@ def test_internal_anchors_resolve(guide: Path) -> None:
                     f"(no such heading in {_relative(candidate)})"
                 )
     assert not offenders, "broken internal anchors:\n" + "\n".join(offenders)
+
+
+# The workbench's "Setup guide" links (lib/guides.ts): a page per subscription
+# runtime and a section per reason it lists no models, on markitai.dev.
+_GUIDES_TS = _REPO / "crates" / "markitai-cli" / "src" / "server" / "web" / "src" / "lib" / "guides.ts"
+
+
+def _guides_table(text: str, name: str) -> dict[str, str]:
+    block = re.search(rf"const {name}: Record<[^>]+> = \{{(.*?)\n\}};", text, re.S)
+    assert block, f"{_relative(_GUIDES_TS)} has no {name} table"
+    pairs = dict(re.findall(r'"?([\w-]+)"?:\s*"([^"]*)"', block.group(1)))
+    assert pairs, f"{_relative(_GUIDES_TS)}: {name} is empty"
+    return pairs
+
+
+def _workbench_guide_links() -> list[str]:
+    """Every address `guideLinks()` lists: English and Chinese (Japanese pages use English)."""
+    text = _GUIDES_TS.read_text(encoding="utf-8")
+    assert 'export const SITE = "https://markitai.dev";' in text
+    pages = set(_guides_table(text, "RUNTIME_PAGES").values())
+    sections = set(_guides_table(text, "RUNTIME_SECTIONS").values())
+    return sorted(
+        f"https://markitai.dev{locale}/guide/{page}#{section}"
+        for locale in ("", "/zh")
+        for page in pages
+        for section in sections
+    )
+
+
+def test_workbench_guide_links_reach_a_page_and_its_section() -> None:
+    """A provider page's Setup guide opens an existing page of the site, in its
+    language, at a heading it has; after `docs:build`, the built page carries
+    that id too."""
+    dist = _WEBSITE / ".vitepress" / "dist"
+    links = _workbench_guide_links()
+    offenders: list[str] = []
+    for link in links:
+        url = urlparse(link)
+        page = url.path.lstrip("/")
+        source = _WEBSITE / f"{page}.md"
+        if not source.is_file():
+            offenders.append(f"{link} (no website/{page}.md)")
+            continue
+        if url.fragment not in _heading_slugs(source):
+            offenders.append(f"{link} (no heading #{url.fragment} in website/{page}.md)")
+        built = dist / f"{page}.html"
+        if dist.is_dir() and f'id="{url.fragment}"' not in (
+            built.read_text(encoding="utf-8") if built.is_file() else ""
+        ):
+            offenders.append(f"{link} (the built site has no {page}.html with id {url.fragment})")
+    assert len(links) >= 8, links
+    assert not offenders, "workbench guide links that land nowhere:\n" + "\n".join(offenders)
 
 
 def test_both_locales_have_the_same_pages() -> None:

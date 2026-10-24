@@ -417,7 +417,10 @@ runtime cannot list models says the cause instead of one generic error
 file), not a release the adapter speaks (naming the installed one when known),
 not signed in, or installed but failing. It shows the command to run on the
 machine where the server runs (install the pinned release, or the sign-in
-command) with a copy button, a link to the setup guide and the server's own
+command) with a copy button, a Setup guide link to the markitai.dev section
+for the cause (`/guide/subscriptions` or `/guide/subscription-chatgpt`, under
+`/zh/` for the Chinese page, at `#install`, `#sign-in` or `#troubleshooting`;
+`website/tests` checks every one against the site) and the server's own
 sentence under Provider's message. Adding a model by hand is switched off, with
 the reason beside it, for the first three: they are certain to fail until
 someone runs a command, so a saved model would only fail every conversion that
@@ -714,9 +717,10 @@ job options `format` (under `document_json`), `ocr_lang` (with `ocr_languages` a
 keys as saved defaults); a missing feature hides its control instead of failing (no Stop
 remaining, no Compare, archives saved through the page, history read job by job,
 images read from the file route).
-`docs_url` points the Docs link at the backend's own documentation. The guide links
-(pricing, subscriptions) open the page beside an `index.md` address, or `guide/<page>`
-under a site root (`https://markitai.dev` or `https://markitai.dev/`).
+`docs_url` points the Docs link at the backend's own documentation. The pricing link
+opens the page beside an `index.md` address, or `guide/<page>` under a site root
+(`https://markitai.dev` or `https://markitai.dev/`); the subscriptions' Setup guide
+links always open markitai.dev in the page's language.
 
 `node scripts/package.mjs OUTDIR` packages a build for the other backend: a
 reproducible tar.gz with `index.html`, every file served under `/ui/`, the
