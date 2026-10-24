@@ -265,6 +265,44 @@ Notes on individual entries:
   usable without a key; the hosted APIs count as routable only with one.
   `ollama_chat/` also reads `OLLAMA_API_BASE`, as LiteLLM does.
 
+### Moonshot AI and Kimi Code
+
+Kimi's models come from two services with separate keys, each in two regions
+(checked 2026-10-24). A key works only at the endpoint of the service and
+region that issued it; elsewhere the answer is HTTP 401 (`Invalid
+Authentication`).
+
+| Key from | Prefix | Base URL | Key variable | Base variables |
+|---|---|---|---|---|
+| Kimi open platform, international (platform.kimi.ai) | `moonshot/` | `https://api.moonshot.ai/v1` (default) | `MOONSHOT_API_KEY` | `MOONSHOT_API_BASE` |
+| Kimi open platform, China (platform.kimi.com, 开放平台) | `moonshot/` | `https://api.moonshot.cn/v1` | `MOONSHOT_API_KEY` | `MOONSHOT_API_BASE` |
+| Kimi Code membership, kimi.com | `kimi_code/` | `https://api.kimi.com/coding/v1` (default) | `KIMI_API_KEY` | `KIMI_CODE_API_BASE`, `KIMI_CODE_BASE_URL` |
+| Kimi Code membership, kimi.ai | `kimi_code/` | `https://api.kimi.ai/coding/v1` | `KIMI_API_KEY` | `KIMI_CODE_API_BASE`, `KIMI_CODE_BASE_URL` |
+
+A China platform key in the configuration file:
+
+```json
+{"model_name": "default",
+ "litellm_params": {"model": "moonshot/kimi-k3", "api_key": "env:MOONSHOT_API_KEY",
+                    "api_base": "https://api.moonshot.cn/v1"}}
+```
+
+or `MOONSHOT_API_BASE=https://api.moonshot.cn/v1` beside `MOONSHOT_API_KEY`. A
+Kimi Code key is `{"model": "kimi_code/k3"}` with `KIMI_API_KEY` set (model IDs
+such as `k3.1-pro`, `k3`, `kimi-for-coding`; the workbench lists the ones the
+key may use). A refused key's error names the other region's address and the
+other service. The workbench's model list tries the other region itself.
+
+Kimi Code is reached at its Anthropic-compatible Messages endpoint
+(`…/coding/v1/messages`, `x-api-key`), the one Kimi documents for Claude Code;
+its Chat Completions endpoint is reported to admit only the User-Agents of
+listed coding agents, and markitai sends its own. Requests ask for at most
+32,768 output tokens unless `max_tokens` says otherwise, since its models think
+before answering. Kimi's community guidelines describe the membership as
+personal, interactive use and ask not to use it for non-interactive automation
+or batch pipelines; use an open-platform key for batch conversions. Its cost
+shows as unknown.
+
 ### Further OpenAI-compatible prefixes
 
 The other OpenAI-compatible prefixes the reference reaches through LiteLLM

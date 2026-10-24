@@ -442,7 +442,14 @@ MOONSHOT_API_KEY where markitai serve runs …`). A hand-written model that the
 server serves with its key variable shows `From DEEPSEEK_API_KEY` in Edit, and
 a model list that cannot be loaded says why in the model test's categories (no
 key, key rejected, rate limited, unreachable, no answer in time, provider
-error), with the provider's message folded.
+error), with the provider's message folded; a rejected key names the hosts that
+refused it (contract v1.21 `endpoints`, else the address the page asked). Moonshot
+AI and Kimi Code keys belong to a region: when the default endpoint refuses a
+new connection's key and the provider's other region lists its models
+(`api_base`, contract v1.21), the page fills that address into API address and
+says so, and the models are saved with it (a saved connection is told to change
+its address instead). Their rejected-key hints also say that a Kimi Code
+membership key belongs under Kimi Code and a Kimi platform key under Moonshot AI.
 
 ## Job controls
 
