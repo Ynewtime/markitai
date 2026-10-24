@@ -298,7 +298,7 @@ URL 模式匹配完整 URL、去掉协议的 URL、主机名或最后一段路�
 
 `-c` 和 `--config-json` 可以写在子命令前面或后面（`markitai -c ./my.json config set llm.enabled true`）；`config set` 和 `config edit` 会创建不存在的 `-c` 文件，并拒绝 `--config-json`。
 
-## 退出码
+## 退出码 {#exit-codes}
 
 | 码 | 含义 |
 |----|------|
