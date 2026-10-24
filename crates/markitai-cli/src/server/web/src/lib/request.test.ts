@@ -76,3 +76,24 @@ test("the command wraps between words, each flag kept with its value", () => {
   assert.deepEqual(view?.words, ["markitai", "'field notes.pdf'", "-o", "output/", "--profile", "obsidian", "--no-cache"]);
   assert.deepEqual(wrapUnits(view?.words ?? []), ["markitai", "'field notes.pdf'", "-o output/", "--profile obsidian", "--no-cache"]);
 });
+
+test("a request naming a preset this page does not know spells its switches out instead of crashing", () => {
+  // An API job submitted with a configured preset the server's table does not list.
+  const team = { ...emptyOptions(), preset: "team", llm: true, ocr: true, alt: false, desc: false, screenshot: false };
+  assert.equal(requestView(["notes.pdf"], team, null, false)?.command, "markitai notes.pdf -o output/ --llm --ocr");
+  assert.equal(
+    requestView(["notes.pdf"], team, { "llm.enabled": true, "ocr.enabled": true, "image.format": "webp" }, false)?.command,
+    "markitai notes.pdf -o output/ --llm --ocr",
+  );
+  // A CLI history entry (`markitai notes.pdf --preset team`): its options carry the preset, its settings what ran.
+  const cli = { ...emptyOptions(), preset: "team" };
+  const view = requestView(["notes.pdf"], cli, { "ocr.enabled": true, "ocr.lang": "ja" }, false);
+  assert.equal(view?.command, "markitai notes.pdf -o output/ --ocr");
+  assert.deepEqual(view?.chips, [{ key: "ocr.lang", value: "ja" }]);
+  // A Python 1.2.1 job: a preset name and its switches, no settings.
+  const python = { ...emptyOptions(), preset: "Team Notes", llm: false, ocr: false, alt: false, desc: false, screenshot: false };
+  assert.equal(requestView(["notes.pdf"], python, null, false)?.command, "markitai notes.pdf -o output/");
+  // A preset the server lists is named while the request equals it.
+  const table = { team: { llm: true, ocr: true, alt: false, desc: false, screenshot: false } };
+  assert.equal(requestView(["notes.pdf"], team, null, false, table)?.command, "markitai notes.pdf -o output/ --preset team");
+});

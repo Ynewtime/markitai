@@ -73,6 +73,12 @@ export function featuresOf(preset: Preset, table: PresetTable = BUILTIN_PRESETS)
   return table[preset] ?? BUILTIN_PRESETS[preset];
 }
 
+/** A recorded request's preset may be any name (a configured preset, a CLI run's, a Python
+ * job's): its features, or null when neither the server's table nor the built-ins know it. */
+export function knownFeatures(preset: string, table: PresetTable = BUILTIN_PRESETS): PresetFeatures | null {
+  return table[preset] ?? (BUILTIN_PRESETS as PresetTable)[preset] ?? null;
+}
+
 /** Choosing a preset resets its five features, never the output or source choices. */
 export function applyPreset(state: Composer, preset: Preset, table: PresetTable = BUILTIN_PRESETS): Composer {
   const features = featuresOf(preset, table);

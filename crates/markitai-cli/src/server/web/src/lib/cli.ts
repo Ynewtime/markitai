@@ -5,7 +5,7 @@
 // `./name` for a file, `./folder/` for a picked folder.
 import type { JobOptions, Preset, PresetFeatures } from "../api/types.ts";
 import { relativePath } from "./files.ts";
-import { BUILTIN_PRESETS, featuresOf, type PresetTable } from "./options.ts";
+import { BUILTIN_PRESETS, knownFeatures, type PresetTable } from "./options.ts";
 
 const SAFE = /^(?!~)[A-Za-z0-9_\-./:@%+=,~]+$/;
 /** The five features a preset sets; every CLI default for them is false. */
@@ -17,10 +17,13 @@ export function shellQuote(word: string): string {
 
 /** A preset is named only while the request still equals it. Once the reader
  * changes one of its features the line spells the five features out, so it
- * never claims a preset it then overrides. */
+ * never claims a preset it then overrides. A preset this page does not know (a
+ * configured one the server does not list, a CLI run's, a Python job's) is never
+ * named either: its features are unknown, so the switches are spelled out. */
 export function namedPreset(options: JobOptions, preset: Preset | null, table: PresetTable): PresetFeatures | null {
   if (preset === null) return null;
-  const features = featuresOf(preset, table);
+  const features = knownFeatures(preset, table);
+  if (features === null) return null;
   return FEATURES.every((key) => options[key] === features[key]) ? features : null;
 }
 
