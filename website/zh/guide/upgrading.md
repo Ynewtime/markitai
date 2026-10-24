@@ -70,7 +70,6 @@ uv tool install "git+https://github.com/Ynewtime/markitai@v1.2.0#subdirectory=pa
 | `<!-- Page number: N -->`、`<!-- Slide number: N -->` | 总是写入 | 默认关闭；`--page-markers` 或 `output.page_markers` 保留它们 |
 | 图片名 | `report.docx.0001.png` | 按内容命名：`.markitai/assets/510f5d9476ab159c03ccda77.jpg`；`image.compress` 开启时 PNG 和 HEIC 会变成 `.jpg` |
 | 幻灯片图片 | `deck.pptx.slide0001.jpg` | `deck.pptx.page0001.jpg` |
-| `image.format: webp` | 按 `image.quality` 写有损 WebP | 质量低于 100 时，不含透明像素的图片和页面截图写为 JPEG（`.jpg`，每个文档一条警告）；含透明像素或质量 100 时为无损 WebP |
 | 文件夹批量转换中的符号链接 | 跟随 | 跳过（`skip_reason: "symlink"`）；`output.allow_symlinks: true` 时跟随 |
 | `.markitai/ownership/` | — | 新增：记录 markitai 写过哪些文件，重跑时不会替换你自己的文件 |
 

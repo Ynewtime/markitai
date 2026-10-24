@@ -396,8 +396,8 @@ flowchart LR
 | `image.alt_enabled` | `false` | Alt text via LLM (`--alt`) |
 | `image.desc_enabled` | `false` | Image descriptions (`--desc`) |
 | `image.compress` | `true` | Compress extracted images |
-| `image.quality` | `75` | JPEG quality (1–100); with `webp`, below 100 a picture without transparency is written as JPEG |
-| `image.format` | `jpeg` | `jpeg`, `png` or `webp` (lossless WebP only at quality 100 or with transparency, otherwise `.jpg`) |
+| `image.quality` | `75` | JPEG/WebP quality (1–100) |
+| `image.format` | `jpeg` | `jpeg`, `png` or `webp` |
 | `image.max_width` | `1920` | Max width in pixels |
 | `image.max_height` | `99999` | Max height in pixels |
 | `image.filter.min_width` | `50` | Skip narrower images |

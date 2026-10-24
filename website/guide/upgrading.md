@@ -70,7 +70,6 @@ New: `--text-only` (only the recognised text of pictures and PDFs) and `--page-m
 | `<!-- Page number: N -->`, `<!-- Slide number: N -->` | always written | off; `--page-markers` or `output.page_markers` keeps them |
 | Picture names | `report.docx.0001.png` | by content: `.markitai/assets/510f5d9476ab159c03ccda77.jpg`; PNG and HEIC become `.jpg` while `image.compress` is on |
 | Slide images | `deck.pptx.slide0001.jpg` | `deck.pptx.page0001.jpg` |
-| `image.format: webp` | lossy WebP at `image.quality` | below quality 100, pictures and page screenshots without transparency are written as JPEG (`.jpg`, one warning per document); with transparency or at 100, lossless WebP |
 | Symbolic links in a folder batch | followed | skipped (`skip_reason: "symlink"`); `output.allow_symlinks: true` follows them |
 | `.markitai/ownership/` | — | new: records which files markitai wrote, so a rerun never replaces yours |
 

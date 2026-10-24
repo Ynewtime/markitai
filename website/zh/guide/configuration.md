@@ -396,8 +396,8 @@ flowchart LR
 | `image.alt_enabled` | `false` | 用 LLM 生成 alt 文本（`--alt`） |
 | `image.desc_enabled` | `false` | 图片描述（`--desc`） |
 | `image.compress` | `true` | 压缩抽取出的图片 |
-| `image.quality` | `75` | JPEG 质量（1–100）；`webp` 时质量低于 100，不含透明像素的图片写为 JPEG |
-| `image.format` | `jpeg` | `jpeg`、`png` 或 `webp`（仅在质量 100 或含透明像素时为无损 WebP，否则写为 `.jpg`） |
+| `image.quality` | `75` | JPEG/WebP 质量（1–100） |
+| `image.format` | `jpeg` | `jpeg`、`png` 或 `webp` |
 | `image.max_width` | `1920` | 最大宽度（像素） |
 | `image.max_height` | `99999` | 最大高度（像素） |
 | `image.filter.min_width` | `50` | 跳过更窄的图片 |
