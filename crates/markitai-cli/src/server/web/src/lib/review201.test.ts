@@ -73,3 +73,16 @@ test("L7: focus stays on a button that turns unavailable, and goes back to a men
   const more = read("../components/action-menu.tsx");
   assert.match(more, /const choose = \(run: \(\) => void\) => \{\s*setOpen\(false\);\s*trigger\.current\?\.focus\(\);\s*run\(\);/);
 });
+
+test("L9: every label a screen reader is given is one it reads", () => {
+  // the dialog's command strip is a named group, as Details' strip is
+  assert.match(read("../components/options-dialog.tsx"), /<code ref=\{cli\} class="cli-text" role="group" tabIndex=\{0\} aria-label=\{t\.cliAria\}/);
+  // a duration's spoken form is sr-only text, not a label on a plain span
+  const bits = read("../components/item-bits.tsx");
+  assert.match(bits, /<span aria-hidden="true">\{fmtDur\(ms\)\}<\/span>\s*<span class="sr-only">\{t\.ariaDuration\(minutes, seconds\)\}<\/span>/);
+  // with the phone's view switch there are no tabs: a pane is a region named by its view
+  const view = read("../components/markdown-view.tsx");
+  assert.match(view, /barHost && compactBar \? \{ role: "region" as const, "aria-label": tabLabels\[tab\] \} : \{ role: "tabpanel" as const, "aria-labelledby": `\$\{prefix\}-tab-\$\{tab\}` \}/);
+  assert.equal((view.match(/\{\.\.\.panel\("(rendered|source|diff|files)"\)\}/g) ?? []).length, 4);
+  assert.ok(!/role="tabpanel" aria-labelledby/.test(view));
+});

@@ -61,8 +61,13 @@ export function useElapsed(startedAt: number | null): number | null {
   return startedAt === null ? null : Math.max(0, now - startedAt);
 }
 
-/** "14.6 s" with a spoken form that says the unit. */
+/** "14.6 s" with a spoken form that says the unit (a label on a plain span is not read). */
 export function Duration({ t, ms }: { t: Dict; ms: number }) {
   const { minutes, seconds } = durParts(ms);
-  return <span aria-label={t.ariaDuration(minutes, seconds)}>{fmtDur(ms)}</span>;
+  return (
+    <span>
+      <span aria-hidden="true">{fmtDur(ms)}</span>
+      <span class="sr-only">{t.ariaDuration(minutes, seconds)}</span>
+    </span>
+  );
 }

@@ -624,7 +624,7 @@ export function OptionsDialog({
         </div>
         <div class="sheet-foot">
           <div class="sheet-cli">
-            <code ref={cli} class="cli-text" tabIndex={0} aria-label={t.cliAria} title={command} onScroll={(event) => markMore(event.currentTarget)}>
+            <code ref={cli} class="cli-text" role="group" tabIndex={0} aria-label={t.cliAria} title={command} onScroll={(event) => markMore(event.currentTarget)}>
               <span class="cli-prompt" aria-hidden="true">
                 ${" "}
               </span>

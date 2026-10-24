@@ -625,6 +625,10 @@ export function MarkdownView({
   const sideBySideDiff = wide;
   const contentsToggle = entries.length > 0 && wide && active === "rendered";
   const tabLabels: Record<Tab, string> = { rendered: t.rendered, source: t.source, diff: t.diffTab, files: t.filesTab };
+  // A pane is the tabpanel of its tab; with the compact view switch (a phone) there are no tabs to
+  // name it, so it is a region named by its view.
+  const panel = (tab: Tab) =>
+    barHost && compactBar ? { role: "region" as const, "aria-label": tabLabels[tab] } : { role: "tabpanel" as const, "aria-labelledby": `${prefix}-tab-${tab}` };
   // Rendered | Source | Diff | Files with Base | LLM: in the window's tab row when it lends one (barHost).
   const bar = (
     <>
@@ -691,7 +695,7 @@ export function MarkdownView({
 
       <div class="viewer-main">
       {showAside && <TocAside t={t} entries={entries} active={readingEntry} onPick={goTo} />}
-      <div ref={pane} id={`${prefix}-pane-rendered`} role="tabpanel" aria-labelledby={`${prefix}-tab-rendered`} class="pane" tabIndex={0} hidden={active !== "rendered"}>
+      <div ref={pane} id={`${prefix}-pane-rendered`} {...panel("rendered")} class="pane" tabIndex={0} hidden={active !== "rendered"}>
         {markdown === null || renderError ? (
           note(failure)
         ) : (
@@ -747,7 +751,7 @@ export function MarkdownView({
         )}
       </div>
 
-      <div id={`${prefix}-pane-source`} role="tabpanel" aria-labelledby={`${prefix}-tab-source`} class="pane is-source" tabIndex={0} hidden={active !== "source"}>
+      <div id={`${prefix}-pane-source`} {...panel("source")} class="pane is-source" tabIndex={0} hidden={active !== "source"}>
         {markdown === null || split === null ? (
           note(failure, "source")
         ) : sourceSeen ? (
@@ -756,7 +760,7 @@ export function MarkdownView({
       </div>
 
       {!compact && pair && (
-        <div id={`${prefix}-pane-diff`} role="tabpanel" aria-labelledby={`${prefix}-tab-diff`} class="pane" tabIndex={0} hidden={active !== "diff"}>
+        <div id={`${prefix}-pane-diff`} {...panel("diff")} class="pane" tabIndex={0} hidden={active !== "diff"}>
           {diff === null ? (
             <Skeleton label={t.loading} />
           ) : diff.kind === "error" ? (
@@ -785,7 +789,7 @@ export function MarkdownView({
       )}
 
       {!compact && (
-        <div id={`${prefix}-pane-files`} role="tabpanel" aria-labelledby={`${prefix}-tab-files`} class="pane" tabIndex={0} hidden={active !== "files"}>
+        <div id={`${prefix}-pane-files`} {...panel("files")} class="pane" tabIndex={0} hidden={active !== "files"}>
           {result === null ? (
             note(doc.error, "list")
           ) : result.artifacts.length === 0 && !kept ? (
