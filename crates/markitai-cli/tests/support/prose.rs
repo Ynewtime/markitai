@@ -101,6 +101,19 @@ const NAMES: &[&str] = &[
     "rag",
     "obsidian",
     "okf",
+    // Linux distributions, named in the comments of doctor's install commands.
+    "debian",
+    "ubuntu",
+    "fedora",
+    "arch",
+];
+
+/// Programs whose command lines the CLI prints for a person to copy: its own,
+/// and the package managers doctor's install commands use on each system.
+/// Matched as written: a sentence starts with a capital, a command does not.
+const COMMANDS: &[&str] = &[
+    "markitai", "mkai", "sudo", "apt", "apt-get", "dnf", "yum", "zypper", "pacman", "brew",
+    "winget", "choco", "scoop", "npm",
 ];
 
 fn has_chinese(text: &str) -> bool {
@@ -135,14 +148,22 @@ pub fn english_prose(line: &str) -> bool {
     if has_chinese(line) {
         return false;
     }
-    let trimmed = line.trim_start();
-    // A command to copy, on a line of its own.
-    if trimmed.starts_with("markitai ") || trimmed.starts_with("mkai ") {
-        return false;
+    // A command to copy, on a line of its own: only a shell comment after it
+    // (`sudo apt install libreoffice  # Debian, Ubuntu`) is read.
+    let mut tokens = line.split_whitespace();
+    if tokens.next().is_some_and(|first| COMMANDS.contains(&first)) && tokens.next().is_some() {
+        return line
+            .split_once(" #")
+            .is_some_and(|(_, comment)| prose_words(comment) >= 1);
     }
+    prose_words(line) >= 1
+}
+
+/// How many words of `text` are English prose.
+fn prose_words(text: &str) -> usize {
     let mut quoted = false;
     let mut words = 0;
-    for token in line.split_whitespace() {
+    for token in text.split_whitespace() {
         // `code` and 'values' are quoted as typed.
         let opens = token.starts_with(['`', '\'', '"']);
         let closes = token.ends_with(['`', '\'', '"'])
@@ -157,7 +178,7 @@ pub fn english_prose(line: &str) -> bool {
             words += 1;
         }
     }
-    words >= 1
+    words
 }
 
 #[test]
@@ -175,6 +196,10 @@ fn the_lines_that_stayed_english_are_caught() {
         "✗ Cannot establish MCP stdio session",
         "  ✗ error sending request: client error (Connect): tcp connect error",
         "  ! Ignored COPILOT_CLI_PATH from ./.env: a folder's .env may not set programs",
+        // Prose that only starts like a command, or a command with a prose comment.
+        "Install LibreOffice: brew install --cask libreoffice",
+        "Brew installs LibreOffice for you",
+        "    sudo apt install libreoffice  # install the office suite first",
     ] {
         assert!(english_prose(line), "{line}");
     }
@@ -193,6 +218,13 @@ fn chinese_lines_and_technical_lines_pass() {
         "  ✓ Native Office readers：旧版 .doc 和 .ppt 由内置读取器读取",
         "output.on_conflict = \"skip\"",
         "",
+        // doctor's LibreOffice install commands on Windows, macOS and Linux.
+        "    winget install --id TheDocumentFoundation.LibreOffice --exact",
+        "    brew install --cask libreoffice",
+        "    sudo apt install libreoffice  # Debian, Ubuntu",
+        "    sudo dnf install libreoffice  # Fedora",
+        "    sudo pacman -S libreoffice-fresh  # Arch",
+        "    npm install -g @anthropic-ai/claude-code@2.1.284",
     ] {
         assert!(!english_prose(line), "{line}");
     }
