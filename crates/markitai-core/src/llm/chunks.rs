@@ -137,6 +137,9 @@ pub(super) struct Protected {
     /// Whether the literal at the same index stood alone on its line: a
     /// comment or picture that is a block of its own.
     blocks: Vec<bool>,
+    /// Whether the literal at the same index is a link's address, written
+    /// between the `](` and `)` of a link whose text the model sees.
+    addresses: Vec<bool>,
     pub page_starts: Vec<(usize, usize)>,
     ranges: Vec<std::ops::Range<usize>>,
 }
@@ -192,7 +195,7 @@ impl Protected {
             .into_iter()
             .chain(std::iter::once(source.len()..source.len()))
         {
-            inline_ranges(source, cursor, range.start, &mut ranges);
+            inline_ranges(source, cursor, range.start, &mut ranges, 0);
             cursor = range.end;
         }
         crate::sort::by_key(&mut ranges, |r| r.start);
@@ -231,6 +234,7 @@ impl Protected {
         let mut text = String::new();
         let mut literals = Vec::new();
         let mut blocks = Vec::new();
+        let mut addresses = Vec::new();
         cursor = 0;
         let source_ranges = merged.clone();
         for range in merged {
@@ -243,6 +247,9 @@ impl Protected {
             }
             literals.push((token, source[range.clone()].to_owned()));
             blocks.push(stands_alone(source, &range));
+            addresses.push(
+                source[..range.start].ends_with("](") && source[range.end..].starts_with(')'),
+            );
             cursor = range.end;
         }
         text.push_str(&source[cursor..]);
@@ -251,6 +258,7 @@ impl Protected {
             prefix,
             literals,
             blocks,
+            addresses,
             page_starts,
             ranges: source_ranges,
         }
@@ -423,7 +431,7 @@ impl Protected {
         let expected = self.tokens(original);
         let actual = self.tokens(answer);
         if expected == actual {
-            return Ok(());
+            return self.links_kept(answer);
         }
         // Name what went wrong and which markers, as Python markitai does:
         // the user sees what was at stake, and a resend tells the model.
@@ -466,6 +474,31 @@ impl Protected {
         )))
     }
 
+    /// A link's address marker must stay inside its link (`](⟦…⟧)`): out of
+    /// it, the address would come back as bare text after the words.
+    fn links_kept(&self, answer: &str) -> Result<()> {
+        let loose: Vec<String> = self
+            .literals
+            .iter()
+            .zip(&self.addresses)
+            .filter(|(_, address)| **address)
+            .filter(|((token, _), _)| {
+                answer.match_indices(token.as_str()).any(|(at, _)| {
+                    !answer[..at].ends_with("](") || !answer[at + token.len()..].starts_with(')')
+                })
+            })
+            .map(|((token, _), _)| self.describe(token))
+            .collect();
+        if loose.is_empty() {
+            return Ok(());
+        }
+        Err(Error::Conversion(format!(
+            "the answer took {} of the document's link addresses out of their links ({}); keep each as [text](marker)",
+            loose.len(),
+            loose.join("; ")
+        )))
+    }
+
     /// A marker as a person and a model can tell it: what it stands for,
     /// then the marker itself.
     fn describe(&self, token: &str) -> String {
@@ -482,7 +515,14 @@ impl Protected {
                 text
             }
         };
-        let what = if let Some(page) = literal
+        let address = self
+            .literals
+            .iter()
+            .zip(&self.addresses)
+            .any(|((marker, _), address)| *address && marker == token);
+        let what = if address {
+            format!("the address of a link ({})", short(literal))
+        } else if let Some(page) = literal
             .strip_prefix("<!-- Page number: ")
             .and_then(|rest| rest.strip_suffix("-->"))
         {
@@ -750,8 +790,33 @@ impl InlineIndex {
     }
 }
 
-fn inline_ranges(source: &str, start: usize, end: usize, ranges: &mut Vec<std::ops::Range<usize>>) {
-    let source = &source[start..end];
+/// Attribute-less HTML tags that only style the text they wrap. They stay
+/// visible: as opaque markers around a phrase (`⟦…⟧text⟦…⟧`) cleanup models
+/// drop them, which costs a second request, and losing one changes no word
+/// of the text (Python markitai never hid them).
+fn styles_only(tag: &str) -> bool {
+    let name = tag
+        .strip_prefix("</")
+        .or_else(|| tag.strip_prefix('<'))
+        .and_then(|rest| rest.strip_suffix('>'))
+        .unwrap_or_default();
+    ["u", "ins", "mark", "small", "b", "strong", "i", "em"]
+        .iter()
+        .any(|known| name.eq_ignore_ascii_case(known))
+}
+
+/// How deeply link texts inside link texts are scanned before a link is
+/// kept whole again.
+const LINK_DEPTH: u8 = 4;
+
+fn inline_ranges(
+    full: &str,
+    start: usize,
+    end: usize,
+    ranges: &mut Vec<std::ops::Range<usize>>,
+    depth: u8,
+) {
+    let source = &full[start..end];
     let index = InlineIndex::new(source);
     let bytes = source.as_bytes();
     let mut i = 0;
@@ -809,6 +874,11 @@ fn inline_ranges(source: &str, start: usize, end: usize, ranges: &mut Vec<std::o
             }
             if next.is_none() {
                 html_failed_until = scanned;
+            } else if let Some(end) = next
+                && styles_only(&source[i..end])
+            {
+                i = end;
+                continue;
             }
         } else if bytes[i] == b'$' {
             let width = rest.bytes().take_while(|&b| b == b'$').count();
@@ -828,6 +898,21 @@ fn inline_ranges(source: &str, start: usize, end: usize, ranges: &mut Vec<std::o
             if let Some(&label) = index.paired.get(&open) {
                 if matches!(bytes.get(label), Some(b'(' | b'[')) {
                     next = index.paired.get(&label).copied();
+                    // A link keeps its text readable and only its address
+                    // (`[text](⟦…⟧)`): hidden whole, its words vanish from
+                    // the sentence and a model reading the page image writes
+                    // them back without the marker.
+                    if let Some(after) = next
+                        && open == i
+                        && bytes[label] == b'('
+                        && after > label + 2
+                        && depth < LINK_DEPTH
+                    {
+                        inline_ranges(full, start + open + 1, start + label - 1, ranges, depth + 1);
+                        ranges.push(start + label + 1..start + after - 1);
+                        i = after;
+                        continue;
+                    }
                 } else if source[open..].starts_with("[[") {
                     next = Some(label);
                 }
@@ -1071,6 +1156,60 @@ mod tests {
                 protected.literals[0].1, protected.literals[1].1, protected.literals[2].1
             )
         );
+    }
+
+    #[test]
+    fn a_link_keeps_its_words_visible_and_only_its_address_hidden() {
+        let source = "Highlights:\n\n- <u>Readings from the ferry ramp are provisional.</u>\n- [North pier tables are online.](https://example.org/tides?pier=north \"Tables\") They list every reading.\n- See [`gauge.csv`](./data/gauge.csv) and ![chart](./chart.png).\n";
+        let protected = Protected::new(source);
+        let text = &protected.text;
+        // Styling tags and link words reach the model as they are.
+        assert!(
+            text.contains("- <u>Readings from the ferry ramp are provisional.</u>\n"),
+            "{text}"
+        );
+        assert!(
+            text.contains("- [North pier tables are online.](⟦MKTI:"),
+            "{text}"
+        );
+        assert!(!text.contains("example.org"), "{text}");
+        // Code inside a link's text and a picture stay whole literals.
+        assert!(!text.contains("gauge.csv"), "{text}");
+        assert!(!text.contains("chart.png"), "{text}");
+        assert_eq!(protected.restore(text).unwrap(), source);
+        // An answer that rewords the link and drops the underline keeps the address.
+        let answer = text.replace("<u>", "").replace("</u>", "").replace(
+            "North pier tables are online.",
+            "The north pier tables are online.",
+        );
+        assert_eq!(
+            protected.restore(&answer).unwrap(),
+            source
+                .replace("<u>", "")
+                .replace("</u>", "")
+                .replace("[North pier", "[The north pier")
+        );
+        // An address taken out of its link is refused, naming it.
+        let token = protected.tokens(text).remove(0);
+        let loose = text.replace(&format!("]({token})"), &format!("] {token}"));
+        let error = protected.validate(text, &loose).unwrap_err().to_string();
+        assert!(
+            error.starts_with("the answer took 1 of the document's link addresses out of their links (the address of a link (https://example.org/tides?pier=north"),
+            "{error}"
+        );
+        assert!(protected.restore(&loose).is_err());
+    }
+
+    #[test]
+    fn styling_tags_with_attributes_and_meaningful_tags_stay_protected() {
+        let source = "x<sup>2</sup> and H<sub>2</sub>O, <s>old</s>, a<br>b, <u class=\"k\">kept</u>, <B>bold</B>.\n";
+        let protected = Protected::new(source);
+        let text = &protected.text;
+        for hidden in ["<sup>", "<sub>", "<s>", "<br>", "<u class"] {
+            assert!(!text.contains(hidden), "{hidden}: {text}");
+        }
+        assert!(text.contains("<B>bold</B>"), "{text}");
+        assert_eq!(protected.restore(text).unwrap(), source);
     }
 
     #[test]
