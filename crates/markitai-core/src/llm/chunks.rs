@@ -790,19 +790,26 @@ impl InlineIndex {
     }
 }
 
-/// Attribute-less HTML tags that only style the text they wrap. They stay
-/// visible: as opaque markers around a phrase (`⟦…⟧text⟦…⟧`) cleanup models
-/// drop them, which costs a second request, and losing one changes no word
-/// of the text (Python markitai never hid them).
-fn styles_only(tag: &str) -> bool {
-    let name = tag
-        .strip_prefix("</")
-        .or_else(|| tag.strip_prefix('<'))
-        .and_then(|rest| rest.strip_suffix('>'))
-        .unwrap_or_default();
+/// HTML tags that only style the text they wrap. Without attributes they
+/// stay visible: as opaque markers around a phrase (`⟦…⟧text⟦…⟧`) cleanup
+/// models drop them, which costs a second request, and losing one changes no
+/// word of the text (Python markitai never hid them). An opening tag with
+/// attributes is protected, and so is the closing tag that ends it: a pair is
+/// either visible or hidden as a whole. Returns the lower-case name, whether
+/// the tag closes, and whether it carries anything after its name.
+fn styling_tag(tag: &str) -> Option<(String, bool, bool)> {
+    let inner = tag.strip_prefix('<')?.strip_suffix('>')?;
+    let (closing, inner) = match inner.strip_prefix('/') {
+        Some(rest) => (true, rest),
+        None => (false, inner),
+    };
+    let width = inner
+        .find(|ch: char| ch.is_whitespace() || ch == '/')
+        .unwrap_or(inner.len());
+    let name = inner[..width].to_ascii_lowercase();
     ["u", "ins", "mark", "small", "b", "strong", "i", "em"]
-        .iter()
-        .any(|known| name.eq_ignore_ascii_case(known))
+        .contains(&name.as_str())
+        .then_some((name, closing, width < inner.len()))
 }
 
 /// How deeply link texts inside link texts are scanned before a link is
@@ -822,6 +829,8 @@ fn inline_ranges(
     let mut i = 0;
     let mut html_failed_until = 0;
     let mut comment_failed = false;
+    // Per styling tag name, whether each open tag carried attributes.
+    let mut styled: std::collections::HashMap<String, Vec<bool>> = Default::default();
     while i < source.len() {
         let rest = &source[i..];
         if rest.starts_with("\\[") || rest.starts_with("\\(") {
@@ -875,10 +884,19 @@ fn inline_ranges(
             if next.is_none() {
                 html_failed_until = scanned;
             } else if let Some(end) = next
-                && styles_only(&source[i..end])
+                && let Some((name, closing, attributed)) = styling_tag(&source[i..end])
             {
-                i = end;
-                continue;
+                let open = styled.entry(name).or_default();
+                let hidden = if closing {
+                    open.pop().unwrap_or(false) || attributed
+                } else {
+                    open.push(attributed);
+                    attributed
+                };
+                if !hidden {
+                    i = end;
+                    continue;
+                }
             }
         } else if bytes[i] == b'$' {
             let width = rest.bytes().take_while(|&b| b == b'$').count();
@@ -1210,6 +1228,34 @@ mod tests {
         }
         assert!(text.contains("<B>bold</B>"), "{text}");
         assert_eq!(protected.restore(text).unwrap(), source);
+    }
+
+    #[test]
+    fn an_attributed_styling_tag_is_hidden_with_its_closing_tag() {
+        let source = "a <B class=x>c</B> d <u>plain</u> <b title=\"t\">x <b>y</b> z</b> </i> e.\n";
+        let protected = Protected::new(source);
+        let text = &protected.text;
+        // the attributed pairs are hidden whole; the inner plain pair and a
+        // stray closer stay visible
+        assert!(
+            !text.contains("<B class") && !text.contains("</B>"),
+            "{text}"
+        );
+        assert!(text.contains("<u>plain</u>"), "{text}");
+        assert!(text.contains("<b>y</b>"), "{text}");
+        assert!(
+            !text.contains("title=") && !text.contains("z</b>"),
+            "{text}"
+        );
+        assert!(text.contains(" </i> e."), "{text}");
+        assert_eq!(protected.tokens(text).len(), 4, "{text}");
+        assert_eq!(protected.restore(text).unwrap(), source);
+        // A model that drops the visible pairs still keeps both ends of the hidden ones.
+        let answer = text.replace("<u>", "").replace("</u>", "");
+        assert_eq!(
+            protected.restore(&answer).unwrap(),
+            source.replace("<u>", "").replace("</u>", "")
+        );
     }
 
     #[test]
