@@ -200,7 +200,7 @@ fn a_discarded_structured_answer_and_its_second_request_are_warned_and_counted()
     assert_eq!(
         enhanced.warnings,
         [
-            "The model's tool-call answer was not used (LLM document response requires cleaned_markdown plus nonempty description and string tags); the request was sent again in JSON-schema mode and a later answer was used"
+            "A model answer could not be used, so the request was sent again; a later answer was used"
         ]
     );
     let requests = server.finish();
@@ -411,11 +411,8 @@ fn a_recitation_stop_on_a_scan_is_requested_once_more_in_the_next_mode() {
     let mut warnings = answer.warnings.clone();
     warnings.extend(scope.take_warnings());
     assert!(
-        warnings.iter().any(
-            |w| w.contains("withheld the tool-call answer as a recitation")
-                && !w.contains("((")
-                && w.contains("sent again in JSON-schema mode")
-        ),
+        warnings.iter().any(|w| w
+            == "The provider withheld a model answer as a recitation of published text, so the request was sent again; a later answer was used"),
         "{warnings:?}"
     );
 }

@@ -1442,7 +1442,7 @@ fn execute_conversion(
                     }
                     if !cli.quiet {
                         for warning in warnings::present(&result.warnings, cli.verbose) {
-                            eprintln!("Warning: {warning}");
+                            eprintln!("{}: {warning}", warnings::label(&warning));
                         }
                         if let Some(reason) = result.skip_reason.as_deref() {
                             // The name as the report lists it, not the path as typed.
@@ -2376,10 +2376,16 @@ fn item_diagnostics(records: &[RunItem], quiet: bool, verbose: bool) -> Vec<Stri
     for (record, warnings) in records.iter().zip(&shown) {
         for warning in warnings {
             match sharing[warning.as_str()].as_slice() {
-                [_] => lines.push(format!("Warning: {}: {warning}", record.display)),
-                items if written.insert(warning.as_str()) => {
-                    lines.push(format!("Warning: {}: {warning}", shared_names(items)))
-                }
+                [_] => lines.push(format!(
+                    "{}: {}: {warning}",
+                    warnings::label(warning),
+                    record.display
+                )),
+                items if written.insert(warning.as_str()) => lines.push(format!(
+                    "{}: {}: {warning}",
+                    warnings::label(warning),
+                    shared_names(items)
+                )),
                 _ => {}
             }
         }

@@ -7,12 +7,14 @@ import type {
   ItemPayload,
   ItemStatus,
   JobOptions,
+  JobSettings,
   JobSnapshot,
   JobStatus,
   Pricing,
   RerunFailure,
 } from "../api/types.ts";
 import { publicOptions } from "./options.ts";
+import { publicSettings } from "./request.ts";
 import { isUnsupported } from "../i18n/errors.ts";
 
 /** A terminal fetch can outlive its stream or a user's next attempt. */
@@ -53,6 +55,8 @@ export interface SessionItem {
   warnings: string[];
   remoteProcessing?: RemoteProcessing | null;
   options?: JobOptions;
+  /** v1.22: what the latest run converted with, when the backend recorded it. */
+  settings?: JobSettings | null;
   /** Models that produced the retained result (newer backends). */
   models: string[];
   /** Upload size: reported by the backend, else known to this tab (files only). */
@@ -130,6 +134,7 @@ export function mergeItem(previous: SessionItem, payload: ItemPayload, now: numb
     diagnostics: payload.diagnostics ?? null,
     remoteProcessing: payload.remote_processing ?? null,
     options: payload.options ? publicOptions(payload.options) : undefined,
+    settings: publicSettings(payload.settings),
     rerunFailure: payload.rerun_failure ?? null,
     llmEnhanced: payload.llm_enhanced,
     operation: payload.operation,

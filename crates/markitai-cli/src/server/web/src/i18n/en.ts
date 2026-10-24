@@ -658,6 +658,7 @@ export const en = {
   factModels: "Models",
   factCost: "Cost",
   factOptions: "Options",
+  requestSettings: "Settings without a flag",
   factFinished: "Finished",
   factTook: "Took",
   factKept: "Kept until",

@@ -1143,6 +1143,11 @@
           "startup_variable": { "type": ["string", "null"], "enum": ["MARKITAI_SERVE_TOKEN", null], "description": "`MARKITAI_SERVE_TOKEN` when the startup token came from that variable (a restart takes it again); else null" }
         }
       },
+      "JobSettings": {
+        "type": "object",
+        "description": "v1.22. What a job or item converted with: configuration values that shape a result, by dotted key (`llm.enabled`, `image.format`, `cache.no_cache`, `ocr.lang`, ...), only where they differ from markitai's defaults, the server's configuration included. Only a fixed list of keys is read; credentials, addresses, headers and prompt text never appear (a custom prompt is `\"custom\"`). A record, not authorization.",
+        "additionalProperties": { "type": ["string", "number", "boolean", "null"] }
+      },
       "JobOptions": {
         "type": "object",
         "additionalProperties": false,
@@ -1227,6 +1232,7 @@
           "kind": { "type": "string", "enum": ["file", "url"] },
           "status": { "type": "string", "enum": ["queued", "running", "done", "error"] },
           "options": { "$ref": "#/components/schemas/JobOptions", "description": "This item's saved repeat selections, falling back to job options for older histories. Always an object; remote_processing and internal metadata are omitted. Snapshot and SSE item responses include it. Enhancement does not change saved repeat selections." },
+          "settings": { "oneOf": [{ "$ref": "#/components/schemas/JobSettings" }, { "type": "null" }], "description": "v1.22. What this item's latest conversion, retry or enhancement ran with; null or missing for one recorded before 2.0.1." },
           "error": { "type": ["string", "null"] },
           "error_code": { "type": "string", "description": "Core conversion code or service cause of a failed item" },
           "output": { "type": ["string", "null"] },
@@ -1294,6 +1300,7 @@
               "created_at": { "type": "string" },
               "finished_at": { "type": ["string", "null"] },
               "options": { "$ref": "#/components/schemas/JobOptions" },
+              "settings": { "oneOf": [{ "$ref": "#/components/schemas/JobSettings" }, { "type": "null" }], "description": "v1.22. What the job (its latest retry, if any) ran with" },
               "items": { "type": "array", "items": { "$ref": "#/components/schemas/Item" } },
               "label": { "type": ["string", "null"], "description": "The label the job was submitted with; null when none" }
             }
@@ -1425,6 +1432,7 @@
           "retryable": { "type": "boolean" },
           "label": { "type": ["string", "null"], "description": "The label the job was submitted with; null when none" },
           "options": { "$ref": "#/components/schemas/JobOptions", "description": "With `include=items`" },
+          "settings": { "oneOf": [{ "$ref": "#/components/schemas/JobSettings" }, { "type": "null" }], "description": "With `include=items` (v1.22)" },
           "items": { "type": "array", "items": { "$ref": "#/components/schemas/Item" }, "description": "With `include=items`: every item as the job snapshot shows it" }
         }
       },

@@ -23,6 +23,7 @@ import type { CreateJobResponse, Features, HistoryEntry, ItemPayload, JobOptions
 import { placeholderJob, type ConvJob } from "../lib/conversions.ts";
 import { askNotifyPermission, notifyDone } from "../lib/notify.ts";
 import { publicOptions } from "../lib/options.ts";
+import { publicSettings } from "../lib/request.ts";
 import {
   itemFromPayload,
   mergeItem,
@@ -49,6 +50,7 @@ function fromSnapshot(snapshot: JobSnapshot, previous: ConvJob | undefined): Con
     createdAt: snapshot.created_at,
     finishedAt: snapshot.finished_at,
     options: publicOptions(snapshot.options),
+    settings: publicSettings(snapshot.settings),
     // A label this tab gave the submission stays when the backend keeps none.
     label: snapshot.label ?? previous?.label ?? null,
     origin: previous?.origin ?? "web",
@@ -66,6 +68,7 @@ function fromHistory(entry: HistoryEntry, previous: ConvJob | undefined): ConvJo
     createdAt: entry.created_at,
     finishedAt: entry.finished_at,
     options: entry.options ? publicOptions(entry.options) : (previous?.options ?? null),
+    settings: entry.items ? publicSettings(entry.settings) : (previous?.settings ?? null),
     label: entry.label ?? previous?.label ?? null,
     origin: entry.origin ?? "web",
     persistenceError: null,

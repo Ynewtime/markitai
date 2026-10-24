@@ -34,6 +34,8 @@ struct Options {
     llm: bool,
     ocr: bool,
     origin: &'static str,
+    /// What the run converted with (`job_settings`).
+    settings: serde_json::Map<String, Value>,
 }
 
 impl Plan {
@@ -57,6 +59,7 @@ impl Plan {
                 llm: config::enabled(cfg, "/llm/enabled"),
                 ocr: config::enabled(cfg, "/ocr/enabled"),
                 origin: "cli",
+                settings: crate::job_settings::of(cfg),
             },
             started_at: DateTime::parse_from_rfc3339(started_at)
                 .map(|time| time.to_rfc3339_opts(SecondsFormat::Millis, false))
@@ -651,6 +654,7 @@ mod tests {
                 llm: false,
                 ocr: false,
                 origin: "cli",
+                settings: serde_json::Map::new(),
             },
             started_at: "2026-09-28T12:00:00.000+08:00".into(),
             allow_symlinks: false,
@@ -846,7 +850,7 @@ mod tests {
         assert_eq!(meta["status"], "done");
         assert_eq!(
             meta["options"],
-            json!({"preset":null,"llm":false,"ocr":false,"origin":"cli"})
+            json!({"preset":null,"llm":false,"ocr":false,"origin":"cli","settings":{}})
         );
         for item in meta["items"].as_array().unwrap() {
             assert_eq!(item.as_object().unwrap().len(), 19);

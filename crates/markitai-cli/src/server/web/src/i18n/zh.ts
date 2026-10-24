@@ -625,6 +625,7 @@ export const zh: Dict = {
   factModels: "模型",
   factCost: "费用",
   factOptions: "选项",
+  requestSettings: "没有对应参数的设置",
   factFinished: "完成于",
   factTook: "用时",
   factKept: "保留至",

@@ -282,6 +282,8 @@ fn labelled(english: &str) -> (Level, Shape, usize) {
         ("Hint: ", Level::Info, Mark::Action, false),
         ("Interrupted: ", Level::Warning, Mark::Warning, true),
         ("Note: ", Level::Info, Mark::Info, true),
+        // An explanatory notice shown with -v: the info mark, no label.
+        ("Info: ", Level::Info, Mark::Info, false),
     ] {
         if english.starts_with(label) {
             return (level, Shape::item(mark), if keep { 0 } else { label.len() });

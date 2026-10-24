@@ -175,6 +175,21 @@ const FAMILIES: &[(&str, Level, &str, &str, Subject)] = &[
     (
         "llm.answer_retried",
         Level::Info,
+        "A model answer could not be used",
+        "a later answer was used",
+        Subject::None,
+    ),
+    (
+        "llm.answer_retried",
+        Level::Info,
+        "The provider withheld a model answer ",
+        "a later answer was used",
+        Subject::None,
+    ),
+    // The wording before 2.0.1, still in older histories and reports.
+    (
+        "llm.answer_retried",
+        Level::Info,
         "The model's ",
         "and a later answer was used",
         Subject::None,
@@ -606,6 +621,12 @@ mod tests {
 
     #[test]
     fn a_retry_that_was_used_is_info_and_one_that_failed_a_warning() {
+        for used in [
+            "A model answer could not be used, so the request was sent again; a later answer was used",
+            "The provider withheld a model answer as a recitation of published text, so the request was sent again; a later answer was used",
+        ] {
+            assert_eq!(code(used), ("llm.answer_retried", Level::Info, Vec::new()));
+        }
         assert_eq!(
             code(
                 "The model's tool-call answer was not used (the answer changed a marker); the request was sent again in JSON-schema mode and a later answer was used"

@@ -13,6 +13,7 @@ mod diagnostics;
 #[cfg(all(test, target_os = "linux"))]
 mod file_lock_test;
 mod history;
+mod job_settings;
 mod mcp;
 mod output_claims;
 mod pricing;

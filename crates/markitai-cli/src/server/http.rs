@@ -427,7 +427,8 @@ pub(super) async fn create(
             item.output_name = Some(format!("{}.md", bases[&item.item_id]));
         }
     }
-    let options = options.saved();
+    let mut options = options.saved();
+    options["settings"] = json!(crate::job_settings::of(&cfg));
     let item_options = items
         .iter()
         .map(|item| (item.item_id.clone(), options.clone()))
@@ -1113,6 +1114,46 @@ mod error_code_tests {
         let retried = settled(&router, &id).await;
         assert_eq!(retried["items"][0]["operation"], "retry");
         assert_eq!(retried["items"][0]["error_code"], "unsupported");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn jobs_and_items_tell_what_they_converted_with() {
+        let temp = tempfile::tempdir().unwrap();
+        let (_state, router) = service(temp.path());
+        let (status, created) = send(
+            &router,
+            "POST",
+            "/api/jobs",
+            Some("multipart/form-data; boundary=edge"),
+            job_form(
+                "notes.txt",
+                r#"{"preset":"minimal","no_cache":true,"format":"json","page_markers":true}"#,
+            ),
+        )
+        .await;
+        assert_eq!(status, 201, "{created}");
+        let id = created["job_id"].as_str().unwrap().to_owned();
+        let done = settled(&router, &id).await;
+        // The service's own configuration turns its cache off.
+        let expected = json!({"cache.enabled":false,"cache.no_cache":true,"output.format":"json","output.page_markers":true});
+        assert_eq!(done["settings"], expected, "{done}");
+        assert_eq!(done["items"][0]["settings"], expected);
+        assert!(done["options"].get("settings").is_none());
+        // A retry with other options records what it ran with, for that item.
+        let (status, _) = send(
+            &router,
+            "POST",
+            &format!("/api/jobs/{id}/items/i1/retry"),
+            Some("application/json"),
+            r#"{"options":{"preset":"minimal","profile":"obsidian"}}"#.into(),
+        )
+        .await;
+        assert_eq!(status, 202);
+        let retried = settled(&router, &id).await;
+        assert_eq!(
+            retried["items"][0]["settings"],
+            json!({"cache.enabled":false,"output.profile":"obsidian"})
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

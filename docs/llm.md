@@ -870,9 +870,16 @@ document prompts. Every decoded mode passes the same metadata and source-content
 checks. Pure text retains its separate plain contract; image analysis uses its
 caption/description/text schema through the same ladder.
 
-Before a request, fenced and indented code, inline code, math, links/images,
-reference definitions and HTML/comment markup are replaced by collision-safe
-source-owned tokens. Their values never become system instructions. The answer
+Before a request, fenced and indented code, inline code, math, images, link
+addresses, reference definitions and HTML/comment markup are replaced by
+collision-safe source-owned tokens. Their values never become system instructions.
+A link keeps its words in front of the model and hides only its address
+(`[North pier tables](⟦…⟧)`); an answer that takes the address out of its link
+is not used. Attribute-less styling tags (`<u>`, `<ins>`, `<mark>`, `<small>`,
+`<b>`, `<strong>`, `<i>`, `<em>`) stay as they are, as in Python markitai: hidden
+around a phrase, small models dropped them and every drop cost a second request,
+while losing one changes no word. `<sup>`, `<sub>`, `<s>`, `<br>` and tags with
+attributes stay protected. The answer
 must retain the tokens exactly once in source order; original bytes are restored
 only after successful validation. An oversized protected code block remains one
 opaque token, so it cannot be truncated or have its internal blank lines changed
@@ -917,8 +924,12 @@ for sources of at least 200 non-whitespace characters, keep at least 20% of thei
 length and 30% of distinct character bigrams. Chunk checks are more permissive
 when the response's character four-grams substantially come from that chunk.
 These are deletion safeguards, not proof of semantic accuracy. An answer that
-fails them, or changes a protected marker, is not used, and the warning says so
-in plain words: `LLM enhancement failed: the model's answer left out or changed
+fails them, or changes a protected marker, is not used. When the request sent
+again (it names the markers the answer lost) gets an answer that passes, the
+document keeps the info notice `A model answer could not be used, so the request
+was sent again; a later answer was used` (`llm.answer_retried`; the terminal
+shows it with `-v`, the workbench not at all; the cost counts both requests).
+When no answer passes, the warning says so in plain words: `LLM enhancement failed: the model's answer left out or changed
 too much of the document, so it was not used; the converted Markdown is kept as
 it was.`
 
@@ -1049,8 +1060,8 @@ marker that stood alone on its line and that the answer dropped is put back
 where only one place fits, as Python markitai does: at the start or end of the
 chunk (models drop the page marker that opens a one-page PDF, or the screenshot
 comment that closes it, as noise) or between neighbouring lines that survived.
-A moved, altered or repeated marker, a lost inline one (code, a link, an inline
-picture) or one whose neighbours were rewritten still rejects the answer.
+A moved, altered or repeated marker, a lost inline one (code, a link address, an
+inline picture) or one whose neighbours were rewritten still rejects the answer.
 Scanning an image with no extracted text is valid: the output need not overlap
 empty text. For substantial extracted prose, the existing deletion safeguard
 also checks the visible text after protected literals are removed. Short explicit

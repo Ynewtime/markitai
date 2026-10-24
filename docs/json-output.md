@@ -83,7 +83,7 @@ field set, its order and types against a frozen version 1.0 list.
 | `tables[]` | list | Each Markdown (pipe) table of the final body: `page` (integer \| null), `header` (list of string), `rows` (list of lists of string) |
 | `notices[]` | list | The conversion's warnings, in order |
 | `notices[].code` | string | Stable code of the warning's family (table below); `other` for one not classified yet |
-| `notices[].level` | `"warning"` \| `"info"` | `info` explains how the output was produced; nothing is missing |
+| `notices[].level` | `"warning"` \| `"info"` | `info` explains how the output was produced; nothing is missing (the terminal shows it only with `-v`, with the info mark) |
 | `notices[].message` | string | The sentence the terminal and reports show |
 | `notices[].items` | list of string | The pages, pictures or sheets it names, when known |
 | `usage.requests`, `usage.input_tokens`, `usage.output_tokens` | integer | Model usage of the document |
@@ -109,7 +109,7 @@ code keeps working when wording changes.
 | `ocr.no_text`, `ocr.unread`, `ocr.capped`, `ocr.unavailable` | warning | Local OCR found nothing, could not read a script, stopped at its region limit, or could not run |
 | `text_only.no_text` | warning | `--text-only` found no text |
 | `llm.enhancement_failed`, `llm.no_model_succeeded` | warning | Model processing failed; only the base Markdown was kept |
-| `llm.answer_retried` | info | A model answer was not used, and a later answer of the request sent again was (the extra request is paid and counted) |
+| `llm.answer_retried` | info | A model answer could not be used, and a later answer of the request sent again was (the extra request is paid and counted); the message does not say why |
 | `llm.answer_rejected` | warning | A model answer was rejected and the request sent again, without a usable answer |
 | `llm.cache_unavailable`, `llm.cache_entry_ignored`, `llm.text_fallback` | warning | Cache and fallback notes |
 | `llm.cost_incomplete` | warning | Some requests have no reviewed price |

@@ -824,7 +824,13 @@ mod tests {
             panic!("cache is disabled");
         };
         let id = "69e09eb66ddf4601aaa461af0324f81b-1";
-        let recorded: Value = serde_json::from_str(&fixture("create-request.json")).unwrap();
+        // The recording predates 2.0.1, which shows a link's words and hides
+        // only its address: the recorded request and answer carried the whole
+        // link as one marker, so they are read with the link written out.
+        let link = "⟦MKTI:1976117f15854677:00000000⟧";
+        let linked = format!("[the changelog]({link})");
+        let recorded: Value =
+            serde_json::from_str(&fixture("create-request.json").replace(link, &linked)).unwrap();
         let sent = recorded["requests"]
             .as_array()
             .unwrap()
@@ -833,6 +839,7 @@ mod tests {
             .unwrap();
         assert_eq!(plan.request(id).unwrap(), *sent);
         let line = fixture("results.jsonl")
+            .replace(link, &linked)
             .lines()
             .map(|line| serde_json::from_str::<Value>(line).unwrap())
             .find(|row| row["custom_id"] == id)

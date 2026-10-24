@@ -9,11 +9,12 @@
 
 ## [2.0.1] - 2026-10-XX
 
-Markitai 2.0.1 是 2.0.0 的修复版本。`image.format: webp` 重新写有损 WebP，与 Python 版 markitai 1.2 写出的文件相同；中文终端下所有命令（包括 `markitai serve`）都显示中文；两个区域的 Kimi 开放平台密钥都能使用，Kimi Code 会员作为新的服务商加入，两者在工作台中合为一张 Kimi 卡片。工作台的说明文字更少，并新增全选框，Windows 安装脚本不再改变用户 Path 在注册表中的类型。按原来的安装方式更新：再运行一次安装命令，或执行 `uv tool upgrade markitai` / `pip install -U markitai`。读取 `markitai serve` 启动信息的脚本，请留意「变更」中关于启动信息的一项。
+Markitai 2.0.1 是 2.0.0 的修复版本。`image.format: webp` 重新写有损 WebP，与 Python 版 markitai 1.2 写出的文件相同；中文终端下所有命令（包括 `markitai serve`）都显示中文；两个区域的 Kimi 开放平台密钥都能使用，Kimi Code 会员作为新的服务商加入，两者在工作台中合为一张 Kimi 卡片。工作台的说明文字更少，新增全选框，并以命令行显示每个转换的选项；Windows 安装脚本不再改变用户 Path 在注册表中的类型。按原来的安装方式更新：再运行一次安装命令，或执行 `uv tool upgrade markitai` / `pip install -U markitai`。读取 `markitai serve` 启动信息的脚本，请留意「变更」中关于启动信息的一项。
 
 ### 新增
 
 - 新增 **Kimi Code** 服务商 `kimi_code/<model>`，用于 Kimi Code 会员的密钥（`KIMI_API_KEY`；地址 `KIMI_CODE_API_BASE` 或 Kimi Code CLI 使用的 `KIMI_CODE_BASE_URL`）。在工作台中，Kimi 开放平台和 Kimi Code 是「添加模型」里的同一张 **Kimi** 卡片：粘贴任一种密钥，「加载模型」会依次尝试开放平台的各区域和 Kimi Code 的各区域（密钥为文档所示的 `sk-kimi-` 形式时先试 Kimi Code），只发往 Kimi 文档列出的主机，填入接受它的地址，并列出该密钥可用的模型（`k3.1-pro`、`k3`、`kimi-for-coding` 等），保存为 `moonshot/…` 或 `kimi_code/…`。请求发往 Kimi 兼容 Anthropic 的 Messages 端点 `https://api.kimi.com/coding/v1`（kimi.ai 的密钥用 `https://api.kimi.ai/coding/v1`），带 markitai 自己的 User-Agent，输出上限最多 32,768 个 token。Kimi 的会员仅限交互使用：识别出会员密钥时，页面用一行说明这一点（批量转换请用开放平台的密钥）。
+- 工作台：转换任务的「详情」以等效命令行显示它的选项（`$ markitai notes.pdf -o output/ --preset rich --keep-base --no-cache`），带复制按钮；没有对应参数的设置以标签列在下方（`image.format webp`、`ocr.lang ja`）。只列出与 markitai 默认值不同的项，包括服务器自己的配置：任务、单项和历史记录现在会记录转换时实际使用的设置（`settings`，接口约定 v1.22；用 `--record-history` 记录的 CLI 运行同样记录）。密钥、地址和提示词内容从不记录。2.0.1 之前的任务显示其请求中指定的选项，较早的 CLI 历史记录显示原来的简短摘要。
 - 工作台：转换任务列表的筛选行开头、各行勾选框的正上方新增全选框。它勾选当前名称筛选和标签页列出的全部转换任务，只选中一部分时显示短横，全部选中后再点则清除；读屏软件将其读作复选框（已选、未选或部分选中）。底部选择栏不变。
 
 ### 变更
@@ -29,6 +30,8 @@ Markitai 2.0.1 是 2.0.0 的修复版本。`image.format: webp` 重新写有损 
 - **WebP：** `image.format: webp` 重新按 `image.quality` 写有损 WebP，与 Python 版 markitai 1.2 一致，适用于内嵌图片、单独的图片、TIFF 页面以及 PDF/Office 页面截图。文件名仍为 `.webp`，透明像素保留。编码器为 libwebp 1.6.0，参数与 Pillow 相同，因此相同像素下 1.2 与 2.0.1 写出同一个文件。2.0.0 在质量低于 100 时把不含透明像素的图片写为 JPEG（`.jpg`，警告 `image.webp_as_jpeg`，该警告已移除），其余写为无损 WebP：一张自制的 1600×1067 照片在质量 75 时曾是 198 KB 的 JPEG，现在是 77 KB 的 WebP。质量 100 时同样是有损编码，与 1.2 一致。页面截图超出大小上限时，先以更低的 WebP 质量重试，再退回 1024 像素的 JPEG。
 - **中文终端**（`MARKITAI_LANG=zh` 或中文系统语言）：`markitai serve`（启动、停止、无法打开浏览器的警告、运行中的警告）、参数错误（未知参数或子命令、缺少值或取值无效、已移除的选项）、`auth`、`config edit` 交互编辑器、配置校验、网页抓取失败、供应商批量任务与 `--resume` 的提示、历史与输出归属的错误以及 MCP 会话失败，都不再显示英文。核心库以前直接写到 stderr、不带标记的提示（下载本地 OCR 模型、忽略 `./.env` 中的变量、当前文件夹 `markitai.json` 的密钥引用、Anthropic 采样参数警告）现在带有 CLI 的标记并跟随终端语言。括号里的技术细节、stdout 上的数据、JSON、报告与文件日志保持不变。
 - **中国区 Kimi 开放平台的密钥**（platform.kimi.com，原 platform.moonshot.cn）可以在工作台中使用。以前 `moonshot/` 总是发往 `https://api.moonshot.ai/v1`，该地址以 HTTP 401 `Invalid Authentication` 拒绝这类密钥。现在默认地址拒绝粘贴的密钥或服务器自己的 `MOONSHOT_API_KEY` 时，「添加模型」会改试 `https://api.moonshot.cn/v1`（Kimi Code 则改试它的另一个区域），添加的模型使用该地址；粘贴的密钥还会把该地址填入「API 地址」。Kimi 的两个服务都不接受的密钥会得到一句简短说明（英文、中文、日文）；发往 `api.moonshot.ai` 或 `api.kimi.com` 的模型请求被拒绝时，错误信息会给出另一个区域的 `api_base`。配置文件中，中国区密钥仍需要 `api_base: https://api.moonshot.cn/v1` 或 `MOONSHOT_API_BASE`，与 1.2 相同。
+- **模型清理：** Claude Haiku 5.5 等小模型会丢掉代表下划线标签和链接的受保护标记（`the answer dropped 3 of the 16 markers …`），这类文档每次都要为第二次请求付费。现在链接的文字照常交给模型，只隐藏地址（`[文字](⟦…⟧)`）；不带属性的样式标签（`<u>`、`<b>`、`<i>`、`<em>`、`<strong>`、`<mark>`、`<ins>`、`<small>`）原样保留，与 Python 版 markitai 1.2 相同。链接地址仍按原样恢复；把地址移出链接的回答不予采用。
+- **提示：** 模型回答无法使用、重新请求后得到可用回答时，提示改为简短的 `A model answer could not be used, so the request was sent again; a later answer was used`（`llm.answer_retried`；终端只在加 `-v` 时显示它，跟随终端语言，并且和其他只作说明的提示一样使用信息标记而不是警告标记），不再附带被丢弃回答的标记代码。工作台不再把它作为带警告标志的英文提示显示：内容没有缺失，费用已计入两次请求。
 - **工作台：** Claude、Copilot、ChatGPT 的「设置指南」链接按界面语言打开 markitai.dev 上与原因对应的小节（安装、登录或新增的「仍然失败时」），不再打开 GitHub 上的英文 Markdown 和并不存在的标题。
 - **工作台：** 模型列表或模型测试失败时，「服务商原文」中只显示服务商自己的回复（HTTP 状态码及其消息或错误代码），网络层报告的原因放在「连接错误」下。markitai 自己的提示（如「Claude CLI is not signed in」或超时）不再在其中重复标题。Claude Code 已登录但不是订阅登录，以及服务商不在服务器所在区域提供该模型，现在会直接写在提示和测试结果中。
 - **工作台：**「对照」视图中，鼠标移到下一个区块时，不再残留上一个区块的部分边框（列表项边框的右侧竖线及圆角会留在原处）。

@@ -2,7 +2,7 @@
 // items, newest activity first. A submission of one item is one row; a
 // submission of several is a header (what was submitted, preset, time) with
 // its items under it. Pure functions only.
-import type { JobOptions, JobStatus, Pricing } from "../api/types.ts";
+import type { JobOptions, JobSettings, JobStatus, Pricing } from "../api/types.ts";
 import { readable, timestampMs } from "./format.ts";
 import { rowWarnings } from "./notices.ts";
 import { isActive, type SessionItem } from "./session.ts";
@@ -13,6 +13,8 @@ export interface ConvJob {
   createdAt: string | null;
   finishedAt: string | null;
   options: JobOptions | null;
+  /** v1.22: what the job converted with, when the backend recorded it. */
+  settings: JobSettings | null;
   /** What the submission was called by the backend or this tab; null when it named nothing. */
   label: string | null;
   origin: "web" | "cli";
@@ -79,7 +81,7 @@ export function submissions(jobs: Record<string, ConvJob>, items: SessionItem[],
 }
 
 export function placeholderJob(jobId: string): ConvJob {
-  return { jobId, status: "running", createdAt: null, finishedAt: null, options: null, label: null, origin: "web", persistenceError: null, durationMs: null, costUsd: null, pricing: null };
+  return { jobId, status: "running", createdAt: null, finishedAt: null, options: null, settings: null, label: null, origin: "web", persistenceError: null, durationMs: null, costUsd: null, pricing: null };
 }
 
 /** A submission of several items is shown as a group with a header. */

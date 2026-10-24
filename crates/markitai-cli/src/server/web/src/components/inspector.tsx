@@ -8,7 +8,7 @@ import type { ComponentChildren } from "preact";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { fetchBlob, filePath, imagePath } from "../api/client.ts";
 import { hasToken } from "../api/token.ts";
-import type { ItemResult } from "../api/types.ts";
+import type { ItemResult, JobOptions, JobSettings } from "../api/types.ts";
 import type { Dict, Locale } from "../i18n/index.ts";
 import { itemErrorText, persistenceText } from "../i18n/errors.ts";
 import { counts, isFailed, isStopped, presetOf, submissionLabel, type ConvJob, type LabelWords } from "../lib/conversions.ts";
@@ -21,6 +21,9 @@ import { docsPage } from "../lib/docs.ts";
 import { drawDiagrams } from "../lib/diagram.ts";
 import { typeset } from "../lib/math.ts";
 import { groupNotices, type NoticeGroup } from "../lib/notices.ts";
+import { copyText } from "../lib/clipboard.ts";
+import type { PresetTable } from "../lib/options.ts";
+import { requestView, wrapUnits } from "../lib/request.ts";
 import { cachedExcerpt, loadExcerpt, resultKey } from "../lib/results.ts";
 import { canRetry, isPreviewable, type SessionItem } from "../lib/session.ts";
 import type { MenuDanger } from "./action-menu.tsx";
@@ -134,6 +137,8 @@ export interface InspectorContext {
   describe: (error: unknown) => Described;
   /** The selected conversion's failed action, if any. */
   failure: ActionFailure | null;
+  /** The server's presets, for naming one in a conversion's command line. */
+  presets?: PresetTable;
 }
 
 
@@ -175,6 +180,65 @@ function keptUntil(ctx: InspectorContext, finishedAt: string | null): string | n
   const ms = timestampMs(finishedAt);
   if (ctx.retentionDays === null || ms === null) return null;
   return fmtDay(ms + ctx.retentionDays * 86_400_000, ctx.locale);
+}
+
+/** The Options fact: the request as its command line with a copy button, and the settings no flag
+ * sets as chips. An older CLI history entry kept only its preset and switches: it keeps its summary. */
+function RequestFact({ ctx, inputs, options, settings, url, origin }: { ctx: InspectorContext; inputs: string[]; options: JobOptions | null | undefined; settings: JobSettings | null | undefined; url: boolean; origin: "web" | "cli" }) {
+  const { t } = ctx;
+  const [copied, setCopied] = useState<"copied" | "failed" | null>(null);
+  useEffect(() => {
+    if (copied === null) return;
+    const timer = setTimeout(() => setCopied(null), 1600);
+    return () => clearTimeout(timer);
+  }, [copied]);
+  const view = origin === "cli" && !settings ? null : requestView(inputs, options, settings, url, ctx.presets);
+  if (!view) {
+    const summary = optionsText(t, { options });
+    return summary ? (
+      <>
+        <dt>{t.factOptions}</dt>
+        <dd>{summary}</dd>
+      </>
+    ) : null;
+  }
+  const copy = () => void copyText(view.command).then((ok) => setCopied(ok ? "copied" : "failed"));
+  const label = copied === "copied" ? t.copied : copied === "failed" ? t.copyFailed : t.copyCommand;
+  return (
+    <>
+      <dt>{t.factOptions}</dt>
+      <dd class="fact-request">
+        <div class="request-line">
+          <code class="request-command" role="group" tabIndex={0} aria-label={t.cliAria}>
+            <span class="cli-prompt" aria-hidden="true">
+              ${" "}
+            </span>
+            {wrapUnits(view.words).map((unit, index) => (
+              <span key={index}>
+                {index > 0 && " "}
+                <span class="request-unit">{unit}</span>
+              </span>
+            ))}
+          </code>
+          <button type="button" class={copied === "copied" ? "icon-btn request-copy is-done" : "icon-btn request-copy"} aria-label={label} title={label} onClick={copy}>
+            <Icon name={copied === "copied" ? "Check" : "Copy"} size={14} />
+          </button>
+          <span class="sr-only" aria-live="polite">
+            {copied === "copied" ? t.copied : copied === "failed" ? t.copyFailed : ""}
+          </span>
+        </div>
+        {view.chips.length > 0 && (
+          <ul class="request-chips" aria-label={t.requestSettings}>
+            {view.chips.map((chip) => (
+              <li key={chip.key} class="request-chip">
+                <span class="request-chip-key">{chip.key}</span> {chip.value}
+              </li>
+            ))}
+          </ul>
+        )}
+      </dd>
+    </>
+  );
 }
 
 function optionsText(t: Dict, item: { options?: SessionItem["options"] | null }): string {
@@ -566,12 +630,7 @@ export function ItemInspector({
         )}
         <dt>{t.factCost}</dt>
         <dd class={cost.kind === "unknown" && itemCostPhase(item) === "amount" ? "is-unknown" : undefined}>{itemCostText(t, item)}</dd>
-        {optionsText(t, item) && (
-          <>
-            <dt>{t.factOptions}</dt>
-            <dd>{optionsText(t, item)}</dd>
-          </>
-        )}
+        <RequestFact ctx={ctx} inputs={[item.name]} options={item.options ?? job?.options} settings={item.settings ?? (item.options ? null : job?.settings)} url={item.kind === "url"} origin={job?.origin ?? "web"} />
         {item.finishedAt && (
           <>
             <dt>{t.factFinished}</dt>
@@ -684,12 +743,14 @@ export function JobInspector({
           {totalCostText(t, items, cost)}
           {cost.kind === "unknown" && cost.unknownItems > 0 && <span class="fact-dim"> · {t.costUnknownItems(cost.unknownItems)}</span>}
         </dd>
-        {optionsText(t, job) && (
-          <>
-            <dt>{t.factOptions}</dt>
-            <dd>{optionsText(t, job)}</dd>
-          </>
-        )}
+        <RequestFact
+          ctx={ctx}
+          inputs={items.length <= 3 ? items.map((item) => item.name) : []}
+          options={job.options}
+          settings={job.settings}
+          url={items.length > 0 && items.every((item) => item.kind === "url")}
+          origin={job.origin}
+        />
         {!running && job.durationMs !== null && (
           <>
             <dt>{t.factTook}</dt>

@@ -730,6 +730,7 @@ export function App() {
     labelWords,
     describe,
     failure: null,
+    presets,
   };
   const waiting = waitingJobs(conversions.items, conversions.jobs);
   const retryable = conversions.items.filter((item) => (isFailed(item) || item.skipReason === "user_stopped") && canRetry(item));

@@ -167,7 +167,13 @@ pub(super) async fn retry(
         if body.operation==Operation::Retry{
             let inherited=data.options.clone();let ids=data.items.iter().map(|i|i.item_id.clone()).collect::<Vec<_>>();
             for id in ids{data.item_options.entry(id).or_insert_with(||inherited.clone());}
-            let options=opts.saved();data.options=options.clone();data.item_options.insert(item_id.clone(),options);
+            let mut options=opts.saved();options["settings"]=json!(crate::job_settings::of(&cfg));
+            data.options=options.clone();data.item_options.insert(item_id.clone(),options);
+        } else {
+            // Enhance keeps the item's repeat selections; what it ran with is told apart.
+            let mut options=data.item_options.get(&item_id).unwrap_or(&data.options).clone();
+            if let Some(fields)=options.as_object_mut(){fields.insert("settings".into(),json!(crate::job_settings::of(&cfg)));}
+            data.item_options.insert(item_id.clone(),options);
         }
         data.bases.insert(item_id.clone(),base.clone());
         let job_id=data.id.clone();
