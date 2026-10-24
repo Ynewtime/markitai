@@ -1,10 +1,13 @@
 name: Deploy Website
 
-# markitai.dev is built from website/ on main. The changelog pages publish only
-# released versions (website/scripts/changelog.mjs keeps a section once its
-# vX.Y.Z tag exists), so a push to main never shows an unreleased section. No
-# release workflow starts this one: after a release tag, the commit that adds
-# its notes to website/changelog/ deploys them, or run it by hand.
+# markitai.dev is built from website/ on main. The changelog pages are the 2.x
+# notes of CHANGELOG.md / CHANGELOG.zh.md followed by the 1.x notes in
+# website/changelog/, released versions only (website/scripts/changelog.mjs
+# keeps a section once its vX.Y.Z tag exists), so a push to main never shows an
+# unreleased section. The release commit reaches main before its tag, so its
+# push builds the site without the new section; once the tag is pushed, run this
+# workflow by hand on main (no release workflow starts it, and the github-pages
+# environment deploys from main only).
 on:
   push:
     branches: [main]
@@ -12,6 +15,9 @@ on:
       - 'website/**'
       # Served as /setup.sh and /setup.ps1 (website/scripts/setup-scripts.mjs).
       - 'scripts/install/**'
+      # The 2.x release notes on /changelog and /zh/changelog.
+      - 'CHANGELOG.md'
+      - 'CHANGELOG.zh.md'
       - '.github/workflows/deploy-website.yml'
   workflow_dispatch:
 

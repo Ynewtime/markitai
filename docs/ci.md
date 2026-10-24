@@ -176,13 +176,19 @@ Two workflows serve markitai.dev from `website/` (see
 
 - `deploy-website.yml` builds the site and deploys it to GitHub Pages on a push
   to `main` that changes `website/**`, `scripts/install/**` (served as
-  `/setup.sh` and `/setup.ps1`) or the workflow, and when started by hand on
-  `main` (a run on another branch skips both jobs).
+  `/setup.sh` and `/setup.ps1`), `CHANGELOG.md`, `CHANGELOG.zh.md` or the
+  workflow, and when started by hand on `main` (a run on another branch skips
+  both jobs). The changelog pages publish a section once its `vX.Y.Z` tag
+  exists, and a release tag starts no deploy, so a release's notes go live with
+  a manual run after the tag (see [the release commit](#the-release-commit)).
 - `website-check.yml` runs on pushes to `main` and pull requests that change
-  `website/**`, `scripts/install/**`, the CLI or core crates, `Cargo.lock` or the
-  workflow, and by hand. It fails on a release-notes section without its
-  `vX.Y.Z` tag, builds the CLI (debug) and runs `website/tests` against it, and
-  builds the site for pull requests and manual runs.
+  `website/**`, `scripts/install/**`, `CHANGELOG.md`, `CHANGELOG.zh.md`, the CLI
+  or core crates, `Cargo.lock` or the workflow, and by hand. It fails on a
+  release-notes section that would be lost (an untagged one in
+  `website/changelog/`, or below a released one in `CHANGELOG*.md`; the top of
+  those may wait for its tag) or that only one language publishes, builds the
+  CLI (debug) and runs `website/tests` against it, and builds the site for pull
+  requests and manual runs.
 
 ## Releases
 
@@ -254,6 +260,9 @@ On macOS or Linux (the help snapshot test is Unix-only):
    `python3 scripts/check.py`, commit, push `main`, run a dry run on it
    (`gh workflow run release.yml --ref main`), then push an annotated
    `vX.Y.Z` tag on that commit.
+5. Once the tag is pushed, `gh workflow run deploy-website.yml --ref main` puts
+   the new section on markitai.dev's changelog pages (the push in step 4 built
+   them before the tag existed).
 
 ### Setup scripts
 

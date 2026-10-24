@@ -76,10 +76,13 @@ bun install --frozen-lockfile
 bun run docs:build    # output in website/.vitepress/dist
 ```
 
-The changelog pages come from `website/changelog/python-1.x*.md`, not from the
-repository's `CHANGELOG*.md`; `bun scripts/changelog.mjs --check` fails when a
-section there has no `vX.Y.Z` tag, and the build leaves such a section off the
-site. The installers served as `https://markitai.dev/setup.sh` and
+The changelog pages show the 2.x notes of the repository's `CHANGELOG.md` /
+`CHANGELOG.zh.md` first, then the Python 1.x notes in
+`website/changelog/python-1.x*.md`, released versions only: the build leaves a
+section off the site until its `vX.Y.Z` tag exists. `bun scripts/changelog.mjs
+--check` fails on an untagged section in `website/changelog/`, on one below a
+released section in `CHANGELOG*.md` (only the top may wait for its tag), and
+when English and Chinese publish different versions. The installers served as `https://markitai.dev/setup.sh` and
 `/setup.ps1` are `scripts/install/setup.sh` and `setup.ps1`:
 `website/scripts/setup-scripts.mjs` copies them into `website/public/`
 (git-ignored) on every build, so the site has no copy of its own. The contract

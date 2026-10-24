@@ -6,6 +6,8 @@ on:
     paths: &paths
       - 'website/**'
       - 'scripts/install/**'
+      - 'CHANGELOG.md'
+      - 'CHANGELOG.zh.md'
       - 'crates/markitai-cli/**'
       - 'crates/markitai-core/**'
       - 'Cargo.lock'
@@ -42,8 +44,10 @@ jobs:
         with:
           bun-version: '1.4.0'
 
-      # The release notes may correct a released section, never add one
-      # whose vX.Y.Z tag does not exist yet.
+      # The release notes may correct a released section; website/changelog/
+      # never adds one whose vX.Y.Z tag does not exist yet, CHANGELOG*.md only
+      # at its top (the release commit comes before its tag). English and
+      # Chinese publish the same versions.
       - name: Check the release notes have released versions only
         run: bun scripts/changelog.mjs --check
         working-directory: website
