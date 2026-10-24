@@ -203,7 +203,11 @@ files wait on Convert); typing URLs is Convert's job.
   its request's own options (OCR language and every-page OCR as chips), and an
   older CLI history entry, which kept only its preset and switches, its short
   summary as an Options fact (`Rich · LLM`). A conversion with LLM also saves the Markdown before
-  LLM, so its command line carries `--keep-base` and reproduces the same files.
+  LLM, so its command line carries `--keep-base`. The line holds the settings that have a
+  flag; the chips are the ones that have none, so a run of the copied line alone uses the
+  configuration of wherever it runs for those (add them there, or with `--config-json`).
+  Every value is quoted for a POSIX shell, and a file name that starts with `-` is written
+  `./-name`.
   A model answer that was requested again and then used is
   no notice (the terminal shows it with `-v`; the cost counts both requests). A
   submission's window shows its progress as one bar (done, failed, stopped,
