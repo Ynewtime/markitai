@@ -520,9 +520,9 @@
     "source": "https://registry.npmjs.org/@lobehub/icons-static-svg/-/icons-static-svg-1.95.1.tgz",
     "package_integrity": "sha512-Hw7EPPgVnC4NZLXBfTNJG6hyQgqECfUPC11VVXodPSr1aebKcFxDZlSpxhWwYNdCc6bhxps/x5TtXoPmfKH2ag==",
     "member": "package/icons/<key>.svg (the path data of the listed monochrome marks)",
-    "bytes": 64010,
-    "sha256": "2276e1efa98fd4601d7f91dd573a8de29f834972441e87249f4d26d32a5346f9",
-    "obtained": "generated: the path data of 59 monochrome marks (no colour variants) was extracted from the members below, dropping titles and one unused gradient; each member's mark and brand site are lobehub's page for it at gitHead 49a2130; bundled into dist/app.js",
+    "bytes": 64629,
+    "sha256": "58b52e76fb57cd986760114f674c97f83b180ac031b54ad38bbf0696cde3b498",
+    "obtained": "generated: the path data of 60 monochrome marks (no colour variants) was extracted from the members below, dropping titles and one unused gradient; each member's mark and brand site are lobehub's page for it at gitHead 49a2130; bundled into dist/app.js",
     "derived_from": [
       {
         "member": "package/icons/ai21.svg",
@@ -747,6 +747,14 @@
         "mark": "Inception Labs",
         "brand_site": "https://inceptionlabs.ai",
         "upstream_page": "https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/src/Inception/index.mdx"
+      },
+      {
+        "member": "package/icons/kimi.svg",
+        "bytes": 786,
+        "sha256": "ed08131b46acf70e6e2144eceb775e74098b58ea65fa21eaee04be7b05cfe63b",
+        "mark": "Kimi",
+        "brand_site": "https://kimi.moonshot.cn",
+        "upstream_page": "https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/src/Kimi/index.mdx"
       },
       {
         "member": "package/icons/lmstudio.svg",

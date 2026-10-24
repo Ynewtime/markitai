@@ -2132,7 +2132,15 @@ fn payload(entry: &Deployment, prompts: &Prompts) -> Value {
         } else {
             json!(prompts.system)
         };
-        let mut payload = json!({"model":entry.model,"max_tokens":output_cap(entry, prompts).unwrap_or(8192),"system":system,"messages":[{"role":"user","content":content}]});
+        // The Messages API needs a cap. Kimi Code's models think by default
+        // and write at least 32,768 tokens (kimi-for-coding's limit, the
+        // smallest it lists), which 8,192 would cut short.
+        let default_cap = if entry.provider == "kimi_code" {
+            32_768
+        } else {
+            8192
+        };
+        let mut payload = json!({"model":entry.model,"max_tokens":output_cap(entry, prompts).unwrap_or(default_cap),"system":system,"messages":[{"role":"user","content":content}]});
         // The Claude API only, as Python markitai sends it: not verified on
         // Vertex AI or Microsoft Foundry.
         if entry.provider == "anthropic" && anthropic_thinking_off(&entry.model) {
@@ -2900,6 +2908,7 @@ mod tests {
     mod cloud_auth;
     mod hardening;
     mod keys;
+    mod kimi;
     mod reasoning;
     mod resend;
     mod transport;

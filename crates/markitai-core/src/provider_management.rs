@@ -131,7 +131,7 @@ const fn shown(
 /// workbench shows them, then each further group by label. Icons are keys of
 /// the lobehub marks the workbench vendors (`src/components/brand-marks.ts`).
 #[rustfmt::skip]
-static SHOWN: [Shown; 95] = [
+static SHOWN: [Shown; 96] = [
     shown("openai", "OpenAI", "common", Some("openai"), &[]),
     shown("anthropic", "Anthropic", "common", Some("anthropic"), &["claude"]),
     shown("gemini", "Gemini", "common", Some("gemini"), &["google", "google ai studio"]),
@@ -150,9 +150,10 @@ static SHOWN: [Shown; 95] = [
     shown("cohere", "Cohere", "makers", Some("cohere"), &["cohere_chat", "command"]),
     shown("compactifai", "CompactifAI", "makers", None, &["multiverse computing"]),
     shown("inception", "Inception", "makers", Some("inception"), &["mercury"]),
+    shown("kimi_code", "Kimi Code", "makers", Some("kimi"), &["kimi for coding", "moonshot"]),
     shown("meta", "Meta Llama API", "makers", Some("meta"), &["llama"]),
     shown("minimax", "MiniMax", "makers", Some("minimax"), &[]),
-    shown("moonshot", "Moonshot AI", "makers", Some("moonshot"), &["kimi"]),
+    shown("moonshot", "Moonshot AI", "makers", Some("moonshot"), &["kimi", "kimi platform", "kimi open platform"]),
     shown("morph", "Morph", "makers", Some("morph"), &[]),
     shown("perplexity", "Perplexity", "makers", Some("perplexity"), &["sonar"]),
     shown("sarvam", "Sarvam AI", "makers", None, &[]),
