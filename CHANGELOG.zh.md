@@ -7,6 +7,30 @@
 1.x 版本是 Python 实现，其说明见
 [1.2.0 更新日志](https://github.com/Ynewtime/markitai/blob/v1.2.0/CHANGELOG.zh.md)。
 
+## [2.0.1] - 2026-10-XX
+
+Markitai 2.0.1 是 2.0.0 的修复版本。`image.format: webp` 重新写有损 WebP，与 Python 版 markitai 1.2 写出的文件相同；中文终端下所有命令（包括 `markitai serve`）都显示中文；两个区域的 Kimi 开放平台密钥都能使用，Kimi Code 会员作为新的服务商加入。工作台新增全选框，Windows 安装脚本不再改变用户 Path 在注册表中的类型。按原来的安装方式更新：再运行一次安装命令，或执行 `uv tool upgrade markitai` / `pip install -U markitai`。读取 `markitai serve` 启动信息的脚本，请留意「变更」中的唯一一项。
+
+### 新增
+
+- 新增 **Kimi Code** 服务商 `kimi_code/<model>`，用于 Kimi Code 会员的密钥（`KIMI_API_KEY`；地址 `KIMI_CODE_API_BASE` 或 Kimi Code CLI 使用的 `KIMI_CODE_BASE_URL`）。工作台的「添加模型」以 Kimi 的标志列出该密钥可用的模型（`k3.1-pro`、`k3`、`kimi-for-coding` 等）。请求发往 Kimi 兼容 Anthropic 的 Messages 端点 `https://api.kimi.com/coding/v1`（kimi.ai 的密钥用 `https://api.kimi.ai/coding/v1`），带 markitai 自己的 User-Agent，输出上限最多 32,768 个 token。Kimi 的会员仅限交互使用：Kimi Code 页面在密钥输入框下方说明这一点，并链接到 Moonshot AI；批量转换请用其开放平台的密钥。
+- 工作台：转换任务列表的筛选行开头、各行勾选框的正上方新增全选框。它勾选当前名称筛选和标签页列出的全部转换任务，只选中一部分时显示短横，全部选中后再点则清除；读屏软件将其读作复选框（已选、未选或部分选中）。底部选择栏不变。
+
+### 变更
+
+- `markitai serve` 的启动信息跟随终端的语言和样式：标题带监听地址（`◆ Markitai 服务正在监听 http://127.0.0.1:3600`，英文为 `◆ Markitai server listening on http://…`），其下依次是 `• 访问令牌：…`、`→ 在浏览器中打开：`（地址单独一行）、任务和历史的保存位置以及如何停止。读取 `Markitai server listening on …` 或 `Remote access token: …` 的脚本，请改为读取标题的最后一个词（地址）和令牌行的值（64 个十六进制字符），两者在各语言中都保留；也可以用 `MARKITAI_SERVE_TOKEN` 固定令牌。
+
+### 修复
+
+- **WebP：** `image.format: webp` 重新按 `image.quality` 写有损 WebP，与 Python 版 markitai 1.2 一致，适用于内嵌图片、单独的图片、TIFF 页面以及 PDF/Office 页面截图。文件名仍为 `.webp`，透明像素保留。编码器为 libwebp 1.6.0，参数与 Pillow 相同，因此相同像素下 1.2 与 2.0.1 写出同一个文件。2.0.0 在质量低于 100 时把不含透明像素的图片写为 JPEG（`.jpg`，警告 `image.webp_as_jpeg`，该警告已移除），其余写为无损 WebP：一张自制的 1600×1067 照片在质量 75 时曾是 198 KB 的 JPEG，现在是 77 KB 的 WebP。质量 100 时同样是有损编码，与 1.2 一致。页面截图超出大小上限时，先以更低的 WebP 质量重试，再退回 1024 像素的 JPEG。
+- **中文终端**（`MARKITAI_LANG=zh` 或中文系统语言）：`markitai serve`（启动、停止、无法打开浏览器的警告、运行中的警告）、参数错误（未知参数或子命令、缺少值或取值无效、已移除的选项）、`auth`、`config edit` 交互编辑器、配置校验、网页抓取失败、供应商批量任务与 `--resume` 的提示、历史与输出归属的错误以及 MCP 会话失败，都不再显示英文。核心库以前直接写到 stderr、不带标记的提示（下载本地 OCR 模型、忽略 `./.env` 中的变量、当前文件夹 `markitai.json` 的密钥引用、Anthropic 采样参数警告）现在带有 CLI 的标记并跟随终端语言。括号里的技术细节、stdout 上的数据、JSON、报告与文件日志保持不变。
+- **中国区 Kimi 开放平台的密钥**（platform.kimi.com，原 platform.moonshot.cn）可以在工作台中使用。以前 `moonshot/` 总是发往 `https://api.moonshot.ai/v1`，该地址以 HTTP 401 `Invalid Authentication` 拒绝这类密钥。现在默认地址拒绝粘贴的密钥时，「添加模型」会改试 `https://api.moonshot.cn/v1`（Kimi Code 则改试它的另一个区域），把该地址填入「API 地址」，添加的模型也使用该地址。密钥被拒绝时的提示会写明拒绝它的地址，并说明 Kimi Code 与 Kimi 开放平台的密钥各应在哪里添加（英文、中文、日文）；发往 `api.moonshot.ai` 或 `api.kimi.com` 的模型请求被拒绝时，错误信息会给出另一个区域的 `api_base`。配置文件中，中国区密钥仍需要 `api_base: https://api.moonshot.cn/v1` 或 `MOONSHOT_API_BASE`，与 1.2 相同。
+- **工作台：** Claude、Copilot、ChatGPT 的「设置指南」链接按界面语言打开 markitai.dev 上与原因对应的小节（安装、登录或新增的「仍然失败时」），不再打开 GitHub 上的英文 Markdown 和并不存在的标题。
+- **工作台：** 模型列表或模型测试失败时，「服务商原文」中只显示服务商自己的回复（HTTP 状态码及其消息或错误代码），网络层报告的原因放在「连接错误」下。markitai 自己的提示（如「Claude CLI is not signed in」或超时）不再在其中重复标题。Claude Code 已登录但不是订阅登录，以及服务商不在服务器所在区域提供该模型，现在会直接写在提示和测试结果中。
+- **工作台：**「对照」视图中，鼠标移到下一个区块时，不再残留上一个区块的部分边框（列表项边框的右侧竖线及圆角会留在原处）。
+- **Windows 安装：** `setup.ps1` 添加或移除自己的文件夹时，保留用户 Path 在注册表中的类型。以前首次安装和卸载会把 `REG_SZ` 类型的 Path 改写成 `REG_EXPAND_SZ`（其中的条目不变）。Path 尚不存在时，仍和 Windows 一样创建为 `REG_EXPAND_SZ`。
+- **安装脚本：** `MARKITAI_VERSION` 指定 1.x 时，不再建议从 PyPI 安装 1.x（PyPI 上已没有任何 1.x 版本），而是提示从 Git tag 安装 1.2.0 并打印命令。PyPI 上的说明和各指南也改为：在没有 wheel 的平台上 pip 无包可装，已安装的 1.x 保持不动。
+
 ## [2.0.0] - 2026-10-24
 
 Markitai 2.0.0 是 Rust 重写版的首个正式发布，取代 Python 版 markitai 1.2.0。命令（`markitai`、`mkai`、`markitai-mcp`）、选项和配置保持不变，现在由一个原生程序运行，无需安装 Python、Node.js 或 Go 运行时。大多数文档转换更快、占用内存更少、结果更好。
