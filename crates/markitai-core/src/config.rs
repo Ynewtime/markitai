@@ -1435,7 +1435,8 @@ mod tests {
             json!({"llm":true,"ocr":false,"alt":true,"desc":true,"screenshot":true})
         );
         assert_eq!(preset(&cfg, "minimal").unwrap()["llm"], false);
-        assert_eq!(preset(&cfg, "bogus"), None); // A configured name with capitals is found as written and in any case;
+        assert_eq!(preset(&cfg, "bogus"), None);
+        // A configured name with capitals is found as written and in any case;
         // two names that differ only in case each keep their own.
         let cfg = normalize(
             &json!({"presets":{"Offline":{"ocr":true},"Team":{"llm":true},"team":{"llm":false}}}),

@@ -436,8 +436,8 @@ required (409 `llm_unavailable` otherwise), and success must contain an actual
 enhanced Markdown output; a fallback base conversion is not reported as a
 successful enhancement. Enhancement does not replace the saved options for future
 ordinary retries. Ordinary retry updates that item's options and settings; the
-job's own options and settings keep describing the submission (2.0.0 replaced them
-with the latest retry's), and sibling items retain their own options.
+job's own options and settings keep describing the submission (2.0.0 replaced the
+job's options with the latest retry's), and sibling items retain their own options.
 
 Only `done` and `error` items can be queued. A duplicate pending retry returns 409;
 a missing original upload returns 404. CLI-recorded file entries without retained
