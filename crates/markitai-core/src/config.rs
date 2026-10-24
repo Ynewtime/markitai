@@ -148,20 +148,29 @@ pub fn env_opt_out(value: &str) -> bool {
 /// The built-in presets, in the order they are offered.
 pub const BUILTIN_PRESETS: [&str; 3] = ["minimal", "standard", "rich"];
 
-/// The feature switches of preset `name` (case-insensitive): an entry of the
-/// configuration's `presets`, which may redefine a built-in name, else the
-/// built-in `minimal`, `standard` or `rich`. None of them enables OCR.
+/// The feature switches of preset `name`: an entry of the configuration's
+/// `presets` named exactly so (as Python markitai looks it up), else one whose
+/// name differs only in case, which may redefine a built-in name, else the
+/// built-in `minimal`, `standard` or `rich` in any case. None of them enables OCR.
 pub fn preset(cfg: &Value, name: &str) -> Option<Value> {
-    let name = name.to_lowercase();
-    cfg["presets"].get(&name).cloned().or_else(|| {
-        let (llm, screenshot) = match name.as_str() {
-            "minimal" => (false, false),
-            "standard" => (true, false),
-            "rich" => (true, true),
-            _ => return None,
-        };
-        Some(json!({"llm":llm,"ocr":false,"alt":llm,"desc":llm,"screenshot":screenshot}))
-    })
+    let configured = cfg["presets"].as_object();
+    if let Some(found) = configured.and_then(|presets| {
+        presets.get(name).or_else(|| {
+            presets
+                .iter()
+                .find(|(key, _)| key.to_lowercase() == name.to_lowercase())
+                .map(|(_, value)| value)
+        })
+    }) {
+        return Some(found.clone());
+    }
+    let (llm, screenshot) = match name.to_lowercase().as_str() {
+        "minimal" => (false, false),
+        "standard" => (true, false),
+        "rich" => (true, true),
+        _ => return None,
+    };
+    Some(json!({"llm":llm,"ocr":false,"alt":llm,"desc":llm,"screenshot":screenshot}))
 }
 
 /// Largest configuration file that is read or written.
@@ -1426,7 +1435,16 @@ mod tests {
             json!({"llm":true,"ocr":false,"alt":true,"desc":true,"screenshot":true})
         );
         assert_eq!(preset(&cfg, "minimal").unwrap()["llm"], false);
-        assert_eq!(preset(&cfg, "bogus"), None);
+        assert_eq!(preset(&cfg, "bogus"), None); // A configured name with capitals is found as written and in any case;
+        // two names that differ only in case each keep their own.
+        let cfg = normalize(
+            &json!({"presets":{"Offline":{"ocr":true},"Team":{"llm":true},"team":{"llm":false}}}),
+        )
+        .unwrap();
+        assert_eq!(preset(&cfg, "Offline").unwrap()["ocr"], true);
+        assert_eq!(preset(&cfg, "offline").unwrap()["ocr"], true);
+        assert_eq!(preset(&cfg, "Team").unwrap()["llm"], true);
+        assert_eq!(preset(&cfg, "team").unwrap()["llm"], false);
     }
 
     #[test]

@@ -342,8 +342,7 @@ impl JobOptions {
         }
         cfg["fetch"]["cloudflare"]["convert_enabled"] = json!(false);
         if let Some(name) = &self.preset {
-            let name = name.to_lowercase();
-            let preset = markitai_core::config::preset(base, &name).ok_or_else(|| {
+            let preset = markitai_core::config::preset(base, name).ok_or_else(|| {
                 ApiError::new(422, "unknown_preset", format!("unknown preset '{name}'"))
             })?;
             for (key, path) in [
@@ -902,6 +901,16 @@ mod error_tests {
         // A model-free request is accepted whatever the model state is.
         let cfg = options("{}").config(&base).unwrap();
         assert!(options("{}").require_model(&base, &cfg).is_ok());
+        // A configured preset named with capitals is applied, as written or in lower case.
+        let base = markitai_core::config::normalize(
+            &json!({"presets":{"Offline Scans":{"llm":false,"ocr":true,"alt":false,"desc":false,"screenshot":false}}}),
+        )
+        .unwrap();
+        for name in ["Offline Scans", "offline scans"] {
+            let text = format!(r#"{{"preset":"{name}"}}"#);
+            let cfg = options(&text).config(&base).unwrap();
+            assert_eq!(cfg["ocr"]["enabled"], true, "{name}");
+        }
     }
 
     #[test]

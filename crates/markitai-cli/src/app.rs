@@ -926,7 +926,7 @@ fn conversion_config(cli: &Cli, overrides: Option<Value>) -> CliResult<Value> {
                 1,
                 format!(
                     "Unknown preset '{}'. Available: {}",
-                    name.to_lowercase(),
+                    name,
                     available.join(", ")
                 ),
             )
