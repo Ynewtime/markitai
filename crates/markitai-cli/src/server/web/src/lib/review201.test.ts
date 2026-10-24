@@ -27,3 +27,9 @@ test("M3: Escape on an open (i) bubble closes the bubble only", () => {
   const escape = tip.slice(tip.indexOf("const escape = (event: KeyboardEvent)"), tip.indexOf("const other ="));
   assert.match(escape, /event\.preventDefault\(\);\s*event\.stopImmediatePropagation\(\);\s*dismiss\(\);/);
 });
+
+test("L8: a bubble opened from the keyboard stays while focus is on its control", () => {
+  const tip = read("../components/help-tooltip.tsx");
+  const timer = tip.slice(tip.indexOf("const timer = setTimeout"), tip.indexOf("AUTO_HIDE_MS + extraMs"));
+  assert.match(timer, /!hovered\.current && !anchor\.current\?\.querySelector\(":focus-visible"\) && !anchor\.current\?\.matches\(":focus-visible"\)/);
+});

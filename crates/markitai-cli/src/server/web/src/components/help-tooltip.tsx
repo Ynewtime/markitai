@@ -1,6 +1,7 @@
 // A help bubble for one control: shown on hover, focus or tap, positioned in
 // the viewport (above unless it does not fit), gone a few seconds after it
-// opens unless the pointer rests on it, on Escape (which then does nothing else: the dialog or page under it stays),
+// opens unless the pointer rests on it or keyboard focus stays on its control,
+// on Escape (which then does nothing else: the dialog or page under it stays),
 // on a click elsewhere, or when another help bubble opens. A row's bubble can also list its choices, or
 // be a short list of lines (the warnings of a conversion).
 import type { ComponentChildren } from "preact";
@@ -153,7 +154,8 @@ export function InfoTip({ label, text, class: className = "opt-help", size = 13 
 }
 
 /** Places an open bubble beside its anchor and closes it on Escape, a click
- * elsewhere, another bubble opening, or after a while unless the pointer rests on it. */
+ * elsewhere, another bubble opening, or after a while unless the pointer rests on it
+ * or keyboard focus is on its control. */
 function useBubble({
   open,
   setOpen,
@@ -235,9 +237,10 @@ function useBubble({
     window.addEventListener("markitai:help", other);
     window.addEventListener("pointerdown", away);
     window.addEventListener("keydown", escape, true);
-    // A pointer resting on the anchor or the bubble keeps it; leaving hides it.
+    // A pointer resting on the anchor or the bubble keeps it, and so does keyboard focus on
+    // its control (the bubble is that control's description); leaving hides it.
     const timer = setTimeout(() => {
-      if (!hovered.current) dismiss();
+      if (!hovered.current && !anchor.current?.querySelector(":focus-visible") && !anchor.current?.matches(":focus-visible")) dismiss();
     }, AUTO_HIDE_MS + extraMs);
     return () => {
       clearTimeout(timer);
