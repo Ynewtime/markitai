@@ -17,8 +17,9 @@ use std::{
     collections::{HashMap, HashSet},
     fs::{self, File},
     io::Read,
-    path::PathBuf,
-    sync::Arc,
+    path::{Path as FsPath, PathBuf},
+    sync::{Arc, Mutex, OnceLock},
+    time::SystemTime,
 };
 use tokio::io::AsyncReadExt;
 
@@ -289,6 +290,35 @@ fn line_count(mut reader: impl Read) -> std::io::Result<u64> {
     Ok(lines + u64::from(last != b'\n'))
 }
 
+/// Line counts of whole results by path, size and modification time: an
+/// excerpt of a large result is read only to its limit, and its count is
+/// read once instead of on every request. Bounded; a full table starts over.
+static LINE_COUNTS: OnceLock<Mutex<HashMap<PathBuf, Counted>>> = OnceLock::new();
+/// A file's size and modification time, and its lines.
+type Counted = (u64, SystemTime, u64);
+const LINE_COUNTS_MAX: usize = 256;
+
+/// The lines of the file at `path`, counted once per size and modification time.
+fn file_lines(path: &FsPath) -> std::io::Result<u64> {
+    let meta = fs::metadata(path)?;
+    let Ok(modified) = meta.modified() else {
+        return line_count(File::open(path)?);
+    };
+    let counts = LINE_COUNTS.get_or_init(Default::default);
+    if let Some((size, time, lines)) = counts.lock().unwrap().get(path)
+        && (*size, *time) == (meta.len(), modified)
+    {
+        return Ok(*lines);
+    }
+    let lines = line_count(File::open(path)?)?;
+    let mut counts = counts.lock().unwrap();
+    if counts.len() >= LINE_COUNTS_MAX {
+        counts.clear();
+    }
+    counts.insert(path.to_owned(), (meta.len(), modified, lines));
+    Ok(lines)
+}
+
 /// A done item's result as `result` reads it, resolved under `job.access`:
 /// the Markdown it shows and where its artifacts come from.
 struct Shown {
@@ -461,7 +491,7 @@ pub(super) async fn result(
         };
         // The whole Markdown's lines, which an excerpt alone cannot tell.
         let lines = match excerpted {
-            Some(_) => line_count(File::open(&shown.path).map_err(ApiError::internal)?),
+            Some(_) => file_lines(&shown.path),
             None => line_count(markdown.as_bytes()),
         }
         .map_err(ApiError::internal)?;
@@ -927,6 +957,27 @@ mod excerpt_tests {
         // Chunks end anywhere: a long text counts the same as its lines.
         let long = "line of the notes\n".repeat(10_000) + "end";
         assert_eq!(line_count(long.as_bytes()).unwrap(), 10_001);
+    }
+
+    #[test]
+    fn a_files_line_count_is_kept_until_the_file_changes() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("notes.md");
+        fs::write(&path, "one\ntwo\n").unwrap();
+        assert_eq!(file_lines(&path).unwrap(), 2);
+        // The second request is answered from the table: the same size and time.
+        let key = LINE_COUNTS
+            .get()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .get(&path)
+            .copied();
+        assert_eq!(key.map(|(size, _, lines)| (size, lines)), Some((8, 2)));
+        assert_eq!(file_lines(&path).unwrap(), 2);
+        // Another size is counted again.
+        fs::write(&path, "one\ntwo\nthree").unwrap();
+        assert_eq!(file_lines(&path).unwrap(), 3);
     }
 
     /// A result file is never sent as a script or style sheet the
