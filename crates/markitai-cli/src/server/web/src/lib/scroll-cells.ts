@@ -1,13 +1,15 @@
 // Table cells that keep their text on one line and scroll it sideways (the properties' keys and
 // values, Details' fact labels). A cell with more to its right fades there until it is scrolled
-// to its end; a cell that scrolls is reachable by the keyboard when nothing in it already is.
+// to its end, and once scrolled its left edge fades too; a cell that scrolls is reachable by the
+// keyboard when nothing in it already is.
 
 /** Whether the cell's content is wider than the cell. */
 export const overflows = (cell: HTMLElement): boolean => cell.scrollWidth > cell.clientWidth + 1;
 
-/** Fades the cell's right edge while it has more to its right. */
+/** Fades the cell's right edge while it has more to its right, and its left edge once scrolled from its start. */
 export function markMore(cell: HTMLElement): void {
   cell.classList.toggle("is-more", cell.scrollLeft + cell.clientWidth < cell.scrollWidth - 1);
+  cell.classList.toggle("is-less", cell.scrollLeft > 1);
 }
 
 /** Fits every `selector` cell under `root` now, when the web font arrives, when the root's width or

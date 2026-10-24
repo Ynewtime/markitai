@@ -107,3 +107,14 @@ test("L12: a visually hidden box takes no room after the page's last line", () =
   const hidden = block(".sr-only");
   for (const rule of ["margin: -1px;", "padding: 0;", "border: 0;", "clip-path: inset(50%);", "width: 1px;", "height: 1px;"]) assert.ok(hidden.includes(rule), rule);
 });
+
+test("L13: a cut value can be read: two lines and a tooltip, key tooltips, a fade on both scrolled edges", () => {
+  const dialog = read("../components/options-dialog.tsx");
+  assert.match(dialog, /"sheet-row-value is-changed" : "sheet-row-value"\} title=\{group\.value\}>/);
+  const value = block(".sheet-row-value");
+  assert.match(value, /-webkit-line-clamp: 2;/);
+  assert.ok(!/white-space: nowrap|text-overflow: ellipsis/.test(value));
+  assert.match(read("../components/front-matter.tsx"), /<span class="front-key" title=\{label === row\.key \? label : `\$\{label\} \(\$\{row\.key\}\)`\}>/);
+  assert.match(read("./scroll-cells.ts"), /cell\.classList\.toggle\("is-less", cell\.scrollLeft > 1\);/);
+  assert.match(block(".sheet-cli .cli-text.is-less.is-more"), /mask-image: linear-gradient\(to right, transparent, #000 20px, #000 calc\(100% - 20px\), transparent\);/);
+});

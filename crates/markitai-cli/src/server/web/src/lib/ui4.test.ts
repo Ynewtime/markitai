@@ -130,7 +130,7 @@ test("properties: one fixed key column (120 px, 92 px on a phone); keys and valu
   // paper cannot scroll: keys, values and fact labels wrap again in print, without chevrons
   assert.match(css, /@media print \{\n {2}\.front-key,\n {2}\.front-cell,\n {2}\.facts > dt \{\n {4}overflow: visible;\n {4}white-space: normal;/);
   const card = read("../components/front-matter.tsx");
-  assert.match(card, /<dt>\n\s+<span class="front-key">\{label\}<\/span>\n\s+<\/dt>/);
+  assert.match(card, /<dt>\n\s+<span class="front-key" title=\{[^\n]*\}>\n\s+\{label\}\n\s+<\/span>\n\s+<\/dt>/);
   assert.ok(!/\.title = /.test(card), "no tooltip in place of the key");
   assert.match(card, /watchScrollCells\(target, "\.front-key, \.front-cell"/);
 });

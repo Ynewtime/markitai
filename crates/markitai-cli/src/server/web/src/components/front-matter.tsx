@@ -2,8 +2,9 @@
 // icon, "Properties · N" and a chevron, no title (the body's own heading is the title). Open:
 // the same line, its chevron turned up, over a two-column properties table. The line is one
 // disclosure button with aria-expanded that stays in place (owner, 2026-10-25): opening or
-// folding changes only what is under it. The choice lasts for the tab's session. The table's key column has one fixed width; a key or
-// value stays on one line that scrolls sideways inside its own cell. A row whose value does not
+// folding changes only what is under it. The choice lasts for the tab's session. The table's key
+// column has one fixed width; a key or value stays on one line that scrolls sideways inside its own
+// cell. A row whose value does not
 // fit gets a chevron at its end: it (or a tap on the value) opens the row so the value wraps in
 // full, and folds it again.
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "preact/hooks";
@@ -105,7 +106,9 @@ export function FrontCard({ t, front, compact = false }: { t: Dict; front: Front
             return (
               <div key={row.key} class={["front-row", more ? "has-more" : "", opened ? "is-open" : ""].filter(Boolean).join(" ")} data-key={row.key}>
                 <dt>
-                  <span class="front-key">{label}</span>
+                  <span class="front-key" title={label === row.key ? label : `${label} (${row.key})`}>
+                    {label}
+                  </span>
                 </dt>
                 <dd>
                   <div

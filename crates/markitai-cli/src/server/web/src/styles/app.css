@@ -2086,6 +2086,21 @@ main:focus {
   -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 20px), transparent);
   mask-image: linear-gradient(to right, #000 calc(100% - 20px), transparent);
 }
+/* scrolled away from its start, the left edge fades too (.is-less) */
+.front-key.is-less,
+.front-cell.is-less,
+.facts > dt.is-less,
+.sheet-cli .cli-text.is-less {
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 20px);
+  mask-image: linear-gradient(to right, transparent, #000 20px);
+}
+.front-key.is-less.is-more,
+.front-cell.is-less.is-more,
+.facts > dt.is-less.is-more,
+.sheet-cli .cli-text.is-less.is-more {
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 20px, #000 calc(100% - 20px), transparent);
+  mask-image: linear-gradient(to right, transparent, #000 20px, #000 calc(100% - 20px), transparent);
+}
 .front-key {
   display: block;
 }
@@ -2173,7 +2188,10 @@ main:focus {
   }
   .front-key.is-more,
   .front-cell.is-more,
-  .facts > dt.is-more {
+  .facts > dt.is-more,
+  .front-key.is-less,
+  .front-cell.is-less,
+  .facts > dt.is-less {
     -webkit-mask-image: none;
     mask-image: none;
   }
@@ -3840,15 +3858,19 @@ kbd {
 .sheet-row-name {
   flex: none;
 }
+/* a long value (many switches on) wraps to a second line before it is cut; its tooltip has it whole */
 .sheet-row-value {
+  display: -webkit-box;
   flex: 1;
   min-width: 0;
   overflow: hidden;
   font-size: var(--text-ui);
+  line-height: 1.35;
   color: var(--text-3);
   text-align: right;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
 }
 .sheet-row-value.is-changed {
   color: var(--text-1);

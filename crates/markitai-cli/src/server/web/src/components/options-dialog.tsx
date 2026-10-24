@@ -343,7 +343,9 @@ export function OptionsDialog({
       onClick={() => open(group.page)}
     >
       <span class="sheet-row-name">{group.name}</span>
-      <span class={differs(group.page) ? "sheet-row-value is-changed" : "sheet-row-value"}>{group.value}</span>
+      <span class={differs(group.page) ? "sheet-row-value is-changed" : "sheet-row-value"} title={group.value}>
+        {group.value}
+      </span>
       <Icon name="CaretRight" size={14} />
     </button>
   );
