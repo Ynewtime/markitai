@@ -1,0 +1,19 @@
+[package]
+name = "markitai-webp-sys"
+version = "1.6.0"
+edition = "2024"
+rust-version = "1.92"
+description = "libwebp 1.6.0's lossy encoder, built from the vendored C sources, behind one C function"
+license = "BSD-3-Clause AND MIT"
+links = "markitai_webp"
+publish = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+
+[lib]
+path = "lib.rs"
+
+[build-dependencies]
+cc = "1.2"

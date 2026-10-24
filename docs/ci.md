@@ -145,7 +145,7 @@ redirected entries and run the installed aliases. Report complete archive size
 separately from a single executable.
 
 CLI, FFI and language packages carry project and upstream attribution,
-including `licenses/hayro/`, `licenses/paddleocr/`, pricing and
+including `licenses/hayro/`, `licenses/paddleocr/`, `licenses/libwebp/`, pricing and
 Tailwind palette (`licenses/tailwind/`) notices. CLI archives also include `vendor/web/` attribution and the explicit
 public Markdown whitelist in `scripts/cli_documentation.py`; release wheels, which serve the same workbench,
 carry the same `vendor/web/` attribution under `.dist-info/licenses/` (`release_build.py licenses` compares the
