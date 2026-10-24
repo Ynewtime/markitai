@@ -33,10 +33,15 @@ Markitai 2.0.1 是 2.0.0 的修复版本。`image.format: webp` 重新写有损 
 - **中文终端**（`MARKITAI_LANG=zh` 或中文系统语言）：`markitai serve`（启动、停止、无法打开浏览器的警告、运行中的警告）、参数错误（未知参数或子命令、缺少值或取值无效、已移除的选项）、`auth`、`config edit` 交互编辑器、配置校验、网页抓取失败、供应商批量任务与 `--resume` 的提示、历史与输出归属的错误以及 MCP 会话失败，都不再显示英文。核心库以前直接写到 stderr、不带标记的提示（下载本地 OCR 模型、忽略 `./.env` 中的变量、当前文件夹 `markitai.json` 的密钥引用、Anthropic 采样参数警告）现在带有 CLI 的标记并跟随终端语言。括号里的技术细节、stdout 上的数据、JSON、报告与文件日志保持不变。
 - **中国区 Kimi 开放平台的密钥**（platform.kimi.com，原 platform.moonshot.cn）可以在工作台中使用。以前 `moonshot/` 总是发往 `https://api.moonshot.ai/v1`，该地址以 HTTP 401 `Invalid Authentication` 拒绝这类密钥。现在默认地址拒绝粘贴的密钥或服务器自己的 `MOONSHOT_API_KEY` 时，「添加模型」会改试 `https://api.moonshot.cn/v1`（Kimi Code 则改试它的另一个区域），添加的模型使用该地址；粘贴的密钥还会把该地址填入「API 地址」。Kimi 的两个服务都不接受的密钥会得到一句简短说明（英文、中文、日文）；发往 `api.moonshot.ai` 或 `api.kimi.com` 的模型请求被拒绝时，错误信息会给出另一个区域的 `api_base`。配置文件中，中国区密钥仍需要 `api_base: https://api.moonshot.cn/v1` 或 `MOONSHOT_API_BASE`，与 1.2 相同。
 - **模型清理：** Claude Haiku 5.5 等小模型会丢掉代表下划线标签和链接的受保护标记（`the answer dropped 3 of the 16 markers …`），这类文档每次都要为第二次请求付费。现在链接的文字照常交给模型，只隐藏地址（`[文字](⟦…⟧)`）；不带属性的样式标签（`<u>`、`<b>`、`<i>`、`<em>`、`<strong>`、`<mark>`、`<ins>`、`<small>`）原样保留，与 Python 版 markitai 1.2 相同。链接地址仍按原样恢复；把地址移出链接的回答不予采用。
-- **提示：** 模型回答无法使用、重新请求后得到可用回答时，提示改为简短的 `A model answer could not be used, so the request was sent again; a later answer was used`（`llm.answer_retried`；终端只在加 `-v` 时显示它，跟随终端语言，并且和其他只作说明的提示一样使用信息标记而不是警告标记），不再附带被丢弃回答的标记代码。工作台不再把它作为带警告标志的英文提示显示：内容没有缺失，费用已计入两次请求。
+- **提示：** 模型回答无法使用、重新请求后得到可用回答时，提示改为简短的 `A model answer could not be used, so the request was sent again; a later answer was used`（`llm.answer_retried`；终端只在加 `-v` 时显示它，跟随终端语言，并且和其他只作说明的提示一样使用信息标记而不是警告标记），不再附带被丢弃回答的标记代码。工作台不再把它列为提示：内容没有缺失，费用已计入两次请求。
 - **工作台：** Claude、Copilot、ChatGPT 的「设置指南」链接按界面语言打开 markitai.dev 上与原因对应的小节（安装、登录或新增的「仍然失败时」），不再打开 GitHub 上的英文 Markdown 和并不存在的标题。
 - **工作台：** 模型列表或模型测试失败时，「服务商原文」中只显示服务商自己的回复（HTTP 状态码及其消息或错误代码），网络层报告的原因放在「连接错误」下。markitai 自己的提示（如「Claude CLI is not signed in」或超时）不再在其中重复标题。Claude Code 已登录但不是订阅登录，以及服务商不在服务器所在区域提供该模型，现在会直接写在提示和测试结果中。
 - **工作台：**「对照」视图中，鼠标移到下一个区块时，不再残留上一个区块的部分边框（列表项边框的右侧竖线及圆角会留在原处）。
+- **工作台：** 页面不再多出 1 像素的滚动（Windows 和 Linux 的常规滚动条下，内容放得下的页面也会出现滚动条）；读屏软件读出时长时带单位。
+- **重试：** 重试任务中的某一项时，不再用这次重试的 `options` 替换整个任务的 `options`，提交的请求仍显示提交时的选择；重试的选项和设置记录在该条目上。
+- **URL 命名：** URL 最后一段路径是密钥（`/reset/` 之后的令牌、很长的随机字符串）时，输出文件改以主机名命名，令牌不再出现在文件名、CLI 历史和 `/api/history` 中。服务中保存名为 `REDACTED` 的条目也改以主机名命名。
+- **预设：** 配置中带大写字母的预设（如 `Team`、`Offline Scans`）现在可以用 `--preset` 和在服务中选用，以前总被当作未知预设。先按原名匹配，再不区分大小写匹配，最后是内置预设。
+- **日志：** 配置中短于四个字符的密钥（如用户名 `u`、cookie 值 `c`）只在单独出现时隐藏，不再把每一行中所有相同的字母都替换成 `[REDACTED]`。
 - **Windows 安装：** `setup.ps1` 添加或移除自己的文件夹时，保留用户 Path 在注册表中的类型。以前首次安装和卸载会把 `REG_SZ` 类型的 Path 改写成 `REG_EXPAND_SZ`（其中的条目不变）。Path 尚不存在时，仍和 Windows 一样创建为 `REG_EXPAND_SZ`。
 - **安装脚本：** `MARKITAI_VERSION` 指定 1.x 时，不再建议从 PyPI 安装 1.x（PyPI 上已没有任何 1.x 版本），而是提示从 Git tag 安装 1.2.0 并打印命令。PyPI 上的说明和各指南也改为：在没有 wheel 的平台上 pip 无包可装，已安装的 1.x 保持不动。
 
