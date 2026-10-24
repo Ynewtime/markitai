@@ -47,7 +47,7 @@ workbench relies on; they are not a byte-for-byte contract of every payload.
 1. `GET /api/capabilities` returns version, effective LLM configuration, presets,
    SVG/browser availability, Cloudflare local readiness, the 1,000-item limit and
    the seven-day history retention (`limits`), and, for clients shared with other
-   backends, `implementation: "rust"`, `docs_url`, `source_url` and `features` (`cancel`,
+   backends, `implementation: "rust"`, `docs_url` (`https://markitai.dev/`), `source_url` and `features` (`cancel`,
    `download_tickets`, `url_lists`, `history_items`, `original`,
    `result_excerpt`, `job_labels`, `item_assets`, `item_archive`, `config_edit`,
    `batch_delete`, all true, and `token_regenerate` and `user_tokens`, true unless

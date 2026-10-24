@@ -985,7 +985,7 @@
           "version": { "type": "string" },
           "build": { "$ref": "#/components/schemas/BuildInfo" },
           "implementation": { "type": "string", "enum": ["rust", "python"], "description": "Which backend answers" },
-          "docs_url": { "type": "string", "format": "uri", "description": "The user guides" },
+          "docs_url": { "type": "string", "format": "uri", "description": "The user guides: `https://markitai.dev/` (before 2.0.1 this server named its Markdown docs on GitHub, `…/docs/index.md`)" },
           "source_url": { "type": "string", "format": "uri", "description": "This service's source repository" },
           "features": { "$ref": "#/components/schemas/Features" },
           "llm": { "type": "object", "required": ["routable"], "properties": { "configured": { "type": "boolean" }, "effective": { "type": "boolean" }, "routable": { "type": "boolean" }, "models": { "type": "array", "items": { "type": "string" } } } },

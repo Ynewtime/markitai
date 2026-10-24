@@ -116,7 +116,8 @@ fn build() -> Value {
         "dirty":build_info::DIRTY == "1"})
 }
 
-const DOCS_URL: &str = "https://github.com/Ynewtime/markitai/blob/main/docs/index.md";
+/// The user guides: the workbench opens their Chinese pages (`/zh/`) for a Chinese page.
+const DOCS_URL: &str = "https://markitai.dev/";
 const SOURCE_URL: &str = "https://github.com/Ynewtime/markitai";
 
 fn invalid_label() -> ApiError {

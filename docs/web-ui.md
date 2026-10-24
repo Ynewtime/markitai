@@ -770,7 +770,8 @@ keys as saved defaults; contract v1.22 adds `settings`, read when present, to jo
 and items); a missing feature hides its control instead of failing (no Stop
 remaining, no Compare, archives saved through the page, history read job by job,
 images read from the file route).
-`docs_url` points the Docs link at the backend's own documentation. The pricing link
+`docs_url` points the Docs link at the backend's own documentation (both servers name
+`https://markitai.dev/`; Rust before 2.0.1 named its Markdown docs on GitHub). The pricing link
 opens the page beside an `index.md` address, or `guide/<page>` under a site root
 (`https://markitai.dev` or `https://markitai.dev/`); the subscriptions' Setup guide
 links always open markitai.dev in the page's language.
