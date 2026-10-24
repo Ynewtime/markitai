@@ -4,9 +4,10 @@ name: Release
 # Pushing a v2.* tag publishes it: CLI archives, wheels, the sdist, SHA256SUMS
 # and build provenance in a GitHub Release, the wheels on PyPI (trusted
 # publishing from the `pypi` environment), then server.json on the MCP
-# Registry. Started by hand, it builds and tests everything and publishes
-# nothing unless dry_run is off and the run is on a tag. Nothing here needs a
-# stored secret; release builds use no caches.
+# Registry, and it redeploys markitai.dev for the new notes. Started by hand, it
+# builds and tests everything and publishes nothing unless dry_run is off and
+# the run is on a tag. Nothing here needs a stored secret; release builds use
+# no caches.
 on:
   push:
     tags: ['v2.*']
@@ -403,3 +404,25 @@ jobs:
           done
           echo "::error::Could not publish $SERVER_NAME $VERSION; re-run this job once the cause is fixed."
           exit 1
+
+  # markitai.dev shows a release's notes once its tag exists, but the release
+  # commit reached main (and deployed the site) before the tag, and a tag push
+  # deploys nothing: the github-pages environment deploys from main only. So
+  # this starts deploy-website.yml on main, once the Release and the PyPI
+  # wheels are out (the site's install commands use both). A workflow_dispatch
+  # sent with GITHUB_TOKEN does start a run. If this job fails, re-run it, or
+  # run `gh workflow run deploy-website.yml --ref main` by hand.
+  website:
+    name: Deploy markitai.dev with the release notes
+    needs: [prepare, github-release, pypi]
+    if: needs.prepare.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: write  # start deploy-website.yml
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Start the website deploy on main
+        run: gh workflow run deploy-website.yml --ref main

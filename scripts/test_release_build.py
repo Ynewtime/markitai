@@ -205,6 +205,18 @@ class AssetTests(unittest.TestCase):
         self.assertNotIn("name: sdist", job)
         self.assertIn("markitai-2.0.0.tar.gz", expected_assets("2.0.0"))
 
+    def test_a_published_release_deploys_the_website(self):
+        workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+        job = workflow.split("\n  website:\n", 1)[1]
+        self.assertIn("needs: [prepare, github-release, pypi]", job)
+        self.assertIn("if: needs.prepare.outputs.publish == 'true'", job)
+        permissions = job.split("permissions:\n", 1)[1].split("\n    env:", 1)[0]
+        self.assertEqual(permissions.split("#")[0].split(), ["actions:", "write"])
+        self.assertIn("gh workflow run deploy-website.yml --ref main", job)
+        deploy = (ROOT / ".github/workflows/deploy-website.yml").read_text(encoding="utf-8")
+        self.assertIn("\n  workflow_dispatch:\n", deploy)
+        self.assertIn("if: github.ref == 'refs/heads/main'", deploy)
+
     def test_container_images_match(self):
         workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
         images = re.findall(r"image: '(quay\.io/pypa/manylinux_2_28_\w+@sha256:[0-9a-f]{64})'", workflow)

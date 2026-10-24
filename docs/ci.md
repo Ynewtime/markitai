@@ -179,8 +179,9 @@ Two workflows serve markitai.dev from `website/` (see
   `/setup.sh` and `/setup.ps1`), `CHANGELOG.md`, `CHANGELOG.zh.md` or the
   workflow, and when started by hand on `main` (a run on another branch skips
   both jobs). The changelog pages publish a section once its `vX.Y.Z` tag
-  exists, and a release tag starts no deploy, so a release's notes go live with
-  a manual run after the tag (see [the release commit](#the-release-commit)).
+  exists, and a release tag starts no deploy, so the release workflow's
+  `website` job starts this one on `main` after a tag release (see
+  [the release commit](#the-release-commit)).
 - `website-check.yml` runs on pushes to `main` and pull requests that change
   `website/**`, `scripts/install/**`, `CHANGELOG.md`, `CHANGELOG.zh.md`, the CLI
   or core crates, `Cargo.lock` or the workflow, and by hand. It fails on a
@@ -209,6 +210,7 @@ a tag). It uses no caches and no stored secrets. Each step runs a subcommand of
 | `github-release` | A check that each target's archive and wheel carry the same license files, `SHA256SUMS` over every asset, build-provenance attestations, and the Release with the notes, created as a draft with all assets and then published. |
 | `pypi` | The six wheels, not the sdist, by trusted publishing from the `pypi` environment (the action also uploads PEP 740 attestations). On a platform without a wheel pip keeps markitai 1.x instead of building 2.x from source; the sdist is on the GitHub Release for those who do. |
 | `mcp-registry` | `server.json` (`io.github.Ynewtime/markitai`, pointing at the PyPI release) through `mcp-publisher` with GitHub OIDC, once PyPI lists the version. |
+| `website` | Starts `deploy-website.yml` on `main` (with `actions: write` only) once `github-release` and `pypi` have succeeded, so markitai.dev's changelog pages show the new section only when the archives and wheels its install commands fetch are out. It does not wait for `mcp-registry`. |
 
 The archives keep the package inventory above, at the archive root. macOS builds
 target macOS 11.0. Linux archives and wheels are built in the pinned
@@ -260,9 +262,10 @@ On macOS or Linux (the help snapshot test is Unix-only):
    `python3 scripts/check.py`, commit, push `main`, run a dry run on it
    (`gh workflow run release.yml --ref main`), then push an annotated
    `vX.Y.Z` tag on that commit.
-5. Once the tag is pushed, `gh workflow run deploy-website.yml --ref main` puts
-   the new section on markitai.dev's changelog pages (the push in step 4 built
-   them before the tag existed).
+5. The tag run's `website` job deploys markitai.dev, which puts the new
+   section on its changelog pages (the push in step 4 built them before the
+   tag existed). If that job fails, re-run it, or run
+   `gh workflow run deploy-website.yml --ref main` by hand.
 
 ### Setup scripts
 

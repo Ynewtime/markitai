@@ -5,9 +5,10 @@ name: Deploy Website
 # website/changelog/, released versions only (website/scripts/changelog.mjs
 # keeps a section once its vX.Y.Z tag exists), so a push to main never shows an
 # unreleased section. The release commit reaches main before its tag, so its
-# push builds the site without the new section; once the tag is pushed, run this
-# workflow by hand on main (no release workflow starts it, and the github-pages
-# environment deploys from main only).
+# push builds the site without the new section; release.yml's last job starts
+# this workflow on main once the tag's Release and PyPI upload are out (the
+# github-pages environment deploys from main only). If that job fails, re-run
+# it, or run this workflow by hand on main.
 on:
   push:
     branches: [main]
