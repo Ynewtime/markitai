@@ -337,7 +337,7 @@ fn anthropic_batch_submits_inline_waits_and_collects() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert_eq!(
         stderr
-            .matches("Warning: temperature, top_k not sent to anthropic/claude-haiku-5-5: Anthropic API 2026-10-21 rejects temperature, top_p and top_k")
+            .matches("  ! temperature, top_k not sent to anthropic/claude-haiku-5-5: Anthropic API 2026-10-21 rejects temperature, top_p and top_k")
             .count(),
         1,
         "{stderr}"

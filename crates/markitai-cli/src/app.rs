@@ -605,6 +605,9 @@ pub(crate) fn erase_status_line() {
 }
 
 pub fn run(mut arguments: Vec<std::ffi::OsString>) -> i32 {
+    markitai_core::console::set_sink(logging::library_line);
+    let _ = i18n::lang();
+    logging::language_known();
     // A distribution may expose this executable through the existing MCP name.
     // Select the subcommand before the no-argument help path, so stdout remains
     // the protocol stream even when a client starts the alias without flags.

@@ -319,11 +319,11 @@ fn a_folders_env_and_config_are_named_and_kept_off_programs_and_keys() {
     );
     let ignored: Vec<_> = stderr
         .lines()
-        .filter(|line| line.starts_with("Warning: Ignored "))
+        .filter(|line| line.starts_with("  ! Ignored "))
         .collect();
     assert_eq!(ignored.len(), 1, "{stderr}");
     assert!(
-        ignored[0].starts_with("Warning: Ignored COPILOT_CLI_PATH, OPENAI_API_BASE from ./.env"),
+        ignored[0].starts_with("  ! Ignored COPILOT_CLI_PATH, OPENAI_API_BASE from ./.env"),
         "{stderr}"
     );
     assert_eq!(

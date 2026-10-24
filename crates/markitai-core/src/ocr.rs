@@ -459,9 +459,9 @@ fn vision_instead(error: &Error) -> bool {
         return false;
     }
     if !TOLD.swap(true, std::sync::atomic::Ordering::Relaxed) {
-        eprintln!(
+        crate::console::line(
             "Local OCR: the portable engine's models could not be downloaded; reading with macOS Vision instead \
-             (the first Vision use of this program takes about 20 seconds). `markitai doctor --fix` installs the models."
+             (the first Vision use of this program takes about 20 seconds). `markitai doctor --fix` installs the models.",
         );
     }
     true
