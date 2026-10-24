@@ -13,7 +13,7 @@ conversions and a grey pulsing dot while something converts, which turns green a
 everything is done and fades six seconds later), the Settings sections
 (Appearance, Models, Access token, Edit config; a user token sees Appearance,
 its own Models and Edit config for them, see [Access token](#access-token)), and Docs and GitHub at the bottom, with the version
-(`2.0.0`) in small muted text beside Docs and the commit it was built from beside GitHub (`-dirty` after
+(`2.0.1`) in small muted text beside Docs and the commit it was built from beside GitHub (`-dirty` after
 it when built with uncommitted changes), and under them, as small muted text centred rather than a row,
 `Build: 20261017 19:54`, the build's date and time in the viewer's time zone (the label stays `Build:` in every
 language; the full stamp with seconds and offset is the tooltip). The Settings list on a phone ends with the Docs
