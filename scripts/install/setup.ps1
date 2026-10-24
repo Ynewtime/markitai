@@ -291,14 +291,50 @@ function Write-Outro {
     Write-Host ""
 }
 
-# A failure ends setup: a terminating error, so `irm | iex` does not close
-# the user's own window as `exit` would.
-function Stop-Setup {
+function Write-Failure {
     param([string]$Text, [string]$Detail)
     Write-Item $S.Cross "DarkRed" $Text
     if ($Detail) { Write-Part $S.Bar "DarkGray" -NoNewline; Write-Part "    $Detail" "DarkGray" }
     Write-Outro "DarkRed" (Msg "failed")
+}
+
+# A failure ends setup: a terminating error, which the end of this script
+# catches (see Exit-Setup), so `irm | iex` does not close the user's own
+# window as `exit` would.
+function Stop-Setup {
+    param([string]$Text, [string]$Detail)
+    Write-Failure $Text $Detail
     throw "markitai setup: $Text"
+}
+
+# Whether `exit` ends only setup: this script runs from its file, or the
+# PowerShell process was started to run a command or a file and ends after it
+# (`powershell -c "irm ... | iex"`, without -NoExit). Typed into the user's
+# own window (`irm | iex`, the script block form) it would close the window.
+function Test-ExitEndsOnlySetup {
+    if ($MyInvocation.ScriptName) { return $true }
+    foreach ($argument in @([Environment]::GetCommandLineArgs() | Select-Object -Skip 1)) {
+        if ("$argument" -notmatch '^(--?|/)([A-Za-z]+)$') { continue }
+        $name = $Matches[2].ToLowerInvariant()
+        if ($name.Length -ge 3 -and "noexit".StartsWith($name)) { return $false }
+        foreach ($runs in @("command", "commandwithargs", "cwa", "encodedcommand", "ec", "file")) {
+            if ($runs.StartsWith($name)) { return $true }
+        }
+    }
+    return $false
+}
+
+# The end of a failed run, its failure already shown in setup's frame: exit
+# code 1 without the error record PowerShell prints for an uncaught error
+# (with "+ CategoryInfo" and "+ FullyQualifiedErrorId" lines in Windows
+# PowerShell 5.1, a "Line |" excerpt in PowerShell 7). Where `exit` would
+# close the user's window, $LASTEXITCODE says the run failed.
+function Exit-Setup {
+    param($Failure)
+    $message = "$($Failure.Exception.Message)"
+    if ($message -notlike "markitai setup: *") { Write-Failure $message }
+    if (Test-ExitEndsOnlySetup) { exit 1 }
+    $global:LASTEXITCODE = 1
 }
 
 function Test-Truthy { param([string]$Value) return $Value -match '^(1|true|yes|on)$' }
@@ -867,9 +903,13 @@ function Invoke-Install {
     }
 }
 
-if (-not $OnWindows) {
-    Write-Intro (Msg "welcome")
-    Stop-Setup (Msg "error_os_windows") "curl -fsSL https://markitai.dev/setup.sh | sh"
+try {
+    if (-not $OnWindows) {
+        Write-Intro (Msg "welcome")
+        Stop-Setup (Msg "error_os_windows") "curl -fsSL https://markitai.dev/setup.sh | sh"
+    }
+    if ($Uninstall -or (Test-Truthy "$env:MARKITAI_UNINSTALL")) { Invoke-Uninstall } else { Invoke-Install }
+} catch {
+    Exit-Setup $_
 }
-if ($Uninstall -or (Test-Truthy "$env:MARKITAI_UNINSTALL")) { Invoke-Uninstall } else { Invoke-Install }
 } -Uninstall:$Uninstall

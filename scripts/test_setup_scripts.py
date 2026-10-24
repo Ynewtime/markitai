@@ -295,15 +295,15 @@ class SetupShTests(unittest.TestCase):
 PS_HARNESS = r"""
 param([string]$Script, [string]$Base, [string]$Work)
 $ErrorActionPreference = "Stop"
-# Load every definition of setup's script block, not the two statements that run setup.
+# Load every definition of setup's script block, not the statement that runs setup.
 $tokens = $null; $errors = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile($Script, [ref]$tokens, [ref]$errors)
 if ($errors) { throw "parse errors: $errors" }
 $block = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.ScriptBlockExpressionAst] }, $false)
 if (-not $block -or $ast.EndBlock.Statements.Count -ne 1) { throw "setup.ps1 is not one script block" }
 $statements = $block.ScriptBlock.EndBlock.Statements
-$body = @($statements | Where-Object { $_.Extent.Text -notmatch '^if \((-not \$OnWindows|\$Uninstall)' })
-if ($body.Count -ne $statements.Count - 2) { throw "setup.ps1 ends differently than expected" }
+$body = @($statements | Where-Object { $_.Extent.Text -notmatch '^try \{' })
+if ($body.Count -ne $statements.Count - 1) { throw "setup.ps1 ends differently than expected" }
 . ([scriptblock]::Create(($body | ForEach-Object { $_.Extent.Text }) -join "`n"))
 function Assert($Condition, $Message) { if (-not $Condition) { throw "FAILED: $Message" } }
 $script:Shown = New-Object System.Collections.ArrayList
@@ -526,6 +526,72 @@ class SetupPs1Tests(unittest.TestCase):
                                     capture_output=True, text=True, timeout=180, env=env)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertEqual(result.stdout.strip().splitlines()[-1], "ok")
+
+    def test_a_failure_ends_in_setups_frame_with_exit_1(self):
+        # Windows PowerShell 5.1 printed an uncaught failure's error record
+        # ("+ CategoryInfo", "+ FullyQualifiedErrorId") below setup's frame,
+        # PowerShell 7 a "Line |" excerpt.
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            releases = FakeReleases(work / "releases")
+            self.addCleanup(releases.close)
+            releases.publish("2.0.0", {"markitai-v2.0.0-x86_64-pc-windows-msvc.zip": release_zip("2.0.0")})
+            # As on Windows x64; the unpacked stand-in "exe" is not started.
+            code = SETUP_PS1.read_text(encoding="utf-8")
+            for old, new in [
+                ('$OnWindows = ($PSVersionTable.PSEdition -ne "Core") -or $IsWindows', "$OnWindows = $true"),
+                ("Get-ReleaseTarget (Get-NativeArchitecture)", 'Get-ReleaseTarget "AMD64"'),
+                ('$reported = Invoke-MarkitaiVersion (Join-Path $unpacked "markitai.exe")', '$reported = "markitai 2.0.0"'),
+            ]:
+                self.assertIn(old, code)
+                code = code.replace(old, new)
+            script = work / "setup.ps1"
+            script.write_text(code, encoding="utf-8")
+            # A folder holding a name setup installs, which setup did not put there.
+            shared = work / "shared"
+            shared.mkdir()
+            (shared / "LICENSE").write_text("mine", encoding="utf-8")
+            (work / "home").mkdir()
+            env = {**os.environ, "HOME": str(work / "home"), "USERPROFILE": str(work / "home"), "TMPDIR": str(work),
+                   "LOCALAPPDATA": str(work / "LocalAppData"), "MARKITAI_HOME": str(work / "state"),
+                   "MARKITAI_DOWNLOAD_URL": releases.base, "MARKITAI_INSTALL_DIR": str(shared),
+                   "MARKITAI_INSTALL_OPTIONAL": "0", "NO_COLOR": "1", "LANG": "C.UTF-8"}
+            for name in ["MARKITAI_VERSION", "MARKITAI_UNINSTALL", "LC_ALL"]:
+                env.pop(name, None)
+            load = f"Get-Content -Raw -LiteralPath '{script}'"
+
+            def run(*arguments):
+                result = subprocess.run(["pwsh", "-NoLogo", "-NoProfile", "-NonInteractive", *arguments],
+                                        capture_output=True, text=True, timeout=180, env=env,
+                                        stdin=subprocess.DEVNULL)
+                shown = result.stdout + result.stderr
+                for raw in ["Exception", "Line |", "CategoryInfo", "FullyQualifiedErrorId", "markitai setup:"]:
+                    self.assertNotIn(raw, shown)
+                return result.returncode, shown
+
+            runs = {
+                "file": ["-File", str(script)],
+                "irm | iex": ["-Command", f"{load} | Invoke-Expression"],
+                "script block": ["-Command", f"& ([scriptblock]::Create(({load})))"],
+            }
+            if os.name != "nt":
+                # The unmodified script refuses another system, outside the install.
+                runs["not Windows"] = ["-File", str(SETUP_PS1)]
+            for name, arguments in runs.items():
+                with self.subTest(name):
+                    code, shown = run(*arguments)
+                    self.assertEqual(code, 1, shown)
+                    self.assertTrue(shown.rstrip().endswith("Setup failed"), shown)
+                    if name != "not Windows":
+                        self.assertIn("already holds files of the names markitai installs", shown)
+            self.assertEqual((shared / "LICENSE").read_text(encoding="utf-8"), "mine")
+            self.assertEqual(sorted(path.name for path in shared.iterdir()), ["LICENSE"])
+            # Typed into the user's own window, it does not close the window.
+            code, shown = run("-NoExit", "-Command",
+                              f"{load} | Invoke-Expression; 'still open, exit code ' + $LASTEXITCODE; exit 0")
+            self.assertEqual(code, 0, shown)
+            self.assertIn("Setup failed", shown)
+            self.assertIn("still open, exit code 1", shown)
 
     def test_irm_iex_leaves_the_session_alone(self):
         with tempfile.TemporaryDirectory() as directory:
