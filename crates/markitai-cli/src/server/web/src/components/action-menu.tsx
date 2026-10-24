@@ -83,8 +83,11 @@ export function ActionMenu({
       list[event.key === "Home" ? 0 : list.length - 1]?.focus();
     } else if (event.key === "Tab") setOpen(false);
   };
+  // Focus goes back to "⋯" before the action runs, so an action that moves it (a confirmation,
+  // another window) still wins and one that does not leaves it on the button, not the page.
   const choose = (run: () => void) => {
     setOpen(false);
+    trigger.current?.focus();
     run();
   };
   if (!actions.length && !danger) return null;

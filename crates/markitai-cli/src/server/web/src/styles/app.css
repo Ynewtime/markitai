@@ -4108,7 +4108,7 @@ kbd {
   white-space: nowrap;
   transition: background-color var(--dur-fast) ease, border-color var(--dur-fast) ease, transform var(--dur-base) var(--ease-out);
 }
-.btn:not(:disabled):active {
+.btn:not(:disabled):not([aria-disabled="true"]):active {
   transform: scale(0.97);
 }
 .btn-sm {
@@ -4122,8 +4122,13 @@ kbd {
   padding: 0;
   color: var(--text-2);
 }
-.btn:disabled {
+.btn:disabled,
+.btn[aria-disabled="true"] {
   opacity: 0.55;
+}
+/* a button that is unavailable only for now (aria-disabled) keeps keyboard focus */
+.btn[aria-disabled="true"] {
+  cursor: default;
 }
 .btn svg {
   flex: none;
@@ -6299,7 +6304,7 @@ input[type="password"],
     background: var(--strip);
     color: var(--text-1);
   }
-  .btn:not(:disabled):not(.btn-primary):not(.btn-danger):hover {
+  .btn:not(:disabled):not([aria-disabled="true"]):not(.btn-primary):not(.btn-danger):hover {
     border-color: var(--text-3);
   }
   .btn-primary:not(:disabled):hover {

@@ -56,3 +56,20 @@ test("M5: a choice menu opens upward when there is more room there, capped and s
   assert.match(menu, /class=\{up \? "menu is-start is-up opt-choice-menu" : "menu is-start opt-choice-menu"\}/);
   assert.match(block(".opt-choice-menu"), /overflow-y: auto;/);
 });
+
+test("L7: focus stays on a button that turns unavailable, and goes back to a menu's trigger", () => {
+  const dialog = read("../components/options-dialog.tsx");
+  const bar = dialog.slice(dialog.indexOf("function DefaultsBar"));
+  // Reset and Save as default are aria-disabled (focusable), never disabled under the pressed key
+  assert.match(bar, /aria-disabled=\{!changed \|\| undefined\} onClick=\{\(\) => changed && control\.reset\(\)\}/);
+  assert.match(bar, /aria-disabled=\{same \|\| remote \|\| saving \|\| undefined\}/);
+  assert.match(bar, /onClick=\{\(\) => !\(same \|\| remote \|\| saving\) && control\.save\(\)\}/);
+  assert.ok(!/disabled=\{!changed\}|disabled=\{same \|\| remote \|\| saving\}/.test(bar));
+  assert.match(css, /\.btn:disabled,\n\.btn\[aria-disabled="true"\] \{\n {2}opacity: 0\.55;/);
+  assert.match(css, /\.btn:not\(:disabled\):not\(\[aria-disabled="true"\]\):active/);
+  // a Download entry and a "⋯" entry give focus back to their trigger
+  const pick = read("../components/pick-menu.tsx");
+  assert.match(pick, /menu\.close\(\);\s*entry\.run\(\);/);
+  const more = read("../components/action-menu.tsx");
+  assert.match(more, /const choose = \(run: \(\) => void\) => \{\s*setOpen\(false\);\s*trigger\.current\?\.focus\(\);\s*run\(\);/);
+});

@@ -685,17 +685,18 @@ function DefaultsBar({
             {t.defaultsUseServer}
           </button>
         )}
-        <button type="button" class="btn btn-sm" disabled={!changed} onClick={control.reset}>
+        {/* aria-disabled, not disabled: the pressed button turns unavailable and must keep focus */}
+        <button type="button" class="btn btn-sm" aria-disabled={!changed || undefined} onClick={() => changed && control.reset()}>
           {t.defaultsReset}
         </button>
         {view.can_save && (
           <button
             type="button"
             class="btn btn-sm"
-            disabled={same || remote || saving}
+            aria-disabled={same || remote || saving || undefined}
             aria-busy={saving || undefined}
             aria-describedby="opts-defaults-scope"
-            onClick={control.save}
+            onClick={() => !(same || remote || saving) && control.save()}
           >
             {t.defaultsSave}
           </button>

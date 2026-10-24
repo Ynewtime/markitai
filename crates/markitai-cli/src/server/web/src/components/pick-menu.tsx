@@ -223,7 +223,8 @@ export function SplitDownload({
               role="menuitem"
               tabIndex={-1}
               onClick={() => {
-                menu.setOpen(false);
+                // focus goes back to the caret (an entry that moves it, as Choose files does, wins)
+                menu.close();
                 entry.run();
               }}
             >
