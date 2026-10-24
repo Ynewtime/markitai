@@ -741,6 +741,8 @@ export const zh: Dict = {
   frontLabel: "文档信息",
   frontTags: (n) => `${n} 个标签`,
   frontSummary: "简介",
+  frontExpandRow: (key: string) => `展开${key}`,
+  frontCollapseRow: (key: string) => `收起${key}`,
   frontProperties: (n) => `属性 · ${n}`,
   frontKey: (key) =>
     ({

@@ -763,6 +763,8 @@ export const ja: Dict = {
   frontLabel: "フロントマター",
   frontTags: (n) => `タグ ${n} 件`,
   frontSummary: "概要",
+  frontExpandRow: (key: string) => `${key}を展開`,
+  frontCollapseRow: (key: string) => `${key}を折りたたむ`,
   frontProperties: (n) => `プロパティ · ${n}`,
   frontKey: (key) =>
     ({

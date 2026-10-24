@@ -14,7 +14,7 @@ Markitai 2.0.1 是 2.0.0 的修复版本。`image.format: webp` 重新写有损 
 ### 新增
 
 - 新增 **Kimi Code** 服务商 `kimi_code/<model>`，用于 Kimi Code 会员的密钥（`KIMI_API_KEY`；地址 `KIMI_CODE_API_BASE` 或 Kimi Code CLI 使用的 `KIMI_CODE_BASE_URL`）。在工作台中，Kimi 开放平台和 Kimi Code 是「添加模型」里的同一张 **Kimi** 卡片：粘贴任一种密钥，「加载模型」会依次尝试开放平台的各区域和 Kimi Code 的各区域（密钥为文档所示的 `sk-kimi-` 形式时先试 Kimi Code），只发往 Kimi 文档列出的主机，填入接受它的地址，并列出该密钥可用的模型（`k3.1-pro`、`k3`、`kimi-for-coding` 等），保存为 `moonshot/…` 或 `kimi_code/…`。请求发往 Kimi 兼容 Anthropic 的 Messages 端点 `https://api.kimi.com/coding/v1`（kimi.ai 的密钥用 `https://api.kimi.ai/coding/v1`），带 markitai 自己的 User-Agent，输出上限最多 32,768 个 token。Kimi 的会员仅限交互使用：识别出会员密钥时，页面用一行说明这一点（批量转换请用开放平台的密钥）。
-- 工作台：转换任务的「详情」开头是「查看请求参数」，展开后以等效命令行显示它的选项（`$ markitai notes.pdf -o output/ --preset rich --keep-base --no-cache`），带复制按钮；没有对应参数的设置以标签列在下方（`image.format webp`、`ocr.lang ja`）。只列出与 markitai 默认值不同的项，包括服务器自己的配置：任务、单项和历史记录现在会记录转换时实际使用的设置（`settings`，接口约定 v1.22；用 `--record-history` 记录的 CLI 运行同样记录）。密钥、地址和提示词内容从不记录。2.0.1 之前的任务显示其请求中指定的选项，较早的 CLI 历史记录显示原来的简短摘要。展开与否由浏览器记住。结果开头可在「渲染」和「源码」之间切换，源码显示原文前 12 行（带行号）和结果的总行数（`前 12 行 / 共 4,210 行`；结果接口返回 `markdown_lines`，接口约定 v1.23）。
+- 工作台：转换任务的「详情」在状态行下方显示「查看请求参数」，展开后以等效命令行显示它的选项（`$ markitai notes.pdf -o output/ --preset rich --keep-base --no-cache`），带复制按钮；没有对应参数的设置以标签列在下方（`image.format webp`、`ocr.lang ja`）。只列出与 markitai 默认值不同的项，包括服务器自己的配置：任务、单项和历史记录现在会记录转换时实际使用的设置（`settings`，接口约定 v1.22；用 `--record-history` 记录的 CLI 运行同样记录）。密钥、地址和提示词内容从不记录。2.0.1 之前的任务显示其请求中指定的选项，较早的 CLI 历史记录显示原来的简短摘要。展开与否由浏览器记住。结果开头可在「渲染」和「源码」之间切换，源码显示原文前 12 行（带行号）和结果的总行数（`前 12 行 / 共 4,210 行`；结果接口返回 `markdown_lines`，接口约定 v1.23）。
 - 工作台：转换任务列表的筛选行开头、各行勾选框的正上方新增全选框。它勾选当前名称筛选和标签页列出的全部转换任务，只选中一部分时显示短横，全部选中后再点则清除；读屏软件将其读作复选框（已选、未选或部分选中）。底部选择栏不变。
 
 ### 变更
@@ -24,7 +24,7 @@ Markitai 2.0.1 是 2.0.0 的修复版本。`image.format: webp` 重新写有损 
 - **工作台：**选项超过三个的单选组改为下拉按钮，显示当前值：URL（自动、静态、Playwright、Defuddle、Jina、Cloudflare）、输出（默认、RAG、Obsidian、OKF；JSON 仍是旁边的开关）以及「添加模型」中的服务商类型。两三个选项的仍为分段按钮。手机上的选项按钮更小（28 px 高，11 px 字号）。
 - **工作台：**手机上的「文档」和 GitHub 改为顶栏右端的两个图标，不再是设置列表中的两行；设置页末尾是一行「版本 · 提交 · 构建时间」。
 - **工作台：**「文档」（侧栏底部、手机顶栏）和费用提示中的价格链接改为打开 markitai.dev，中文界面打开中文页面（`/zh/`；该站没有日文页面，日文界面打开英文站点），不再打开 GitHub 上的英文 Markdown 文档。`GET /api/capabilities` 返回的 `docs_url` 现在是 `"https://markitai.dev/"`，2.0.0 返回的是 `https://github.com/Ynewtime/markitai/blob/main/docs/index.md`。
-- **工作台：**文档上方的属性面板用中文、英文或日文显示 markitai 写入的每个键（`word_count`、`domain`、`source_url`、`content_profile` 等），markitai 自己的取值也显示名称（`social_post` 显示为「社交帖子」）。重复的行不再显示：与来源相同的最终地址或规范链接、与获取方式相同的渲染方式、与来源主机相同的域名；X 帖子的显示名称与账号合为一行。Markdown 文件中的键全部保留。键名列改为更窄的固定宽度（放不下的键名以省略号结尾，悬停显示全名），每个值都只占一行：较长的标题、地址或标签行在自己的单元格内横向滚动，不再换行。
+- **工作台：**文档上方的属性面板用中文、英文或日文显示 markitai 写入的每个键（`word_count`、`domain`、`source_url`、`content_profile` 等），markitai 自己的取值也显示名称（`social_post` 显示为「社交帖子」）。重复的行不再显示：与来源相同的最终地址或规范链接、与获取方式相同的渲染方式、与来源主机相同的域名；X 帖子的显示名称与账号合为一行。Markdown 文件中的键全部保留。键名列改为更窄的固定宽度，每个键和值都只占一行，过长时在自己的单元格内横向滚动。值放不下的行末尾有一个箭头：点它或点值即可展开该行、完整换行显示，再点收起。「详情」中事实列表的标签列按标签宽度显示（最宽 120 px，手机上 96 px）。
 
 ### 修复
 

@@ -5,7 +5,7 @@
 // The summary of everything listed is the Overview. The actions are an action
 // set the window's header draws: the one or two that matter, the rest in "⋯".
 import type { ComponentChildren } from "preact";
-import { useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import { fetchBlob, filePath, imagePath } from "../api/client.ts";
 import { hasToken } from "../api/token.ts";
 import type { ItemResult, JobOptions, JobSettings } from "../api/types.ts";
@@ -26,6 +26,7 @@ import type { PresetTable } from "../lib/options.ts";
 import { readRequestOpen, storeRequestOpen } from "../lib/peek-pref.ts";
 import { requestView, wrapUnits, type RequestView } from "../lib/request.ts";
 import { cachedExcerpt, loadExcerpt, resultKey, sourceStart } from "../lib/results.ts";
+import { watchScrollCells } from "../lib/scroll-cells.ts";
 import { canRetry, isPreviewable, type SessionItem } from "../lib/session.ts";
 import type { MenuDanger } from "./action-menu.tsx";
 import { FileName } from "./file-name.tsx";
@@ -203,7 +204,19 @@ function useRequestOpen(): [boolean, () => void] {
   ];
 }
 
-/** The first row of Details: a quiet text button whose terminal mark sits in the status mark's column. */
+/** A facts list whose labels stay on one line, a long one scrolling in its cell. */
+function Facts({ children }: { children: ComponentChildren }) {
+  const list = useRef<HTMLDListElement>(null);
+  useLayoutEffect(() => (list.current ? watchScrollCells(list.current, ".facts > dt") : undefined), []);
+  return (
+    <dl ref={list} class="facts">
+      {children}
+    </dl>
+  );
+}
+
+/** Under the status line: a quiet text button whose terminal mark sits in the status mark's column,
+ * the request's command line straight under it when open. */
 function RequestToggle({ t, open, onToggle, controls }: { t: Dict; open: boolean; onToggle: () => void; controls: string }) {
   return (
     <button type="button" class="req-toggle" aria-expanded={open} aria-controls={open ? controls : undefined} onClick={onToggle}>
@@ -662,11 +675,11 @@ export function ItemInspector({
             <span class="insp-name">{readable(item.name)}</span>
           </h2>
         )}
-        {request && <RequestToggle t={t} open={requestOpen} onToggle={toggleRequest} controls={`${headingId}-request`} />}
         <p class={failed ? "insp-line is-error" : "insp-line"}>
           {peek && <StatusGlyph glyph={glyph} label={statusWord(t, glyph)} />}
           {itemLine(ctx, item, elapsed, images)}
         </p>
+        {request && <RequestToggle t={t} open={requestOpen} onToggle={toggleRequest} controls={`${headingId}-request`} />}
         {request && requestOpen && <RequestStrip t={t} view={request} id={`${headingId}-request`} />}
       </header>
       {job?.persistenceError && <ConditionLine tone="error" text={persistenceText(locale, job.persistenceError).text} />}
@@ -691,7 +704,7 @@ export function ItemInspector({
           )}
         </div>
       )}
-      <dl class="facts">
+      <Facts>
         <dt>{t.factSource}</dt>
         <dd>
           {url ? (
@@ -740,7 +753,7 @@ export function ItemInspector({
             <dd>{kept}</dd>
           </>
         )}
-      </dl>
+      </Facts>
       {notices.length > 0 && (
         <section class="insp-section" aria-labelledby={`${headingId}-notices`}>
           <h3 id={`${headingId}-notices`}>{t.noticesHeading(notices.reduce((sum, group) => sum + group.count, 0))}</h3>
@@ -833,9 +846,8 @@ export function JobInspector({
             <span class="insp-name">{label}</span>
           </h2>
         )}
-        {request && <RequestToggle t={t} open={requestOpen} onToggle={toggleRequest} controls={`${headingId}-request`} />}
         <p class="insp-line">
-          {/* under the request's terminal mark, the submission's own mark keeps the two texts in one column */}
+          {/* above the request's terminal mark, the submission's own mark keeps the two texts in one column */}
           {request && peek && (
             <span class="condition-mark" aria-hidden="true">
               <Icon name="Files" size={14} />
@@ -845,11 +857,12 @@ export function JobInspector({
           {preset && ` · ${t.presetName(preset)}`}
           {job.createdAt && ` · ${fmtWhen(job.createdAt, locale)}`}
         </p>
+        {request && <RequestToggle t={t} open={requestOpen} onToggle={toggleRequest} controls={`${headingId}-request`} />}
         {request && requestOpen && <RequestStrip t={t} view={request} id={`${headingId}-request`} />}
       </header>
       <ProgressStrip t={t} items={items} />
       {job.persistenceError && <ConditionLine tone="error" text={persistenceText(locale, job.persistenceError).text} />}
-      <dl class="facts">
+      <Facts>
         <dt>{t.factCost}</dt>
         <dd class={cost.kind === "unknown" ? "is-unknown" : undefined}>
           {totalCostText(t, items, cost)}
@@ -882,7 +895,7 @@ export function JobInspector({
             <dd>{t.originCliLong}</dd>
           </>
         )}
-      </dl>
+      </Facts>
       {tally.failed > 0 && (
         <section class="insp-section" aria-labelledby={`${headingId}-failed`}>
           <h3 id={`${headingId}-failed`}>{t.failedHeading(tally.failed)}</h3>
@@ -960,13 +973,13 @@ export function Overview({ ctx, items, peek = false, onShowItems }: { ctx: Inspe
         <p class="insp-line">{t.selectHint}</p>
       </header>
       <ProgressStrip t={t} items={items} />
-      <dl class="facts">
+      <Facts>
         <dt>{t.factCost}</dt>
         <dd class={cost.kind === "unknown" ? "is-unknown" : undefined}>
           {totalCostText(t, items, cost)}
           {cost.kind === "unknown" && cost.unknownItems > 0 && <span class="fact-dim"> · {t.costUnknownItems(cost.unknownItems)}</span>}
         </dd>
-      </dl>
+      </Facts>
       {tally.failed > 0 && (
         <p class="insp-note">
           <button type="button" class="text-link" onClick={() => onShowItems(items.filter(isFailed).map((item) => item.key))}>

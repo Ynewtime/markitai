@@ -792,6 +792,8 @@ export const en = {
   frontLabel: "Front matter",
   frontTags: (n: number) => plural(n, "1 tag", `${n} tags`),
   frontSummary: "Summary",
+  frontExpandRow: (key: string) => `Expand ${key}`,
+  frontCollapseRow: (key: string) => `Collapse ${key}`,
   frontProperties: (n: number) => `Properties · ${n}`,
   frontKey: (key: string) =>
     ({

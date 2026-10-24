@@ -1600,7 +1600,8 @@ main:focus {
 }
 .facts {
   display: grid;
-  grid-template-columns: 112px minmax(0, 1fr);
+  /* the labels' own width, at most 120 px (96 px on a phone): a longer label scrolls in its cell */
+  grid-template-columns: fit-content(120px) minmax(0, 1fr);
   gap: 8px 16px;
   margin-bottom: 20px;
 }
@@ -1617,15 +1618,15 @@ main:focus {
   font-size: var(--text-sm);
   font-variant-numeric: tabular-nums;
 }
-/* Details' first row: a quiet text button whose terminal mark shares the status mark's 18 px column
-   and gap, so both texts start at one x */
+/* Details' second row, under the status line: a quiet text button whose terminal mark shares the
+   status mark's 18 px column and gap, so both texts start at one x */
 .req-toggle {
   position: relative;
   display: flex;
   align-items: center;
   gap: 8px;
   min-height: 24px;
-  margin: 0 0 2px;
+  margin: 2px 0 0;
   padding: 0;
   border: 0;
   background: none;
@@ -1652,12 +1653,12 @@ main:focus {
 .req-toggle[aria-expanded="true"] .req-caret {
   transform: rotate(180deg);
 }
-/* opened: the request as its command line, on the dark strip of the composer's, and
-   the settings no flag sets as quiet chips under it */
+/* opened: straight under its toggle, the request as its command line on the dark strip of the
+   composer's, and the settings no flag sets as quiet chips under it */
 .insp-request {
   display: grid;
   gap: 8px;
-  margin-top: 12px;
+  margin-top: 4px;
 }
 .request-line {
   display: flex;
@@ -2072,8 +2073,8 @@ main:focus {
 }
 .front-table {
   display: grid;
-  /* one fixed key width for every document and language (a longer key ends in an ellipsis,
-     its whole name as a tooltip); the value column takes the rest and never grows past it */
+  /* one fixed key width for every document and language; the value column takes the rest
+     and never grows past it */
   grid-template-columns: 120px minmax(0, 1fr);
   margin: 0;
 }
@@ -2089,34 +2090,87 @@ main:focus {
   border-bottom: 1px solid var(--hairline);
 }
 .front-table dt {
-  overflow: hidden;
+  min-width: 0;
   padding-right: 12px;
   border-right: 1px solid var(--hairline);
-  text-overflow: ellipsis;
-  white-space: nowrap;
   color: var(--text-3);
 }
 .front-table dd {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
   min-width: 0;
   margin: 0;
   padding-left: 14px;
   color: var(--text-1);
 }
-/* a value on one line: a long one (an address, a title, the tags) scrolls sideways inside its
-   own cell, by touch, trackpad or Shift+wheel, and the page itself never does */
-.front-cell {
+/* A key, a value or a fact label on one line: a long one scrolls sideways inside its own cell
+   (touch, trackpad or Shift+wheel) and fades at its right edge while there is more; the page
+   itself never scrolls sideways (lib/scroll-cells.ts marks .is-more). */
+.front-key,
+.front-cell,
+.facts > dt {
   overflow-x: auto;
   overflow-y: hidden;
   overscroll-behavior-x: contain;
   scrollbar-width: none;
   white-space: nowrap;
 }
-.front-cell::-webkit-scrollbar {
+.front-key::-webkit-scrollbar,
+.front-cell::-webkit-scrollbar,
+.facts > dt::-webkit-scrollbar {
   display: none;
 }
-.front-cell.is-more {
-  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
-  mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+.front-key.is-more,
+.front-cell.is-more,
+.facts > dt.is-more {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 20px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 20px), transparent);
+}
+.front-key {
+  display: block;
+}
+.front-cell {
+  flex: 1;
+  min-width: 0;
+}
+/* a row whose value does not fit: a chevron at its end, and a tap on the value, open the row
+   so the value wraps in full (the tags as wrapped chips); the chevron turns to fold it again */
+.front-row.has-more .front-cell {
+  cursor: pointer;
+}
+.front-cell.is-open {
+  overflow: visible;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.front-cell.is-open .front-tags {
+  flex-wrap: wrap;
+  width: auto;
+}
+.front-more {
+  position: relative;
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 20px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-xs);
+  background: none;
+  color: var(--text-3);
+  cursor: pointer;
+}
+.front-more:hover {
+  background: var(--row-hover);
+  color: var(--text-1);
+}
+.front-more svg {
+  transition: transform var(--dur-base) var(--ease-out);
+}
+.front-more[aria-expanded="true"] svg {
+  transform: rotate(180deg);
 }
 .front-meta.is-compact {
   margin-bottom: 12px;
@@ -2142,11 +2196,18 @@ main:focus {
   .front-table dd {
     padding-left: 12px;
   }
+  /* a finger reaches the chevron from around it */
+  .front-more::after {
+    content: "";
+    position: absolute;
+    inset: -8px -6px;
+  }
 }
-/* on paper nothing scrolls: keys and values wrap again */
+/* on paper nothing scrolls: keys, values and fact labels wrap again, no chevrons */
 @media print {
-  .front-table dt,
-  .front-cell {
+  .front-key,
+  .front-cell,
+  .facts > dt {
     overflow: visible;
     white-space: normal;
     overflow-wrap: anywhere;
@@ -2155,9 +2216,14 @@ main:focus {
     flex-wrap: wrap;
     width: auto;
   }
-  .front-cell.is-more {
+  .front-key.is-more,
+  .front-cell.is-more,
+  .facts > dt.is-more {
     -webkit-mask-image: none;
     mask-image: none;
+  }
+  .front-more {
+    display: none;
   }
 }
 /* The Details excerpt opens Preview: the whole card is one button under the properties control. */
@@ -6340,6 +6406,9 @@ input[type="password"],
 .front-fold:focus-visible,
 .front-head:focus-visible,
 .front-cell:focus-visible,
+.front-key:focus-visible,
+.facts > dt:focus-visible,
+.front-more:focus-visible,
 .toc-link:focus-visible,
 .toc-fab:focus-visible,
 .diff-fold:focus-visible,
@@ -6596,7 +6665,7 @@ input[type="password"],
     display: none;
   }
   .facts {
-    grid-template-columns: 92px minmax(0, 1fr);
+    grid-template-columns: fit-content(96px) minmax(0, 1fr);
   }
   /* a finger reaches the request toggle from 8 px around it */
   .req-toggle::after {

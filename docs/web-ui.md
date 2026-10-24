@@ -171,17 +171,18 @@ files wait on Convert); typing URLs is Convert's job.
 - **Details** shows the item: its state in a sentence
   ("Converted with LLM in 14.6 s · 12 images", or the failure in plain words), the
   facts (source and its size, output, what else was saved, models, cost,
-  finished, kept until; a long output name stays on one line and gives
-  up its middle, `2025年度…披露全文.pdf.llm.md`), its notices grouped by kind, and
+  finished, kept until; the label column is as wide as its labels, at most 120 px
+  (96 px on a phone), a longer label scrolling on one line in its cell; a long output
+  name stays on one line and gives up its middle, `2025年度…披露全文.pdf.llm.md`), its notices grouped by kind, and
   the start of the result with its front matter and its own pictures, in the same
   centred reading column as Preview (the whole card opens Preview). A small
   Rendered | Source switch heads that start (Rendered first; only for Markdown
   output): Source shows its first 12 lines as written, numbered, the front matter
   muted, with "First 12 of N lines" on the right (N from `markdown_lines`, else
-  counted by the page when it has the whole text). Above the state sentence, a quiet
+  counted by the page when it has the whole text). Under the state sentence, a quiet
   **Show request options** row (a terminal mark in the status mark's column, a
   chevron; `aria-expanded`; open or folded is remembered per browser,
-  `localStorage['markitai.request']`) opens, under that sentence,
+  `localStorage['markitai.request']`) opens, straight under itself,
   the conversion as its command line on the composer's dark strip
   (`$ markitai notes.pdf -o output/ --preset rich --keep-base`, wrapping between
   flags, a copy icon at its end) with the settings no flag sets as `key value`
@@ -252,10 +253,13 @@ type · Social post", the file's word in the tooltip), other keys as written; a 
 already says is left out: the final address (`source_url`) or the canonical link when it is the
 source's, `renderer` when it is the fetch method, `domain` when it is the source's host, and an X
 post's `author_name` joins its handle, "Lumen Dev (@lumen_dev)"; the file keeps every key; one fixed key width for every document, 120 px (92 px on a phone),
-with a rule between key and value: a longer key ends in an ellipsis with its whole name as a
-tooltip, and every value stays on one line, a long one (a title, an address, the tags, the
-summary) scrolling sideways inside its own cell and fading at its right edge until scrolled to
-its end, so the page never scrolls sideways; in print both wrap again) whose `Properties · N` header row, anywhere on it, folds it again; the
+with a rule between key and value: every key and value stays on one line, a long one (an OCR
+counter's name, a title, an address, the tags, the summary) scrolling sideways inside its own
+cell and fading at its right edge until scrolled to its end, so the page never scrolls
+sideways; a row whose value does not fit (measured again on every resize) has a chevron at its
+end, a button named "Expand Summary"/"Collapse Summary" with `aria-expanded`, and it or a tap
+on the value (not on its link) opens the row so the value wraps in full, the tags as wrapped
+chips, and folds it again; in print keys and values wrap and no chevron shows) whose `Properties · N` header row, anywhere on it, folds it again; the
 choice holds for the tab's session (`sessionStorage['markitai.front']`) and in
 Preview, Compare and the Details excerpt alike. Tables over 500 rows show their first 500 rows under a
 sticky header with "Showing the first 500 of 20,000 rows … Show all rows";
