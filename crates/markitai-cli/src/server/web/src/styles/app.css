@@ -1973,103 +1973,59 @@ main:focus {
 .excerpt-body > :first-child {
   margin-top: 0;
 }
-/* Front matter: one light line above the body (tags inline, a Summary control at its end), or,
-   opened, a two-column properties table whose header folds it again. No card, no title. */
+/* Front matter: one light line above the body (the tag icon, "Properties · N", a chevron), and
+   opened, a two-column properties table under that same line. The line never moves: opening or
+   folding only adds or removes the table under it and turns the chevron. No card, no title. */
 .front-meta {
-  display: flex;
-  align-items: center;
-  gap: 8px;
   min-width: 0;
-  min-height: 28px;
   margin-bottom: 16px;
   padding-bottom: 6px;
   border-bottom: 1px solid var(--hairline);
   font-size: var(--text-sm);
   color: var(--text-3);
 }
-.front-fold > svg:first-child,
-.front-head > svg:first-child {
-  flex: none;
-  color: var(--text-4);
-}
-/* folded, the whole line is the button: a click anywhere on it opens the properties */
-.front-fold {
-  display: flex;
-  flex: 1;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  min-height: 24px;
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--text-3);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-.front-count {
-  flex: none;
-  white-space: nowrap;
-}
-/* the tags after the count, a hairline between them */
-.front-meta .front-line {
-  flex: 1;
-  overflow: hidden;
-  min-width: 0;
-  padding-left: 8px;
-  border-left: 1px solid var(--hairline-strong);
-  line-height: 1.2;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-2);
-}
-.front-sep {
-  color: var(--text-4);
-}
-.front-toggle,
-.front-head {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 24px;
-  padding: 0 6px;
-  border: 0;
-  border-radius: var(--r-xs);
-  background: none;
-  color: var(--text-3);
-  font: inherit;
-  cursor: pointer;
-}
-.front-toggle {
-  flex: none;
-  margin-left: auto;
-}
-.front-fold:hover .front-toggle,
-.front-fold:hover .front-count,
-.front-head:hover {
-  color: var(--text-1);
-}
-.front-fold:hover .front-toggle {
-  background: var(--row-hover);
-}
 .front-meta.is-open {
-  display: block;
   /* the table closes with its own rule: the card draws no second one under it */
   padding-bottom: 0;
   border-bottom: 0;
 }
+/* the whole line is the button: a click anywhere on it opens or folds the properties */
 .front-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   width: 100%;
-  margin: 0 0 4px;
+  min-height: 24px;
   padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-3);
+  font: inherit;
   text-align: left;
+  cursor: pointer;
+}
+.front-head > svg {
+  flex: none;
+}
+.front-head > svg:first-child {
+  color: var(--text-4);
+}
+.front-head > svg:last-child {
+  transition: transform var(--dur-base) var(--ease-out);
+}
+.front-head[aria-expanded="true"] > svg:last-child {
+  transform: rotate(180deg);
 }
 .front-head:hover {
-  background: none;
+  color: var(--text-1);
 }
 .front-head-label {
   flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+}
+.front-meta.is-open .front-table {
+  margin-top: 4px;
 }
 .front-table {
   display: grid;
@@ -6416,7 +6372,6 @@ input[type="password"],
 .doc-body a:focus-visible,
 .doc-body pre:focus-visible,
 .doc-body .table-scroll:focus-visible,
-.front-fold:focus-visible,
 .front-head:focus-visible,
 .front-cell:focus-visible,
 .front-key:focus-visible,

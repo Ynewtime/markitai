@@ -1,15 +1,15 @@
-// A document's front matter above its body. Folded (the default): one light line,
-// "Properties · N", the tags inline and a "Summary" mark at its end, no title (the body's
-// own heading is the title). Open: a two-column properties table whose header folds it
-// again. Either way the whole header row is one disclosure button with aria-expanded;
-// the choice lasts for the tab's session. The table's key column has one fixed width; a key or
+// A document's front matter above its body. Folded (the default): one light line, the tag
+// icon, "Properties · N" and a chevron, no title (the body's own heading is the title). Open:
+// the same line, its chevron turned up, over a two-column properties table. The line is one
+// disclosure button with aria-expanded that stays in place (owner, 2026-10-25): opening or
+// folding changes only what is under it. The choice lasts for the tab's session. The table's key column has one fixed width; a key or
 // value stays on one line that scrolls sideways inside its own cell. A row whose value does not
 // fit gets a chevron at its end: it (or a tap on the value) opens the row so the value wraps in
 // full, and folds it again.
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "preact/hooks";
 import type { Dict } from "../i18n/index.ts";
 import { frontOpen, onFrontOpen, setFrontOpen } from "../lib/front-pref.ts";
-import { frontLine, frontRows, frontValue, type FrontRow } from "../lib/front-rows.ts";
+import { frontRows, frontValue, type FrontRow } from "../lib/front-rows.ts";
 import type { FrontMatter } from "../lib/frontmatter.ts";
 import { overflows, watchScrollCells } from "../lib/scroll-cells.ts";
 import { Icon } from "./icons.tsx";
@@ -87,16 +87,15 @@ export function FrontCard({ t, front, compact = false }: { t: Dict; front: Front
     });
   const longKeys = new Set(long.split("\n").filter(Boolean));
   const rows = frontRows(front);
-  const line = frontLine(front);
   const classes = ["front-meta", compact ? "is-compact" : "", open ? "is-open" : ""].filter(Boolean).join(" ");
-  if (open)
-    return (
-      <section class={classes} aria-label={t.frontLabel}>
-        <button type="button" class="front-head" aria-expanded="true" aria-controls={id} onClick={() => setOpen(false)}>
-          <Icon name="Tag" size={13} />
-          <span class="front-head-label">{t.frontProperties(rows.length)}</span>
-          <Icon name="CaretUp" size={12} />
-        </button>
+  return (
+    <section class={classes} aria-label={t.frontLabel}>
+      <button type="button" class="front-head" aria-expanded={open} aria-controls={open ? id : undefined} onClick={() => setOpen(!open)}>
+        <Icon name="Tag" size={13} />
+        <span class="front-head-label">{t.frontProperties(rows.length)}</span>
+        <Icon name="CaretDown" size={12} />
+      </button>
+      {open && (
         <dl id={id} ref={table} class="front-table">
           {rows.map((row) => {
             const label = t.frontKey(row.key);
@@ -129,30 +128,7 @@ export function FrontCard({ t, front, compact = false }: { t: Dict; front: Front
             );
           })}
         </dl>
-      </section>
-    );
-  return (
-    <section class={classes} aria-label={t.frontLabel}>
-      <button type="button" class="front-fold" aria-expanded="false" onClick={() => setOpen(true)}>
-        <Icon name="Tag" size={13} />
-        <span class="front-count">{t.frontProperties(rows.length)}</span>
-        {line && (
-          <span class="front-line">
-            {line.kind === "tags"
-              ? line.tags.map((tag, index) => (
-                  <span key={tag} class="front-inline-tag">
-                    {index > 0 && <span class="front-sep" aria-hidden="true"> · </span>}
-                    {tag}
-                  </span>
-                ))
-              : line.text}
-          </span>
-        )}
-        <span class="front-toggle">
-          {front.description && <span>{t.frontSummary}</span>}
-          <Icon name="CaretDown" size={12} />
-        </span>
-      </button>
+      )}
     </section>
   );
 }

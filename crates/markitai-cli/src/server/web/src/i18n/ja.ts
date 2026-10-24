@@ -746,7 +746,6 @@ export const ja: Dict = {
   originalPageNote: "取得時のページです。サイトの画像とスタイルを表示し、スクリプトは実行しません。",
   frontLabel: "フロントマター",
   frontTags: (n) => `タグ ${n} 件`,
-  frontSummary: "概要",
   frontExpandRow: (key: string) => `${key}を展開`,
   frontCollapseRow: (key: string) => `${key}を折りたたむ`,
   frontProperties: (n) => `プロパティ · ${n}`,

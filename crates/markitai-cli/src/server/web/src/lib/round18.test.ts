@@ -9,7 +9,7 @@ import { ja } from "../i18n/ja.ts";
 import { zh } from "../i18n/zh.ts";
 import { itemCostPhase, llmAsked, totalCostPhase } from "./cost.ts";
 import { locate } from "./compare.ts";
-import { frontLine, frontRows } from "./front-rows.ts";
+import { frontRows } from "./front-rows.ts";
 import { cardFacts, leadsWithHeading, parseFrontMatter } from "./frontmatter.ts";
 import { jsonTokens } from "./json-tokens.ts";
 import { groupNotices, ocrBlankNotice } from "./notices.ts";
@@ -40,7 +40,7 @@ test("a conversion's cost line says what will happen until there is an amount", 
   assert.equal(zh.costCounting, "计算中…");
 });
 
-test("front matter: no title of its own over a heading, tags inline, every key a row", () => {
+test("front matter: no title of its own over a heading, every key a row", () => {
   const front = parseFrontMatter("---\ntitle: Allotment rota\nsource: rota.xlsx\ndescription: Who does what\ntags:\n- gardening\n- volunteers\nmarkitai_processed: '2026-10-15T09:43:12+08:00'\n---");
   assert.ok(front);
   // The body's own heading is the title, whatever its level or words.
@@ -48,14 +48,12 @@ test("front matter: no title of its own over a heading, tags inline, every key a
   assert.equal(leadsWithHeading("\n### Notes\n"), true);
   assert.equal(leadsWithHeading("Text\n# Later"), false);
   const shown = cardFacts(front, "# Allotment rota\n")!;
-  assert.deepEqual(frontLine(shown), { kind: "tags", tags: ["gardening", "volunteers"] });
   assert.deepEqual(
     frontRows(shown).map((row) => [row.key, row.kind]),
     [["description", "text"], ["tags", "tags"], ["source", "text"], ["markitai_processed", "time"]],
   );
-  // Only other keys: still shown (the folded line says the first value).
+  // Only other keys: still shown.
   const only = cardFacts(parseFrontMatter("---\nsource: https://example.org/a\n---"), "Body")!;
-  assert.deepEqual(frontLine(only), { kind: "text", text: "https://example.org/a" });
   assert.equal(frontRows(only)[0]?.kind, "link");
   assert.equal(en.frontKey("markitai_processed"), "Processed");
   assert.equal(zh.frontKey("description"), "简介");

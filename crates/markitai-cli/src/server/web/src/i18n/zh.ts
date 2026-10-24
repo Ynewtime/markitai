@@ -727,7 +727,6 @@ export const zh: Dict = {
   originalPageNote: "抓取时的网页，含站点的图片和样式；其中的脚本不会运行。",
   frontLabel: "文档信息",
   frontTags: (n) => `${n} 个标签`,
-  frontSummary: "简介",
   frontExpandRow: (key: string) => `展开${key}`,
   frontCollapseRow: (key: string) => `收起${key}`,
   frontProperties: (n) => `属性 · ${n}`,

@@ -1,8 +1,11 @@
 // 2.0.1 owner items on the release candidate (2026-10-25): the options dialog's command scrolls
-// instead of being cut.
+// instead of being cut, and the properties line stays put and folded says only "Properties · N".
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { en } from "../i18n/en.ts";
+import { ja } from "../i18n/ja.ts";
+import { zh } from "../i18n/zh.ts";
 
 const read = (relative: string) => readFileSync(new URL(relative, import.meta.url), "utf8");
 const css = read("../styles/app.css");
@@ -19,4 +22,19 @@ test("the dialog's command is one line that scrolls in its box, fading while the
   assert.match(block(".sheet-cli .icon-btn"), /flex: none;/);
   const dialog = read("../components/options-dialog.tsx");
   assert.match(dialog, /<code ref=\{cli\} class="cli-text"[^>]*onScroll=\{\(event\) => markMore\(event\.currentTarget\)\}/);
+});
+
+test("the properties line is the same button folded and open, with no tags or Summary on it", () => {
+  const card = read("../components/front-matter.tsx");
+  // one return, so the button is the same element in both states and keeps its place and focus
+  assert.equal((card.match(/\n  return \(/g) ?? []).length, 1);
+  const head = card.slice(card.indexOf('<button type="button" class="front-head"'), card.indexOf("</button>", card.indexOf('class="front-head"')));
+  assert.match(head, /aria-expanded=\{open\}/);
+  assert.deepEqual([...head.matchAll(/<Icon name="(\w+)"/g)].map((m) => m[1]), ["Tag", "CaretDown"]);
+  assert.match(head, /t\.frontProperties\(rows\.length\)/);
+  assert.ok(!/front-line|front-toggle|frontSummary|front-fold/.test(card));
+  for (const dict of [en, zh, ja]) assert.equal("frontSummary" in dict, false);
+  // the open state only turns the chevron; the line's own box is the same
+  assert.match(block('.front-head[aria-expanded="true"] > svg:last-child'), /transform: rotate\(180deg\);/);
+  assert.ok(!/display|margin|gap|padding-top/.test(block(".front-meta.is-open")));
 });

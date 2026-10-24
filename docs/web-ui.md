@@ -251,11 +251,11 @@ column centred in the window: 820 px, wider as the window grows (56 % of its
 width, at most 1120 px); every table keeps to that column (its width and left
 edge), and one whose cells need more scrolls sideways inside its own box. Rendered starts with
 the conversion's notices (collapsed to one line) and the front matter as one light
-line above the body: a tag icon, `Properties · N` (the number of properties), the
-tags inline (`gardening · community beds · …`; else the summary) and Summary at its
-end when there is one, with no title of its own (the body's heading is the title).
-The whole line is one button (a click anywhere on it, Enter or Space) that opens it into a
-two-column properties table (closing with its own rule; a rule that opens the body right after the front matter is not drawn a second time) (Summary, Tags as chips, Source, Processed and every
+line above the body: a tag icon, `Properties · N` (the number of properties) and a
+chevron, with no title of its own (the body's heading is the title).
+The whole line is one button (a click anywhere on it, Enter or Space; `aria-expanded`)
+that stays where it is, its icon and label never moving, and opens a
+two-column properties table under it (closing with its own rule; a rule that opens the body right after the front matter is not drawn a second time) (Summary, Tags as chips, Source, Processed and every
 other key; every key markitai writes is named in the interface's language and its own values by name
 (`fetch_strategy: playwright` is "Fetched with · Playwright", `content_profile: social_post` "Content
 type · Social post", the file's word in the tooltip), other keys as written; a row another row
@@ -268,7 +268,8 @@ cell and fading at its right edge until scrolled to its end, so the page never s
 sideways; a row whose value does not fit (measured again on every resize) has a chevron at its
 end, a button named "Expand Summary"/"Collapse Summary" with `aria-expanded`, and it or a tap
 on the value (not on its link) opens the row so the value wraps in full, the tags as wrapped
-chips, and folds it again; in print keys and values wrap and no chevron shows) whose `Properties · N` header row, anywhere on it, folds it again; the
+chips, and folds it again; in print keys and values wrap and no chevron shows); the
+same line, its chevron turned up, folds it again; the
 choice holds for the tab's session (`sessionStorage['markitai.front']`) and in
 Preview, Compare and the Details excerpt alike. Tables over 500 rows show their first 500 rows under a
 sticky header with "Showing the first 500 of 20,000 rows … Show all rows";

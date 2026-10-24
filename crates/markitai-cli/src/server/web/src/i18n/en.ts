@@ -774,7 +774,6 @@ export const en = {
   originalPageNote: "Page as fetched, with the site's pictures and styles; its scripts don't run.",
   frontLabel: "Front matter",
   frontTags: (n: number) => plural(n, "1 tag", `${n} tags`),
-  frontSummary: "Summary",
   frontExpandRow: (key: string) => `Expand ${key}`,
   frontCollapseRow: (key: string) => `Collapse ${key}`,
   frontProperties: (n: number) => `Properties · ${n}`,

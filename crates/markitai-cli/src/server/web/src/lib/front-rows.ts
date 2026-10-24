@@ -82,11 +82,3 @@ export function frontRows(front: FrontMatter): FrontRow[] {
   }
   return rows;
 }
-
-/** What the folded line says: the tags, else the summary, else the first other value. */
-export function frontLine(front: FrontMatter): { kind: "tags"; tags: string[] } | { kind: "text"; text: string } | null {
-  if (front.tags.length) return { kind: "tags", tags: front.tags };
-  if (front.description) return { kind: "text", text: front.description };
-  const first = front.fields[0];
-  return first ? { kind: "text", text: first[1] } : null;
-}
