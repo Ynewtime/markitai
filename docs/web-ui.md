@@ -417,8 +417,13 @@ runtime cannot list models says the cause instead of one generic error
 file), not a release the adapter speaks (naming the installed one when known),
 not signed in, or installed but failing. It shows the command to run on the
 machine where the server runs (install the pinned release, or the sign-in
-command) with a copy button, a link to the setup guide and the server's own
-sentence under Provider's message. Adding a model by hand is switched off, with
+command) with a copy button and a Setup guide link to the markitai.dev section
+for the cause (`/guide/subscriptions` or `/guide/subscription-chatgpt`, under
+`/zh/` for the Chinese page, at `#install`, `#sign-in` or `#troubleshooting`;
+`website/tests` checks every one against the site). The server's sentence is
+markitai's own (no runtime output is passed on), so it is not shown as the
+provider's message; a Claude login that is not a subscription gets its own line.
+Adding a model by hand is switched off, with
 the reason beside it, for the first three: they are certain to fail until
 someone runs a command, so a saved model would only fail every conversion that
 routes to it, and reloading the list (the ↻ button) re-checks once the command
@@ -438,11 +443,25 @@ one row, which says how it authenticates (`Using DEEPSEEK_API_KEY`, `Key saved`,
 `No key`) and its model count; a connection at another address is its own row.
 Common and All mark a saved provider as Added, and choosing it opens that row.
 A provider's key field says where else the key can come from (`Or set
-MOONSHOT_API_KEY where markitai serve runs …`). A hand-written model that the
+MOONSHOT_API_KEY where markitai serve runs …`); Kimi Code's adds Kimi's terms
+(the membership is for interactive use only; batch conversions take a Kimi
+platform key), with a link to the Moonshot AI page. A hand-written model that the
 server serves with its key variable shows `From DEEPSEEK_API_KEY` in Edit, and
 a model list that cannot be loaded says why in the model test's categories (no
 key, key rejected, rate limited, unreachable, no answer in time, provider
-error), with the provider's message folded.
+error). Folded under Provider's message is only what the provider itself said
+(its HTTP status with its message or error code; a bare status only for a
+provider error), under Connection error what the network reported (`connection
+refused`, a TLS failure); markitai's own sentences (a timeout, a key variable not
+set, an unreadable answer) and text that repeats the heading open nothing, and a
+model test's toast follows the same rule. A rejected key names the hosts that
+refused it (contract v1.21 `endpoints`, else the address the page asked). Moonshot
+AI and Kimi Code keys belong to a region: when the default endpoint refuses a
+new connection's key and the provider's other region lists its models
+(`api_base`, contract v1.21), the page fills that address into API address and
+says so, and the models are saved with it (a saved connection is told to change
+its address instead). Their rejected-key hints also say that a Kimi Code
+membership key belongs under Kimi Code and a Kimi platform key under Moonshot AI.
 
 ## Job controls
 
@@ -707,9 +726,10 @@ job options `format` (under `document_json`), `ocr_lang` (with `ocr_languages` a
 keys as saved defaults); a missing feature hides its control instead of failing (no Stop
 remaining, no Compare, archives saved through the page, history read job by job,
 images read from the file route).
-`docs_url` points the Docs link at the backend's own documentation. The guide links
-(pricing, subscriptions) open the page beside an `index.md` address, or `guide/<page>`
-under a site root (`https://markitai.dev` or `https://markitai.dev/`).
+`docs_url` points the Docs link at the backend's own documentation. The pricing link
+opens the page beside an `index.md` address, or `guide/<page>` under a site root
+(`https://markitai.dev` or `https://markitai.dev/`); the subscriptions' Setup guide
+links always open markitai.dev in the page's language.
 
 `node scripts/package.mjs OUTDIR` packages a build for the other backend: a
 reproducible tar.gz with `index.html`, every file served under `/ui/`, the

@@ -257,8 +257,11 @@ markitai 自己对接每家提供商的 API。模型写作 `prefix/model`：
 | `ollama/`、`lm_studio/`、`hosted_vllm/` | 你自己的服务器，不需要 key |
 | `bedrock/`、`vertex_ai/` | 本机的 AWS 和 Google Cloud 凭据 |
 | `claude-agent/`、`copilot/`、`chatgpt/` | 订阅，经由其官方命令行 |
+| `kimi_code/` | Kimi Code 会员的 key（`KIMI_API_KEY`），经由 Kimi 的 Messages API |
 
 完整列表连同 key 和地址变量见 [`docs/llm.md`](https://github.com/Ynewtime/markitai/blob/main/docs/llm.md#providers-and-request-parameters)；网页工作台的**添加模型**提供全部前缀。其他前缀会报错，并给出应改用的写法：带 `api_base` 的 `openai/<model>`。
+
+**Kimi 的 key 分服务、分区域。** Kimi 开放平台的 key 写作 `moonshot/<model>`，用 `MOONSHOT_API_KEY`：platform.kimi.ai 的 key 用默认的 `https://api.moonshot.ai/v1`，中国区开放平台（platform.kimi.com）的 key 需要 `api_base: https://api.moonshot.cn/v1` 或 `MOONSHOT_API_BASE`。Kimi Code 会员的 key 写作 `kimi_code/<model>`（kimi.com；kimi.ai 的 key 需要 `https://api.kimi.ai/coding/v1`）。在网页工作台里只需粘贴 key：默认地址拒绝时会改试另一个区域，并保存可用的地址。Kimi 要求会员用于交互式使用，批量转换请用开放平台的 key。
 
 | 订阅 | 前缀 | 需要 | 登录 |
 |------|------|------|------|

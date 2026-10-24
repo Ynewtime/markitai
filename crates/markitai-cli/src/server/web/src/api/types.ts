@@ -477,6 +477,10 @@ export interface DiscoveryResult {
   runtime?: { name: string; required: string; installed?: string };
   /** v1.18: what to run on the machine the server runs on. */
   next_step?: { kind: "install" | "sign_in"; command: string };
+  /** v1.21: the provider's other region that listed the models after its default endpoint refused the key (Moonshot, Kimi Code). */
+  api_base?: string;
+  /** v1.21, with `key_rejected`: the endpoints that refused the key, in the order tried. */
+  endpoints?: string[];
 }
 
 export interface ProbeResult {

@@ -257,8 +257,11 @@ markitai speaks each provider's API itself. A model is `prefix/model`:
 | `ollama/`, `lm_studio/`, `hosted_vllm/` | A server of your own, no key |
 | `bedrock/`, `vertex_ai/` | AWS and Google Cloud credentials of this machine |
 | `claude-agent/`, `copilot/`, `chatgpt/` | A subscription, through its official CLI |
+| `kimi_code/` | A Kimi Code membership key (`KIMI_API_KEY`), at Kimi's Messages API |
 
 The full list with key and address variables is in [`docs/llm.md`](https://github.com/Ynewtime/markitai/blob/main/docs/llm.md#providers-and-request-parameters); the web workspace's **Add models** offers every one. Another prefix fails with the route to use instead: `openai/<model>` with an `api_base`.
+
+**Kimi keys belong to a service and a region.** A Kimi open platform key is `moonshot/<model>` with `MOONSHOT_API_KEY`: one from platform.kimi.ai works at the default `https://api.moonshot.ai/v1`, one from the China platform (platform.kimi.com) needs `api_base: https://api.moonshot.cn/v1` or `MOONSHOT_API_BASE`. A Kimi Code membership key is `kimi_code/<model>` (kimi.com; a kimi.ai key needs `https://api.kimi.ai/coding/v1`). In the web workspace you only paste the key: if the default address refuses it, the other region is tried and its address saved. Kimi asks that the membership serve interactive use, so batch conversions belong on an open platform key.
 
 | Subscription | Prefix | Needs | Sign in |
 |--------------|--------|-------|---------|

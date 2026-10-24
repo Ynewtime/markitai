@@ -1,19 +1,21 @@
 // A subscription runtime (Claude Code, Copilot, Codex) that lists no models says
 // why: not installed, not a release the adapter speaks, not signed in, or
 // failed; with the command to run on the machine the server runs on, one click
-// to copy it, and the setup guide. The server's own sentence stays under
-// "Provider's message".
+// to copy it, and the markitai.dev setup guide at the section for the cause.
+// The server's sentence is markitai's own (no runtime output is passed on), so
+// it is never shown as the provider's message.
 import { useState } from "preact/hooks";
 import type { Dict } from "../i18n/index.ts";
 import { copyText } from "../lib/clipboard.ts";
-import { docsPage } from "../lib/docs.ts";
+import type { Locale } from "../i18n/locale.ts";
+import { runtimeGuide } from "../lib/guides.ts";
 import type { RuntimeFailure } from "../lib/model-test.ts";
 import { Icon } from "./icons.tsx";
 
-/** The guide's heading for each runtime. */
-const GUIDE: Record<string, string> = { "claude-agent": "claude", copilot: "copilot", chatgpt: "" };
+/** Claude Code signed in, but not with a subscription (an API key, a cloud): the server says so in its own words. */
+const NOT_SUBSCRIPTION = /non-subscription/i;
 
-export function RuntimeNotice({ t, failure, provider, docsUrl }: { t: Dict; failure: RuntimeFailure; provider: string; docsUrl: string }) {
+export function RuntimeNotice({ t, failure, provider, locale }: { t: Dict; failure: RuntimeFailure; provider: string; locale: Locale }) {
   const [copied, setCopied] = useState(false);
   const { name } = failure;
   const title =
@@ -30,10 +32,11 @@ export function RuntimeNotice({ t, failure, provider, docsUrl }: { t: Dict; fail
       : failure.reason === "runtime_unsupported"
         ? t.runtimeUnsupportedText(failure.installed, failure.required)
         : failure.reason === "not_signed_in"
-          ? t.notSignedInText
+          ? NOT_SUBSCRIPTION.test(failure.detail)
+            ? t.notSubscriptionText
+            : t.notSignedInText
           : t.runtimeFailedText;
-  const anchor = GUIDE[provider];
-  const guide = docsPage(docsUrl, provider === "chatgpt" ? "subscription-chatgpt" : "subscriptions") + (anchor ? `#${anchor}` : "");
+  const guide = runtimeGuide(locale, provider, failure.reason);
   return (
     <div class="test-failure runtime-notice" role="alert">
       <Icon name="WarningCircle" size={16} />
@@ -68,12 +71,6 @@ export function RuntimeNotice({ t, failure, provider, docsUrl }: { t: Dict; fail
             <span class="sr-only"> {t.opensNewTab}</span>
           </a>
         </p>
-        {failure.detail && (
-          <details class="test-failure-detail">
-            <summary>{t.testFailDetail}</summary>
-            <p>{failure.detail}</p>
-          </details>
-        )}
       </div>
     </div>
   );

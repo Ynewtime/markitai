@@ -10,7 +10,8 @@ not save credentials or change running conversions.
 Discovery supports OpenAI, Anthropic, Gemini, DeepSeek, OpenRouter, Azure,
 Ollama, custom OpenAI-compatible endpoints and every OpenAI-compatible prefix of
 the routing table (`docs/llm.md`) through `GET <base>/models`, Together AI's bare
-array included; Perplexity, Z.ai and Fireworks AI answer `unavailable` with
+array included, and Kimi Code (`kimi_code`, whose inference uses Kimi's
+Messages endpoint) through the same bearer-key `GET <base>/models`; Perplexity, Z.ai and Fireworks AI answer `unavailable` with
 `source: "manual"` without a request, since they document no OpenAI-compatible
 model list, and their model IDs are typed by hand. The subscription providers
 `copilot` and `claude-agent` ask their installed official runtime for its model
@@ -72,7 +73,19 @@ its JSON `error.message`, `message`, `error` or `detail`, else a short text
 excerpt without markup, at most 300 characters, with the key that was sent
 replaced by "…"), `Model discovery timed out`, `Model discovery request failed:
 <cause>`, or `DEEPSEEK_API_KEY is not set on the server, so nothing was sent`.
-Discovery no longer answers 503 for these.
+Discovery no longer answers 503 for these. A `key_rejected` answer also names
+the endpoints that refused the key as `endpoints`, in the order tried.
+
+Moonshot AI and Kimi Code issue keys per region, and each endpoint refuses
+another region's key with HTTP 401: Moonshot's open platform at
+`https://api.moonshot.ai/v1` (keys from platform.kimi.ai) and
+`https://api.moonshot.cn/v1` (keys from platform.kimi.com), Kimi Code at
+`https://api.kimi.com/coding/v1` (kimi.com) and `https://api.kimi.ai/coding/v1`
+(kimi.ai). A discovery for either with a key but no address (no `api_base`, no
+base variable) that the default endpoint refuses tries the other region; when
+that one lists the models, the answer carries its address as `api_base` (contract
+v1.21), which the workbench fills into the new connection's address so its
+models are saved with it. A request that names an address is sent there only.
 
 A connection check reuses native deployment resolution, endpoint construction
 and provider payload construction. It requests exactly `Reply with exactly OK.`

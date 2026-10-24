@@ -314,7 +314,9 @@ pub(super) fn parse(provider: &str, data: &Value) -> Result<Value> {
             .filter(|c| !c.is_control())
             .take(1024)
             .collect::<String>();
+        // Moonshot's and Kimi Code's records say `supports_image_in`.
         let vision = provider == "anthropic"
+            || record.get("supports_image_in") == Some(&Value::Bool(true))
             || provider == "openrouter"
                 && record
                     .pointer("/architecture/input_modalities")

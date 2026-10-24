@@ -170,8 +170,21 @@ pub(super) fn key_refused(status: u16, lowercase_body: &str) -> bool {
 
 /// What to do about a refused key, before the provider's own words: the
 /// variable that held it, or the configured key. A keyless request to a
-/// server that wants a key names the variable that would hold one.
+/// server that wants a key names the variable that would hold one. A key
+/// refused at one region of a provider that issues keys per region (see
+/// `providers::regions`) also names the other regions' endpoints.
 pub(super) fn refused_hint(entry: &Deployment) -> String {
+    let hint = key_hint(entry);
+    match entry.key.as_ref().and(super::providers::region_hint(
+        &entry.provider,
+        &entry.endpoint,
+    )) {
+        Some(region) => format!("{hint}. {region}"),
+        None => hint,
+    }
+}
+
+fn key_hint(entry: &Deployment) -> String {
     let variable = entry
         .key_variable
         .as_deref()

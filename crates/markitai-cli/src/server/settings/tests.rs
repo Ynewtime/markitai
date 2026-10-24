@@ -483,10 +483,29 @@ fn every_routed_provider_is_offered_with_its_group_mark_endpoint_key_and_discove
             "chatgpt",
             "claude-agent",
             "copilot",
+            "kimi_code",
             "bedrock",
             "vertex_ai",
             "custom"
         ]
+    );
+    // Kimi Code takes a key of its own and lists its models.
+    let kimi = card("kimi_code");
+    assert_eq!(
+        (
+            kimi["label"].clone(),
+            kimi["group"].clone(),
+            kimi["key_variable"].clone(),
+            kimi["default_base"].clone(),
+            kimi["supports_discovery"].clone()
+        ),
+        (
+            json!("Kimi Code"),
+            json!("makers"),
+            json!("KIMI_API_KEY"),
+            json!("https://api.kimi.com/coding/v1"),
+            json!(true)
+        )
     );
     assert_eq!(card("mistral")["kind"], "compatible");
     assert_eq!(card("mistral")["group"], "common");

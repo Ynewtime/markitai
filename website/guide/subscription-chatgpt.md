@@ -2,10 +2,17 @@
 
 markitai can send requests through your ChatGPT subscription instead of an API key, using OpenAI's official Codex CLI. Models are named `chatgpt/<model>`, for example `chatgpt/gpt-6-luna`.
 
+## Install {#install}
+
 Run this on the machine where markitai (or `markitai serve`) runs:
 
 ```sh
 npm install -g @openai/codex@0.159.0   # Codex CLI 0.159.0 or later
+```
+
+## Sign in {#sign-in}
+
+```sh
 markitai auth chatgpt login            # runs Codex's own sign-in
 ```
 
@@ -29,4 +36,6 @@ Codex keeps the sign-in; markitai never reads or copies it, and a 1.x ChatGPT lo
 | Cost | Tokens are counted, the price is unknown; a positive `llm.max_cost_per_document_usd` refuses this route |
 | Limits | A rate limit or server error is retried; your plan's usage limit stops the run |
 
-If the workbench says ChatGPT "is not signed in" after you did sign in, the sign-in expired: run the login again.
+## If it still fails {#troubleshooting}
+
+If the workbench says ChatGPT "is not signed in" after you did sign in, the sign-in expired: run the login again. `markitai auth chatgpt status` shows the Codex release it found and the account; an older Codex than the one under [Install](#install) is refused, and one outside `PATH` needs `CODEX_CLI_PATH`.

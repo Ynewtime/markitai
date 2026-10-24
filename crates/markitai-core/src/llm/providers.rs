@@ -102,7 +102,7 @@ const fn hosted(
     }
 }
 
-static PROVIDERS: [Provider; 93] = [
+static PROVIDERS: [Provider; 94] = [
     chat(
         "openai",
         "https://api.openai.com/v1",
@@ -239,6 +239,21 @@ static PROVIDERS: [Provider; 93] = [
         &["MOONSHOT_API_BASE"],
         &["MOONSHOT_API_KEY"],
     ),
+    // The Kimi Code membership's API (checked 2026-10-24). Its Anthropic
+    // Messages endpoint, the one Kimi's guides give Claude Code: its Chat
+    // Completions endpoint is reported to admit only the User-Agents of
+    // listed coding agents, and Kimi counts a changed User-Agent as a
+    // violation. `KIMI_API_KEY` is the name models.dev and OpenCode read,
+    // `KIMI_CODE_BASE_URL` the one Kimi Code CLI reads.
+    Provider {
+        prefix: "kimi_code",
+        protocol: Protocol::Anthropic,
+        base: Some("https://api.kimi.com/coding/v1"),
+        base_vars: &["KIMI_CODE_API_BASE", "KIMI_CODE_BASE_URL"],
+        key_vars: &["KIMI_API_KEY"],
+        key_optional: false,
+        special: Special::None,
+    },
     chat(
         "sambanova",
         "https://api.sambanova.ai/v1",
@@ -781,6 +796,86 @@ pub(crate) fn listings() -> impl Iterator<Item = Listing> {
         key_optional: provider.key_optional,
         openai_compatible: provider.protocol == Protocol::Chat,
     })
+}
+
+/// One region of a provider whose keys are issued per region: its endpoint
+/// and the site that issues the keys it accepts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Region {
+    pub base: &'static str,
+    pub console: &'static str,
+}
+
+/// The regions of a provider whose key works only at the endpoint of the
+/// region that issued it, the documented default first (checked
+/// 2026-10-24). Moonshot's open platform issues keys on platform.kimi.ai
+/// (once platform.moonshot.ai) for api.moonshot.ai and on platform.kimi.com
+/// (once platform.moonshot.cn) for api.moonshot.cn; Kimi Code's membership
+/// has a kimi.com and a kimi.ai endpoint. Each answers a key it does not
+/// know with HTTP 401.
+pub(crate) fn regions(prefix: &str) -> &'static [Region] {
+    const MOONSHOT: [Region; 2] = [
+        Region {
+            base: "https://api.moonshot.ai/v1",
+            console: "platform.kimi.ai",
+        },
+        Region {
+            base: "https://api.moonshot.cn/v1",
+            console: "platform.kimi.com",
+        },
+    ];
+    const KIMI_CODE: [Region; 2] = [
+        Region {
+            base: "https://api.kimi.com/coding/v1",
+            console: "kimi.com",
+        },
+        Region {
+            base: "https://api.kimi.ai/coding/v1",
+            console: "kimi.ai",
+        },
+    ];
+    match prefix {
+        "moonshot" => &MOONSHOT,
+        "kimi_code" => &KIMI_CODE,
+        _ => &[],
+    }
+}
+
+fn host(url: &str) -> Option<String> {
+    url::Url::parse(url)
+        .ok()
+        .and_then(|url| url.host_str().map(str::to_ascii_lowercase))
+}
+
+/// What to try when a regional endpoint refuses a key, for an English
+/// message: the region the endpoint (a base or a request URL) serves, the
+/// others' endpoints, and the sibling service whose keys look the same
+/// (Moonshot's open platform and Kimi Code). `None` elsewhere.
+pub(crate) fn region_hint(prefix: &str, endpoint: &str) -> Option<String> {
+    let regions = regions(prefix);
+    let at = host(endpoint)?;
+    let here = regions
+        .iter()
+        .find(|region| host(region.base).as_deref() == Some(at.as_str()))?;
+    let others = regions
+        .iter()
+        .filter(|region| *region != here)
+        .map(|region| {
+            format!(
+                "a key from {} needs api_base {}",
+                region.console, region.base
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sibling = match prefix {
+        "moonshot" => "a Kimi Code membership key is used as kimi_code/<model>",
+        _ => "a Kimi platform key is used as moonshot/<model>",
+    };
+    Some(format!(
+        "{at} accepts keys from {} only: {others}, and {sibling}",
+        here.console
+    ))
 }
 
 /// Prefixes served by an installed official runtime instead of HTTP.

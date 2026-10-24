@@ -2,6 +2,17 @@
 // English, the proper noun is always "LLM", and "·" separates facts.
 import type { Dict } from "./en.ts";
 
+/** What else a key refused by Moonshot's open platform or Kimi Code may be: the other region, or the sibling service. */
+const kimiKeyHint = (provider: string, region = false): string =>
+  provider === "moonshot"
+    ? `${region ? "Moonshot 的密钥只在签发它的区域有效：platform.kimi.com（中国）的密钥使用地址 https://api.moonshot.cn/v1，platform.kimi.ai 的密钥使用 https://api.moonshot.ai/v1。" : ""}Kimi Code 会员的密钥请在「Kimi Code」中添加。`
+    : provider === "kimi_code"
+      ? "Kimi 开放平台（platform.kimi.com 或 platform.kimi.ai）的密钥请在「Moonshot AI」中添加；Kimi Code 的密钥在 Kimi Code 控制台创建。"
+      : "";
+
+/** The endpoints that refused a key, as one phrase. */
+const keyRefusedBy = (hosts: string[]) => `${hosts.join(" 和 ")} 拒绝了这个密钥。`;
+
 export const zh: Dict = {
   homeAria: "Markitai 首页",
   docsLabel: "文档",
@@ -293,8 +304,9 @@ export const zh: Dict = {
   runtimeUnsupportedText: (installed, required) => `${installed ? `当前安装的是 ${installed}。` : ""}需要 ${required}。请在运行服务器的机器上安装该版本，然后重新加载列表。`,
   notSignedInTitle: (name) => `${name} 尚未登录`,
   notSignedInText: "请在运行服务器的机器上登录，然后重新加载列表。",
+  notSubscriptionText: "它已登录，但不是订阅登录（API 密钥或云平台登录不算）。请在运行服务器的机器上用订阅登录，然后重新加载列表。",
   runtimeFailedTitle: (name) => `${name} 没有响应`,
-  runtimeFailedText: "它已安装，但启动或响应失败，详细信息见下方。请在服务器上修复后重新加载列表。",
+  runtimeFailedText: "它已安装，但启动或响应失败。请在服务器上检查（方法见设置指南），然后重新加载列表。",
   runtimeStepInstall: "安装",
   runtimeStepSignIn: "登录",
   runtimeSetupGuide: "设置指南",
@@ -330,6 +342,7 @@ export const zh: Dict = {
     return "填写连接信息后加载可用模型。";
   },
   optionalKeyVariable: (variable) => `${variable}（可选）`,
+  kimiCodeTerms: ["Kimi Code 会员仅限交互使用；批量转换请用 ", "Kimi 开放平台", "的密钥（Moonshot AI）。"],
   keyVariableHint: (variable) => `也可以在运行 markitai serve 的环境中设置 ${variable} 并重启；之后该服务商会出现在“已保存”中，无需粘贴密钥。`,
   ownEndpointNote: (label, credential) => `使用这台服务器的 ${credential}，只连接 ${label} 自己的接口。`,
   googleLogin: "Google 登录",
@@ -437,31 +450,38 @@ export const zh: Dict = {
       network: "无法连接服务商",
       timeout: "响应超时",
     })[reason] ?? "服务商返回错误",
-  testFailHint: (reason, variable, model) =>
+  testFailHint: (reason, variable, model, detailShown = true) =>
     reason === "no_key"
       ? variable
         ? `服务器上未设置 ${variable}。请在运行 markitai serve 的环境中设置它并重启服务，或为该模型的连接添加密钥。`
         : "该模型没有可用的 API 密钥。请为它的连接添加密钥，或在运行 markitai serve 的环境中设置服务商的密钥变量。"
       : (({
-          key_rejected: "服务商拒绝了这个密钥。请确认密钥正确、仍然有效且有权使用该模型；没有单独密钥的模型会使用服务器上设置的密钥变量。",
+          key_rejected: `服务商拒绝了这个密钥。请确认密钥正确、仍然有效且有权使用该模型；没有单独密钥的模型会使用服务器上设置的密钥变量。${kimiKeyHint(model.split("/")[0] ?? "", true)}`,
           model_not_found: `服务商没有向这个密钥提供 ${model}。请检查模型 ID。`,
           rate_limited: "服务商正在限制请求，或账户的额度、余额已用完。请稍后重试，或检查账户。",
           network: "服务器无法连接到服务商。请检查接口地址以及服务器的网络或代理。",
           timeout: "服务商没有及时响应。请重试；如果反复出现，请查看服务商的状态。",
-        }) as Record<string, string>)[reason] ?? "服务商返回了错误，原文见下方。",
+        }) as Record<string, string>)[reason] ?? (detailShown ? "服务商返回了错误，原文见下方。" : "服务商返回了错误。"),
   testFailFor: (model) => `${model} 的测试`,
   testFailDetail: "服务商原文",
-  discoveryFailHint: (reason, variable) =>
+  connectionDetail: "连接错误",
+  modelRegionBlocked: (model) => `服务商不在服务器所在的区域提供 ${model}。请换一个模型，或从受支持的区域访问服务商。`,
+  discoveryFailHint: (reason, variable, hosts = [], provider = "") =>
     reason === "no_key"
       ? variable
         ? `服务器上未设置 ${variable}，因此没有请求模型列表。请在运行 markitai serve 的环境中设置它并重启服务器，或为这个连接添加密钥。`
         : "这个连接没有密钥，因此没有请求模型列表。请为它添加密钥。"
+      : reason === "key_rejected"
+        ? `${hosts.length ? keyRefusedBy(hosts) : "服务商拒绝了这个密钥。"}请确认密钥正确且仍然有效。${kimiKeyHint(provider)}`
       : (({
-          key_rejected: "服务商拒绝了这个密钥。请确认密钥正确且仍然有效。",
           rate_limited: "服务商正在限流，或账户额度已用完。请稍后再试。",
           network: "服务器无法连接到服务商。请检查地址以及服务器的网络或代理。",
           timeout: "服务商没有及时响应。请重试。",
         }) as Record<string, string>)[reason] ?? "服务商返回了错误。你仍可以在下方手动添加模型 ID。",
+  regionMovedTitle: "已按密钥填入地址",
+  regionElsewhereTitle: "这个密钥属于另一个地址",
+  regionMoved: (base) => `这个密钥属于 ${base}，已填入 API 地址，添加的模型会使用该地址。`,
+  regionElsewhere: (base) => `这个密钥在 ${base} 有效，而不是这个连接的地址。添加模型前，请把地址改为 ${base}。`,
   save: "保存",
   saving: "保存中…",
   saved: "已保存",

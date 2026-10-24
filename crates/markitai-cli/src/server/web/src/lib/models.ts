@@ -18,6 +18,20 @@ export function manualModelId(provider: string, input: string): string {
  * connection's own address. */
 export const endpointFor = (draft: string, providerBase: string | null | undefined): string => draft.trim() || providerBase || "";
 
+/** The hosts that refused a key, for the failure hint: the endpoints the
+ * server names (v1.21), else the one the page asked. */
+export function refusedHosts(endpoints: readonly string[] | undefined, asked: string): string[] {
+  const host = (value: string) => {
+    try {
+      return new URL(value).host;
+    } catch {
+      return "";
+    }
+  };
+  const hosts = (endpoints?.length ? endpoints : [asked]).map(host).filter(Boolean);
+  return [...new Set(hosts)];
+}
+
 const normalizeEndpoint = (value: string | null | undefined) => (value ?? "").trim().replace(/\/+$/, "").toLowerCase();
 
 /** Whether a deployment is routed at this endpoint. A deployment the provider

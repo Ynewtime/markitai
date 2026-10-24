@@ -4,6 +4,17 @@
 
 const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
 
+/** What else a key refused by Moonshot's open platform or Kimi Code may be: the other region, or the sibling service. */
+const kimiKeyHint = (provider: string, region = false): string =>
+  provider === "moonshot"
+    ? `${region ? " A Moonshot key works only in its own region: a key from platform.kimi.com (China) needs the address https://api.moonshot.cn/v1, one from platform.kimi.ai https://api.moonshot.ai/v1." : ""} A Kimi Code membership key belongs under Kimi Code.`
+    : provider === "kimi_code"
+      ? " A Kimi platform key (platform.kimi.com or platform.kimi.ai) belongs under Moonshot AI; Kimi Code keys are created in the Kimi Code console."
+      : "";
+
+/** The endpoints that refused a key, as one phrase. */
+const keyRefusedBy = (hosts: string[]) => `${hosts.join(" and ")} refused the key.`;
+
 export const en = {
   // header and footer
   homeAria: "Markitai home",
@@ -316,8 +327,9 @@ export const en = {
   runtimeUnsupportedText: (installed: string | null, required: string) => `${installed ? `Version ${installed} is installed. ` : ""}This needs ${required}. Install that release on the machine where the server runs, then reload the list.`,
   notSignedInTitle: (name: string) => `${name} is not signed in`,
   notSignedInText: "Sign in on the machine where the server runs, then reload the list.",
+  notSubscriptionText: "It is signed in, but not with a subscription (an API key or a cloud login does not count). Sign in with the subscription on the machine where the server runs, then reload the list.",
   runtimeFailedTitle: (name: string) => `${name} did not answer`,
-  runtimeFailedText: "It is installed, but it failed to start or answer. Its message is below. Fix it on the server, then reload the list.",
+  runtimeFailedText: "It is installed, but it failed to start or answer. Check it on the server (the setup guide says how), then reload the list.",
   runtimeStepInstall: "Install",
   runtimeStepSignIn: "Sign in",
   runtimeSetupGuide: "Setup guide",
@@ -365,6 +377,8 @@ export const en = {
     return "Enter the connection details to load available models.";
   },
   optionalKeyVariable: (variable: string) => `${variable} (optional)`,
+  /** Kimi's terms for the membership, under Kimi Code's key field: the text before the link, the link (to Moonshot AI), the text after. */
+  kimiCodeTerms: ["Kimi Code membership is for interactive use only; for batch conversions use a ", "Kimi platform", " key (Moonshot AI)."] as [string, string, string],
   keyVariableHint: (variable: string) => `Or set ${variable} where markitai serve runs and restart it; the provider then appears under Saved, with no key to paste.`,
   ownEndpointNote: (label: string, credential: string) => `Uses this server's ${credential} at ${label}'s own endpoint.`,
   googleLogin: "Google login",
@@ -472,31 +486,40 @@ export const en = {
       network: "Provider unreachable",
       timeout: "No answer in time",
     })[reason] ?? "Provider error",
-  testFailHint: (reason: string, variable: string | null, model: string) =>
+  testFailHint: (reason: string, variable: string | null, model: string, detailShown = true) =>
     reason === "no_key"
       ? variable
         ? `${variable} is not set on the server. Set it where markitai serve runs and restart the server, or add a key to this model's connection.`
         : "No API key is set for this model. Add one to its connection, or set the provider's key variable where markitai serve runs."
       : (({
-          key_rejected: "The provider refused the key. Check that it is correct, still active and allowed to use this model; a model without a key of its own uses the key variable set on the server.",
+          key_rejected: `The provider refused the key. Check that it is correct, still active and allowed to use this model; a model without a key of its own uses the key variable set on the server.${kimiKeyHint(model.split("/")[0] ?? "", true)}`,
           model_not_found: `The provider does not offer ${model} to this key. Check the model ID.`,
           rate_limited: "The provider is limiting requests, or the account has no quota or balance left. Try again later, or check the account.",
           network: "The server could not reach the provider. Check the address and the server's network or proxy.",
           timeout: "The provider did not answer in time. Try again; if it keeps happening, check the provider's status.",
-        }) as Record<string, string>)[reason] ?? "The provider answered with an error. Its message is below.",
+        }) as Record<string, string>)[reason] ?? (detailShown ? "The provider answered with an error. Its message is below." : "The provider answered with an error."),
   testFailFor: (model: string) => `Test of ${model}`,
   testFailDetail: "Provider's message",
-  discoveryFailHint: (reason: string, variable: string | null) =>
+  /** The network stack's account of a connection that failed (not the provider's words). */
+  connectionDetail: "Connection error",
+  modelRegionBlocked: (model: string) => `The provider does not serve ${model} in the server's region. Choose another model, or reach the provider from a supported region.`,
+  discoveryFailHint: (reason: string, variable: string | null, hosts: string[] = [], provider = "") =>
     reason === "no_key"
       ? variable
         ? `${variable} is not set on the server, so the list was not requested. Set it where markitai serve runs and restart the server, or add a key to this connection.`
         : "This connection has no key, so the list was not requested. Add a key to it."
+      : reason === "key_rejected"
+        ? `${hosts.length ? keyRefusedBy(hosts) : "The provider refused the key."} Check that it is correct and still active.${kimiKeyHint(provider)}`
       : (({
-          key_rejected: "The provider refused the key. Check that it is correct and still active.",
           rate_limited: "The provider is limiting requests, or the account has no quota left. Try again later.",
           network: "The server could not reach the provider. Check the address and the server's network or proxy.",
           timeout: "The provider did not answer in time. Try again.",
         }) as Record<string, string>)[reason] ?? "The provider answered with an error. You can still add model IDs by hand below.",
+  /** Discovery found the key's region (v1.21 `api_base`). */
+  regionMovedTitle: "Address set for this key",
+  regionElsewhereTitle: "This key works at another address",
+  regionMoved: (base: string) => `This key is from ${base}: the API address is set to it, and the models you add use it.`,
+  regionElsewhere: (base: string) => `This key works at ${base}, not at this connection's address. Change the address to ${base} before adding models.`,
   save: "Save",
   saving: "Saving…",
   saved: "Saved",
