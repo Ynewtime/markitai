@@ -3627,6 +3627,8 @@ kbd {
 .opt-choice-menu {
   width: auto;
   min-width: 180px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .opt-choice-menu .menu-check {
   border: 0;

@@ -45,3 +45,14 @@ test("M2: the options dialog has a history entry, so Back closes it and stays on
   // "Add a model" leaves only after that Back
   assert.match(panel, /if \(backing\.current\) afterClose\.current = onAddModel;\s*else onAddModel\(\);/);
 });
+
+test("M5: a choice menu opens upward when there is more room there, capped and scrolling", () => {
+  const pick = read("../components/pick-menu.tsx");
+  const menu = pick.slice(pick.indexOf("export function ChoiceMenu"), pick.indexOf("export interface DownloadEntry"));
+  // measured against the phone's tab bar (a fixed element: getClientRects, not offsetParent)
+  assert.match(menu, /bar && bar\.getClientRects\(\)\.length > 0 \? bar\.getBoundingClientRect\(\)\.top : window\.innerHeight/);
+  assert.match(menu, /const flip = box\.scrollHeight > below && above > below;/);
+  assert.match(menu, /box\.style\.maxHeight = `\$\{Math\.max\(120, Math\.floor\(flip \? above : below\)\)\}px`;/);
+  assert.match(menu, /class=\{up \? "menu is-start is-up opt-choice-menu" : "menu is-start opt-choice-menu"\}/);
+  assert.match(block(".opt-choice-menu"), /overflow-y: auto;/);
+});

@@ -3,7 +3,7 @@
 // group of more than three choices, and a conversion's split Download
 // button, whose caret lists the formats to save. Also the OCR languages' names.
 import type { ComponentChildren } from "preact";
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import type { IconName } from "./icon-paths.ts";
 import { Icon } from "./icons.tsx";
 
@@ -100,6 +100,25 @@ export function ChoiceMenu<T extends string | null>({
 }) {
   const menu = useMenu();
   const current = choices.find((choice) => choice === value);
+  const list = useRef<HTMLDivElement>(null);
+  const [up, setUp] = useState(false);
+  // The menu opens downward while it fits above the phone's tab bar (or the window's edge), else
+  // upward when there is more room there; either way it is capped to that room and scrolls.
+  useLayoutEffect(() => {
+    const box = list.current;
+    const button = menu.trigger.current;
+    if (!menu.open || !box || !button) return setUp(false);
+    const margin = 8;
+    const bar = document.querySelector<HTMLElement>(".tabbar");
+    const floor = bar && bar.getClientRects().length > 0 ? bar.getBoundingClientRect().top : window.innerHeight;
+    const rect = button.getBoundingClientRect();
+    const below = floor - rect.bottom - 6 - margin;
+    const above = rect.top - 6 - margin;
+    box.style.maxHeight = "";
+    const flip = box.scrollHeight > below && above > below;
+    setUp(flip);
+    box.style.maxHeight = `${Math.max(120, Math.floor(flip ? above : below))}px`;
+  }, [menu.open]);
   return (
     <span ref={menu.root} class={extra ? `menu-wrap ${extra}` : "menu-wrap"} onKeyDown={menu.onKeyDown}>
       <button
@@ -116,7 +135,7 @@ export function ChoiceMenu<T extends string | null>({
         <Icon name="CaretDown" size={11} />
       </button>
       {menu.open && (
-        <div class="menu is-start opt-choice-menu" role="menu" aria-label={name}>
+        <div ref={list} class={up ? "menu is-start is-up opt-choice-menu" : "menu is-start opt-choice-menu"} role="menu" aria-label={name}>
           {choices.map((choice) => {
             const off = disabled?.(choice) ?? false;
             return (
