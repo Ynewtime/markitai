@@ -626,11 +626,19 @@ function Install-Release {
     return (Complete-Install $stage $Directory $previous)
 }
 
-# The user Path lives in HKCU\Environment as REG_EXPAND_SZ: written back as
-# that kind so entries such as %USERPROFILE%\bin keep expanding
-# ([Environment]::SetEnvironmentVariable would store REG_SZ).
+# The user Path lives in HKCU\Environment. Windows creates it as REG_EXPAND_SZ,
+# so entries such as %USERPROFILE%\bin expand, but some machines hold it as
+# REG_SZ: it is written back as the kind it already has, and created as
+# REG_EXPAND_SZ only when there is none ([Environment]::SetEnvironmentVariable
+# would always store REG_SZ).
+function Open-UserEnvironment {
+    param([switch]$Writable)
+    if ($Writable) { return [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey("Environment") }
+    return [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey("Environment")
+}
+
 function Get-UserPath {
-    $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey("Environment")
+    $key = Open-UserEnvironment
     try {
         if (-not $key) { return "" }
         return [string]$key.GetValue("Path", "", [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
@@ -641,9 +649,13 @@ function Get-UserPath {
 
 function Set-UserPath {
     param([string]$Value)
-    $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey("Environment")
+    $key = Open-UserEnvironment -Writable
     try {
-        $key.SetValue("Path", $Value, [Microsoft.Win32.RegistryValueKind]::ExpandString)
+        $kind = [Microsoft.Win32.RegistryValueKind]::ExpandString
+        if (($key.GetValueNames() -contains "Path") -and $key.GetValueKind("Path") -eq [Microsoft.Win32.RegistryValueKind]::String) {
+            $kind = [Microsoft.Win32.RegistryValueKind]::String
+        }
+        $key.SetValue("Path", $Value, $kind)
     } finally {
         $key.Dispose()
     }

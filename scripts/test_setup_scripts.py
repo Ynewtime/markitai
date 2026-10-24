@@ -292,8 +292,7 @@ class SetupShTests(unittest.TestCase):
         self.assertFalse((bin_dir / "markitai").is_symlink())
 
 
-PS_HARNESS = r"""
-param([string]$Script, [string]$Base, [string]$Work)
+PS_LOAD = r"""
 $ErrorActionPreference = "Stop"
 # Load every definition of setup's script block, not the statement that runs setup.
 $tokens = $null; $errors = $null
@@ -305,7 +304,11 @@ $statements = $block.ScriptBlock.EndBlock.Statements
 $body = @($statements | Where-Object { $_.Extent.Text -notmatch '^try \{' })
 if ($body.Count -ne $statements.Count - 1) { throw "setup.ps1 ends differently than expected" }
 . ([scriptblock]::Create(($body | ForEach-Object { $_.Extent.Text }) -join "`n"))
-function Assert($Condition, $Message) { if (-not $Condition) { throw "FAILED: $Message" } }
+"""
+
+PS_HARNESS = r"""
+param([string]$Script, [string]$Base, [string]$Work)
+""" + PS_LOAD + r"""function Assert($Condition, $Message) { if (-not $Condition) { throw "FAILED: $Message" } }
 $script:Shown = New-Object System.Collections.ArrayList
 function Write-Host { param([Parameter(Position = 0)]$Object, $ForegroundColor, [switch]$NoNewline) [void]$script:Shown.Add("$Object") }
 function Send-EnvironmentChange { }
@@ -467,6 +470,90 @@ Assert ((Msg "verified") -eq "SHA-256 verified") "en"
 """
 
 
+PS_PATH_KIND = r"""
+param([string]$Script, [string]$TestKey)
+""" + PS_LOAD + r"""
+function Assert($Condition, $Message) { if (-not $Condition) { throw "FAILED: $Message" } }
+$script:Broadcasts = 0
+function Send-EnvironmentChange { $script:Broadcasts++ }
+# HKCU\Environment: on Windows a scratch key of the real registry ($TestKey),
+# elsewhere a stand-in with a RegistryKey's methods.
+$script:Fake = @{ Exists = $false; Values = @{} }
+function Open-UserEnvironment {
+    param([switch]$Writable)
+    if ($TestKey) {
+        if ($Writable) { return [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($TestKey) }
+        return [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($TestKey)
+    }
+    if (-not $Writable -and -not $script:Fake.Exists) { return $null }
+    $script:Fake.Exists = $true
+    $key = New-Object PSObject
+    $key | Add-Member ScriptMethod GetValueNames { @($script:Fake.Values.Keys) }
+    $key | Add-Member ScriptMethod GetValue { param($Name, $Default) if ($script:Fake.Values.ContainsKey($Name)) { $script:Fake.Values[$Name][0] } else { $Default } }
+    $key | Add-Member ScriptMethod GetValueKind { param($Name) $script:Fake.Values[$Name][1] }
+    $key | Add-Member ScriptMethod SetValue { param($Name, $Value, $Kind) $script:Fake.Values[$Name] = @($Value, $Kind) }
+    $key | Add-Member ScriptMethod Dispose { }
+    return $key
+}
+# The user's Path before setup runs: none at all, an Environment key without
+# Path, or Path as REG_SZ or REG_EXPAND_SZ.
+function Reset-UserEnvironment {
+    param([bool]$KeyExists, $Value, $Kind)
+    if ($TestKey) {
+        [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKeyTree($TestKey, $false)
+        if ($KeyExists) {
+            $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($TestKey)
+            if ($null -ne $Value) { $key.SetValue("Path", $Value, $Kind) }
+            $key.Dispose()
+        }
+    } else {
+        $script:Fake = @{ Exists = $KeyExists; Values = @{} }
+        if ($null -ne $Value) { $script:Fake.Values["Path"] = @($Value, $Kind) }
+    }
+}
+# "<kind>|<value as stored>"
+function Read-UserEnvironment {
+    if (-not $TestKey) { return "$($script:Fake.Values['Path'][1])|$($script:Fake.Values['Path'][0])" }
+    $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($TestKey)
+    try {
+        $raw = $key.GetValue("Path", $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+        return "$($key.GetValueKind('Path'))|$raw"
+    } finally { $key.Dispose() }
+}
+
+$install = 'C:\Users\Example\AppData\Local\Programs\markitai'
+$entries = '%USERPROFILE%\bin;C:\Tools\;D:\Mixed Case'
+$cases = @(
+    @{ Name = "REG_SZ"; KeyExists = $true; Value = $entries; Kind = [Microsoft.Win32.RegistryValueKind]::String },
+    @{ Name = "REG_EXPAND_SZ"; KeyExists = $true; Value = $entries; Kind = [Microsoft.Win32.RegistryValueKind]::ExpandString },
+    @{ Name = "no Path"; KeyExists = $true; Value = $null; Kind = $null },
+    @{ Name = "no Environment key"; KeyExists = $false; Value = $null; Kind = $null }
+)
+try {
+    foreach ($case in $cases) {
+        Reset-UserEnvironment $case.KeyExists $case.Value $case.Kind
+        $kind = if ($case.Kind) { "$($case.Kind)" } else { "ExpandString" }
+        $before = $script:Broadcasts
+        Assert (Add-ToUserPath $install) "$($case.Name): added"
+        $added = if ($case.Value) { "$install;$($case.Value)" } else { $install }
+        Assert ((Read-UserEnvironment) -ceq "$kind|$added") "$($case.Name): added as $kind|$added, got $(Read-UserEnvironment)"
+        Assert ($script:Broadcasts -eq $before + 1) "$($case.Name): WM_SETTINGCHANGE after adding"
+        Assert (-not (Add-ToUserPath $install)) "$($case.Name): a second run adds nothing"
+        Assert ((Read-UserEnvironment) -ceq "$kind|$added") "$($case.Name): a second run leaves it alone"
+        Assert ($script:Broadcasts -eq $before + 1) "$($case.Name): nothing to announce"
+        Assert (Remove-FromUserPath $install) "$($case.Name): removed"
+        $removed = if ($case.Value) { $case.Value } else { "" }
+        Assert ((Read-UserEnvironment) -ceq "$kind|$removed") "$($case.Name): uninstall keeps $kind|$removed, got $(Read-UserEnvironment)"
+        Assert ($script:Broadcasts -eq $before + 2) "$($case.Name): WM_SETTINGCHANGE after removing"
+        Assert (-not (Remove-FromUserPath $install)) "$($case.Name): nothing left to remove"
+    }
+} finally {
+    if ($TestKey) { [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKeyTree($TestKey, $false) }
+}
+"ok"
+"""
+
+
 PS_SESSION = r"""
 param([string]$Script)
 # setup.ps1 piped into iex, then as a script block with -Uninstall, in this
@@ -607,6 +694,27 @@ class SetupPs1Tests(unittest.TestCase):
                                      "-Script", str(SETUP_PS1)], capture_output=True, text=True, timeout=180, env=env)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertEqual(result.stdout.strip().splitlines()[-1], "ok")
+
+
+# Windows PowerShell 5.1 is `powershell` on Windows; PowerShell 7 is `pwsh`.
+POWERSHELLS = [name for name in ["pwsh", "powershell"] if shutil.which(name)]
+
+
+@unittest.skipUnless(POWERSHELLS, "needs PowerShell")
+class UserPathKindTests(unittest.TestCase):
+    def test_the_user_path_keeps_its_registry_kind(self):
+        # On Windows against a scratch key under HKCU\Software, elsewhere against a stand-in.
+        for shell in POWERSHELLS:
+            with self.subTest(shell=shell), tempfile.TemporaryDirectory() as directory:
+                harness = Path(directory) / "path-kind.ps1"
+                harness.write_text(PS_PATH_KIND, encoding="utf-8")
+                arguments = ["-Script", str(SETUP_PS1)]
+                if sys.platform == "win32":
+                    arguments += ["-TestKey", f"Software\\markitai-setup-test-{os.getpid()}-{shell}"]
+                result = subprocess.run([shell, "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+                                         "-File", str(harness), *arguments], capture_output=True, text=True, timeout=120)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(result.stdout.strip().splitlines()[-1], "ok")
 
 
 class SetupScriptTextTests(unittest.TestCase):
