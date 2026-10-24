@@ -57,8 +57,9 @@ group in the same dialog (Back returns), as a list with a check for a single
 choice or switches, each with a short line under its name, and a choice applies
 at once. A choice the server can't offer stays dimmed with its reason (LLM
 without a model links to Settings → Models; Cloudflare without its setup). The
-foot keeps the equivalent CLI command on one line with Copy, and Reset to
-defaults / Save as default. The options start from the server's defaults (its configuration: `llm.enabled`,
+foot keeps the equivalent CLI command on one line that scrolls sideways inside its
+box (touch, trackpad or Shift+wheel; no visible scrollbar; its right edge fades while
+there is more) with Copy fixed at the right, and Reset to defaults / Save as default. The options start from the server's defaults (its configuration: `llm.enabled`,
 `ocr.enabled`, `image.alt_enabled`, `image.desc_enabled`, `screenshot.enabled`,
 `screenshot.screenshot_only`, `llm.pure`, `cache.no_cache`, `image.compress`,
 `output.profile`, `fetch.strategy`, and with contract v1.20 `output.format`,

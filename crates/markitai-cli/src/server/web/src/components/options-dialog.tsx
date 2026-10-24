@@ -3,7 +3,7 @@
 // preset and one row per group with its current value; a row opens its group in place (Back returns)
 // and a choice applies at once. The foot keeps the CLI line and the defaults' two buttons.
 import type { ComponentChildren } from "preact";
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import type { CloudflareCapability, ConversionBackend, FetchStrategy, OutputProfile, Preset } from "../api/types.ts";
 import type { DefaultsControl } from "../hooks/use-convert-defaults.ts";
 import { useModal } from "../hooks/use-modal.ts";
@@ -29,6 +29,7 @@ import {
   type OptionKey,
   type PresetTable,
 } from "../lib/options.ts";
+import { markMore } from "../lib/scroll-cells.ts";
 import { HelpTooltip } from "./help-tooltip.tsx";
 import { Icon } from "./icons.tsx";
 import { languageName, languageTag } from "./pick-menu.tsx";
@@ -228,7 +229,20 @@ export function OptionsDialog({
   const [pull, setPull] = useState(0);
   const drag = useRef<number | null>(null);
   const [copied, setCopied] = useState<"idle" | "copied" | "failed">("idle");
+  const cli = useRef<HTMLElement>(null);
   useModal(dialog, onClose);
+  // The command stays on one line and scrolls sideways in its box; its right edge fades while
+  // there is more (measured again when the box resizes, the web font arrives or the command changes).
+  useLayoutEffect(() => {
+    const line = cli.current;
+    if (!line) return;
+    const fit = () => markMore(line);
+    fit();
+    void document.fonts?.ready.then(fit);
+    const resized = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(fit);
+    resized?.observe(line);
+    return () => resized?.disconnect();
+  }, [command]);
   // A group opened: focus its Back; back again: the row it was opened from.
   useEffect(() => {
     body.current?.scrollTo(0, 0);
@@ -610,7 +624,7 @@ export function OptionsDialog({
         </div>
         <div class="sheet-foot">
           <div class="sheet-cli">
-            <code class="cli-text" tabIndex={0} aria-label={t.cliAria} title={command}>
+            <code ref={cli} class="cli-text" tabIndex={0} aria-label={t.cliAria} title={command} onScroll={(event) => markMore(event.currentTarget)}>
               <span class="cli-prompt" aria-hidden="true">
                 ${" "}
               </span>

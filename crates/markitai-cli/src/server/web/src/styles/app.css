@@ -3962,12 +3962,23 @@ kbd {
   background: var(--t-bg);
   color-scheme: dark;
 }
+/* the whole command on one line, scrolled sideways inside the box (touch, trackpad or Shift+wheel)
+   with no visible scrollbar; the right edge fades while there is more (.is-more), Copy stays put */
 .sheet-cli .cli-text {
   flex: 1;
   padding: 6px 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
   white-space: nowrap;
+}
+.sheet-cli .cli-text::-webkit-scrollbar {
+  display: none;
+}
+.sheet-cli .cli-text.is-more {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 20px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 20px), transparent);
 }
 .sheet-cli .icon-btn {
   flex: none;

@@ -106,7 +106,7 @@ test("a sheet on a phone, a dialog near the top on a wider screen", () => {
   assert.match(phone, /\.dialog\.opts-dialog \{\n {4}width: 100%;\n {4}max-height: 88dvh;/);
   assert.match(phone, /\.sheet-handle \{\n {4}display: block;/);
   assert.match(css, /\.sheet-row \{[^}]*min-height: 44px;/);
-  assert.match(css, /\.sheet-cli \.cli-text \{[^}]*text-overflow: ellipsis;\n {2}white-space: nowrap;/);
+  assert.match(css, /\.sheet-cli \.cli-text \{[^}]*overflow-x: auto;[^}]*white-space: nowrap;/);
 });
 
 test("the dialog's words exist in every language, short and without the drawer's paragraphs", () => {
