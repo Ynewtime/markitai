@@ -10,7 +10,7 @@ License: markitai is MIT. Its Rust dependencies are under permissive licences (M
 
 - `markitai input -o out/ --json` returns final per-item status, output paths, usage and costs; check the exit code and `ok`/`error`. `--dry-run` and `--llm-batch-collect` exclude JSON output. Usage errors exit 2 with no JSON.
 - `markitai input -f json` prints one versioned document object (`schema_version` 1.0) instead of Markdown.
-- `--no-remote-fetch` disables remote URL extraction; it does not disable separately enabled LLM enhancement or a Cloudflare file backend. By default `auto` URL fetching stays on the machine.
+- `--no-remote-fetch` disables remote URL extraction and refuses the Cloudflare file backend (`-b cloudflare`); it does not disable separately enabled LLM enhancement. By default `auto` URL fetching stays on the machine.
 - MCP tools: `convert_document`, `convert_url`, `batch_convert`, `job_status`; paths must be absolute. Conversions accept `profile`; batches accept `concurrency` (default 10) and isolate outputs by batch/item. Omitted `llm` inherits server configuration; `llm: false` disables it.
 
 ## Docs
