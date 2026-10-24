@@ -1,6 +1,6 @@
-//! English or Chinese wording for the terminal text of `doctor`, `cache`,
-//! `config path/validate`, `init`, the conversion and batch lines on stderr and
-//! `--help`.
+//! English or Chinese wording for every line the CLI prints for a person:
+//! `--help` and usage errors, the commands' terminal output and the
+//! diagnostics on stderr (see `reasons` for the ones built without a language).
 //!
 //! A nonempty `MARKITAI_LANG` decides on its own; otherwise the first of
 //! `LC_ALL`, `LC_MESSAGES` and `LANG` that is set to something other than the
@@ -19,8 +19,8 @@
 //! files there are UTF-8). `MARKITAI_LANG=zh` is taken as asked.
 //!
 //! Only sentences meant for a person change. JSON, values shared with JSON
-//! (check names, messages and hints), usage errors from the argument parser,
-//! the file log and exit codes stay as they are in every language.
+//! (check names, messages and hints), data on standard output, the file log
+//! and exit codes stay as they are in every language.
 use std::collections::HashMap;
 use std::sync::OnceLock;
 

@@ -349,6 +349,30 @@ fn emit(original: String, console: Option<String>, shape: Option<Shape>) {
     write_line(&line);
 }
 
+/// The library's own stderr lines (see `markitai_core::console`) that came
+/// before the terminal language was known; `None` once it is.
+static EARLY: Mutex<Option<Vec<String>>> = Mutex::new(Some(Vec::new()));
+
+/// The library's sink: its lines are diagnostics like the CLI's own, with
+/// marks, the file log and the terminal language. Choosing the language reads
+/// the environment, which may itself warn (a folder's `.env`), so a line that
+/// comes before the language is known waits for [`language_known`].
+pub(super) fn library_line(text: &str) {
+    if let Some(early) = EARLY.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
+        early.push(text.to_owned());
+        return;
+    }
+    emit(text.to_owned(), None, None);
+}
+
+/// The terminal language is known: print the library lines that waited for it.
+pub(super) fn language_known() {
+    let early = EARLY.lock().unwrap_or_else(|e| e.into_inner()).take();
+    for line in early.unwrap_or_default() {
+        emit(line, None, None);
+    }
+}
+
 /// A line for the terminal alone, as it is: neither redacted nor logged.
 /// For the service's startup lines, whose addresses carry the access token
 /// the person who started it needs to copy.

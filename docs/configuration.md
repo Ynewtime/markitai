@@ -134,7 +134,7 @@ stdout 仍为“配置有效”且退出 0。只检查所选文件与 `--config-
 | `MARKITAI_NO_VLM_OCR` | 非空且不是 `0`/`false`/`no` 时，LLM 开启的 OCR 先本地识别再只发送文字 |
 | `MARKITAI_LOG_DIR` / `MARKITAI_LOG_FORMAT` | 覆盖 `log.dir` 与 `log.format`（`text`/`json`） |
 | `MARKITAI_SERVE_TOKEN` | `serve` 的进程环境访问令牌（不从 `.env` 读取；含回环地址请求；未设置或空白时自动生成），见 [REST 服务](serve.md) |
-| `MARKITAI_LANG` | `doctor`、`cache`、`config path/validate`、`init`、转换与批量运行的 stderr 提示以及 `--help` 的终端语言：以 `zh` 开头为中文，其他值为英文；为空时依次看 `LC_ALL`、`LC_MESSAGES`、`LANG`（跳过 `C`/`POSIX`），见 [CLI](cli.md#终端语言) |
+| `MARKITAI_LANG` | CLI 终端输出（`--help`、参数错误、`doctor`、`auth`、`cache`、`config`、`init`、`serve`、转换与批量运行的提示）的语言：以 `zh` 开头为中文，其他值为英文；为空时依次看 `LC_ALL`、`LC_MESSAGES`、`LANG`（跳过 `C`/`POSIX`），见 [CLI](cli.md#终端语言) |
 | `MARKITAI_BROWSER_EXECUTABLE` | 指定 Chrome/Chromium 可执行文件 |
 | `PLAYWRIGHT_BROWSERS_PATH` | 额外搜索的 Playwright 浏览器缓存目录 |
 | `MODEL` | 未配置 `llm.model_list` 时使用的模型，如 `openai/gpt-4.1-mini` |

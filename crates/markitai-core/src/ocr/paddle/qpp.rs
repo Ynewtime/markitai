@@ -145,7 +145,7 @@ fn fast_cpu() -> bool {
 }
 
 fn notice(text: &str) {
-    eprintln!("Local OCR: {text}");
+    crate::console::line(&format!("Local OCR: {text}"));
 }
 
 /// What `MARKITAI_OCR_ENGINE` asks for.

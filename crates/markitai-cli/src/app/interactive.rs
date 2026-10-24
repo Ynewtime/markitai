@@ -209,11 +209,20 @@ fn edit_with(
         writeln!(
             output,
             "\n{}\n{}",
-            style.section(&format!("Configuration: {}", path.display())),
+            style.section(&{
+                let path = path.display();
+                text!("Configuration: {path}", "配置：{path}")
+            }),
             style.line(
                 2,
                 None,
-                &format!("Page {}/{}; search: {}", page + 1, pages, query),
+                &{
+                    let page = page + 1;
+                    text!(
+                        "Page {page}/{pages}; search: {query}",
+                        "第 {page}/{pages} 页；搜索：{query}"
+                    )
+                },
                 Some(Tone::Secondary)
             )
         )
@@ -233,7 +242,10 @@ fn edit_with(
             output,
             &style.prompt(
                 2,
-                "Select number or full key; /search, n next, p previous, q quit: ",
+                &text!(
+                    "Select number or full key; /search, n next, p previous, q quit: ",
+                    "输入编号或完整的键；/关键字 搜索，n 下一页，p 上一页，q 退出："
+                ),
             ),
         )?
         else {
@@ -267,7 +279,10 @@ fn edit_with(
             writeln!(
                 output,
                 "{}",
-                style.item(Mark::Warning, "No editable setting selected.")
+                style.item(
+                    Mark::Warning,
+                    &text!("No editable setting selected.", "没有选中可编辑的设置。")
+                )
             )
             .map_err(runtime)?;
             continue;
@@ -276,28 +291,37 @@ fn edit_with(
         let hint = shape["enum"]
             .as_array()
             .map(|values| {
-                format!(
-                    "; choices: {}",
-                    values
-                        .iter()
-                        .map(Value::to_string)
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )
+                let choices = values
+                    .iter()
+                    .map(Value::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                text!("; choices: {choices}", "；可选值：{choices}")
             })
             .unwrap_or_default();
         writeln!(
             output,
             "{}",
-            style.item(
-                Mark::Info,
-                &format!(
-                    "{} ({}){hint}. Current: {}",
-                    setting.key,
-                    shape["type"].as_str().unwrap_or("value"),
-                    shown(&setting.key, &setting.value)
+            style.item(Mark::Info, &{
+                let key = &setting.key;
+                let kind = shape["type"].as_str().unwrap_or("value");
+                let kind = match (super::i18n::lang(), kind) {
+                    (super::i18n::Lang::En, kind) => kind,
+                    (_, "integer") => "整数",
+                    (_, "number") => "数值",
+                    (_, "string") => "字符串",
+                    (_, "boolean") => "布尔值",
+                    (_, "array") => "数组",
+                    (_, "object") => "对象",
+                    (_, "value") => "值",
+                    (_, kind) => kind,
+                };
+                let current = shown(&setting.key, &setting.value);
+                text!(
+                    "{key} ({kind}){hint}. Current: {current}",
+                    "{key}（{kind}）{hint}。当前值：{current}"
                 )
-            )
+            })
         )
         .map_err(runtime)?;
         let secret =
@@ -313,7 +337,10 @@ fn edit_with(
                 output,
                 &style.prompt(
                     2,
-                    "New value (empty keeps current, :empty sets an empty string, :cancel returns): ",
+                    &text!(
+                        "New value (empty keeps current, :empty sets an empty string, :cancel returns): ",
+                        "新值（留空保持不变，:empty 设为空字符串，:cancel 返回）："
+                    ),
                 ),
             )
         };
@@ -342,10 +369,11 @@ fn edit_with(
                 writeln!(
                     output,
                     "{}",
-                    style.item(
-                        Mark::Success,
-                        &format!("Saved {} = {}", setting.key, shown(&setting.key, &value))
-                    )
+                    style.item(Mark::Success, &{
+                        let key = &setting.key;
+                        let value = shown(&setting.key, &value);
+                        text!("Saved {key} = {value}", "已保存 {key} = {value}")
+                    })
                 )
                 .map_err(runtime)?;
             }
@@ -353,7 +381,16 @@ fn edit_with(
                 writeln!(
                     output,
                     "{}",
-                    style.item(Mark::Error, &format!("Invalid value: {error}"))
+                    style.item(
+                        Mark::Error,
+                        &match super::i18n::lang() {
+                            super::i18n::Lang::En => format!("Invalid value: {error}"),
+                            super::i18n::Lang::Zh => format!(
+                                "无效的值：{}",
+                                super::reasons::localize(&error.to_string())
+                            ),
+                        }
+                    )
                 )
                 .map_err(runtime)?;
             }

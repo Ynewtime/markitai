@@ -107,34 +107,36 @@ fn a_local_server_prints_the_address_the_data_location_and_how_to_stop() {
     let serve = Serve::start(temp.path(), None, &["--host", "127.0.0.1", "--port", "0"]);
     let lines = serve.until("Ctrl-C");
     let port = port_of(&lines[0]);
+    // The title carries the address, then a blank line and the items.
     assert_eq!(
         lines[0],
-        format!("Markitai server listening on http://127.0.0.1:{port}")
+        format!("◆ Markitai server listening on http://127.0.0.1:{port}")
     );
-    assert!(
-        lines[1].starts_with("Remote access token: ") && lines[1].len() == 21 + 64,
-        "{lines:?}"
-    );
+    assert_eq!(lines[1], "");
+    let token = lines[2]
+        .strip_prefix("  • Access token: ")
+        .unwrap_or_else(|| panic!("{lines:?}"));
+    assert_eq!(token.len(), 64, "{lines:?}");
     // The address to open sits on a line of its own, so it copies whole.
-    assert_eq!(lines[2], "Open in your browser:");
-    assert_eq!(
-        lines[3],
-        format!(
-            "    http://127.0.0.1:{port}/#token={}",
-            lines[1].strip_prefix("Remote access token: ").unwrap()
-        )
-    );
+    assert_eq!(lines[3], "  → Open in your browser:");
     assert_eq!(
         lines[4],
+        format!("    http://127.0.0.1:{port}/#token={token}")
+    );
+    assert_eq!(
+        lines[5],
         format!(
-            "Jobs and history are stored in {}",
+            "  • Jobs and history: {}",
             temp.path().join("home/serve/jobs").display()
         )
     );
-    assert!(lines[5].starts_with("Press Ctrl-C to stop"), "{lines:?}");
+    assert!(
+        lines[6].starts_with("  • Press Ctrl-C to stop"),
+        "{lines:?}"
+    );
     assert_eq!(
         lines.len(),
-        6,
+        7,
         "a loopback server has nothing to warn about: {lines:?}"
     );
     // The data location is real: the service created it.
@@ -142,7 +144,7 @@ fn a_local_server_prints_the_address_the_data_location_and_how_to_stop() {
 }
 
 #[test]
-fn the_terminal_language_changes_the_sentences_but_not_the_scripted_lines() {
+fn the_terminal_language_changes_every_line_but_not_where_the_values_are() {
     let temp = tempfile::tempdir().unwrap();
     let serve = Serve::start(
         temp.path(),
@@ -150,12 +152,29 @@ fn the_terminal_language_changes_the_sentences_but_not_the_scripted_lines() {
         &["--host", "127.0.0.1", "--port", "0"],
     );
     let lines = serve.until("Ctrl-C");
-    assert!(lines[0].starts_with("Markitai server listening on http://127.0.0.1:"));
-    assert!(lines[1].starts_with("Remote access token: "));
-    assert_eq!(lines[2], "在浏览器中打开：", "{lines:?}");
-    assert!(lines[3].starts_with("    http://127.0.0.1:"), "{lines:?}");
-    assert!(lines[4].starts_with("任务和历史保存在 "), "{lines:?}");
-    assert!(lines[5].starts_with("按 Ctrl-C 停止"), "{lines:?}");
+    let port = port_of(&lines[0]);
+    assert_eq!(
+        lines[0],
+        format!("◆ Markitai 服务正在监听 http://127.0.0.1:{port}"),
+        "{lines:?}"
+    );
+    let token = lines[2]
+        .strip_prefix("  • 访问令牌：")
+        .unwrap_or_else(|| panic!("{lines:?}"));
+    assert_eq!(token.len(), 64, "{lines:?}");
+    assert_eq!(lines[3], "  → 在浏览器中打开：", "{lines:?}");
+    assert_eq!(
+        lines[4],
+        format!("    http://127.0.0.1:{port}/#token={token}")
+    );
+    assert!(lines[5].starts_with("  • 任务和历史："), "{lines:?}");
+    assert!(lines[6].starts_with("  • 按 Ctrl-C 停止"), "{lines:?}");
+    assert!(
+        lines.iter().all(|line| !line.contains("listening")
+            && !line.contains("token:")
+            && !line.contains("Open in")),
+        "{lines:?}"
+    );
 }
 
 #[test]
@@ -166,24 +185,25 @@ fn listening_beyond_this_computer_warns_and_hands_out_the_token_only_where_it_is
     let port = port_of(&lines[0]);
     assert_eq!(
         lines[0],
-        format!("Markitai server listening on http://0.0.0.0:{port}")
+        format!("◆ Markitai server listening on http://0.0.0.0:{port}")
     );
     assert!(
-        lines[1].starts_with(&format!(
-            "! Binding to 0.0.0.0:{port} makes this server reachable"
+        lines[2].starts_with(&format!(
+            "  ! Binding to 0.0.0.0:{port} makes this server reachable"
         )),
         "{lines:?}"
     );
     assert!(
-        lines[2].starts_with("  Other machines") && lines[2].contains("like a password"),
+        lines[3].starts_with("    Other machines") && lines[3].contains("like a password"),
         "{lines:?}"
     );
-    assert!(lines[3].starts_with("Remote access token: "));
     // Local and remote browsers both receive the token in a fragment.
-    let token = lines[3].strip_prefix("Remote access token: ").unwrap();
+    let token = lines[4]
+        .strip_prefix("  • Access token: ")
+        .unwrap_or_else(|| panic!("{lines:?}"));
     let local = lines
         .iter()
-        .position(|line| line == "Open in your browser:")
+        .position(|line| line == "  → Open in your browser:")
         .unwrap_or_else(|| panic!("{lines:?}"));
     assert_eq!(
         lines[local + 1],
@@ -193,7 +213,7 @@ fn listening_beyond_this_computer_warns_and_hands_out_the_token_only_where_it_is
     for (index, line) in lines
         .iter()
         .enumerate()
-        .filter(|(_, line)| line.starts_with("From another device"))
+        .filter(|(_, line)| line.starts_with("  → From another device"))
     {
         assert!(line.contains("contains the access token"), "{line}");
         assert!(

@@ -164,8 +164,8 @@ impl Service {
                 service.logs.lock().unwrap()
             );
             let port = service.logs.lock().unwrap().lines().find_map(|line| {
-                line.strip_prefix("Markitai server listening on http://127.0.0.1:")
-                    .and_then(|value| value.parse().ok())
+                line.split_once("Markitai server listening on http://127.0.0.1:")
+                    .and_then(|(_, value)| value.parse().ok())
             });
             if let Some(port) = port {
                 service.port = port;

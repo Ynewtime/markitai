@@ -55,7 +55,9 @@ fn added() -> &'static [CertificateDer<'static>] {
             .any(|name| std::env::var_os(name).is_some_and(|value| !value.is_empty()));
         if named {
             for error in &loaded.errors {
-                eprintln!("markitai: certificates in SSL_CERT_FILE/SSL_CERT_DIR not read: {error}");
+                crate::console::line(&format!(
+                    "Warning: Certificates in SSL_CERT_FILE/SSL_CERT_DIR not read: {error}"
+                ));
             }
         }
         usable(loaded.certs)

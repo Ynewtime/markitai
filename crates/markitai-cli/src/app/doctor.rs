@@ -400,7 +400,8 @@ fn check_line(check: &Check, lang: Lang) -> String {
 }
 
 /// A message or remedy in the terminal language; the JSON values stay English.
-fn localized(text: &str, lang: Lang) -> String {
+/// `auth` shows the same runtime messages.
+pub(super) fn localized(text: &str, lang: Lang) -> String {
     match lang {
         Lang::En => text.to_owned(),
         Lang::Zh => doctor_zh::zh(text),

@@ -4,6 +4,7 @@ mod browser_install;
 mod browser_runtime;
 pub mod build_info;
 pub mod config;
+pub mod console;
 pub mod document_json;
 mod fetch;
 pub mod fetch_cache;

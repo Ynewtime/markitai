@@ -423,7 +423,7 @@ fn install_into(
     // it, so a process may download several, one call at a time.
     if announce {
         let models: Vec<&Model> = needed.iter().map(|(model, _)| **model).collect();
-        eprintln!("{}", download_notice(&models, root));
+        crate::console::line(&download_notice(&models, root));
     }
     let mut installed = Vec::new();
     for (model, state) in needed {

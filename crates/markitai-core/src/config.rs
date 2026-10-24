@@ -304,10 +304,10 @@ pub fn raw(explicit: Option<&Path>, overrides: Option<Value>) -> Result<Value> {
             Ok(None) => {
                 // The CLI separately rejects a missing explicit -c. The library
                 // loader historically warns and falls back without selecting another file.
-                eprintln!(
+                crate::console::line(&format!(
                     "Warning: Config file not found: {} (using defaults)",
                     path.display()
-                );
+                ));
             }
             Err(error) => {
                 return Err(Error::Config(format!(
@@ -1084,7 +1084,7 @@ pub(crate) fn warn_once(message: String) {
         .unwrap_or_else(|error| error.into_inner())
         .insert(message.clone())
     {
-        eprintln!("{message}");
+        crate::console::line(&message);
     }
 }
 
