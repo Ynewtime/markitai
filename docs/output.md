@@ -89,7 +89,10 @@ comments into its own `<!-- page: N -->` provenance first, so RAG output keeps i
 A URL names its output after the last path segment, percent-decoded when that
 yields UTF-8 (`https://example.com/path/to/doc` gives `doc.md`, and
 `/posts/人是什么单位` gives `人是什么单位.md`), or after the host when there is
-none (`example_com.md`). When the URL has a query, the host comes first
+none (`example_com.md`). A last segment that carries a secret (a token after
+`/reset/`, a long random-looking segment, see
+[strategy order](fetch.md#strategy-order-and-remote-fallback)) never names a file: the host does, as
+when there is no segment. When the URL has a query, the host comes first
 (`example_com_8080_search.md` for `https://example.com:8080/search?q=x`). Names
 are bounded to 200 characters and replace characters that file systems reject.
 

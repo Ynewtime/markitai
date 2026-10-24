@@ -773,11 +773,20 @@ pub fn url_name(source: &str) -> String {
     };
     // The parser percent-encodes every non-ASCII character of the path, so a
     // URL written as `/人是什么单位` would name its output `%E4%BA%BA….md`;
-    // the segment is decoded when it decodes to UTF-8.
-    let segment = parsed
-        .as_ref()
-        .and_then(|u| u.path_segments()?.rfind(|s| !s.is_empty()))
-        .map(|segment| percent_decoded(segment).unwrap_or_else(|| segment.to_owned()));
+    // the segment is decoded when it decodes to UTF-8. A last segment that
+    // carries a secret (the fetch policy's judgement, as metadata hides it) or
+    // already reads `REDACTED` never names a file: the host does.
+    let segment = parsed.as_ref().and_then(|u| {
+        u.path_segments()?;
+        let path = u.path();
+        let segments: Vec<&str> = path.split('/').collect();
+        let index = segments.iter().rposition(|s| !s.is_empty())?;
+        let segment = segments[index];
+        if segment == "REDACTED" || crate::fetch::secret_path_segments(path).contains(&index) {
+            return None;
+        }
+        Some(percent_decoded(segment).unwrap_or_else(|| segment.to_owned()))
+    });
     // A page named by a query (`item?id=8863`, `watch?v=abc`) carries its
     // identity there; without it two pages of one site share a name.
     let identity = parsed.as_ref().and_then(identifying_query);
@@ -2253,6 +2262,32 @@ mod tests {
                 "{filename}"
             );
         }
+    }
+
+    #[test]
+    fn a_secret_last_segment_never_names_the_output() {
+        // An invented token after a reset route, an opaque one on its own, and
+        // the form serve's items keep once redacted: the host names the file.
+        let token = "Zq7XmR2pVt9LwK4sNb8YcD3h";
+        assert_eq!(
+            url_name("https://example.test/reset/k7Q2mX9p"),
+            "example_test"
+        );
+        assert_eq!(
+            url_name(&format!("http://127.0.0.1:8080/share/{token}")),
+            "127_0_0_1_8080"
+        );
+        assert_eq!(
+            url_name("http://127.0.0.1:8080/share/REDACTED"),
+            "127_0_0_1_8080"
+        );
+        assert_eq!(
+            url_name(&format!("https://example.test/{token}?id=42")),
+            "example_test_42"
+        );
+        // An ordinary last segment still names it.
+        assert_eq!(url_name("https://example.test/share/notes"), "notes");
+        assert_eq!(url_name("mailto:someone@example.test"), "page");
     }
 
     #[test]
