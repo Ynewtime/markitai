@@ -76,6 +76,15 @@ const RULES: &[(&str, &str)] = &[
         "PDF pages {}: native text was not recovered ({}); OCR is required to read them. Run again with --ocr.",
         "PDF 第 {} 页：未能提取文字（{}）；需要 OCR 才能读取。请加上 --ocr 重新运行。",
     ),
+    // An answer requested again and used: shown with -v only (an info notice).
+    (
+        "A model answer could not be used, so the request was sent again; a later answer was used",
+        "模型有一次回答无法使用，已重新请求，并采用了之后的回答",
+    ),
+    (
+        "The provider withheld a model answer as a recitation of published text, so the request was sent again; a later answer was used",
+        "供应商认为一次回答复述了已发表的文字而未返回，已重新请求，并采用了之后的回答",
+    ),
     (
         "--llm-batch requires enabled LLM processing",
         "--llm-batch 需要启用 LLM 处理",
@@ -784,6 +793,16 @@ mod tests {
         assert_eq!(
             localize("Cannot create output directory a/b: a is not a directory"),
             "无法创建输出目录 a/b：a 不是目录"
+        );
+    }
+
+    #[test]
+    fn a_used_retry_reads_in_chinese_with_its_file_name() {
+        assert_eq!(
+            localize(
+                "notes.pdf: A model answer could not be used, so the request was sent again; a later answer was used"
+            ),
+            "notes.pdf: 模型有一次回答无法使用，已重新请求，并采用了之后的回答"
         );
     }
 

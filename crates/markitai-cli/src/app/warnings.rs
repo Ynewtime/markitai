@@ -14,6 +14,16 @@ fn is_explanatory(warning: &str) -> bool {
     markitai_core::notices::classify(warning).level == markitai_core::notices::Level::Info
 }
 
+/// The label a shown warning is printed with: `Info` (the info mark) for a
+/// note that only explains, `Warning` otherwise.
+pub(super) fn label(warning: &str) -> &'static str {
+    if is_explanatory(warning) {
+        "Info"
+    } else {
+        "Warning"
+    }
+}
+
 /// `(page, reason)` of a per-page "native text was not recovered" warning.
 fn page_without_text(warning: &str) -> Option<(usize, &str)> {
     let rest = warning.strip_prefix("PDF page ")?;
@@ -236,6 +246,8 @@ mod tests {
             ]
         );
         assert_eq!(present(&warnings, true), warnings);
+        assert_eq!(label(&warnings[1]), "Info");
+        assert_eq!(label(&warnings[5]), "Warning");
         assert!(present(&[], false).is_empty());
     }
 }

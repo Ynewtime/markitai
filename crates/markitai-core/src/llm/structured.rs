@@ -397,21 +397,18 @@ struct Resend {
 impl Resend {
     /// The document's notice once the outcome is known. A discarded answer is
     /// paid and the second request counts toward the budget, so it is always
-    /// recorded; when a later answer was used it is an `info` notice
-    /// (`llm.answer_retried`): nothing is missing from the document.
+    /// recorded. When a later answer was used it is a short `info` notice
+    /// (`llm.answer_retried`): nothing is missing from the document, and the
+    /// discarded answer's faults (the markers it dropped) are the model's
+    /// business, told to it in the follow-up request, not the reader's.
     fn notice(&self, used: bool) -> String {
         let (previous, next) = (self.previous.label(), self.next.label());
         match (self.reason.contains("RECITATION"), used) {
-            (true, true) => format!(
-                "The provider withheld the {previous} answer as a recitation of published text; the request was sent again in {next} mode and a later answer was used"
-            ),
+            (true, true) => "The provider withheld a model answer as a recitation of published text, so the request was sent again; a later answer was used".into(),
             (true, false) => format!(
                 "The provider withheld the {previous} answer as a recitation of published text; the request was sent again in {next} mode"
             ),
-            (false, true) => format!(
-                "The model's {previous} answer was not used ({}); the request was sent again in {next} mode and a later answer was used",
-                self.reason
-            ),
+            (false, true) => "A model answer could not be used, so the request was sent again; a later answer was used".into(),
             (false, false) => format!(
                 "LLM {previous} answer was rejected ({}); the request was sent again in {next} mode",
                 self.reason

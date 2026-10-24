@@ -922,8 +922,12 @@ for sources of at least 200 non-whitespace characters, keep at least 20% of thei
 length and 30% of distinct character bigrams. Chunk checks are more permissive
 when the response's character four-grams substantially come from that chunk.
 These are deletion safeguards, not proof of semantic accuracy. An answer that
-fails them, or changes a protected marker, is not used, and the warning says so
-in plain words: `LLM enhancement failed: the model's answer left out or changed
+fails them, or changes a protected marker, is not used. When the request sent
+again (it names the markers the answer lost) gets an answer that passes, the
+document keeps the info notice `A model answer could not be used, so the request
+was sent again; a later answer was used` (`llm.answer_retried`; the terminal
+shows it with `-v`, the workbench not at all; the cost counts both requests).
+When no answer passes, the warning says so in plain words: `LLM enhancement failed: the model's answer left out or changed
 too much of the document, so it was not used; the converted Markdown is kept as
 it was.`
 
