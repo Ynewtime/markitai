@@ -42,6 +42,7 @@ import functools
 import json
 import os
 import re
+import unicodedata
 import shutil
 import subprocess
 import tempfile
@@ -749,16 +750,29 @@ def test_docs_do_not_advertise_ffmpeg() -> None:
 _LINK_RE = re.compile(r"\]\((/(?:zh/)?guide/[^)\s#]*|\./[^)\s#]*)(?:#([^)\s]+))?\)")
 
 
+# VitePress's own slugify (vitepress/dist/node, from @mdit-vue/shared): every run of
+# whitespace and ASCII punctuation, `.` and `_` included, becomes one `-`.
+_SLUG_SPECIAL = re.compile(r"[\s~`!@#$%^&*()\-_+=\[\]{}|\\;:\"'“”‘’<>,.?/]+")
+
+
 def _slugify_heading(text: str) -> str:
-    """Approximate VitePress/markdown-it-anchor ids (CJK kept as-is)."""
-    slug = re.sub(r"\s*\{#[^}]*\}\s*$", "", text).strip().lower()
-    slug = re.sub(r"[`*_]", "", slug)
-    slug = slug.replace(" ", "-")
-    return re.sub(r"[^\w\u4e00-\u9fff-]", "", slug, flags=re.UNICODE).strip("-")
+    """The id VitePress gives a heading without an explicit `{#id}` (CJK kept as-is)."""
+    text = re.sub(r"\s*\{#[^}]*\}\s*$", "", text).strip()
+    # The id is made from the rendered text: a link keeps its words, code and
+    # emphasis lose their marks.
+    text = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", text)
+    text = re.sub(r"[`*]", "", text)
+    slug = unicodedata.normalize("NFKD", text)
+    slug = re.sub(r"[\u0300-\u036f]", "", slug)
+    slug = re.sub(r"[\u0000-\u001f]", "", slug)
+    slug = _SLUG_SPECIAL.sub("-", slug)
+    slug = re.sub(r"-{2,}", "-", slug).strip("-")
+    return re.sub(r"^(\d)", r"_\1", slug).lower()
 
 
 def _heading_slugs(path: Path) -> set[str]:
-    """Every id a heading answers to: its explicit `{#id}` or its slug."""
+    """Every id a heading answers to: its explicit `{#id}`, which then is its only
+    id, else its slug."""
     slugs: set[str] = set()
     for line in _prose_lines(path.read_text(encoding="utf-8")):
         match = re.match(r"^#{1,6}\s+(.*)$", line)
@@ -768,7 +782,8 @@ def _heading_slugs(path: Path) -> set[str]:
         explicit = re.search(r"\{#[^}]*\}\s*$", text)
         if explicit:
             slugs.add(explicit.group(0)[2:-1].strip())
-        slugs.add(_slugify_heading(text))
+        else:
+            slugs.add(_slugify_heading(text))
     return slugs
 
 
