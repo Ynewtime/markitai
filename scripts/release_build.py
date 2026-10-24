@@ -198,9 +198,10 @@ def release_body(changelog, version, repository=REPOSITORY):
 # Files that keep naming a development version on purpose: tests and examples
 # of version parsing, the private workbench package (its version is unused and
 # feeds the bundle's source digest), the contributor protocol, released history
-# and the website (deployed on its own).
+# and the website (deployed on its own). Cargo.lock and vendor/ also hold
+# other packages' versions; `cargo update --workspace` sets the workspace's.
 STALE_VERSION_EXEMPT = ("*.test.ts", "scripts/test_*.py", "scripts/release_build.py", "AGENTS.md",
-                        "CHANGELOG.md", "CHANGELOG.zh.md", "website/*",
+                        "CHANGELOG.md", "CHANGELOG.zh.md", "website/*", "Cargo.lock", "vendor/*",
                         "crates/markitai-cli/src/server/web/package.json",
                         "crates/markitai-cli/src/server/web/package-lock.json")
 
@@ -242,7 +243,8 @@ def set_versions(root, version):
 def stale_versions(root, old):
     """Tracked files outside STALE_VERSION_EXEMPT that still name the old version, with line numbers."""
     spellings = sorted({old, python_version(old), npm_version(old)}, key=len, reverse=True)
-    pattern = re.compile("|".join(map(re.escape, spellings)))
+    # Not part of a longer number: 192.0.0.8 does not name 2.0.0.
+    pattern = re.compile(r"(?<![\d.])(?:" + "|".join(map(re.escape, spellings)) + r")(?!\d|\.\d)")
     names = subprocess.check_output(["git", "ls-files", "-z"], cwd=root).decode("utf-8").split("\0")
     found = []
     for name in filter(None, names):
