@@ -34,7 +34,7 @@ pip、pipx 和 uv 只在 PyPI 有 wheel 的六个平台（macOS 11+、glibc 2.28
 uv tool install "git+https://github.com/Ynewtime/markitai@v1.2.0#subdirectory=packages/markitai" --with "pymupdf4llm<2"
 ```
 
-`MARKITAI_VERSION` 指定 1.x 版本时，安装脚本会打印同一条命令。1.x 的历史见[更新日志](/zh/changelog)。
+`MARKITAI_VERSION` 指定 1.x 版本时，安装脚本会打印同一条命令。1.x 的历史见[更新日志](/zh/changelog#python-1x)。
 
 ## 变化一览
 

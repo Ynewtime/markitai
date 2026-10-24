@@ -112,9 +112,9 @@ export default defineConfig({
 
   lastUpdated: true,
   cleanUrls: true,
-  // Not pages: the release notes' sources (scripts/changelog.mjs publishes
-  // their released sections as /changelog and /zh/changelog) and shared
-  // snippets (`<!--@include: …/snippets/setup.md-->`).
+  // Not pages: the 1.x release notes (scripts/changelog.mjs publishes them,
+  // after the 2.x notes of CHANGELOG*.md, as /changelog and /zh/changelog)
+  // and shared snippets (`<!--@include: …/snippets/setup.md-->`).
   srcExclude: ['changelog/**', 'snippets/**'],
 
   // ```mermaid fences become SVG at build time (see mermaid.ts).

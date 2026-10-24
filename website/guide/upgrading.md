@@ -34,7 +34,7 @@ pip, pipx and uv find 2.0 only on the six platforms PyPI has wheels for (macOS 1
 uv tool install "git+https://github.com/Ynewtime/markitai@v1.2.0#subdirectory=packages/markitai" --with "pymupdf4llm<2"
 ```
 
-The setup script prints the same command when `MARKITAI_VERSION` names a 1.x release. 1.x history is on the [changelog](/changelog).
+The setup script prints the same command when `MARKITAI_VERSION` names a 1.x release. 1.x history is on the [changelog](/changelog#python-1x).
 
 ## What changed
 

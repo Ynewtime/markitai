@@ -55,7 +55,11 @@ _REPO = _WEBSITE.parent
 _EN_GUIDE = _WEBSITE / "guide"
 _ZH_GUIDE = _WEBSITE / "zh" / "guide"
 _GUIDES = (_EN_GUIDE, _ZH_GUIDE)
-_CHANGELOGS = sorted((_WEBSITE / "changelog").glob("*.md"))
+# The release notes the changelog pages publish: 2.x, then the Python 1.x line.
+_CHANGELOGS = sorted((_WEBSITE / "changelog").glob("*.md")) + [
+    _REPO / "CHANGELOG.md",
+    _REPO / "CHANGELOG.zh.md",
+]
 _BIN_ENV = "MARKITAI_BIN"
 
 # `--flag`. Trailing-hyphen matches are prose globs (`--no-*`), not options.
@@ -902,7 +906,12 @@ def _strip_code_spans(line: str) -> str:
 
 
 def test_release_notes_exist() -> None:
-    assert [path.name for path in _CHANGELOGS] == ["python-1.x.md", "python-1.x.zh.md"]
+    assert [path.name for path in _CHANGELOGS] == [
+        "python-1.x.md",
+        "python-1.x.zh.md",
+        "CHANGELOG.md",
+        "CHANGELOG.zh.md",
+    ]
 
 
 @pytest.mark.parametrize("changelog", _CHANGELOGS, ids=lambda p: p.name)
@@ -922,3 +931,145 @@ def test_changelog_has_no_bare_angle_bracket_tags(changelog: Path) -> None:
         "Bare angle-bracket tokens break the VitePress/Vue website build; "
         "wrap them in backticks: " + "; ".join(offenders)
     )
+
+
+# ============================================================
+# The changelog pages publish released versions only
+# ============================================================
+
+_SECTION_RE = re.compile(r"^## \[(\d+\.\d+\.\d+)\]", re.MULTILINE)
+
+
+def _git(cwd: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", "-c", "user.name=Site Test", "-c", "user.email=site@example.invalid", *args],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
+        timeout=60,
+    ).stdout
+
+
+def _bun() -> str:
+    bun = shutil.which("bun")
+    if bun is None:
+        message = "bun is not on PATH (the changelog script runs under Bun)"
+        if os.environ.get("CI"):
+            pytest.fail(message)
+        pytest.skip(message)
+    return bun
+
+
+def _notes(title: str, intro: str, *sections: str) -> str:
+    body = [f"# {title}", "", intro, ""]
+    for version in sections:
+        body += [f"## [{version}] - 2026-01-01", "", f"- Fixed: item of {version}", ""]
+    return "\n".join(body)
+
+
+def _changelog_repo(root: Path, current: tuple[str, ...], python: tuple[str, ...]) -> Path:
+    """A repository with release notes, the changelog script and tags v1.0.0, v2.0.0."""
+    site = root / "website"
+    (site / "scripts").mkdir(parents=True)
+    (site / "changelog").mkdir()
+    (site / "zh").mkdir()
+    shutil.copy(_WEBSITE / "scripts" / "changelog.mjs", site / "scripts")
+    link = "[1.0.0 changelog](https://github.com/Ynewtime/markitai/blob/v1.0.0/CHANGELOG{}.md)"
+    for suffix in ("", ".zh"):
+        (root / f"CHANGELOG{suffix}.md").write_text(
+            _notes("Changelog", "1.x notes: " + link.format(suffix) + ".", *current),
+            encoding="utf-8",
+        )
+        (site / "changelog" / f"python-1.x{suffix}.md").write_text(
+            _notes("Changelog", "Python intro, not shown.", *python), encoding="utf-8"
+        )
+    _git(root, "init", "-q")
+    _git(root, "add", ".")
+    _git(root, "commit", "-q", "-m", "notes")
+    _git(root, "tag", "v1.0.0")
+    _git(root, "tag", "v2.0.0")
+    return site
+
+
+def _changelog(site: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [_bun(), "scripts/changelog.mjs", *args],
+        cwd=site,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        timeout=60,
+    )
+
+
+def test_changelog_pages_put_released_2x_first_and_gate_by_tag(tmp_path: Path) -> None:
+    """2.x then 1.x, newest first; a 2.x section waits for its tag.
+
+    The release commit adds `## [2.0.1]` (or keeps `## [Unreleased]`) at the
+    top of CHANGELOG.md before the tag exists: --check passes and the page
+    leaves it out until `v2.0.1` is tagged.
+    """
+    site = _changelog_repo(tmp_path, ("Unreleased", "2.0.1", "2.0.0"), ("1.0.0", "0.9.0"))
+    check = _changelog(site, "--check")
+    assert check.returncode == 0, check.stdout + check.stderr
+    build = _changelog(site)
+    assert build.returncode == 0, build.stdout + build.stderr
+    for page in ("changelog.md", "zh/changelog.md"):
+        text = (site / page).read_text(encoding="utf-8")
+        assert _SECTION_RE.findall(text) == ["2.0.0", "1.0.0", "0.9.0"], page
+        assert "Unreleased" not in text, page
+        assert "Python intro" not in text, page
+        assert text.index("[2.0.0]") < text.index("{#python-1x}") < text.index("[1.0.0]"), page
+        assert "](#python-1x)" in text and "github.com" not in text, (
+            f"{page}: the intro's 1.x link should point into the page"
+        )
+
+    _git(tmp_path, "tag", "v2.0.1")
+    assert _changelog(site).returncode == 0
+    text = (site / "changelog.md").read_text(encoding="utf-8")
+    assert _SECTION_RE.findall(text) == ["2.0.1", "2.0.0", "1.0.0", "0.9.0"]
+
+
+def test_changelog_check_fails_on_lost_or_one_language_sections(tmp_path: Path) -> None:
+    """An untagged section below a released one would vanish; so would a one-language one."""
+    site = _changelog_repo(tmp_path, ("2.0.0", "2.0.0-typo"), ("1.0.0",))
+    check = _changelog(site, "--check")
+    assert check.returncode == 1 and "2.0.0-typo" in check.stderr, check.stderr
+
+    zh = tmp_path / "CHANGELOG.zh.md"
+    zh.write_text(_notes("更新日志", "简介。", "1.9.9"), encoding="utf-8")
+    (tmp_path / "CHANGELOG.md").write_text(_notes("Changelog", "Intro.", "2.0.0"), encoding="utf-8")
+    _git(tmp_path, "tag", "v1.9.9")
+    check = _changelog(site, "--check")
+    assert check.returncode == 1 and "publishes" in check.stderr, check.stderr
+
+
+def test_built_changelog_pages_carry_the_released_2x_notes() -> None:
+    """After `docs:build`: every tagged 2.x section, then the 1.x heading, then 1.x."""
+    dist = _WEBSITE / ".vitepress" / "dist"
+    if not dist.is_dir():
+        pytest.skip("the site is not built (bun run docs:build)")
+    tags = {line.strip().removeprefix("v") for line in _git(_REPO, "tag", "--list", "v*").split()}
+    for page, current in (
+        ("changelog.html", _REPO / "CHANGELOG.md"),
+        ("zh/changelog.html", _REPO / "CHANGELOG.zh.md"),
+    ):
+        html = (dist / page).read_text(encoding="utf-8")
+        headings = re.findall(r"<h2[^>]*\bid=\"([^\"]+)\"[^>]*>(.*?)</h2>", html, re.DOTALL)
+        shown = [
+            "1.x" if anchor == "python-1x" else m.group(1)
+            for anchor, text in headings
+            if anchor == "python-1x" or (m := re.search(r"\[(\d+\.\d+\.\d+)\]", text))
+        ]
+        assert "1.x" in shown, f"{page} has no heading where the 1.x notes start"
+        written = _SECTION_RE.findall(current.read_text(encoding="utf-8"))
+        released = [version for version in written if version in tags]
+        assert released, f"{current.name} has no tagged section (fetch the tags)"
+        assert shown[: shown.index("1.x")] == released, (
+            f"{page} shows 2.x {shown[: shown.index('1.x')]}, the tagged sections are {released}"
+        )
+        older = shown[shown.index("1.x") + 1 :]
+        assert older and older[0].startswith("1."), f"{page}: the 1.x part starts with {older[:1]}"
