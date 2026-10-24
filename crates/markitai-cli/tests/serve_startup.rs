@@ -130,7 +130,10 @@ fn a_local_server_prints_the_address_the_data_location_and_how_to_stop() {
             temp.path().join("home/serve/jobs").display()
         )
     );
-    assert!(lines[6].starts_with("  • Press Ctrl-C to stop"), "{lines:?}");
+    assert!(
+        lines[6].starts_with("  • Press Ctrl-C to stop"),
+        "{lines:?}"
+    );
     assert_eq!(
         lines.len(),
         7,
@@ -160,7 +163,10 @@ fn the_terminal_language_changes_every_line_but_not_where_the_values_are() {
         .unwrap_or_else(|| panic!("{lines:?}"));
     assert_eq!(token.len(), 64, "{lines:?}");
     assert_eq!(lines[3], "  → 在浏览器中打开：", "{lines:?}");
-    assert_eq!(lines[4], format!("    http://127.0.0.1:{port}/#token={token}"));
+    assert_eq!(
+        lines[4],
+        format!("    http://127.0.0.1:{port}/#token={token}")
+    );
     assert!(lines[5].starts_with("  • 任务和历史："), "{lines:?}");
     assert!(lines[6].starts_with("  • 按 Ctrl-C 停止"), "{lines:?}");
     assert!(

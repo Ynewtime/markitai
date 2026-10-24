@@ -304,7 +304,9 @@ async fn serve(cfg: Value, source: SettingsSource, options: ServeOptions) -> Res
         if let Err(error) = launch::open_browser(&url) {
             crate::app::logging::shaped(
                 crate::app::logging::Shape::item(crate::term::Mark::Warning),
-                &format!("Warning: Could not open a browser: {error}; open the address above manually."),
+                &format!(
+                    "Warning: Could not open a browser: {error}; open the address above manually."
+                ),
                 Some(&crate::app::i18n::text!(lang =>
                     "Could not open a browser: {error}; open the address above manually.",
                     "无法打开浏览器：{error}；请手动打开上面的地址。")),
