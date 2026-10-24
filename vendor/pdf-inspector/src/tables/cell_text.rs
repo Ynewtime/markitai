@@ -23,8 +23,10 @@ pub(crate) fn cell_fragment(item: &TextItem, text: &str) -> String {
 pub(crate) fn join_cell_items(items: &[&TextItem]) -> String {
     let mut result = String::new();
     let mut last: Option<&TextItem> = None;
+    // markitai: the item before `last`, for a spaced hyphen run.
+    let mut before_last: Option<&TextItem> = None;
 
-    for item in items {
+    for (index, item) in items.iter().enumerate() {
         let text = item.text.trim();
         if text.is_empty() {
             continue;
@@ -53,9 +55,22 @@ pub(crate) fn join_cell_items(items: &[&TextItem]) -> String {
             // A script run flagged by extraction renders as `<sup>`/`<sub>`
             // and takes the same edge-spacing policy as `TextLine::text`:
             // "V<sub>f</sub>", "$1,234<sup>1</sup>", "word<sup>2</sup> next".
+            // markitai: a lone hyphen run a word space apart from the words
+            // on both sides keeps its spaces ("2019 - 2020" as three runs).
+            let spaced_dash = if curr_is_hyphen {
+                items[index + 1..]
+                    .iter()
+                    .find(|next| !next.text.trim().is_empty())
+                    .is_some_and(|next| crate::types::spaced_dash(prev_item, item, next))
+            } else {
+                prev_item.text.trim() == "-"
+                    && before_last
+                        .is_some_and(|before| crate::types::spaced_dash(before, prev_item, item))
+            };
             let needs_space =
                 match crate::types::script_edge_needs_space(prev_item, item, &result, text) {
                     Some(needs_space) => needs_space,
+                    None if spaced_dash => true,
                     None => {
                         !(prev_ends_with_hyphen
                             || curr_is_hyphen
@@ -76,6 +91,7 @@ pub(crate) fn join_cell_items(items: &[&TextItem]) -> String {
         } else {
             crate::types::push_item_text(&mut result, item, text);
         }
+        before_last = last;
         last = Some(item);
     }
 
@@ -282,10 +298,24 @@ mod tests {
 
     #[test]
     fn test_join_cell_items_hyphen_no_space() {
+        // markitai: the hyphen touches both words (each item is 5 units a
+        // character wide); a word gap on both sides is a spaced hyphen.
         let a = make_item("pre", 100.0, 500.0, 10.0);
-        let b = make_item("-", 120.0, 500.0, 10.0);
-        let c = make_item("fix", 130.0, 500.0, 10.0);
+        let b = make_item("-", 115.0, 500.0, 10.0);
+        let c = make_item("fix", 120.0, 500.0, 10.0);
         assert_eq!(join_cell_items(&[&a, &b, &c]), "pre-fix");
+    }
+
+    #[test]
+    fn spaced_hyphen_runs_keep_their_spaces_in_a_cell() {
+        // markitai: "2019 - 2020" drawn as three runs, a word space apart.
+        let a = make_item("2019", 100.0, 500.0, 10.0);
+        let b = make_item("-", 123.0, 500.0, 10.0);
+        let c = make_item("2020", 131.0, 500.0, 10.0);
+        assert_eq!(join_cell_items(&[&a, &b, &c]), "2019 - 2020");
+        // A gap on one side only still joins, as a hyphen touching a word.
+        let c = make_item("2020", 128.0, 500.0, 10.0);
+        assert_eq!(join_cell_items(&[&a, &b, &c]), "2019-2020");
     }
 
     #[test]

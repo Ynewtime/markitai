@@ -167,24 +167,14 @@ fn collapse_dot_leaders(text: &str) -> String {
     DOT_LEADER_RE.replace_all(text, " ... ").to_string()
 }
 
-/// Fix words broken across lines with spaces before the continuation
-/// e.g., "Limoeiro do Nort e" -> "Limoeiro do Norte"
+/// Rejoin words hyphenated at line breaks ([`dehyphenate_line_breaks`]).
+///
+/// markitai: a hyphen or dash set between spaces stays as written
+/// ("Monday - Friday", "Gazette - Spring Issue"). The upstream rule rewrote
+/// every `letter - letter` as `letter-letter`, which joined ranges, titles
+/// and running headers that the page prints spaced.
 fn fix_hyphenation(text: &str) -> String {
-    use once_cell::sync::Lazy;
-
-    // Fix "word - word" patterns that should be "word-word" (compound words)
-    // But be careful not to break list items (which start with "- ")
-    static SPACED_HYPHEN_RE: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r"([a-zA-ZáàâãéèêíïóôõöúçñÁÀÂÃÉÈÊÍÏÓÔÕÖÚÇÑ]) - ([a-zA-ZáàâãéèêíïóôõöúçñÁÀÂÃÉÈÊÍÏÓÔÕÖÚÇÑ])").unwrap()
-    });
-
-    let result = SPACED_HYPHEN_RE
-        .replace_all(text, |caps: &regex::Captures| {
-            format!("{}-{}", &caps[1], &caps[2])
-        })
-        .to_string();
-
-    dehyphenate_line_breaks(&result)
+    dehyphenate_line_breaks(text)
 }
 
 /// What a line-break hyphen pair should become. Policy output only — how the
@@ -956,7 +946,22 @@ mod tests {
 
     #[test]
     fn test_fix_hyphenation_spaced_hyphen() {
-        assert_eq!(fix_hyphenation("Limoeiro - Norte"), "Limoeiro-Norte");
+        // markitai: spaced hyphens and dashes stay as the page prints them.
+        for text in [
+            "Limoeiro - Norte",
+            "São - Paulo",
+            "one - two and three - four",
+            "Harbour Gazette - Spring Issue",
+            "Inland \u{2013} Coastal \u{2014} not in winter",
+        ] {
+            assert_eq!(fix_hyphenation(text), text);
+        }
+        // Line-end breaks and in-word hyphens behave as before.
+        assert_eq!(
+            fix_hyphenation("a defendant and the de- fendant"),
+            "a defendant and the defendant"
+        );
+        assert_eq!(fix_hyphenation("lower-energy lamps"), "lower-energy lamps");
     }
 
     #[test]
@@ -964,19 +969,6 @@ mod tests {
         assert_eq!(
             fix_hyphenation("- item one\n- item two"),
             "- item one\n- item two"
-        );
-    }
-
-    #[test]
-    fn test_fix_hyphenation_accented_chars() {
-        assert_eq!(fix_hyphenation("São - Paulo"), "São-Paulo");
-    }
-
-    #[test]
-    fn test_fix_hyphenation_multiple_instances() {
-        assert_eq!(
-            fix_hyphenation("one - two and three - four"),
-            "one-two and three-four"
         );
     }
 

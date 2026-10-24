@@ -1,0 +1,9 @@
+{
+  "file": "spaced-dashes.pdf",
+  "bytes": 2670,
+  "sha256": "3877804c059e08e5a14e8a5ffc7fd04546d865ff3f792bd41e9cf1595705be4c",
+  "content": "invented newsletter page, no real data",
+  "authored": "written for these tests in markitai-rust",
+  "generator": "make.py: ReportLab 5.1.0 BaseDocTemplate with a running header, a title frame and two column frames, plus two lines drawn word by word as separate runs without space characters, their hyphens in Times-Roman",
+  "purpose": "hyphens and dashes set between spaces (in one run and as runs of their own) keep their spaces, while in-word hyphens and a word broken at a line end read as before"
+}

@@ -917,3 +917,26 @@ failed by name as the 1.25.1 copy (1,727 passed).
 
   Run in the isolated copy (as above), the crate's unit tests give 1,745
   passed (1 added) and the same 21 failed by name.
+
+## Spaced hyphens and dashes (2.0 parity, r3)
+
+- `src/markdown/postprocess.rs`: `fix_hyphenation` no longer rewrites every
+  `letter - letter` as `letter-letter`. A hyphen set between spaces stays as
+  the page prints it (`Monday - Friday`, `Gazette - Spring Issue`), as Python
+  markitai 1.2.0 reads it; the rule fired on every page markitai's layout
+  leaves to this reader's Markdown. Line-end breaks (`de- fendant`) still go
+  through `dehyphenate_line_breaks`. The upstream tests that expected the
+  rewrite (`Limoeiro - Norte`, `São - Paulo`, `one - two and three - four`)
+  now expect the text unchanged and are folded into one test.
+- `src/types.rs` (`needs_space_between`) and `src/tables/cell_text.rs`
+  (`join_cell_items`): a run that is a lone hyphen keeps a space on both sides
+  when `spaced_dash` finds it a word space (`SPACED_DASH_GAP`, 0.13 em, up to
+  3 em) from the runs before and after it on its baseline; a hyphen touching
+  either word, or on another baseline, joins them as before (`lower-cost`).
+  The upstream test `centered_delimiters_inside_substantive_text_are_preserved`
+  draws its hyphens a third of an em from their words and now expects
+  `Result - 42 - approved`; `test_join_cell_items_hyphen_no_space` moves its
+  hyphen to touch both words.
+
+  Run in the isolated copy (as above), the crate's unit tests give 1,745
+  passed (2 added, 2 folded) and the same 21 failed by name.

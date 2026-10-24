@@ -4409,7 +4409,9 @@ mod tests {
         let lines = group_into_lines(items);
 
         assert_eq!(lines.len(), 1);
-        assert_eq!(lines[0].text(), "Result-42-approved");
+        // markitai: the hyphens stand a third of an em from their words on
+        // both sides, so they keep their spaces (`spaced_dash`).
+        assert_eq!(lines[0].text(), "Result - 42 - approved");
     }
 
     #[test]

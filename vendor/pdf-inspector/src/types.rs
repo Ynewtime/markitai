@@ -730,6 +730,31 @@ fn footnote_mark(text: &str) -> bool {
         || count == 1 && text.chars().all(|c| c.is_ascii_lowercase())
 }
 
+/// markitai: the least gap, in ems, on each side of a lone hyphen run that
+/// reads as a word space: the merge of a line's runs inserts a space from
+/// 0.08 em and from 0.13 em between lowercase letters.
+const SPACED_DASH_GAP: f32 = 0.13;
+
+/// markitai: whether `dash`, a run of a lone hyphen between `prev` and
+/// `next` on one baseline, is set a word space apart from both
+/// ("Gazette - Spring" drawn as three runs). Such a hyphen keeps its spaces
+/// in line and cell text; one touching either word ("lower-cost", a
+/// line-end "conver-") still joins them.
+pub(crate) fn spaced_dash(prev: &TextItem, dash: &TextItem, next: &TextItem) -> bool {
+    let size = dash.font_size;
+    let measured = |item: &TextItem| item.advance_known && item.width > 0.0 && item.is_upright();
+    let word_gap = |gap: f32| gap >= size * SPACED_DASH_GAP && gap <= size * 3.0;
+    dash.text.trim() == "-"
+        && measured(prev)
+        && measured(dash)
+        && next.is_upright()
+        && [prev, next]
+            .iter()
+            .all(|item| (item.y - dash.y).abs() <= size * 0.2)
+        && word_gap(dash.x - (prev.x + prev.width))
+        && word_gap(next.x - (dash.x + dash.width))
+}
+
 /// Spacing at the edge of a super/subscript run — the single policy shared
 /// by line rendering (`TextLine::text`) and table-cell joining. `None` when
 /// neither item is a script run, so the caller's ordinary rules apply.
@@ -1143,6 +1168,25 @@ impl TextLine {
             return true;
         }
 
+        // markitai: a lone hyphen run a word space apart from the words on
+        // both sides keeps its spaces ("tables - Winter").
+        if !space_already_exists {
+            let index = |run: &TextItem| self.items.iter().position(|i| std::ptr::eq(i, run));
+            let spaced = if curr_is_hyphen {
+                index(item)
+                    .and_then(|i| self.items.get(i + 1))
+                    .is_some_and(|next| spaced_dash(prev_item, item, next))
+            } else {
+                prev_item.text.trim() == "-"
+                    && index(prev_item)
+                        .and_then(|i| i.checked_sub(1))
+                        .is_some_and(|i| spaced_dash(&self.items[i], prev_item, item))
+            };
+            if spaced {
+                return true;
+            }
+        }
+
         // Use position-based spacing detection
         let should_join = should_join_items(prev_item, item, single_char_threshold);
 
@@ -1211,6 +1255,45 @@ mod formatting_tests {
         it.font = "Menlo-Regular".into();
         it.fixed_pitch = Some(true);
         it
+    }
+
+    #[test]
+    fn a_hyphen_run_a_word_space_apart_keeps_its_spaces() {
+        // markitai: words and hyphens as separate runs, 12pt; a space is
+        // about 3.3 units wide.
+        let spaced = line(vec![
+            body("Tide tables", 0.0, 60.0),
+            body("-", 63.3, 4.0),
+            body("Winter Edition", 70.6, 80.0),
+        ]);
+        assert_eq!(spaced.text(), "Tide tables - Winter Edition");
+        assert_eq!(
+            spaced.text_with_formatting(true, true, true),
+            "Tide tables - Winter Edition"
+        );
+        // Touching the words, or a gap on one side only: one word as before.
+        let tight = line(vec![
+            body("lower", 0.0, 30.0),
+            body("-", 30.0, 4.0),
+            body("cost lamp", 34.0, 50.0),
+        ]);
+        assert_eq!(tight.text(), "lower-cost lamp");
+        let one_sided = line(vec![
+            body("lower", 0.0, 30.0),
+            body("-", 33.3, 4.0),
+            body("cost", 37.3, 24.0),
+        ]);
+        assert_eq!(one_sided.text(), "lower-cost");
+        // A dash a line lower (wrapped heading lines) is not on the
+        // baseline of its neighbours and joins as before.
+        let mut lower = body("-", 63.3, 4.0);
+        lower.y = 84.0;
+        let wrapped = line(vec![
+            body("tables", 0.0, 60.0),
+            lower,
+            body("Winter", 70.6, 40.0),
+        ]);
+        assert_eq!(wrapped.text(), "tables-Winter");
     }
 
     #[test]

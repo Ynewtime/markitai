@@ -45,6 +45,9 @@ mod sanitize;
 #[cfg(test)]
 #[path = "pdf/sanitize_tests.rs"]
 mod sanitize_tests;
+#[cfg(test)]
+#[path = "pdf/spaced_dashes_tests.rs"]
+mod spaced_dashes_tests;
 #[path = "pdf/text_trust.rs"]
 pub(crate) mod text_trust;
 #[cfg(test)]
