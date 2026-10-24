@@ -7,7 +7,7 @@
 1.x 版本是 Python 实现，其说明见
 [1.2.0 更新日志](https://github.com/Ynewtime/markitai/blob/v1.2.0/CHANGELOG.zh.md)。
 
-## [2.0.0] - 2026-10-XX
+## [2.0.0] - 2026-10-24
 
 Markitai 2.0.0 是 Rust 重写版的首个正式发布，取代 Python 版 markitai 1.2.0。命令（`markitai`、`mkai`、`markitai-mcp`）、选项和配置保持不变，现在由一个原生程序运行，无需安装 Python、Node.js 或 Go 运行时。大多数文档转换更快、占用内存更少、结果更好。
 

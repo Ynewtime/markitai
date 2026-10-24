@@ -1648,10 +1648,10 @@ Examples:
 
 --- stderr ---
 === markitai --version (exit 0, stderr 0 bytes) ===
-markitai 2.0.0-dev
+markitai 2.0.0
 --- stderr ---
 === markitai -V (exit 0, stderr 0 bytes) ===
-markitai 2.0.0-dev
+markitai 2.0.0
 --- stderr ---
 === markitai config (exit 2, stderr 1194 bytes) ===
 --- stderr ---

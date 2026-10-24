@@ -6,7 +6,7 @@ build-backend = "maturin"
 
 [project]
 name = "markitai"
-version = "2.0.0.dev0"
+version = "2.0.0"
 description = "Convert documents, web pages and images to Markdown: CLI, MCP server and Python API"
 readme = "README.md"
 requires-python = ">=3.10"

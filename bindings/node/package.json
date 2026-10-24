@@ -1,6 +1,6 @@
 {
   "name": "markitai",
-  "version": "2.0.0-dev.0",
+  "version": "2.0.0",
   "description": "In-process Rust document conversion for Node.js",
   "main": "index.cjs",
   "types": "index.d.ts",

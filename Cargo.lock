@@ -2141,7 +2141,7 @@ checksum = "3e2e65a1a2e43cfcb47a895c4c8b10d1f4a61097f9f254f183aee60cad9c651d"
 
 [[package]]
 name = "markitai-cli"
-version = "2.0.0-dev"
+version = "2.0.0"
 dependencies = [
  "axum",
  "caseless",
@@ -2171,7 +2171,7 @@ dependencies = [
 
 [[package]]
 name = "markitai-core"
-version = "2.0.0-dev"
+version = "2.0.0"
 dependencies = [
  "anydoc",
  "base64",
@@ -2236,7 +2236,7 @@ dependencies = [
 
 [[package]]
 name = "markitai-ffi"
-version = "2.0.0-dev"
+version = "2.0.0"
 dependencies = [
  "markitai-core",
  "serde_json",
@@ -2245,7 +2245,7 @@ dependencies = [
 
 [[package]]
 name = "markitai-node"
-version = "2.0.0-dev"
+version = "2.0.0"
 dependencies = [
  "markitai-core",
  "napi",
@@ -2255,7 +2255,7 @@ dependencies = [
 
 [[package]]
 name = "markitai-python"
-version = "2.0.0-dev"
+version = "2.0.0"
 dependencies = [
  "markitai-cli",
  "markitai-core",

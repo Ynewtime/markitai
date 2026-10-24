@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Releases 1.x were the Python implementation; their notes are in the
 [1.2.0 changelog](https://github.com/Ynewtime/markitai/blob/v1.2.0/CHANGELOG.md).
 
-## [2.0.0] - 2026-10-XX
+## [2.0.0] - 2026-10-24
 
 Markitai 2.0.0 is the first release of the Rust rewrite, and it replaces Python markitai 1.2.0. The commands (`markitai`, `mkai`, `markitai-mcp`), options and configuration stay the same. They now run as one native program: no Python, Node.js or Go runtime is needed. Most documents convert faster, use less memory and come out better.
 
