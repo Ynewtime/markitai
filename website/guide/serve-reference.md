@@ -39,8 +39,8 @@ The details behind the [web workspace guide](/guide/serve): access rules, user t
 
 `llm.enabled`, `ocr.enabled`, `image.alt_enabled`, `image.desc_enabled`, `screenshot.enabled`, `screenshot.screenshot_only`, `llm.pure`, `cache.no_cache`, `image.compress`, `output.profile`, `fetch.strategy`, `output.format`, `ocr.lang`, `ocr.per_page_routing`, `output.page_markers`
 
-- Besides the preset and Enhance: Output (profile, and **JSON** for the [document JSON](/guide/cli#format) beside the Markdown), the local OCR language while OCR runs without LLM, and Advanced (fetch strategy, files backend, cache, compression, text only, page markers, OCR on every PDF page).
-- A row above the command line says whether the options are the server's, yours or changed, with **Reset to defaults** and **Save as default**.
+- **Options** opens them in a dialog: the preset, then one row per group with its current value (Enhance, Images, Output with **JSON** for the [document JSON](/guide/cli#format), and under Advanced: URL, Files, Pages, Other). A row opens its choices in place; they apply at once. The local OCR language is under Enhance while OCR runs without LLM.
+- A value in full colour, and a dot on **Options**, mean the choices differ from the defaults. The dialog's foot has the command line, **Reset to defaults** and **Save as default**.
 - The admin's saved choice goes to `config.json` and applies to the next conversion; a user token's is kept in its own file (**Use the server's defaults** undoes it). Cloudflare is never a default.
 
 **Conversions.** Submissions are named after the folder or `.urls` list they came from. **New conversion** leads back to Convert. To delete several items, check them with the box at the left of a row or a submission's header (the box at the start of the filter row checks everything listed), then **Delete** in the bar that appears and confirm; items still converting cannot be checked.

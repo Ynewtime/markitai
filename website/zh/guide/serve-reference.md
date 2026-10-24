@@ -39,8 +39,8 @@
 
 `llm.enabled`、`ocr.enabled`、`image.alt_enabled`、`image.desc_enabled`、`screenshot.enabled`、`screenshot.screenshot_only`、`llm.pure`、`cache.no_cache`、`image.compress`、`output.profile`、`fetch.strategy`、`output.format`、`ocr.lang`、`ocr.per_page_routing`、`output.page_markers`
 
-- 除预设和增强外还有：输出（profile，以及在 Markdown 旁另写[文档 JSON](/zh/guide/cli#format) 的 **JSON**）、OCR 不开 LLM 时本机 OCR 的语言，以及高级（抓取策略、文件后端、缓存、压缩、仅文字、页码标记、PDF 每页都 OCR）。
-- 命令行上方一行会说明这些选项是服务器的、你的还是已改动的，并提供**恢复默认**和**设为默认**。
+- **选项**在对话框中打开：预设，然后每组一行并显示当前值（增强、图片、输出及在 Markdown 旁另写[文档 JSON](/zh/guide/cli#format) 的 **JSON**，以及「高级」下的 URL、文件、页面、其它）。点一行在原处打开该组的选项，选择立即生效。OCR 不开 LLM 时，本机 OCR 的语言在「增强」中。
+- 以正常亮度显示的值以及**选项**上的圆点，表示当前选择与默认设置不同。对话框底部是命令行、**恢复默认**和**设为默认**。
 - 管理员保存的选择写入 `config.json`，立即用于下一次转换；用户令牌的选择保存在它自己的文件里（**改用服务器的默认设置**可撤销）。Cloudflare 永远不会成为默认值。
 
 **转换任务。** 提交以来源文件夹或 `.urls` 列表命名。**新建转换**回到转换页。要一次删除多个条目，用行或提交标题左侧的勾选框选中（筛选行开头的勾选框可全选当前列出的条目），再点出现的底部栏里的**删除**并确认；仍在转换的条目不能勾选。

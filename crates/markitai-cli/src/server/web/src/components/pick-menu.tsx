@@ -1,7 +1,7 @@
-// Two small menus on one keyboard model (the arrow keys walk the entries, Home
-// and End jump, Escape and a click elsewhere close and give focus back):
-// the OCR language picker after the OCR switch, and a conversion's split
-// Download button, whose caret lists the formats to save.
+// Small menus on one keyboard model (the arrow keys walk the entries, Home
+// and End jump, Escape and a click elsewhere close and give focus back): a
+// group of more than three choices, and a conversion's split Download
+// button, whose caret lists the formats to save. Also the OCR languages' names.
 import type { ComponentChildren } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { IconName } from "./icon-paths.ts";
@@ -68,83 +68,9 @@ export function languageName(code: string, automatic: string): string {
   return code === "en" ? automatic : (LANGUAGES[code]?.name ?? code);
 }
 
-export function OcrLanguageMenu({
-  label,
-  engine,
-  automatic,
-  automaticShort,
-  automaticHint,
-  languages,
-  value,
-  describedBy,
-  onPick,
-}: {
-  /** What the control sets ("OCR language"). */
-  label: string;
-  /** Where OCR runs ("Local"), before the language. */
-  engine: string;
-  automatic: string;
-  automaticShort: string;
-  /** The scripts the automatic policy reads ("中 · 英 · 日"). */
-  automaticHint: string;
-  languages: string[];
-  value: string;
-  describedBy?: string;
-  onPick: (code: string) => void;
-}) {
-  const menu = useMenu();
-  return (
-    <span ref={menu.root} class="menu-wrap opt-pick-wrap" onKeyDown={menu.onKeyDown}>
-      <button
-        ref={menu.trigger}
-        type="button"
-        class="opt-pick"
-        aria-haspopup="menu"
-        aria-expanded={menu.open}
-        aria-describedby={describedBy}
-        onClick={() => menu.setOpen((open) => !open)}
-      >
-        <Icon name="Translate" size={14} />
-        <span class="sr-only">{label}: </span>
-        <span>
-          {engine} · {languageName(value, automatic)}
-        </span>
-        <Icon name="CaretDown" size={11} />
-      </button>
-      {menu.open && (
-        <div class="menu is-start opt-pick-menu" role="menu" aria-label={label}>
-          {languages.map((code) => {
-            const known = LANGUAGES[code];
-            return (
-              <button
-                key={code}
-                type="button"
-                role="menuitemradio"
-                aria-checked={code === value}
-                tabIndex={-1}
-                onClick={() => {
-                  onPick(code);
-                  menu.close();
-                }}
-              >
-                <span class="menu-check" aria-hidden="true">
-                  {code === value && <Icon name="Check" size={13} />}
-                </span>
-                {code === "en" ? (
-                  <span>{automaticShort}</span>
-                ) : (
-                  <span lang={known?.lang} dir="auto">
-                    {known?.name ?? code}
-                  </span>
-                )}
-                {code === "en" && <span class="menu-hint">{automaticHint}</span>}
-              </button>
-            );
-          })}
-        </div>
-      )}
-    </span>
-  );
+/** The language tag a code's name is written in (none for the automatic policy). */
+export function languageTag(code: string): string | undefined {
+  return code === "en" ? undefined : (LANGUAGES[code]?.lang ?? undefined);
 }
 
 /** Groups of more than this many single choices are a menu button, smaller ones segments (owner rule, 2026-10-24). */

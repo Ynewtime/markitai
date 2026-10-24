@@ -677,6 +677,7 @@ export function App() {
       presets={presets}
       llmReady={llmReady}
       needsModel={role === "user" && !userModels ? t.advNeedsModelAdmin : t.advNeedsModel}
+      onAddModel={role === "admin" || userModels ? () => navigate({ view: "settings", section: "models" }) : undefined}
       cloudflare={caps?.remote_services?.cloudflare}
       urls={urls}
       staged={staged?.files ?? []}

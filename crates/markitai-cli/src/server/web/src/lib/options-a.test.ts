@@ -9,7 +9,6 @@ import {
   ADVANCED_DEFAULTS,
   composerFromDefaults,
   defaultsOf,
-  hasAdvancedChoices,
   publicOptions,
   resolveOptions,
   sameAsDefaults,
@@ -79,7 +78,6 @@ test("the v1.20 defaults start the composer, are saved back and count as met", (
   assert.equal(composer.ocrLang, "ko");
   assert.equal(composer.advanced.ocrAllPages, true);
   assert.equal(composer.advanced.pageMarkers, false);
-  assert.ok(hasAdvancedChoices(composer.advanced), "every-page OCR opens the advanced fold");
   assert.deepEqual(defaultsOf(composer), defaults);
   assert.ok(sameAsDefaults(composer, defaults));
   assert.equal(sameAsDefaults({ ...composer, format: "markdown" }, defaults), false);

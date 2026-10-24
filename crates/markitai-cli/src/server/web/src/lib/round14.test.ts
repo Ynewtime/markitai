@@ -85,8 +85,10 @@ test("revoking says what happens to the token's models, in every language", () =
   assert.match(zh.advNeedsModel, /设置 → 模型/);
   // A user token on a backend without its own models is told to ask the admin.
   for (const dict of [en, zh, ja]) assert.ok(dict.advNeedsModelAdmin && dict.advNeedsModelAdmin !== dict.advNeedsModel);
-  const panel = readFileSync(new URL("../components/options-panel.tsx", import.meta.url), "utf8");
-  assert.match(panel, /!llmReady && <p class="opt-note no-model-note">\{modelNote\}<\/p>/);
+  // The options dialog dims LLM and says so under it, with the way to Settings → Models when there is one.
+  const dialog = readFileSync(new URL("../components/options-dialog.tsx", import.meta.url), "utf8");
+  assert.match(dialog, /sub=\{llmReady \? t\.helpLlm : noModel\}/);
+  assert.match(dialog, /\{onAddModel \? t\.noModel : short\(needsModel\)\}/);
 });
 
 test("Models stays an admin-guarded address while the caller is unknown, and a user has its own", () => {

@@ -133,10 +133,7 @@ test("the docs open in the page's language where the site has it", () => {
 });
 
 test("a single choice of more than three options is a menu button; the phone sizes are the owner's", () => {
-  const panel = read("../components/options-panel.tsx");
-  assert.match(panel, /if \(props\.choices\.length <= SEGMENTS_MAX\) return <Segments \{\.\.\.props\} \/>;/);
-  for (const row of ["preset", "output", "strategy", "backend"]) assert.match(panel, new RegExp(`<Choice\\n\\s+name=\\{t\\.\\w+\\}\\n\\s+labelledBy=\\{\`\\$\\{id\\}-${row}\`\\}`));
-  assert.ok(!/<Segments\n/.test(panel), "every option group goes through Choice");
+  // The conversion options moved into a dialog (sheet.test.ts): a group's choices are a list there.
   const picker = read("../components/provider-picker.tsx");
   assert.match(picker, /view\.filters\.length > SEGMENTS_MAX \? \(\n\s+<ChoiceMenu/);
   const menu = read("../components/pick-menu.tsx");
@@ -146,7 +143,8 @@ test("a single choice of more than three options is a menu button; the phone siz
   const phone = css.slice(css.indexOf("@media screen and (max-width: 760px)"));
   assert.match(
     phone,
-    /\.opt-controls \.chip,\n {2}\.opt-controls \.seg button,\n {2}\.opt-controls \.opt-choice,\n {2}\.opt-controls \.opt-pick,\n {2}\.opt-controls \.opt-custom \{\n {4}position: relative;\n {4}height: 28px;\n {4}min-height: 28px;\n {4}padding: 0 8px;\n {4}font-size: var\(--text-xs\);/,
+    /\.sheet-preset \.seg button \{\n {4}position: relative;\n {4}height: 28px;\n {4}min-height: 28px;\n {4}padding: 0 8px;\n {4}font-size: var\(--text-xs\);/,
   );
   assert.match(css, /--text-xs: 11px;/);
 });
+
