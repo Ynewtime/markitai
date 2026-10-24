@@ -2016,9 +2016,6 @@ main:focus {
 .front-head[aria-expanded="true"] > svg:last-child {
   transform: rotate(180deg);
 }
-.front-head:hover {
-  color: var(--text-1);
-}
 .front-head-label {
   flex: 1;
   min-width: 0;
@@ -2117,10 +2114,6 @@ main:focus {
   background: none;
   color: var(--text-3);
   cursor: pointer;
-}
-.front-more:hover {
-  background: var(--row-hover);
-  color: var(--text-1);
 }
 .front-more svg {
   transition: transform var(--dur-base) var(--ease-out);
@@ -6244,6 +6237,14 @@ input[type="password"],
 /* ------------------------------------------- hover: fine pointers only */
 
 @media (hover: hover) and (pointer: fine) {
+  /* the properties line and a row's chevron: a tap on a touch screen leaves no highlight */
+  .front-head:hover {
+    color: var(--text-1);
+  }
+  .front-more:hover {
+    background: var(--row-hover);
+    color: var(--text-1);
+  }
   .icon-btn:not(:disabled):hover,
   .rail-toggle:hover,
   .secret-toggle:not(:disabled):hover,

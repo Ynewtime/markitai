@@ -93,3 +93,12 @@ test("L10: the weight tooltip joins its sentences in the page's language", async
   const { ja } = await import("../i18n/ja.ts");
   for (const dict of [zh, ja]) assert.equal(`${dict.weightHint}${dict.toastLead}${dict.weightEditHint}`.includes(". "), false);
 });
+
+test("L11: the properties line and its chevrons highlight on hover only where a pointer hovers", () => {
+  const hover = css.slice(css.indexOf("@media (hover: hover) and (pointer: fine) {"));
+  const outside = css.slice(0, css.indexOf("@media (hover: hover) and (pointer: fine) {"));
+  for (const selector of [".front-head:hover", ".front-more:hover"]) {
+    assert.ok(hover.includes(`  ${selector} {`), selector);
+    assert.ok(!outside.includes(`\n${selector} {`), selector);
+  }
+});
