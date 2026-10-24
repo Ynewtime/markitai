@@ -3,6 +3,10 @@
 //! files are compiled for those instruction sets and chosen at run time
 //! (`src/dsp/cpu.c`); NEON is part of every aarch64 target. MSVC's cl
 //! enables these intrinsics without flags; clang-cl needs them as clang does.
+//! Outside Windows `WEBP_USE_THREAD` is defined, as in libwebp's own builds
+//! and Pillow's, so its one-time table set-up takes a pthread lock; libwebp
+//! takes none on Windows, where markitai's first encode runs alone instead
+//! (`markitai-core`'s `images/webp.rs`).
 use std::{env, fs, path::Path, path::PathBuf};
 
 fn sources(directory: &Path) -> Vec<PathBuf> {
@@ -19,6 +23,7 @@ fn main() {
     let root = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
     let arch = env::var("CARGO_CFG_TARGET_ARCH").expect("CARGO_CFG_TARGET_ARCH");
     let x86 = matches!(arch.as_str(), "x86" | "x86_64");
+    let windows = env::var("CARGO_CFG_TARGET_OS").is_ok_and(|os| os == "windows");
     let mut files = vec![root.join("markitai_webp.c")];
     for directory in ["src/enc", "src/dsp", "src/utils", "sharpyuv"] {
         println!("cargo:rerun-if-changed={directory}");
@@ -29,6 +34,9 @@ fn main() {
     let build = || {
         let mut build = cc::Build::new();
         build.include(&root).define("NDEBUG", None).warnings(false);
+        if !windows {
+            build.define("WEBP_USE_THREAD", None);
+        }
         if !build.get_compiler().is_like_msvc() {
             build.flag("-fvisibility=hidden");
             if x86 {

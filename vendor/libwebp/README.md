@@ -13,7 +13,11 @@ dependency.
 - `build.rs` compiles it with the sources the way libwebp's CMake build does:
   on x86 the `_sse41.c` and `_avx2.c` files get `-msse4.1` / `-mavx2` and run
   only on processors that have them (`src/dsp/cpu.c`); aarch64 always has
-  NEON; MSVC enables the intrinsics without flags.
+  NEON; MSVC enables the intrinsics without flags. Outside Windows it defines
+  `WEBP_USE_THREAD`, as libwebp's own builds and Pillow's do, so the encoder's
+  one-time table set-up is locked; libwebp never locks it on Windows, so
+  `images/webp.rs` runs the first encode alone on every system before any
+  other may run.
 - `lib.rs` declares the function; `markitai-core`'s `images/webp.rs` wraps it.
 
 The libwebp files are unchanged copies from the signed release archive; their

@@ -10,6 +10,7 @@ use markitai_webp_sys::{ERROR_BAD_DIMENSION, ERROR_BAD_WRITE, markitai_webp_enco
 use std::ffi::{c_int, c_void};
 use std::io::{Error, Result, Write};
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::Once;
 
 /// The longest side a WebP picture can have.
 pub(crate) const MAX_SIDE: u32 = 16383;
@@ -91,6 +92,50 @@ fn encode_pixels<W: Write>(
             "WebP input pixels do not match the picture size",
         ));
     }
+    set_up_once();
+    libwebp(pixels, width, height, stride, alpha, quality, out)
+}
+
+/// libwebp fills its function and lookup tables on first use, guarded only
+/// by a flag: never locked on Windows, and elsewhere only because
+/// `vendor/libwebp/build.rs` turns on `WEBP_USE_THREAD`. Two first encodes at
+/// once (`convert_ahead` runs several) could read a table the other is still
+/// filling. One small RGB and one RGBA encode with graded transparency reach
+/// every table the encoder fills with these settings, so they run alone
+/// before any other encode.
+fn set_up_once() {
+    static SET_UP: Once = Once::new();
+    SET_UP.call_once(|| {
+        const SIDE: u32 = 16;
+        let rgba: Vec<u8> = (0..SIDE * SIDE)
+            .flat_map(|i| {
+                let (x, y) = (i % SIDE, i / SIDE);
+                [x * 16, y * 16, (x ^ y) * 16, (x + y) * 8].map(|v| v as u8)
+            })
+            .collect();
+        let rgb: Vec<u8> = rgba
+            .chunks_exact(4)
+            .flat_map(|p| [p[0], p[1], p[2]])
+            .collect();
+        let mut sink = std::io::sink();
+        for (pixels, alpha) in [(&rgb, false), (&rgba, true)] {
+            let stride = SIDE as usize * if alpha { 4 } else { 3 };
+            // Only the set-up matters; a failure here shows in the real encode.
+            let _ = libwebp(pixels, SIDE, SIDE, stride, alpha, 75, &mut sink);
+        }
+    });
+}
+
+/// One call of libwebp's encoder for pixels `encode_pixels` has checked.
+fn libwebp<W: Write>(
+    pixels: &[u8],
+    width: u32,
+    height: u32,
+    stride: usize,
+    alpha: bool,
+    quality: u8,
+    out: &mut W,
+) -> Result<()> {
     let mut context = Sink { out, error: None };
     // SAFETY: `pixels` holds `height` rows of `stride` bytes (checked above;
     // both sides fit in `c_int`), and `context` outlives the call.
