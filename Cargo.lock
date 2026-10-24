@@ -2191,6 +2191,7 @@ dependencies = [
  "libc",
  "lopdf",
  "mail-parser",
+ "markitai-webp-sys",
  "markup5ever",
  "md-5",
  "memchr",
@@ -2261,6 +2262,13 @@ dependencies = [
  "markitai-core",
  "pyo3",
  "pyo3-build-config",
+]
+
+[[package]]
+name = "markitai-webp-sys"
+version = "1.6.0"
+dependencies = [
+ "cc",
 ]
 
 [[package]]

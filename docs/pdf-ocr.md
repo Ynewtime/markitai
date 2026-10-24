@@ -115,11 +115,11 @@ OCR input. Reliable native pages without screenshots do not need rendering.
 
 PDF screenshots use `image.format`, `image.quality`, `image.max_width` and
 `image.max_height`; browser viewport and tiling settings do not apply. JPEG, PNG
-and WebP extensions match actual encoded bytes. WebP below quality 100 is
-written as JPEG (`.jpg`), with one warning per document; at quality 100 it is
-lossless WebP. Oversized output falls back to lower
-JPEG qualities and then a maximum 1024×1024 image, changing the extension to
-`.jpg`. Remaining oversize output is an error rather than a missing page.
+and WebP extensions match actual encoded bytes; WebP is lossy at
+`image.quality`, as in Python markitai 1.2. Oversized JPEG or WebP output is
+encoded again at lower qualities in the same format (PNG switches to JPEG),
+then as JPEG at most 1024×1024, changing the extension to `.jpg`. Remaining
+oversize output is an error rather than a missing page.
 
 Names start as `<output-stem>.page0001.<extension>`, including CLI-reserved
 document rename suffixes. Direct core calls without a reserved stem may reuse

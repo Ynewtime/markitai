@@ -228,6 +228,14 @@ impl Encoding {
             Self::Webp => "webp",
         }
     }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::Jpeg => "JPEG",
+            Self::Png => "PNG",
+            Self::Webp => "WebP",
+        }
+    }
 }
 
 fn encode_attempt(
@@ -260,12 +268,14 @@ fn encode_attempt(
             image.height(),
             image::ExtendedColorType::Rgb8,
         ),
-        Encoding::Webp => image::codecs::webp::WebPEncoder::new_lossless(&mut out).write_image(
+        Encoding::Webp => crate::images::webp::encode_rgb(
             image.as_raw(),
             image.width(),
             image.height(),
-            image::ExtendedColorType::Rgb8,
-        ),
+            quality,
+            &mut out,
+        )
+        .map_err(image::ImageError::IoError),
     };
     if out.exceeded {
         return Ok(None);
@@ -400,9 +410,6 @@ fn encode_screenshot(
     {
         "jpeg" | "jpg" => Encoding::Jpeg,
         "png" => Encoding::Png,
-        // Screenshots have no transparency: below quality 100 they are JPEG
-        // (see `images::WEBP_AS_JPEG`).
-        "webp" if quality < 100 => Encoding::Jpeg,
         "webp" => Encoding::Webp,
         _ => {
             return Err(Error::Config(
@@ -444,20 +451,26 @@ fn encode_screenshot(
             fallback: false,
         });
     }
-    // Lossless encoders ignore quality. Once their size limit is reached, switch
-    // to JPEG rather than repeat the same unbounded or ineffective attempt.
+    // JPEG and WebP are retried at lower qualities, as Python markitai does.
+    // PNG ignores quality: once its size limit is reached, switch to JPEG
+    // rather than repeat the same attempt.
+    let retry = if format == Encoding::Png {
+        Encoding::Jpeg
+    } else {
+        format
+    };
     let qualities = [quality as u8, 70, 55, 40, 25];
     let mut previous = 101;
     for candidate in qualities {
-        if candidate >= previous || (format == Encoding::Jpeg && candidate == quality as u8) {
+        if candidate >= previous || (retry == format && candidate == quality as u8) {
             previous = previous.min(candidate);
             continue;
         }
         previous = candidate;
-        if let Some(bytes) = encode_attempt(image, Encoding::Jpeg, candidate, limit)? {
+        if let Some(bytes) = encode_attempt(image, retry, candidate, limit)? {
             return Ok(EncodedShot {
                 bytes,
-                format: Encoding::Jpeg,
+                format: retry,
                 fallback: true,
             });
         }
@@ -694,15 +707,9 @@ pub(crate) fn capture_external_pdf(
         budget.screenshot(encoded.bytes.len())?;
         if encoded.fallback {
             captured.warnings.push(format!(
-                "Office page {page}: screenshot size required JPEG compression fallback."
+                "Office page {page}: screenshot size required {} compression fallback.",
+                encoded.format.name()
             ));
-        } else if crate::images::webp_as_jpeg(cfg)
-            && !captured
-                .warnings
-                .iter()
-                .any(|warning| warning == crate::images::WEBP_AS_JPEG)
-        {
-            captured.warnings.push(crate::images::WEBP_AS_JPEG.into());
         }
         captured.screenshots.push(Asset {
             name: format!("{prefix}.page{page:04}.{}", encoded.format.extension()),
@@ -1025,7 +1032,6 @@ fn prepare_with(
     // recognized on up to `ocr_pages_at_once` threads at once: the next page
     // starts as soon as any recognition ends, not only the oldest. Each page's
     // diagnostics are written in page order once its recognition is in.
-    let mut webp_noted = false;
     let mut read = ReadPages::default();
     let at_once = ocr_pages_at_once();
     std::thread::scope(|scope| -> Result<()> {
@@ -1060,18 +1066,9 @@ fn prepare_with(
                 budget.screenshot(encoded.bytes.len())?;
                 if encoded.fallback {
                     warnings.push(format!(
-                        "PDF page {number}: screenshot size required JPEG compression fallback."
+                        "PDF page {number}: screenshot size required {} compression fallback.",
+                        encoded.format.name()
                     ));
-                } else if crate::images::webp_as_jpeg(cfg)
-                    && !webp_noted
-                    && !pages
-                        .document
-                        .warnings
-                        .iter()
-                        .any(|warning| warning == crate::images::WEBP_AS_JPEG)
-                {
-                    webp_noted = true;
-                    warnings.push(crate::images::WEBP_AS_JPEG.into());
                 }
                 screenshots.push(Asset {
                     name: format!("{prefix}.page{number:04}.{}", encoded.format.extension()),
@@ -1316,8 +1313,7 @@ mod tests {
         for (format, quality, expected, extension) in [
             ("jpeg", 80, ImageFormat::Jpeg, "jpg"),
             ("png", 80, ImageFormat::Png, "png"),
-            // No lossy WebP encoder: below quality 100 it is JPEG.
-            ("webp", 80, ImageFormat::Jpeg, "jpg"),
+            ("webp", 80, ImageFormat::WebP, "webp"),
             ("webp", 100, ImageFormat::WebP, "webp"),
         ] {
             let cfg =
@@ -1352,6 +1348,30 @@ mod tests {
         );
         assert!(encoded.bytes.len() <= 12_000);
         assert!(encode_screenshot(&noisy, &cfg, 4, None).is_err());
+    }
+
+    #[test]
+    fn oversized_webp_capture_retries_lower_webp_qualities() {
+        let mut seed = 17u32;
+        let noisy = RgbImage::from_fn(96, 96, |_, _| {
+            let channels = std::array::from_fn(|_| {
+                seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                (seed >> 24) as u8
+            });
+            Rgb(channels)
+        });
+        let cfg = json!({"image":{"format":"webp","quality":90}});
+        let full = encode_screenshot(&noisy, &cfg, MAX_SHOT_BYTES, None).unwrap();
+        assert!(!full.fallback);
+        let limit = full.bytes.len() - 1;
+        let encoded = encode_screenshot(&noisy, &cfg, limit, None).unwrap();
+        assert!(encoded.fallback);
+        assert_eq!(encoded.format.extension(), "webp");
+        assert_eq!(
+            image::guess_format(&encoded.bytes).unwrap(),
+            ImageFormat::WebP
+        );
+        assert!(encoded.bytes.len() <= limit);
     }
 
     #[test]

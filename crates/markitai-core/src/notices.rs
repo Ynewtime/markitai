@@ -264,6 +264,7 @@ const FAMILIES: &[(&str, Level, &str, &str, Subject)] = &[
         "",
         Subject::None,
     ),
+    // 2.0.0, which wrote WebP below quality 100 as JPEG.
     (
         "image.webp_as_jpeg",
         Level::Warning,
@@ -546,7 +547,9 @@ mod tests {
             "llm.no_model_succeeded"
         );
         assert_eq!(
-            code(crate::images::WEBP_AS_JPEG),
+            code(
+                "image.format webp: pictures were written as JPEG at image.quality, because this build has no lossy WebP encoder; pictures with transparency stay lossless WebP, and image.quality 100 keeps every picture lossless WebP."
+            ),
             ("image.webp_as_jpeg", Level::Warning, Vec::new())
         );
         assert_eq!(

@@ -152,10 +152,9 @@ fn pdf_config_only_flag_does_not_enable_capture() {
 fn pdf_vlm_sends_every_page_with_real_mime_in_memory() {
     let dir = tempfile::tempdir().unwrap();
     let path = source(dir.path());
-    // WebP below quality 100 is JPEG (no lossy WebP encoder); at 100 it is
-    // lossless WebP. The MIME type follows the bytes either way.
+    // Lossy WebP at any quality; the MIME type follows the bytes.
     for (quality, mime, format) in [
-        (75, "image/jpeg", image::ImageFormat::Jpeg),
+        (75, "image/webp", image::ImageFormat::WebP),
         (100, "image/webp", image::ImageFormat::WebP),
     ] {
         let (base, server) = llm_server(

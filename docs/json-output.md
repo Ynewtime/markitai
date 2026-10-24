@@ -115,7 +115,7 @@ code keeps working when wording changes.
 | `llm.cost_incomplete` | warning | Some requests have no reviewed price |
 | `image.analysis_failed` | warning | A picture's analysis failed; `items` the picture |
 | `image.not_localized` | warning | A linked picture could not be saved |
-| `image.webp_as_jpeg` | warning | `image.format: webp` below quality 100: pictures without transparency were written as JPEG |
+| `image.webp_as_jpeg` | warning | Written by 2.0.0 only, which had no lossy WebP encoder: `image.format: webp` below quality 100 wrote pictures without transparency as JPEG |
 | `office.renderer_missing` | warning | Office page screenshots or vision OCR need LibreOffice |
 | `office.page` | warning | A note about rendered Office pages |
 | `office.screenshot_format`, `office.count_verified` | info | Office rendering notes (`office.screenshot_format`: older builds' lossless WebP screenshots) |
