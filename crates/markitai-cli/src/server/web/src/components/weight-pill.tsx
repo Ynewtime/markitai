@@ -97,7 +97,7 @@ export function WeightPill({
         type="button"
         class="mini-pill weight-pill"
         disabled={disabled}
-        title={`${title}. ${t.weightEditHint}`}
+        title={`${title}${t.toastLead}${t.weightEditHint}`}
         aria-label={t.weightEditAria(text, model)}
         onClick={() => {
           settled.current = false;

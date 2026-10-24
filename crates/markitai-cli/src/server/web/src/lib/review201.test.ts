@@ -86,3 +86,10 @@ test("L9: every label a screen reader is given is one it reads", () => {
   assert.equal((view.match(/\{\.\.\.panel\("(rendered|source|diff|files)"\)\}/g) ?? []).length, 4);
   assert.ok(!/role="tabpanel" aria-labelledby/.test(view));
 });
+
+test("L10: the weight tooltip joins its sentences in the page's language", async () => {
+  assert.match(read("../components/weight-pill.tsx"), /title=\{`\$\{title\}\$\{t\.toastLead\}\$\{t\.weightEditHint\}`\}/);
+  const { zh } = await import("../i18n/zh.ts");
+  const { ja } = await import("../i18n/ja.ts");
+  for (const dict of [zh, ja]) assert.equal(`${dict.weightHint}${dict.toastLead}${dict.weightEditHint}`.includes(". "), false);
+});
