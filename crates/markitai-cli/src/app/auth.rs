@@ -1,4 +1,5 @@
 //! Authentication stays with the official runtime; no token store is inspected here.
+use super::i18n;
 use super::{CliResult, runtime};
 use crate::term::{Mark, Style, Tone};
 use clap::Subcommand;
@@ -79,10 +80,11 @@ pub(super) fn chatgpt_status(env: &HashMap<String, String>) -> subscription::Aut
 /// sign-in command. The overview lists each provider as an item; one asked
 /// for alone is the command's verdict, at column 0.
 fn display(status: &subscription::AuthStatus, style: Style, indent: usize, missing: Mark) {
+    let lang = i18n::lang();
     let (mark, state) = if status.authenticated {
-        (Mark::Success, "authenticated")
+        (Mark::Success, text!(lang => "authenticated", "已登录"))
     } else {
-        (missing, "unavailable")
+        (missing, text!(lang => "unavailable", "不可用"))
     };
     let under = indent + 2;
     println!(
@@ -90,7 +92,10 @@ fn display(status: &subscription::AuthStatus, style: Style, indent: usize, missi
         style.line(
             indent,
             Some(mark),
-            &format!("{}: {state}", status.provider),
+            &{
+                let provider = status.provider;
+                text!(lang => "{provider}: {state}", "{provider}：{state}")
+            },
             None
         )
     );
@@ -100,7 +105,10 @@ fn display(status: &subscription::AuthStatus, style: Style, indent: usize, missi
             style.line(
                 under,
                 None,
-                &format!("Account: {}", terminal_text(user)),
+                &{
+                    let user = terminal_text(user);
+                    text!(lang => "Account: {user}", "账户：{user}")
+                },
                 None
             )
         );
@@ -108,7 +116,12 @@ fn display(status: &subscription::AuthStatus, style: Style, indent: usize, missi
     if let Some(error) = &status.error {
         println!(
             "{}",
-            style.line(under, None, &terminal_text(error), Some(Tone::Secondary))
+            style.line(
+                under,
+                None,
+                &super::doctor::localized(&terminal_text(error), lang),
+                Some(Tone::Secondary)
+            )
         );
         // A signed-out runtime is one command away from working.
         if error.contains("not signed in") {
@@ -138,7 +151,10 @@ pub(super) fn run(command: Option<&Command>) -> CliResult<i32> {
     let env = config::environment();
     let style = Style::stdout();
     let Some(command) = command else {
-        println!("{}\n", style.title("Provider Authentication"));
+        println!(
+            "{}\n",
+            style.title(&text!("Provider Authentication", "供应商认证"))
+        );
         for status in [
             claude_status(&env),
             chatgpt_status(&env),
