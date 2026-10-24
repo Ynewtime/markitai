@@ -628,6 +628,30 @@ fn session_lock(directory: &Path, stem: &str) -> Option<PathBuf> {
 /// the sentence after the URL would be taken for a path and hidden.
 const CHINESE_PUNCTUATION: &str = "，。、；：！？（）【】「」『』《》“”";
 
+/// A configured secret shorter than this (a one-letter user name, a cookie
+/// named `c`) is hidden only where it stands alone: hidden inside every word
+/// it would blank that letter throughout the line, and reveal nothing.
+const SHORT_SECRET: usize = 4;
+
+/// `text` with each occurrence of `secret` that no letter or digit touches
+/// replaced by `[REDACTED]`.
+fn replace_alone(text: &str, secret: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find(secret) {
+        let end = start + secret.len();
+        let before = rest[..start].chars().next_back();
+        let after = rest[end..].chars().next();
+        let alone =
+            !before.is_some_and(char::is_alphanumeric) && !after.is_some_and(char::is_alphanumeric);
+        out.push_str(&rest[..start]);
+        out.push_str(if alone { "[REDACTED]" } else { secret });
+        rest = &rest[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
 fn redact(message: &str, secrets: &[String]) -> String {
     let mut safe = String::with_capacity(message.len().min(65536));
     let mut rest = message;
@@ -653,7 +677,11 @@ fn redact(message: &str, secrets: &[String]) -> String {
     }
     safe.push_str(rest);
     for secret in secrets {
-        safe = safe.replace(secret, "[REDACTED]");
+        safe = if secret.chars().count() < SHORT_SECRET {
+            replace_alone(&safe, secret)
+        } else {
+            safe.replace(secret, "[REDACTED]")
+        };
     }
     safe = safe
         .chars()
@@ -691,6 +719,26 @@ mod tests {
         collect_secrets(&cfg, &config::redact(&cfg), &mut secrets);
         assert!(secrets.contains(&"key-secret".into()));
         assert!(secrets.contains(&"Bearer header-secret".into()));
+    }
+    #[test]
+    fn a_short_secret_is_hidden_only_where_it_stands_alone() {
+        let secrets = ["u".to_owned(), "c".to_owned(), "k3y".to_owned()];
+        assert_eq!(
+            redact(
+                "Saved /tmp/scratch/out.md as user u with cookie c=k3y",
+                &secrets
+            ),
+            "Saved /tmp/scratch/out.md as user [REDACTED] with cookie [REDACTED]=[REDACTED]"
+        );
+        // A long secret is still hidden inside other text.
+        assert_eq!(
+            redact("token=abcd1234efgh", &["abcd1234efgh".into()]),
+            "token=[REDACTED]"
+        );
+        assert_eq!(
+            redact("prefixabcd1234", &["abcd1234".into()]),
+            "prefix[REDACTED]"
+        );
     }
     #[test]
     fn secret_path_segments_are_hidden_as_in_output_metadata() {
