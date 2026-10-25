@@ -307,16 +307,17 @@ pub(crate) fn archive_line(
     })
 }
 
-/// The release's one-line description, from its `RELEASE-NOTES.md`; `None`
-/// for a release without one (the link alone is shown).
-pub(crate) fn lead(base: &Base, version: &Version, timeouts: Timeouts) -> Option<String> {
+/// The release's one-line description, from its `RELEASE-NOTES.md` (or
+/// `RELEASE-NOTES.zh.md`); `None` for a release without one (the link alone
+/// is shown).
+pub(crate) fn lead(base: &Base, version: &Version, timeouts: Timeouts, zh: bool) -> Option<String> {
     let client = client(timeouts, true).ok()?;
-    let response = get(
-        &client,
-        &base.asset(version, "RELEASE-NOTES.md"),
-        &base.host(),
-    )
-    .ok()?;
+    let name = if zh {
+        "RELEASE-NOTES.zh.md"
+    } else {
+        "RELEASE-NOTES.md"
+    };
+    let response = get(&client, &base.asset(version, name), &base.host()).ok()?;
     if !response.status().is_success() {
         return None;
     }
@@ -326,6 +327,21 @@ pub(crate) fn lead(base: &Base, version: &Version, timeouts: Timeouts) -> Option
         .read_to_end(&mut bytes)
         .ok()?;
     super::notes::lead(&String::from_utf8_lossy(&bytes))
+}
+
+/// The English and the Chinese description; the Chinese one is asked for
+/// only when the release has an English one (releases before 2.2.0 have
+/// neither).
+pub(crate) fn leads(
+    base: &Base,
+    version: &Version,
+    timeouts: Timeouts,
+) -> (Option<String>, Option<String>) {
+    let lead = lead(base, version, timeouts, false);
+    let zh = lead
+        .as_ref()
+        .and_then(|_| self::lead(base, version, timeouts, true));
+    (lead, zh)
 }
 
 /// Starts the archive download; the caller reads the body.

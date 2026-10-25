@@ -146,7 +146,7 @@ class MissingNotes(SystemExit):
     """The changelog has no section for the version (a dry run may go on without one)."""
 
 
-def changelog_section(changelog, version):
+def changelog_section(changelog, version, name="CHANGELOG.md"):
     """The heading of `## [version]` and its body, up to the next version heading."""
     lines = changelog.splitlines()
     heading = re.compile(r"^## \[" + re.escape(version) + r"\](?:\s|$)")
@@ -158,7 +158,7 @@ def changelog_section(changelog, version):
             if body:
                 return line, body + "\n"
             break
-    raise MissingNotes(f"CHANGELOG.md has no section for {version}")
+    raise MissingNotes(f"{name} has no section for {version}")
 
 
 def release_notes(changelog, version):
@@ -172,7 +172,7 @@ def github_anchor(heading):
     return re.sub(r"[^\w\- ]", "", text).replace(" ", "-")
 
 
-def release_body(changelog, version, repository=REPOSITORY):
+def release_body(changelog, version, repository=REPOSITORY, zh=False):
     """The GitHub Release text: the version's section and a link to the full changelog.
 
     GitHub refuses a Release body over 125,000 characters, after the tag is
@@ -180,11 +180,15 @@ def release_body(changelog, version, repository=REPOSITORY):
     summary written between the version heading and its first `###`
     subsection; without a lead short enough, this fails.
     """
-    heading, body = changelog_section(changelog, version)
+    heading, body = changelog_section(changelog, version, "CHANGELOG.zh.md" if zh else "CHANGELOG.md")
     base = f"https://github.com/{repository}/blob/v{version}"
     anchor = github_anchor(heading)
-    link = (f"\nFull changelog: [CHANGELOG.md]({base}/CHANGELOG.md#{anchor}) "
-            f"([中文]({base}/CHANGELOG.zh.md#{anchor}))\n")
+    if zh:
+        link = (f"\n完整更新日志：[CHANGELOG.zh.md]({base}/CHANGELOG.zh.md#{anchor})"
+                f"（[English]({base}/CHANGELOG.md#{anchor})）\n")
+    else:
+        link = (f"\nFull changelog: [CHANGELOG.md]({base}/CHANGELOG.md#{anchor}) "
+                f"([中文]({base}/CHANGELOG.zh.md#{anchor}))\n")
     if len(body) + len(link) <= NOTES_LIMIT:
         return body + link
     lead = re.split(r"^### ", body, maxsplit=1, flags=re.MULTILINE)[0].strip()
@@ -682,9 +686,11 @@ def build_sdist(output):
     return sdist
 
 
-# The release notes as an asset: `markitai update` and the server read its
-# first lines (at most 16 KiB) for the release's one-line description.
+# The release notes as assets, from CHANGELOG.md and CHANGELOG.zh.md:
+# `markitai update` and the server read their first lines (at most 16 KiB)
+# for the release's one-line description, the Chinese one in Chinese.
 NOTES_ASSET = "RELEASE-NOTES.md"
+NOTES_ZH_ASSET = "RELEASE-NOTES.zh.md"
 
 
 def expected_assets(version):
@@ -693,7 +699,7 @@ def expected_assets(version):
     names = {archive_name(version, target) for target in TARGETS}
     names |= {f"markitai-{python}-cp310-abi3-{tag}.whl" for tag in TARGETS.values()}
     names.add(f"markitai-{python}.tar.gz")
-    names.add(NOTES_ASSET)
+    names |= {NOTES_ASSET, NOTES_ZH_ASSET}
     return names
 
 
@@ -725,6 +731,7 @@ def main(argv=None):
     notes = commands.add_parser("notes")
     notes.add_argument("--version", required=True)
     notes.add_argument("--output", type=Path, required=True)
+    notes.add_argument("--lang", choices=["en", "zh"], default="en", help="zh: from CHANGELOG.zh.md")
     for name in ["cli", "wheel"]:
         command = commands.add_parser(name)
         command.add_argument("--target", required=True)
@@ -760,8 +767,10 @@ def main(argv=None):
         prepare_version(ROOT, args.version)
     elif args.command == "notes":
         try:
-            body = release_body((ROOT / "CHANGELOG.md").read_text(encoding="utf-8"), args.version,
-                                os.environ.get("GITHUB_REPOSITORY", REPOSITORY))
+            zh = args.lang == "zh"
+            changelog = ROOT / ("CHANGELOG.zh.md" if zh else "CHANGELOG.md")
+            body = release_body(changelog.read_text(encoding="utf-8"), args.version,
+                                os.environ.get("GITHUB_REPOSITORY", REPOSITORY), zh)
         except MissingNotes as missing:
             print(missing, file=sys.stderr)
             return NO_NOTES

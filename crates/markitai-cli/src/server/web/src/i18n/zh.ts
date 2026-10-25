@@ -1018,6 +1018,7 @@ export const zh: Dict = {
   updCopyCommand: (command: string) => `复制命令：${command}`,
   updApply: "更新并重启",
   updConfirm: "确认更新",
+  updLead: (lead: string | null, zh: string | null): string | null => zh ?? lead,
   updConfirmNote: (n: number) => (n > 0 ? `服务将重启，${n} 个转换会先完成` : "服务将重启"),
   updSteps: ["下载", "校验", "安装", "重启"],
   updDownloading: "正在下载",

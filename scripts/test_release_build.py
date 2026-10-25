@@ -88,6 +88,16 @@ class NotesTests(unittest.TestCase):
         self.assertIn("(https://github.com/owner/repo/blob/v2.0.0/CHANGELOG.md#200---2026-11-01)", body)
         self.assertIn("(https://github.com/owner/repo/blob/v2.0.0/CHANGELOG.zh.md#200---2026-11-01)", body)
 
+    def test_the_chinese_body_links_the_chinese_changelog_first(self):
+        changelog = "# 更新日志\n\n## [2.0.0] - 2026-11-01\n\n表格更快。\n\n### 新增\n- 一\n"
+        body = release_body(changelog, "2.0.0", "owner/repo", zh=True)
+        self.assertTrue(body.startswith("表格更快。\n"))
+        self.assertIn("完整更新日志：[CHANGELOG.zh.md](https://github.com/owner/repo/blob/v2.0.0/CHANGELOG.zh.md#200---2026-11-01)", body)
+        self.assertIn("[English](https://github.com/owner/repo/blob/v2.0.0/CHANGELOG.md#200---2026-11-01)", body)
+        with self.assertRaises(release_build.MissingNotes) as missing:
+            release_body("# 更新日志\n", "2.0.0", zh=True)
+        self.assertIn("CHANGELOG.zh.md", str(missing.exception))
+
     def test_a_long_section_is_represented_by_its_lead(self):
         items = "".join(f"- change {index} " + "x" * 200 + "\n" for index in range(600))
         long = f"## [2.0.0] - 2026-11-01\n\nThe summary.\n\n### Added\n{items}"
@@ -167,8 +177,9 @@ class AssetTests(unittest.TestCase):
         self.assertEqual(archive_name("2.0.0", "aarch64-pc-windows-msvc"),
                          "markitai-v2.0.0-aarch64-pc-windows-msvc.zip")
         assets = expected_assets("2.0.0")
-        self.assertEqual(len(assets), 14)
+        self.assertEqual(len(assets), 15)
         self.assertIn("RELEASE-NOTES.md", assets)
+        self.assertIn("RELEASE-NOTES.zh.md", assets)
         self.assertIn("markitai-2.0.0-cp310-abi3-manylinux_2_28_aarch64.whl", assets)
         self.assertIn("markitai-2.0.0.tar.gz", assets)
 
@@ -180,7 +191,7 @@ class AssetTests(unittest.TestCase):
             with contextlib.redirect_stdout(io.StringIO()):
                 write_sums(folder, "2.0.0")
             lines = (folder / "SHA256SUMS").read_text(encoding="utf-8").splitlines()
-            self.assertEqual(len(lines), 14)
+            self.assertEqual(len(lines), 15)
             self.assertTrue(all(re.fullmatch(r"[0-9a-f]{64}  \S+", line) for line in lines))
             (folder / "stray.txt").write_text("x")
             with self.assertRaises(SystemExit):
@@ -206,8 +217,8 @@ class AssetTests(unittest.TestCase):
     def test_the_release_carries_its_notes_as_an_asset(self):
         workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
         job = workflow.split("\n  github-release:", 1)[1].split("\n  pypi:", 1)[0]
-        copy = job.index("cp notes/notes.md assets/RELEASE-NOTES.md")
-        self.assertLess(copy, job.index("release_build.py sums"))
+        for line in ["cp notes/notes.md assets/RELEASE-NOTES.md", "cp notes/notes.zh.md assets/RELEASE-NOTES.zh.md"]:
+            self.assertLess(job.index(line), job.index("release_build.py sums"))
 
     def test_pypi_gets_the_wheels_only(self):
         workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")

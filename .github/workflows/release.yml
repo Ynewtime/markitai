@@ -89,16 +89,21 @@ jobs:
             echo "::error::$GITHUB_REF_NAME ($GITHUB_SHA) is not on main"; exit 1; }
       # The section (or, when long, its lead) and a link to the full changelog;
       # notes over the limit fail here, in a dry run too, not at the Release.
-      - name: Release notes from CHANGELOG.md
+      # The Chinese notes (CHANGELOG.zh.md) become an asset beside them.
+      - name: Release notes from CHANGELOG.md and CHANGELOG.zh.md
         env:
           VERSION: ${{ steps.versions.outputs.version }}
           PUBLISH: ${{ steps.mode.outputs.publish }}
         run: |
           status=0
           python scripts/release_build.py notes --version "$VERSION" --output notes.md || status=$?
+          if [ "$status" -eq 0 ]; then
+            python scripts/release_build.py notes --lang zh --version "$VERSION" --output notes.zh.md || status=$?
+          fi
           if [ "$status" -eq 3 ] && [ "$PUBLISH" != true ]; then
-            echo "::warning::CHANGELOG.md has no [$VERSION] section; a release would fail here."
+            echo "::warning::CHANGELOG.md or CHANGELOG.zh.md has no [$VERSION] section; a release would fail here."
             echo "Dry run of $VERSION: CHANGELOG.md has no section for it." > notes.md
+            echo "Dry run of $VERSION: CHANGELOG.zh.md has no section for it." > notes.zh.md
           elif [ "$status" -ne 0 ]; then
             exit 1
           fi
@@ -106,7 +111,9 @@ jobs:
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: notes
-          path: notes.md
+          path: |
+            notes.md
+            notes.zh.md
           if-no-files-found: error
           retention-days: 14
 
@@ -300,8 +307,10 @@ jobs:
       - name: Archives and wheels carry the same licenses
         run: python scripts/release_build.py licenses --version "$VERSION" assets
       # `markitai update` and the server read the notes' first line.
-      - name: Release notes as an asset
-        run: cp notes/notes.md assets/RELEASE-NOTES.md
+      - name: Release notes as assets
+        run: |
+          cp notes/notes.md assets/RELEASE-NOTES.md
+          cp notes/notes.zh.md assets/RELEASE-NOTES.zh.md
       - name: SHA256SUMS
         run: python scripts/release_build.py sums --version "$VERSION" assets
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2

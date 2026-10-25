@@ -101,6 +101,13 @@ impl Releases {
             "RELEASE-NOTES.md",
             b"Faster tables and a new command.\n\n### Added\n\n- One\n".to_vec(),
         );
+        self.put(
+            version,
+            "RELEASE-NOTES.zh.md",
+            "表格更快，并新增一个命令。\n\n### 新增\n\n- 一\n"
+                .as_bytes()
+                .to_vec(),
+        );
     }
 
     /// A Windows release: this binary as `markitai.exe`, posed as `version`
@@ -515,6 +522,7 @@ fn check_answers_with_its_exit_status_and_json() {
     // What was learnt is kept for the notice, with the release's description.
     assert_eq!(home.cache()["latest"], "2.2.0");
     assert_eq!(home.cache()["lead"], "Faster tables and a new command.");
+    assert_eq!(home.cache()["lead_zh"], "表格更快，并新增一个命令。");
     // The same release: up to date.
     let (_, stderr, code) = text(&home.run(
         &releases,
@@ -605,6 +613,10 @@ fn a_copy_no_setup_script_installed_gets_the_setup_command_and_changes_nothing()
         "{:?}",
         releases.requests()
     );
+    // In Chinese, the Chinese description (from the cache now).
+    let (_, stderr, code) = text(&home.run(&releases, &["update"], &[("MARKITAI_LANG", "zh")]));
+    assert_eq!(code, 10, "{stderr}");
+    assert!(stderr.contains("  表格更快，并新增一个命令。"), "{stderr}");
     let (_, stderr, code) = text(&home.run(&releases, &["update", "--version", "1.2.0"], &[]));
     assert_eq!(code, 1);
     assert!(stderr.contains("Python package"), "{stderr}");

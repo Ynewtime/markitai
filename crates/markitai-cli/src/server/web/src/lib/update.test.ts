@@ -21,6 +21,7 @@ const status = (over: Partial<UpdateStatus> = {}): UpdateStatus => ({
   newer: true,
   notes_url: "https://github.com/Ynewtime/markitai/releases/tag/v2.2.0",
   lead: "Sharper PDF tables.",
+  lead_zh: null,
   method: "setup",
   command: "markitai update",
   can_apply: true,

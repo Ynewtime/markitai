@@ -1078,6 +1078,8 @@ export const en = {
   updCopyCommand: (command: string) => `Copy command: ${command}`,
   updApply: "Update and restart",
   updConfirm: "Update",
+  /** The release's description in this language: `lead_zh` for Chinese, else `lead`. */
+  updLead: (lead: string | null, _zh: string | null): string | null => lead,
   updConfirmNote: (n: number) => (n > 0 ? `The server restarts; ${n} conversion${n === 1 ? "" : "s"} finish${n === 1 ? "es" : ""} first` : "The server restarts"),
   updSteps: ["Download", "Verify", "Install", "Restart"],
   updDownloading: "Downloading",

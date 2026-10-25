@@ -246,7 +246,7 @@ export function UpdateCard({
   } else {
     body = (
       <>
-        {status.lead && <p class="upd-lead">{status.lead}</p>}
+        {t.updLead(status.lead, status.lead_zh) && <p class="upd-lead">{t.updLead(status.lead, status.lead_zh)}</p>}
         {status.can_apply ? (
           <div class="upd-acts">
             {terminal}

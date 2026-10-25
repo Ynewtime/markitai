@@ -270,6 +270,8 @@ export interface UpdateStatus {
   newer: boolean;
   notes_url: string | null;
   lead: string | null;
+  /** From RELEASE-NOTES.zh.md; shown instead of `lead` in Chinese. */
+  lead_zh: string | null;
   method: string;
   command: string | null;
   can_apply: boolean;

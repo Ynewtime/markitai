@@ -1039,6 +1039,7 @@ export const ja: Dict = {
   updCopyCommand: (command: string) => `コマンドをコピー：${command}`,
   updApply: "更新して再起動",
   updConfirm: "更新する",
+  updLead: (lead: string | null, _zh: string | null): string | null => lead,
   updConfirmNote: (n: number) => (n > 0 ? `サーバーを再起動します。${n} 件の変換が先に完了します` : "サーバーを再起動します"),
   updSteps: ["ダウンロード", "検証", "インストール", "再起動"],
   updDownloading: "ダウンロード中",

@@ -147,8 +147,9 @@ pub(crate) struct Cache {
     /// When the last check succeeded (Unix seconds).
     pub(crate) checked_at: Option<i64>,
     pub(crate) latest: Option<String>,
-    /// The latest release's one-line description.
+    /// The latest release's one-line description, in English and Chinese.
     pub(crate) lead: Option<String>,
+    pub(crate) lead_zh: Option<String>,
     /// Failed checks in a row, and when the next may run.
     pub(crate) failures: u32,
     pub(crate) retry_at: Option<i64>,
@@ -200,8 +201,12 @@ impl Cache {
     }
 
     pub(crate) fn succeeded(&mut self, now: i64, latest: &Version, lead: Option<String>) {
-        if self.latest.as_deref() != Some(&latest.to_string()) || lead.is_some() {
+        let changed = self.latest.as_deref() != Some(&latest.to_string());
+        if changed || lead.is_some() {
             self.lead = lead;
+        }
+        if changed {
+            self.lead_zh = None;
         }
         self.latest = Some(latest.to_string());
         self.checked_at = Some(now);
@@ -262,13 +267,19 @@ pub(crate) fn learned(home: &Path, latest: &Version) -> Option<Cache> {
     Some(cache)
 }
 
-/// Save a release's description in the cache, if it still names that release.
-pub(crate) fn described(home: &Path, latest: &Version, lead: Option<String>) {
+/// Save a release's description (English, Chinese) in the cache, if it
+/// still names that release.
+pub(crate) fn described(
+    home: &Path,
+    latest: &Version,
+    (lead, zh): (Option<String>, Option<String>),
+) {
     let Some(lead) = lead else { return };
     if let Some(mut cache) = Cache::load(home)
         && cache.latest.as_deref() == Some(&latest.to_string())
     {
         cache.lead = Some(lead);
+        cache.lead_zh = zh;
         let _ = cache.save(home);
     }
 }
@@ -281,7 +292,7 @@ pub(crate) fn refresh(home: &Path, base: &check::Base, timeouts: check::Timeouts
     let cache = learned(home, &latest)?;
     let known = before.latest.as_deref() == Some(&latest.to_string()) && before.lead.is_some();
     if !known {
-        described(home, &latest, check::lead(base, &latest, timeouts));
+        described(home, &latest, check::leads(base, &latest, timeouts));
     }
     Cache::load(home).or(Some(cache))
 }
@@ -465,8 +476,11 @@ mod tests {
         assert_eq!((cache.failures, cache.retry_at), (0, None));
         // The same release keeps its description when none was fetched again.
         assert_eq!(cache.lead.as_deref(), Some("Lead."));
+        cache.lead_zh = Some("说明。".into());
+        cache.succeeded(start, &v("2.2.0"), None);
+        assert_eq!(cache.lead_zh.as_deref(), Some("说明。"));
         cache.succeeded(start, &v("2.3.0"), None);
-        assert_eq!(cache.lead, None);
+        assert_eq!((cache.lead, cache.lead_zh), (None, None));
     }
 
     #[test]

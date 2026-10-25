@@ -316,20 +316,27 @@ pub(super) fn run(options: &Options) -> CliResult<i32> {
     report.notes_url = Some(base.notes_url(&latest));
     // Saved before the description is asked for.
     updates::learned(&home, &latest);
-    let lead = before
+    let cached = before
         .as_ref()
-        .filter(|cache| cache.latest.as_deref() == Some(&latest.to_string()))
-        .and_then(|cache| cache.lead.clone());
-    let target = wanted.clone().unwrap_or_else(|| latest.clone());
-    let lead = if target == latest {
-        lead.or_else(|| {
-            let lead = check::lead(&base, &latest, check::COMMAND);
-            updates::described(&home, &latest, lead.clone());
-            lead
+        .filter(|cache| {
+            cache.latest.as_deref() == Some(&latest.to_string()) && cache.lead.is_some()
         })
+        .map(|cache| (cache.lead.clone(), cache.lead_zh.clone()));
+    let target = wanted.clone().unwrap_or_else(|| latest.clone());
+    let zh = out.lang == Lang::Zh;
+    let (lead, lead_zh) = if target == latest {
+        cached.unwrap_or_else(|| {
+            let leads = check::leads(&base, &latest, check::COMMAND);
+            updates::described(&home, &latest, leads.clone());
+            leads
+        })
+    } else if zh {
+        check::leads(&base, &target, check::COMMAND)
     } else {
-        check::lead(&base, &target, check::COMMAND)
+        (check::lead(&base, &target, check::COMMAND, false), None)
     };
+    // In Chinese the Chinese description, else the English one.
+    let lead = if zh { lead_zh.or(lead) } else { lead };
     if target == current || (wanted.is_none() && latest < current) {
         out.say(
             Shape::verdict(Mark::Success),

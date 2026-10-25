@@ -1209,7 +1209,7 @@
       "UpdateStatus": {
         "type": "object",
         "description": "v1.24: what `GET /api/update` says",
-        "required": ["state", "current", "latest", "newer", "notes_url", "lead", "method", "command", "can_apply", "target", "progress", "waiting_jobs", "error", "updated_from", "by"],
+        "required": ["state", "current", "latest", "newer", "notes_url", "lead", "lead_zh", "method", "command", "can_apply", "target", "progress", "waiting_jobs", "error", "updated_from", "by"],
         "properties": {
           "state": { "type": "string", "enum": ["idle", "downloading", "verifying", "waiting", "installing", "restarting", "failed"] },
           "current": { "type": ["string", "null"] },
@@ -1217,6 +1217,7 @@
           "newer": { "type": "boolean" },
           "notes_url": { "type": ["string", "null"], "format": "uri", "description": "The release page" },
           "lead": { "type": ["string", "null"], "description": "The release's one-line description, when its RELEASE-NOTES.md has one" },
+          "lead_zh": { "type": ["string", "null"], "description": "The same from RELEASE-NOTES.zh.md, shown instead of `lead` in Chinese" },
           "method": { "type": "string", "enum": ["setup", "uv", "pipx", "pip", "uv-pip", "cargo", "packaged", "source", "unknown"], "description": "How this server was installed; only `setup` is updated from the page" },
           "command": { "type": ["string", "null"], "description": "The command that updates this install" },
           "can_apply": { "type": "boolean", "description": "`POST` would start: a setup install, a newer release, no update running" },

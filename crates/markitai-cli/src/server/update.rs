@@ -211,12 +211,13 @@ impl Update {
             .unwrap_or_else(|error| error.into_inner())
     }
 
-    /// The newer release the cache knows of, and its description.
-    fn latest(&self) -> Option<(Version, Option<String>)> {
+    /// The newer release the cache knows of, and its description (English,
+    /// Chinese).
+    fn latest(&self) -> Option<(Version, Option<String>, Option<String>)> {
         let current = self.current.as_ref()?;
         let cache = Cache::load(&self.home)?;
         let latest = cache.newer(current)?;
-        Some((latest, cache.lead))
+        Some((latest, cache.lead, cache.lead_zh))
     }
 
     fn can_apply(&self) -> bool {
@@ -229,7 +230,7 @@ impl Update {
         let progress = self.lock();
         let notes_url = latest
             .as_ref()
-            .and_then(|(version, _)| self.base.as_ref().map(|base| base.notes_url(version)));
+            .and_then(|(version, ..)| self.base.as_ref().map(|base| base.notes_url(version)));
         let error = progress.error.as_ref().map(|error| {
             json!({"code": error.code, "reason": error.reason, "rolled_back": error.rolled_back})
         });
@@ -239,10 +240,11 @@ impl Update {
         json!({
             "state": progress.phase.name(),
             "current": self.current.as_ref().map(ToString::to_string),
-            "latest": latest.as_ref().map(|(version, _)| version.to_string()),
+            "latest": latest.as_ref().map(|(version, ..)| version.to_string()),
             "newer": latest.is_some(),
             "notes_url": notes_url,
-            "lead": latest.as_ref().and_then(|(_, lead)| lead.clone()),
+            "lead": latest.as_ref().and_then(|(_, lead, _)| lead.clone()),
+            "lead_zh": latest.as_ref().and_then(|(.., zh)| zh.clone()),
             "method": self.method.key(),
             "command": self.method.command(),
             "can_apply": self.method.in_place() && latest.is_some() && !progress.phase.busy(),
@@ -425,7 +427,7 @@ pub(super) async fn start(
             "an update is already running",
         ));
     }
-    let Some((latest, _)) = update.latest() else {
+    let Some((latest, ..)) = update.latest() else {
         return Err(ApiError::new(
             409,
             "version_changed",
@@ -1350,6 +1352,7 @@ pub(super) mod tests {
             "https://github.com/Ynewtime/markitai/releases/tag/v2.2.0"
         );
         assert_eq!(view["lead"], "Faster tables.");
+        assert_eq!(view["lead_zh"], Value::Null);
         let other = Update {
             method: Method::UvTool,
             ..Update::for_test(home.path(), Some("2.2.0"))
