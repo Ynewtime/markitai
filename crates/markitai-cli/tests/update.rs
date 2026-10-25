@@ -8,12 +8,11 @@ mod console;
 
 use serde_json::{Value, json};
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
 
 /// A fake GitHub release host: `/releases/latest/download/X` redirects to the
 /// latest version, `/releases/download/v<version>/<asset>` serves the files.
@@ -397,6 +396,8 @@ fn a_copy_no_setup_script_installed_gets_the_setup_command_and_changes_nothing()
 #[cfg(unix)]
 mod unix {
     use super::*;
+    use std::io::Read;
+    use std::time::{Duration, Instant};
 
     #[test]
     fn a_setup_install_is_replaced_in_place_and_its_receipt_rewritten() {

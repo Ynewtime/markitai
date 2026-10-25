@@ -20,7 +20,9 @@ use std::path::Path;
 #[cfg(windows)]
 use std::time::Duration;
 
+#[cfg(unix)]
 const LISTEN_FD: &str = "MARKITAI_SERVE_LISTEN_FD";
+#[cfg(unix)]
 const TOKEN_FD: &str = "MARKITAI_SERVE_TOKEN_FD";
 #[cfg(windows)]
 const TOKEN_STDIN: &str = "MARKITAI_SERVE_TOKEN_STDIN";
@@ -230,7 +232,8 @@ fn relaunch_with(
     }
     #[cfg(windows)]
     {
-        drop(kept);
+        // The listener closed with the server; the child binds again.
+        let _ = kept;
         command.env_remove(TOKEN_STDIN);
         if !handover {
             command.env_remove(RESTARTED_FROM);
@@ -269,6 +272,9 @@ fn relaunch_with(
                 Ok(None) => std::thread::sleep(Duration::from_millis(100)),
             }
         }
+        // The child shares this console: Ctrl-C is its to handle (it drains
+        // and exits), and this idle parent then exits with its code.
+        let _delegated = crate::signals::Delegated::install().ok();
         let code = child
             .wait()
             .ok()
