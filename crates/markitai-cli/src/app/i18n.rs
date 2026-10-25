@@ -32,6 +32,12 @@ pub(crate) enum Lang {
 
 /// The language for this process, resolved once on first use.
 pub(crate) fn lang() -> Lang {
+    // Unit tests read English whatever the machine's language (a Chinese
+    // Windows would otherwise pick Chinese); a test of the Chinese wording
+    // passes `Lang::Zh` to the code it checks.
+    if cfg!(test) {
+        return Lang::En;
+    }
     static LANG: OnceLock<Lang> = OnceLock::new();
     *LANG.get_or_init(|| {
         let fallback = system_locale();
