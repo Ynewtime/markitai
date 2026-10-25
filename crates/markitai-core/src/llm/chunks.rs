@@ -109,6 +109,35 @@ fn squash(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// Whether the link whose address marker starts at `at` (right after `](`)
+/// is written as a picture: a `!` just before the `[` that opens its words.
+fn pictured_link(text: &str, at: usize) -> bool {
+    let bytes = text.as_bytes();
+    let Some(mut index) = at
+        .checked_sub(2)
+        .filter(|&close| bytes.get(close) == Some(&b']'))
+    else {
+        return false;
+    };
+    let mut depth = 0usize;
+    loop {
+        match bytes[index] {
+            b']' => depth += 1,
+            b'[' => {
+                depth -= 1;
+                if depth == 0 {
+                    return index > 0 && bytes[index - 1] == b'!';
+                }
+            }
+            _ => {}
+        }
+        if index == 0 {
+            return false;
+        }
+        index -= 1;
+    }
+}
+
 /// A protected literal without its enclosing fence delimiters.
 fn literal_core(literal: &str) -> String {
     let is_fence = |line: &str| {
@@ -505,13 +534,36 @@ impl Protected {
             })
             .map(|((token, _), _)| self.describe(token))
             .collect();
-        if loose.is_empty() {
+        if !loose.is_empty() {
+            return Err(Error::Conversion(format!(
+                "the answer took {} of the document's link addresses out of their links ({}); keep each as [text](marker)",
+                loose.len(),
+                loose.join("; ")
+            )));
+        }
+        // `![words](marker)` keeps the marker in place but would restore the
+        // link as a picture of its address.
+        let pictured: Vec<String> = self
+            .literals
+            .iter()
+            .zip(&self.addresses)
+            .filter(|(_, address)| **address)
+            .filter(|((token, _), _)| {
+                let was = |text: &str| {
+                    text.match_indices(token.as_str())
+                        .any(|(at, _)| pictured_link(text, at))
+                };
+                was(answer) && !was(&self.text)
+            })
+            .map(|((token, _), _)| self.describe(token))
+            .collect();
+        if pictured.is_empty() {
             return Ok(());
         }
         Err(Error::Conversion(format!(
-            "the answer took {} of the document's link addresses out of their links ({}); keep each as [text](marker)",
-            loose.len(),
-            loose.join("; ")
+            "the answer turned {} of the document's links into pictures ({}); keep each as [text](marker)",
+            pictured.len(),
+            pictured.join("; ")
         )))
     }
 
@@ -1358,6 +1410,26 @@ mod tests {
             .text
             .replace("for details", &format!("at {url} for details"));
         assert!(protected.no_literal_copies(&copied).is_err());
+    }
+    #[test]
+    fn an_answer_that_makes_a_link_a_picture_is_refused() {
+        let source =
+            "Read [the release](https://e.test/a) now, or [the [old] notes](https://e.test/b).\n";
+        let protected = Protected::new(source);
+        assert!(protected.validate(&protected.text, &protected.text).is_ok());
+        for words in ["[the release]", "[the [old] notes]"] {
+            let answer = protected.text.replace(words, &format!("!{words}"));
+            let refused = protected
+                .validate(&protected.text, &answer)
+                .unwrap_err()
+                .to_string();
+            assert!(refused.contains("into pictures"), "{refused}");
+        }
+        // A link whose words are a picture stays a link.
+        let badge = "[![build](badge.png)](https://e.test/ci) ok\n";
+        let protected = Protected::new(badge);
+        assert!(protected.validate(&protected.text, &protected.text).is_ok());
+        assert_eq!(protected.restore(&protected.text).unwrap(), badge);
     }
     #[test]
     fn unicode_chunks_keep_tail_and_exact_concatenation() {
