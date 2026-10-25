@@ -713,7 +713,14 @@ fn redacted_parameters(text: Option<&str>, repeated: &[String]) -> Option<String
     }
     let mut serializer = url::form_urlencoded::Serializer::new(String::new());
     for (key, value) in &pairs {
-        serializer.append_pair(key, if secret(key, value) { "REDACTED" } else { value });
+        serializer.append_pair(
+            key,
+            if secret(key, value) {
+                "REDACTED"
+            } else {
+                value
+            },
+        );
     }
     Some(serializer.finish())
 }
@@ -809,7 +816,9 @@ pub fn url_name(source: &str) -> String {
     // A page named by a query (`item?id=8863`, `watch?v=abc`) carries its
     // identity there; without it two pages of one site share a name. A value
     // that repeats a secret path segment or reads as a secret itself does not.
-    let identity = parsed.as_ref().and_then(|u| identifying_query(u, &secret_segment_values(u)));
+    let identity = parsed
+        .as_ref()
+        .and_then(|u| identifying_query(u, &secret_segment_values(u)));
     let raw = match (segment, identity) {
         (Some(path), identity) if parsed.as_ref().is_some_and(|u| u.query().is_some()) => {
             match identity {
