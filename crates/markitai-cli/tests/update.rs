@@ -110,8 +110,11 @@ impl Releases {
         );
     }
 
-    /// A Windows release: this binary as `markitai.exe`, posed as `version`
-    /// by its pose file, which also says whether it fails to start.
+    /// A Windows release laid out as the real zip (release_build.py: the
+    /// three EXEs, LICENSE, NOTICE): this binary as `markitai.exe`, posed as
+    /// `version` by its pose file, which also says whether it fails to start.
+    /// `mkai.exe` and `markitai-mcp.exe` are stand-ins: the update only
+    /// requires them, and three debug copies would pass the archive limit.
     #[cfg(windows)]
     fn publish_exe(&self, version: &str, fail: bool) {
         use std::io::Write as _;
@@ -125,8 +128,11 @@ impl Releases {
             .large_file(program.len() > u32::MAX as usize / 2);
         for (entry, bytes) in [
             ("markitai.exe", program.as_slice()),
+            ("mkai.exe", b"mkai stand-in".as_slice()),
+            ("markitai-mcp.exe", b"markitai-mcp stand-in".as_slice()),
             (POSE, pose.as_bytes()),
             ("LICENSE", b"MIT\n".as_slice()),
+            ("NOTICE", b"notices\n".as_slice()),
         ] {
             writer.start_file(entry, options).unwrap();
             writer.write_all(bytes).unwrap();
@@ -285,11 +291,13 @@ impl Home {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::copy(env!("CARGO_BIN_EXE_markitai"), dir.join("markitai.exe")).unwrap();
         std::fs::write(dir.join(POSE), format!("{version}\n")).unwrap();
-        std::fs::write(dir.join("LICENSE"), "old\n").unwrap();
+        for name in ["mkai.exe", "markitai-mcp.exe", "LICENSE", "NOTICE"] {
+            std::fs::write(dir.join(name), "old\n").unwrap();
+        }
         std::fs::write(
             dir.join("receipt"),
             format!(
-                "version={version}\ntarget={}\nfile=LICENSE\nfile={POSE}\nfile=markitai.exe\n",
+                "version={version}\ntarget={}\nfile=LICENSE\nfile=NOTICE\nfile={POSE}\nfile=markitai-mcp.exe\nfile=markitai.exe\nfile=mkai.exe\n",
                 target()
             ),
         )
@@ -1147,7 +1155,9 @@ mod restart_by_cli {
         let server = Serve::start_with(&home, &releases, OLD, port());
         let (said, code) = update(&home, &releases);
         assert_eq!(code, 1, "{said}");
-        assert!(said.contains("2.2.0"), "{said}");
+        // The failure is the new version's start, nothing earlier: else
+        // there is no rollback to wait for.
+        assert!(said.contains("The new version didn't start"), "{said}");
         assert!(!said.contains("came back as"), "{said}");
         // The old version answers on the same port with the same token.
         let view = server.wait("the rollback", |view| {

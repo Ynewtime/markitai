@@ -730,7 +730,22 @@ impl Swapped {
     pub(crate) fn rollback(&self) -> io::Result<()> {
         let mut first = None;
         for path in self.placed.iter().rev() {
-            if let Err(error) = remove_any(path) {
+            // A running Windows EXE (the new server undoing its own update)
+            // cannot be deleted, only renamed: aside, as a leftover.
+            let removed = fault("remove")
+                .and_then(|()| remove_any(path))
+                .or_else(|error| {
+                    let name = path
+                        .file_name()
+                        .map(|name| name.to_string_lossy().into_owned());
+                    let aside = path.with_file_name(format!(
+                        "{}.old-{}",
+                        name.unwrap_or_default(),
+                        new_id()
+                    ));
+                    markitai_core::platform::rename(path, &aside).map_err(|_| error)
+                });
+            if let Err(error) = removed {
                 first.get_or_insert(error);
             }
         }
@@ -1387,6 +1402,35 @@ pub(crate) mod tests {
                 Some("2.1.0")
             );
         }
+    }
+
+    #[test]
+    fn a_rollback_renames_aside_a_new_file_it_cannot_delete() {
+        let root = tempfile::tempdir().unwrap();
+        let install = folder_install(root.path());
+        let work = prepare(&install).unwrap();
+        let unpacked = new_folder_release(&work.path);
+        let swapped = swap(&install, &release("2.2.0", "a.zip", ""), &unpacked).unwrap();
+        // As the new markitai.exe still running: no delete, renames only.
+        fail_at(Some("remove"));
+        let rolled = swapped.rollback();
+        fail_at(None);
+        rolled.unwrap();
+        for name in ["markitai.exe", "mkai.exe", "markitai-mcp.exe", "LICENSE"] {
+            assert_eq!(read(&install.dir.join(name)), format!("old {name}"));
+        }
+        assert!(!install.dir.join("NOTICE").exists());
+        let aside: Vec<String> = std::fs::read_dir(&install.dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with("markitai.exe.old-"))
+            .collect();
+        assert_eq!(aside.len(), 1, "{aside:?}");
+        assert_eq!(read(&install.dir.join(&aside[0])), "new markitai.exe");
+        // Removed as a leftover by the next update.
+        drop(work);
+        remove_leftovers(&install, &[]);
+        assert!(!install.dir.join(&aside[0]).exists());
     }
 
     #[test]
