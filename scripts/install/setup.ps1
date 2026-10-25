@@ -387,7 +387,7 @@ function Save-Download {
 }
 
 # The release named by MARKITAI_VERSION, else the latest, from its SHA256SUMS:
-# @{ Version; Archive; Sha256 }.
+# @{ Version; Archive; Sha256; Base }.
 function Resolve-Release {
     param([string]$Base, [string]$Target, [string]$Wanted, [string]$Work)
     if ($Wanted) {
@@ -404,7 +404,7 @@ function Resolve-Release {
     foreach ($line in [IO.File]::ReadAllLines($sums)) {
         $match = [regex]::Match($line, $pattern)
         if ($match.Success) {
-            $release = @{ Sha256 = $match.Groups[1].Value; Archive = $match.Groups[2].Value; Version = $match.Groups[3].Value }
+            $release = @{ Sha256 = $match.Groups[1].Value; Archive = $match.Groups[2].Value; Version = $match.Groups[3].Value; Base = $Base }
             if ($Wanted -and $release.Version -ne $Wanted) { Stop-Setup (Msg "error_no_asset") $release.Archive }
             return $release
         }
@@ -500,8 +500,10 @@ function Write-Receipt {
     param([string]$Directory, [hashtable]$Receipt)
     $pathAdded = 0
     if ($Receipt.PathAdded) { $pathAdded = 1 }
-    $lines = @("version=$($Receipt.Version)", "target=$($Receipt.Target)", "path_added=$pathAdded") +
-        @($Receipt.Names | ForEach-Object { "file=$_" })
+    # base= and format=1 are read by `markitai update`, which updates this
+    # install in place from the same releases.
+    $lines = @("version=$($Receipt.Version)", "target=$($Receipt.Target)", "path_added=$pathAdded",
+        "base=$($Receipt.Base)", "format=1") + @($Receipt.Names | ForEach-Object { "file=$_" })
     [IO.File]::WriteAllText([IO.Path]::Combine($Directory, "receipt"), (($lines -join "`n") + "`n"))
 }
 
@@ -557,7 +559,7 @@ function New-Staging {
     if ($foreign.Count) { Stop-Setup (Msg "error_shared_folder") "${Directory}: $($foreign -join ', ')" }
     $created = -not (Test-Path -LiteralPath $Directory)
     $stage = [IO.Path]::Combine($Directory, ".markitai-new-" + [Guid]::NewGuid().ToString("N"))
-    $receipt = @{ Version = $Release.Version; Target = $Target; Names = $names; PathAdded = [bool]($Previous -and $Previous.PathAdded) }
+    $receipt = @{ Version = $Release.Version; Target = $Target; Base = $Release.Base; Names = $names; PathAdded = [bool]($Previous -and $Previous.PathAdded) }
     try {
         New-Item -ItemType Directory -Force -Path $stage | Out-Null
         foreach ($name in $names) {
@@ -823,7 +825,7 @@ function Write-GettingStarted {
     Write-Hint (Msg "web_ui") "markitai serve"
     Write-Hint (Msg "configure_llm") "markitai init"
     Write-Hint (Msg "show_help") "markitai --help"
-    Write-Hint (Msg "update") "irm $ScriptUrl | iex"
+    Write-Hint (Msg "update") "markitai update"
     # A script block takes -Uninstall and, unlike setting MARKITAI_UNINSTALL,
     # leaves nothing set in this window for a later update to trip over.
     Write-Hint (Msg "uninstall") "& ([scriptblock]::Create((irm $ScriptUrl))) -Uninstall"

@@ -146,7 +146,12 @@ class SetupShTests(unittest.TestCase):
         self.assertEqual((current / "LICENSE").read_text(), "MIT\n")
         self.assertTrue((current / "licenses/example/LICENSE").is_file())
         self.assertFalse((current / "markitai").exists())
-        self.assertIn("version=2.0.0", (current / "receipt").read_text())
+        receipt = (current / "receipt").read_text()
+        self.assertIn("version=2.0.0", receipt)
+        # What `markitai update` reads to update this install in place.
+        for line in [f"base={self.releases.base}", "installer=setup.sh", "format=1", f"bin_dir={bin_dir}"]:
+            self.assertIn(line + "\n", receipt)
+        self.assertIn("markitai update", result.stdout)
         self.assertIn("SHA-256 verified", result.stdout)
         self.assertIn("PATH does not include", result.stdout)
         self.assertIn("MARKITAI_INSTALL_OPTIONAL=1", result.stdout)
@@ -377,6 +382,8 @@ Assert (Test-Path (Join-Path $install "settings.old-2024.json")) "only this scri
 Assert ((Get-Content -Raw (Join-Path $install "markitai.exe")) -eq "exe 2.0.1") "new exe"
 Assert (@(Get-ChildItem $install -Force | Where-Object { $_.Name -match '\.old-[0-9a-f]{32}$|^\.markitai-' }).Count -eq 0) "old copies and staging gone"
 Assert ((Get-Content -Raw (Join-Path $install "receipt")) -match "version=2.0.1") "receipt"
+Assert ((Get-Content -Raw (Join-Path $install "receipt")) -match "(?m)^format=1$") "receipt format"
+Assert ((Get-Content -Raw (Join-Path $install "receipt")) -match "(?m)^base=\S+$") "receipt base"
 Assert ((Read-Receipt $install).Names -contains "licenses") "receipt lists the folder's names"
 Assert ($script:UvRemoved -eq 1) "uv's markitai removed once installing"
 $script:FakeUserPath = "Z:\old-usb-tools;$install"

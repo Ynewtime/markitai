@@ -19,9 +19,23 @@ fn config_json(overrides: &str, model: &str, schema: bool) -> String {
 /// `mkai` or `markitai-mcp`) as the `markitai` executable does, and ends the
 /// process with its exit status, as the executable does: the wheel's entry
 /// points call it and nothing of the interpreter runs after it.
+///
+/// `install` says how the wheel was installed (`prefix`, `executable`,
+/// `installer`, `user`), so `markitai update` names the command that
+/// updates it.
 #[pyfunction]
-fn run_cli(py: Python<'_>, arguments: Vec<std::ffi::OsString>) {
-    py.detach(move || std::process::exit(markitai_cli::run(arguments)))
+#[pyo3(signature = (arguments, install = None))]
+fn run_cli(
+    py: Python<'_>,
+    arguments: Vec<std::ffi::OsString>,
+    install: Option<std::collections::HashMap<String, String>>,
+) {
+    py.detach(move || {
+        std::process::exit(markitai_cli::run_python(
+            arguments,
+            install.unwrap_or_default(),
+        ))
+    })
 }
 
 #[pymodule]

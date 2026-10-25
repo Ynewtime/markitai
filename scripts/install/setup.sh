@@ -401,7 +401,8 @@ install_release() {
         mkdir -p "$SHARE_ROOT" &&
             rm -rf "$SHARE_ROOT/current.new" "$SHARE_ROOT/current.old" &&
             mv "$_unpacked" "$SHARE_ROOT/current.new" &&
-            printf 'version=%s\ntarget=%s\nbin_dir=%s\n' "$VERSION" "$TARGET" "$BIN_DIR" >"$SHARE_ROOT/current.new/receipt" &&
+            printf 'version=%s\ntarget=%s\nbin_dir=%s\nbase=%s\ninstaller=setup.sh\nformat=1\n' \
+                "$VERSION" "$TARGET" "$BIN_DIR" "$BASE" >"$SHARE_ROOT/current.new/receipt" &&
             { [ ! -d "$SHARE_ROOT/current" ] || mv "$SHARE_ROOT/current" "$SHARE_ROOT/current.old"; } &&
             mv "$SHARE_ROOT/current.new" "$SHARE_ROOT/current" &&
             rm -rf "$SHARE_ROOT/current.old"
@@ -482,7 +483,7 @@ getting_started() {
     hint "$(msg web_ui)" "markitai serve"
     hint "$(msg configure_llm)" "markitai init"
     hint "$(msg show_help)" "markitai --help"
-    hint "$(msg update)" "curl -fsSL $SCRIPT_URL | sh"
+    hint "$(msg update)" "markitai update"
     hint "$(msg uninstall)" "curl -fsSL $SCRIPT_URL | sh -s -- --uninstall"
     info "$(msg docs): https://markitai.dev"
 }

@@ -15,7 +15,8 @@
   smoke-wheel  install a wheel into a new venv and exercise it
   smoke-sdist  build a wheel from the sdist with pip and exercise it
   licenses  check every archive and wheel carries the same license set
-  sums      write SHA256SUMS for the release assets
+  sums      write SHA256SUMS for the release assets (RELEASE-NOTES.md, the
+            `notes` output, is one of them)
 
 Archives are `markitai-v<version>-<target>.tar.gz` (`.zip` on Windows) with
 the executables at the root: `markitai` and relative `mkai`/`markitai-mcp`
@@ -681,12 +682,18 @@ def build_sdist(output):
     return sdist
 
 
+# The release notes as an asset: `markitai update` and the server read its
+# first lines (at most 16 KiB) for the release's one-line description.
+NOTES_ASSET = "RELEASE-NOTES.md"
+
+
 def expected_assets(version):
-    """Every file a release carries besides SHA256SUMS: archives, wheels, the sdist."""
+    """Every file a release carries besides SHA256SUMS: archives, wheels, the sdist, the notes."""
     python = python_version(version)
     names = {archive_name(version, target) for target in TARGETS}
     names |= {f"markitai-{python}-cp310-abi3-{tag}.whl" for tag in TARGETS.values()}
     names.add(f"markitai-{python}.tar.gz")
+    names.add(NOTES_ASSET)
     return names
 
 

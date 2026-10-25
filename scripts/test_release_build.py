@@ -167,7 +167,8 @@ class AssetTests(unittest.TestCase):
         self.assertEqual(archive_name("2.0.0", "aarch64-pc-windows-msvc"),
                          "markitai-v2.0.0-aarch64-pc-windows-msvc.zip")
         assets = expected_assets("2.0.0")
-        self.assertEqual(len(assets), 13)
+        self.assertEqual(len(assets), 14)
+        self.assertIn("RELEASE-NOTES.md", assets)
         self.assertIn("markitai-2.0.0-cp310-abi3-manylinux_2_28_aarch64.whl", assets)
         self.assertIn("markitai-2.0.0.tar.gz", assets)
 
@@ -179,7 +180,7 @@ class AssetTests(unittest.TestCase):
             with contextlib.redirect_stdout(io.StringIO()):
                 write_sums(folder, "2.0.0")
             lines = (folder / "SHA256SUMS").read_text(encoding="utf-8").splitlines()
-            self.assertEqual(len(lines), 13)
+            self.assertEqual(len(lines), 14)
             self.assertTrue(all(re.fullmatch(r"[0-9a-f]{64}  \S+", line) for line in lines))
             (folder / "stray.txt").write_text("x")
             with self.assertRaises(SystemExit):
@@ -201,6 +202,12 @@ class AssetTests(unittest.TestCase):
                          {target for target in TARGETS if "windows" in target})
         for text in [shell, powershell]:
             self.assertTrue("markitai-v" in text and "SHA256SUMS" in text)
+
+    def test_the_release_carries_its_notes_as_an_asset(self):
+        workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+        job = workflow.split("\n  github-release:", 1)[1].split("\n  pypi:", 1)[0]
+        copy = job.index("cp notes/notes.md assets/RELEASE-NOTES.md")
+        self.assertLess(copy, job.index("release_build.py sums"))
 
     def test_pypi_gets_the_wheels_only(self):
         workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")

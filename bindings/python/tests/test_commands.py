@@ -71,6 +71,16 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(run.returncode, 2)
         self.assertIn("--no-such-option", run.stderr.decode(errors="replace"))
 
+    def test_the_commands_say_how_the_wheel_was_installed(self):
+        # `markitai update` names the command for this install from these.
+        from markitai._cli import _install
+
+        facts = _install()
+        self.assertEqual(facts["prefix"], sys.prefix)
+        self.assertEqual(facts["executable"], sys.executable)
+        if installed() is not None:
+            self.assertIn(facts["user"], ("0", "1"))
+
     def test_the_program_converts_a_file(self):
         source = self.root / "note.md"
         source.write_text("# Note\n\nWords.\n", encoding="utf-8")

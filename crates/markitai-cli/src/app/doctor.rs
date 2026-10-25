@@ -137,8 +137,9 @@ pub(super) fn run(
 ) -> CliResult<i32> {
     let lang = lang();
     let style = Style::stdout();
+    let newer = (!json).then(|| newer_markitai(cfg)).flatten();
     if !json {
-        for line in heading(path, project, lang, style) {
+        for line in heading(path, project, lang, style, newer.as_ref()) {
             println!("{line}");
         }
     }
@@ -221,15 +222,41 @@ pub(super) fn run(
             serde_json::to_string_pretty(&checks).map_err(runtime)?
         );
     } else {
-        for line in report(&checks, &repair_failed, lang, style) {
+        for line in report(&checks, &repair_failed, lang, style, newer.as_ref()) {
             println!("{line}");
         }
     }
     Ok(i32::from(failed || !repair_failed.is_empty()))
 }
 
+/// A newer release the update check found (from its cache: doctor sends
+/// no request), shown on a terminal outside CI. Doctor never updates and
+/// its exit status does not change.
+pub(super) struct Newer {
+    latest: String,
+    command: String,
+}
+
+fn newer_markitai(cfg: &Value) -> Option<Newer> {
+    use std::io::IsTerminal;
+    if !std::io::stdout().is_terminal() || crate::update::ci() {
+        return None;
+    }
+    let (latest, _) = crate::update::cached_newer(Some(cfg))?;
+    Some(Newer {
+        latest: latest.to_string(),
+        command: crate::update::command_for_notice(),
+    })
+}
+
 /// The title, then the version and configuration lines.
-fn heading(path: Option<&Path>, project: bool, lang: Lang, style: Style) -> [String; 3] {
+fn heading(
+    path: Option<&Path>,
+    project: bool,
+    lang: Lang,
+    style: Style,
+    newer: Option<&Newer>,
+) -> [String; 3] {
     let version = markitai_core::VERSION;
     let configured = path.map(|path| super::config_line(lang, path, project));
     let source = match path {
@@ -245,10 +272,18 @@ fn heading(path: Option<&Path>, project: bool, lang: Lang, style: Style) -> [Str
     };
     [
         style.title(&text!(lang => "System Check", "系统检查")),
-        style.item(
-            Mark::Info,
-            &text!(lang => "Version: markitai {version} (native)", "版本：markitai {version}（原生）"),
-        ),
+        match newer {
+            Some(Newer { latest, .. }) => style.item(
+                Mark::Warning,
+                &text!(lang =>
+                    "Version: markitai {version} (native), version {latest} is available",
+                    "版本：markitai {version}（原生），有新版本 {latest}"),
+            ),
+            None => style.item(
+                Mark::Info,
+                &text!(lang => "Version: markitai {version} (native)", "版本：markitai {version}（原生）"),
+            ),
+        },
         style.item(
             Mark::Info,
             &configured.unwrap_or_else(|| text!(lang => "Config: {source}", "配置文件：{source}")),
@@ -264,6 +299,7 @@ fn report(
     repair_failed: &[&str],
     lang: Lang,
     style: Style,
+    newer: Option<&Newer>,
 ) -> Vec<String> {
     let mut lines = Vec::new();
     // A check no section names is shown in the first one rather than lost.
@@ -331,7 +367,7 @@ fn report(
         .filter(|check| check.failed())
         .map(|check| check.name)
         .collect();
-    if !remedies.is_empty() {
+    if !remedies.is_empty() || newer.is_some() {
         lines.push(String::new());
         lines.push(style.section(&if failed.is_empty() {
             text!(lang => "To enable what is missing", "启用缺失的功能")
@@ -361,6 +397,13 @@ fn report(
                     Fix::Command(command) => style.command(4, command),
                 });
             }
+        }
+        if let Some(Newer { latest, command }) = newer {
+            lines.push(style.item(
+                Mark::Info,
+                &text!(lang => "Update to {latest}:", "更新到 {latest}："),
+            ));
+            lines.push(style.command(4, command));
         }
     }
     lines.push(String::new());
@@ -1689,6 +1732,46 @@ mod tests {
     }
 
     #[test]
+    fn a_newer_release_marks_the_version_and_adds_the_update_command_but_not_a_failure() {
+        let plain = Style {
+            color: false,
+            unicode: true,
+            width: None,
+            bright: false,
+        };
+        let newer = Newer {
+            latest: "9.9.9".into(),
+            command: "markitai update".into(),
+        };
+        let version = markitai_core::VERSION;
+        let heading = heading(None, false, Lang::Zh, plain, Some(&newer));
+        assert_eq!(
+            heading[1],
+            format!("  ! 版本：markitai {version}（原生），有新版本 9.9.9")
+        );
+        // Nothing else to enable: the section still names the update.
+        let lines = report(&IndexMap::new(), &[], Lang::Zh, plain, Some(&newer));
+        let at = lines
+            .iter()
+            .position(|line| line == "启用缺失的功能")
+            .unwrap();
+        assert_eq!(
+            lines[at + 1..at + 3],
+            ["  • 更新到 9.9.9：", "    markitai update"]
+        );
+        let english = report(&sample(), &[], Lang::En, plain, Some(&newer));
+        assert!(
+            english.contains(&"  • Update to 9.9.9:".to_owned()),
+            "{english:?}"
+        );
+        // The verdict is the same as without it.
+        assert_eq!(
+            english.last(),
+            report(&sample(), &[], Lang::En, plain, None).last()
+        );
+    }
+
+    #[test]
     fn keys_no_active_model_uses_are_listed() {
         let cfg = config::normalize(&json!({"llm":{"model_list":[
             {"model_name":"default","litellm_params":{"model":"deepseek/deepseek-flash"}}]}}))
@@ -1711,12 +1794,12 @@ mod tests {
             width: None,
             bright: false,
         };
-        let english = report(&checks, &[], Lang::En, plain).join("\n");
+        let english = report(&checks, &[], Lang::En, plain, None).join("\n");
         assert!(
             english.contains("Not used: OPENAI_API_KEY, GOOGLE_API_KEY (set, but no model in llm.model_list uses them)"),
             "{english}"
         );
-        let chinese = report(&checks, &[], Lang::Zh, plain).join("\n");
+        let chinese = report(&checks, &[], Lang::Zh, plain, None).join("\n");
         assert!(
             chinese.contains("未使用：OPENAI_API_KEY、GOOGLE_API_KEY（已设置，但 llm.model_list 中没有模型用到它们）"),
             "{chinese}"
@@ -1736,9 +1819,15 @@ mod tests {
             bright: false,
         };
         let lines = |style| {
-            let mut lines =
-                heading(Some(Path::new("/cfg/config.json")), false, Lang::En, style).to_vec();
-            lines.extend(report(&sample(), &[], Lang::En, style));
+            let mut lines = heading(
+                Some(Path::new("/cfg/config.json")),
+                false,
+                Lang::En,
+                style,
+                None,
+            )
+            .to_vec();
+            lines.extend(report(&sample(), &[], Lang::En, style, None));
             lines.join("\n")
         };
         let version = markitai_core::VERSION;
