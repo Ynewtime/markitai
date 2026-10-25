@@ -976,6 +976,81 @@ pub(super) mod tests {
         assert!(capabilities.get("update").is_none(), "{capabilities}");
     }
 
+    #[test]
+    fn only_a_host_naming_this_computer_counts_as_loopback() {
+        let named = |host: Option<&str>| {
+            let mut builder = axum::http::Request::builder().uri("/api/update");
+            if let Some(host) = host {
+                builder = builder.header("host", host);
+            }
+            loopback_host(&builder.body(Body::empty()).unwrap())
+        };
+        for host in [
+            "localhost",
+            "LocalHost:3600",
+            "127.0.0.1",
+            "127.0.0.1:3600",
+            "127.8.9.1:1",
+            "[::1]",
+            "[::1]:3600",
+            "[::ffff:127.0.0.1]:3600",
+        ] {
+            assert!(named(Some(host)), "{host}");
+        }
+        // A proxy's public name, this computer's network address, a lookalike.
+        for host in [
+            "md.example.com",
+            "md.example.com:443",
+            "localhost.example.com",
+            "127.0.0.1.example.com",
+            "192.168.1.5:3600",
+            "[2001:db8::1]:3600",
+            "0.0.0.0:3600",
+            "localhost:port",
+            "",
+        ] {
+            assert!(!named(Some(host)), "{host}");
+        }
+        assert!(!named(None));
+    }
+
+    #[tokio::test]
+    async fn the_admin_reaching_a_loopback_server_under_another_name_is_refused() {
+        let root = tempfile::tempdir().unwrap();
+        let mut state = state(
+            root.path(),
+            Some(ADMIN),
+            Update::for_test(root.path(), Some("2.2.0")),
+        );
+        // Let through by the server's own Host check, as --allowed-host does
+        // (which also turns the web update off; this is the check behind it).
+        let allowed = super::super::security::allowed_host("md.example.com")
+            .map_err(|error| error.detail)
+            .unwrap();
+        Arc::get_mut(&mut state)
+            .unwrap()
+            .allowed_hosts
+            .insert(allowed);
+        let bearer = format!("Bearer {ADMIN}");
+        for (host, expected) in [("localhost:3600", 200), ("md.example.com", 403)] {
+            let mut request = request(
+                "GET",
+                "/api/update",
+                LOCAL,
+                &[("authorization", &bearer)],
+                "",
+            );
+            request
+                .headers_mut()
+                .insert("host", axum::http::HeaderValue::from_static(host));
+            let (status, value, _) = answer(&state, request).await;
+            assert_eq!(status, expected, "{host}: {value}");
+            if expected == 403 {
+                assert_eq!(value["reason"], "update_forbidden", "{value}");
+            }
+        }
+    }
+
     #[tokio::test]
     async fn a_loopback_server_tells_its_admin_alone_and_only_directly() {
         let root = tempfile::tempdir().unwrap();
