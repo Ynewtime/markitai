@@ -454,7 +454,7 @@ fn actual_service_reports_an_unset_key_variable_before_any_request() {
     assert_eq!(status, 200, "{result}");
     assert_eq!(result["ok"], true, "{result}");
     let requests = backend.seen.lock().unwrap().clone();
-    assert_eq!(requests.len(), 1);
+    assert_eq!(requests.len(), 1, "{requests:?}");
     assert!(requests[0].starts_with("POST /v1/chat/completions"));
 }
 

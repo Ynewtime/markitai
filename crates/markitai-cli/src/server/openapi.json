@@ -544,6 +544,78 @@
         }
       }
     },
+    "/api/update": {
+      "get": {
+        "tags": ["service"],
+        "operationId": "getUpdate",
+        "summary": "v1.24: the newer release this server found and the state of an update",
+        "description": "Only a server that listens on loopback has this route (an exposed one answers 404 `route_not_found`, and its capabilities carry no `update`). Admin only, on a direct loopback connection: the server token, or a loopback client of a `--no-auth` server; a user token, a forwarding header or another peer: 403 (`settings_forbidden`, `update_forbidden`). Other tabs poll it every 3 s while `state` is not `idle`. `Cache-Control: no-store`.",
+        "security": [{ "bearerAuth": [] }, { "tokenQuery": [] }],
+        "responses": {
+          "200": { "description": "The update state", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UpdateStatus" } } } },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "post": {
+        "tags": ["service"],
+        "operationId": "startUpdate",
+        "summary": "v1.24: download, verify and install the latest release, then restart",
+        "description": "Body exactly `{\"version\": \"X.Y.Z\"}`, the `latest` this server reported (else 409 `version_changed`: reload; malformed: 422 `invalid_json`). Only a setup-script install is updated in place (else 409 `update_unavailable`); one update at a time (409 `update_running`). The answer is 202 with the new state. The server downloads and verifies while conversions run (`downloading`, `verifying`), then holds new conversions (503 `updating` with `Retry-After`) until the running and queued ones finish (`waiting`), installs (`installing`) and restarts in place (`restarting`): the connection drops, the token stays. A failure ends in `failed` with `error`. Admin only, as `GET`.",
+        "security": [{ "bearerAuth": [] }, { "tokenQuery": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["version"], "additionalProperties": false, "properties": { "version": { "type": "string" } } } } } },
+        "responses": {
+          "202": { "description": "Started", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UpdateStatus" } } } },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" },
+          "413": { "$ref": "#/components/responses/Error" },
+          "422": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "delete": {
+        "tags": ["service"],
+        "operationId": "cancelUpdate",
+        "summary": "v1.24: cancel an update until installing begins",
+        "description": "While `downloading`, `verifying` or `waiting`; the update then ends `failed` with `error.code` `cancelled` and nothing changed. Otherwise 409 `not_cancellable`. Admin only, as `GET`.",
+        "security": [{ "bearerAuth": [] }, { "tokenQuery": [] }],
+        "responses": {
+          "200": { "description": "Cancelling", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UpdateStatus" } } } },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/update/control": {
+      "get": {
+        "tags": ["service"],
+        "operationId": "updateControl",
+        "summary": "For markitai update: this server's version and the conversions a restart waits for",
+        "description": "Authorised by the per-launch secret in `MARKITAI_HOME/serve/control` (owner-only) in the `X-Markitai-Control` header, on a direct loopback connection; no access token. Anything else: 403 `control_forbidden`. Every server has it.",
+        "security": [],
+        "parameters": [{ "name": "X-Markitai-Control", "in": "header", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "The server", "content": { "application/json": { "schema": { "type": "object", "required": ["version", "pid", "waiting_jobs", "state"], "properties": { "version": { "type": "string" }, "pid": { "type": "integer" }, "waiting_jobs": { "type": "integer" }, "state": { "type": "string" } } } } } },
+          "403": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/update/restart": {
+      "post": {
+        "tags": ["service"],
+        "operationId": "updateRestart",
+        "summary": "For markitai update: finish the conversions, then start the installed program again",
+        "description": "Authorised as `GET /api/update/control`. New conversions are held (503 `updating`) until the running and queued ones finish; then the server starts the installed program in its place with the same address and token. 409 `update_running` while an update runs.",
+        "security": [],
+        "parameters": [{ "name": "X-Markitai-Control", "in": "header", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "202": { "description": "Restarting once idle", "content": { "application/json": { "schema": { "type": "object", "required": ["waiting_jobs"], "properties": { "waiting_jobs": { "type": "integer" } } } } } },
+          "403": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
     "/api/history/delete": {
       "post": {
         "tags": ["history"],
@@ -946,7 +1018,7 @@
           "reason": {
             "type": "string",
             "description": "Stable machine code of the specific cause. The list is the set the service writes; new codes may be added.",
-            "examples": ["ambiguous_legacy_model_name", "archive_too_large", "batch_pending", "config_changed", "config_missing", "config_too_large", "discovery_timeout", "empty_job", "empty_url_list", "enhancement_failed", "file_not_found", "file_too_large", "form_field_too_large", "history_empty", "host_not_allowed", "internal_error", "invalid_allowed_host", "invalid_config", "invalid_convert_defaults", "invalid_delete_request", "invalid_json", "invalid_label", "invalid_max_bytes", "invalid_multipart", "invalid_options", "invalid_provider_request", "invalid_retry_body", "invalid_settings_request", "invalid_ticket_path", "invalid_weight", "invalid_output_name", "invalid_page_request", "invalid_url", "invalid_url_list", "invalid_urls", "item_busy", "item_not_found", "job_id_collision", "job_not_found", "job_not_running", "job_running", "json_required", "key_or_address_required", "llm_unavailable", "method_not_allowed", "model_limit", "no_output", "no_source", "not_retryable", "nothing_to_stop", "origin_not_allowed", "original_unavailable", "output_conflict", "output_identity_conflict", "page_not_found", "persistence_failed", "provider_busy", "provider_unavailable", "remote_url_forbidden", "remote_processing_forbidden", "remote_processing_confirmation_required", "remote_processing_disabled", "render_busy", "render_failed", "cloudflare_unavailable", "request_too_large", "result_too_large", "result_unavailable", "route_not_found", "server_address", "server_credentials", "settings_durability_unknown", "settings_entry_missing", "settings_forbidden", "settings_io_failed", "settings_read_only", "shutting_down", "stale_revision", "ticket_invalid", "token_disabled", "token_limit", "token_not_found", "token_required", "too_many_items", "too_many_tickets", "unknown_preset", "unsupported_url_scheme", "upload_missing", "url_list_too_large", "user_token_required"]
+            "examples": ["ambiguous_legacy_model_name", "archive_too_large", "batch_pending", "config_changed", "config_missing", "config_too_large", "discovery_timeout", "empty_job", "empty_url_list", "enhancement_failed", "file_not_found", "file_too_large", "form_field_too_large", "history_empty", "host_not_allowed", "internal_error", "invalid_allowed_host", "invalid_config", "invalid_convert_defaults", "invalid_delete_request", "invalid_json", "invalid_label", "invalid_max_bytes", "invalid_multipart", "invalid_options", "invalid_provider_request", "invalid_retry_body", "invalid_settings_request", "invalid_ticket_path", "invalid_weight", "invalid_output_name", "invalid_page_request", "invalid_url", "invalid_url_list", "invalid_urls", "item_busy", "item_not_found", "job_id_collision", "job_not_found", "job_not_running", "job_running", "json_required", "key_or_address_required", "llm_unavailable", "method_not_allowed", "model_limit", "no_output", "no_source", "not_retryable", "nothing_to_stop", "origin_not_allowed", "original_unavailable", "output_conflict", "output_identity_conflict", "page_not_found", "persistence_failed", "provider_busy", "provider_unavailable", "remote_url_forbidden", "remote_processing_forbidden", "remote_processing_confirmation_required", "remote_processing_disabled", "render_busy", "render_failed", "cloudflare_unavailable", "request_too_large", "result_too_large", "result_unavailable", "route_not_found", "server_address", "server_credentials", "settings_durability_unknown", "settings_entry_missing", "settings_forbidden", "settings_io_failed", "settings_read_only", "shutting_down", "stale_revision", "ticket_invalid", "token_disabled", "token_limit", "token_not_found", "token_required", "too_many_items", "too_many_tickets", "unknown_preset", "unsupported_url_scheme", "upload_missing", "url_list_too_large", "user_token_required", "control_forbidden", "not_cancellable", "update_forbidden", "update_running", "update_unavailable", "updating", "version_changed"]
           }
         }
       },
@@ -996,7 +1068,8 @@
           "limits": { "type": "object", "properties": { "max_job_items": { "type": "integer" }, "history_retention_days": { "type": ["integer", "null"], "description": "Days a finished job is kept; null when it is kept until deleted" } } },
           "access": { "type": "object", "required": ["role"], "description": "Who is asking: `admin` (the server token, or a loopback client with --no-auth) or `user` (a user token, with its `label`; an anonymous --no-auth client is a `user` without one)", "properties": { "role": { "type": "string", "enum": ["admin", "user"] }, "label": { "type": "string" } } },
           "ocr_languages": { "type": "array", "items": { "type": "string" }, "description": "v1.20, with `features.ocr_lang`: the `ocr_lang` values a job may choose, the automatic default `en` first; the configured `ocr.lang` is appended when it is none of them" },
-          "ocr_lang": { "type": "string", "description": "v1.20, with `features.ocr_lang`: the configured `ocr.lang`, what a job without `ocr_lang` reads with" }
+          "ocr_lang": { "type": "string", "description": "v1.20, with `features.ocr_lang`: the configured `ocr.lang`, what a job without `ocr_lang` reads with" },
+          "update": { "type": "object", "description": "v1.24, only for the admin of a server that listens on loopback: the summary of `GET /api/update`", "required": ["current", "latest", "newer", "can_apply", "method", "state"], "properties": { "current": { "type": ["string", "null"] }, "latest": { "type": ["string", "null"] }, "newer": { "type": "boolean" }, "can_apply": { "type": "boolean" }, "method": { "type": "string" }, "state": { "type": "string" } } }
         }
       },
       "BuildInfo": {
@@ -1131,6 +1204,28 @@
           "masked": { "type": "integer", "description": "How many values are masked" },
           "problem": { "type": ["string", "null"], "description": "Why `text` is null (`line 3, column 9: expected ...`)" },
           "read_only": { "type": "boolean", "description": "Session model/provider overrides are active; saving is refused" }
+        }
+      },
+      "UpdateStatus": {
+        "type": "object",
+        "description": "v1.24: what `GET /api/update` says",
+        "required": ["state", "current", "latest", "newer", "notes_url", "lead", "method", "command", "can_apply", "target", "progress", "waiting_jobs", "error", "updated_from", "by"],
+        "properties": {
+          "state": { "type": "string", "enum": ["idle", "downloading", "verifying", "waiting", "installing", "restarting", "failed"] },
+          "current": { "type": ["string", "null"] },
+          "latest": { "type": ["string", "null"], "description": "The newer release the daily check found; null when there is none" },
+          "newer": { "type": "boolean" },
+          "notes_url": { "type": ["string", "null"], "format": "uri", "description": "The release page" },
+          "lead": { "type": ["string", "null"], "description": "The release's one-line description, when its RELEASE-NOTES.md has one" },
+          "method": { "type": "string", "enum": ["setup", "uv", "pipx", "pip", "uv-pip", "cargo", "packaged", "source", "unknown"], "description": "How this server was installed; only `setup` is updated from the page" },
+          "command": { "type": ["string", "null"], "description": "The command that updates this install" },
+          "can_apply": { "type": "boolean", "description": "`POST` would start: a setup install, a newer release, no update running" },
+          "target": { "type": ["string", "null"], "description": "The version an update in progress installs" },
+          "progress": { "type": ["object", "null"], "description": "While `downloading`", "properties": { "done": { "type": "integer" }, "total": { "type": ["integer", "null"] } } },
+          "waiting_jobs": { "type": "integer", "description": "Conversions running or queued; a restart waits for them" },
+          "error": { "type": ["object", "null"], "description": "Why the last update failed (also one the last start undid): `code` is `offline`, `checksum`, `disk_full`, `not_writable`, `file_busy`, `start_failed`, `install_failed` or `cancelled`; `rolled_back` when files had been replaced and were put back (else nothing changed)", "properties": { "code": { "type": "string" }, "reason": { "type": "string" }, "rolled_back": { "type": "boolean" }, "version": { "type": "string" } } },
+          "updated_from": { "type": ["string", "null"], "description": "The version this server ran before it restarted into this one" },
+          "by": { "type": ["string", "null"], "enum": ["web", "cli", null], "description": "Who started the update in progress: the page, or `markitai update`" }
         }
       },
       "RegeneratedToken": {

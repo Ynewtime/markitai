@@ -128,6 +128,7 @@ pub(super) async fn guard(
 ) -> Response {
     let private = admin_path(request.uri().path())
         || me_path(request.uri().path())
+        || super::update::control_path(request.uri().path())
         || request.uri().path() == "/api/convert-defaults";
     let mut response = guard_inner(state, request, next).await;
     if private {
@@ -159,7 +160,10 @@ fn me_path(path: &str) -> bool {
 
 /// Routes only an admin may use.
 fn admin_path(path: &str) -> bool {
-    settings_path(path) || path == REGENERATE || tokens_path(path)
+    settings_path(path)
+        || path == REGENERATE
+        || tokens_path(path)
+        || super::update::update_path(path)
 }
 
 /// The job a route names in its path: `/api/jobs/{job_id}…`, and
@@ -348,7 +352,9 @@ async fn guard_inner(state: Arc<State>, mut request: Request, next: Next) -> Res
             }
         }
     }
-    if api && token.is_some() && principal.is_none() {
+    // The control routes carry the control secret instead (`update.rs`).
+    let control = super::update::control_path(request.uri().path());
+    if api && token.is_some() && principal.is_none() && !control {
         return ApiError::new(
             401,
             "token_required",
@@ -493,6 +499,7 @@ mod router_tests {
             previews: Default::default(),
             access: super::super::access::Access::load(root.join("access.json")).unwrap(),
             users: super::super::settings::Users::new(root.join("user-models")),
+            update: Default::default(),
         });
         Router::new()
             .route(

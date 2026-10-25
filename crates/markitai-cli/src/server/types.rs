@@ -718,6 +718,12 @@ impl IntoResponse for ApiError {
                 .headers_mut()
                 .insert("www-authenticate", "Bearer".parse().unwrap());
         }
+        // New conversions are held for an update; the restart takes seconds.
+        if self.reason == "updating" {
+            response
+                .headers_mut()
+                .insert("retry-after", "5".parse().unwrap());
+        }
         response
     }
 }

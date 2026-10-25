@@ -77,7 +77,8 @@ pub(super) async fn capabilities(
         .iter()
         .filter_map(|name| Some((name.to_string(), markitai_core::config::preset(&cfg, name)?)))
         .collect();
-    Json(json!({
+    let update = super::update::capability(&state, admin);
+    let mut capabilities = json!({
         "version":markitai_core::VERSION,
         "build":build(),
         "implementation":"rust",
@@ -99,7 +100,12 @@ pub(super) async fn capabilities(
             "user_models":state.auth_enabled(),"user_config":state.auth_enabled(),
             "convert_defaults":true,"pdf_outline":true,"document_json":true,"text_only":true,
             "ocr_lang":true,"ocr_all_pages":true,"page_markers":true},
-    }))
+    });
+    // Only the admin of a loopback server hears of updates (contract v1.24).
+    if let Some(update) = update {
+        capabilities["update"] = update;
+    }
+    Json(capabilities)
 }
 
 /// Which build answers: the version, the commit it was built from (`null`
@@ -215,6 +221,7 @@ pub(super) async fn create(
             "server is shutting down",
         ));
     }
+    let _admission = super::update::admit(&state)?;
     let trusted = request.extensions().get::<Trusted>().is_some_and(|v| v.0);
     // Cloudflare processing bills the server's account: the admin's alone.
     let admin = request.extensions().get::<Principal>() == Some(&Principal::Admin);
@@ -1002,6 +1009,7 @@ mod error_code_tests {
             previews: Default::default(),
             access: super::super::access::Access::load(root.join("access.json")).unwrap(),
             users: super::super::settings::Users::new(root.join("user-models")),
+            update: Default::default(),
         });
         let router = Router::new()
             .route("/api/jobs", post(create))

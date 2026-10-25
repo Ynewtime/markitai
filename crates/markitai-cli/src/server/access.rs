@@ -204,7 +204,7 @@ impl Access {
 
     /// Save a new token named `label` and return its public form with the
     /// token. Blocking: it writes the file.
-    fn create(&self, label: String) -> ApiResult<Value> {
+    pub(super) fn create(&self, label: String) -> ApiResult<Value> {
         let _write = self.write.lock().unwrap_or_else(|e| e.into_inner());
         let mut next = self
             .tokens

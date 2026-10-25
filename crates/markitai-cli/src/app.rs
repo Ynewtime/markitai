@@ -459,6 +459,9 @@ enum Command {
         #[arg(long, action = ArgAction::Append, value_name = "HOSTNAME")]
         /// Also allow this hostname in Host/Origin headers (repeatable). Local Origins must still match the request port.
         allowed_host: Vec<String>,
+        #[arg(long, hide = true)]
+        /// Load the configuration and stored state, then exit without listening (an update's dry start).
+        preflight: bool,
     },
     /// Run the native MCP service over standard input/output.
     #[command(
@@ -3108,6 +3111,7 @@ fn subcommand(cli: &Cli, command: &Command, overrides: Option<Value>) -> CliResu
             no_open,
             no_auth,
             allowed_host,
+            preflight,
         } => {
             let source = crate::server::settings_source(cli.config.as_deref(), overrides.clone())
                 .map_err(runtime)?;
@@ -3126,6 +3130,7 @@ fn subcommand(cli: &Cli, command: &Command, overrides: Option<Value>) -> CliResu
                     no_open: *no_open,
                     no_auth: *no_auth,
                     allowed_host: allowed_host.clone(),
+                    preflight: *preflight,
                 },
             )
             .map_err(runtime)?;

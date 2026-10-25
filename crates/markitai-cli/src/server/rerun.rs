@@ -105,6 +105,7 @@ pub(super) async fn retry(
             "server is shutting down",
         ));
     }
+    let _admission = super::update::admit(&state)?;
     let trusted = request.extensions().get::<Trusted>().is_some_and(|v| v.0);
     // Cloudflare processing bills the server's account: the admin's alone.
     let admin = request.extensions().get::<super::security::Principal>()

@@ -25,6 +25,12 @@ pub(super) struct Startup<'a> {
     pub data: &'a Path,
     /// This computer's address on the local network, when it could be found.
     pub network: Option<IpAddr>,
+    /// A newer release the update check found: (latest, current, command).
+    pub newer: Option<(String, String, String)>,
+    /// The version an update tried and undid.
+    pub failed_update: Option<String>,
+    /// The version running.
+    pub current: String,
 }
 
 /// Whether other machines can reach the listener. Loopback peers only are the
@@ -59,6 +65,8 @@ pub(super) enum Kind {
     More,
     /// An address to open, on its own line in the accent colour, never wrapped.
     Address,
+    /// `  • New version 2.2.0 (current 2.1.0): markitai update`, one line.
+    Notice,
 }
 
 pub(super) fn lines(lang: Lang, startup: &Startup<'_>) -> Vec<(Kind, String)> {
@@ -67,6 +75,7 @@ pub(super) fn lines(lang: Lang, startup: &Startup<'_>) -> Vec<(Kind, String)> {
         token,
         data,
         network,
+        ..
     } = *startup;
     let mut lines = vec![(
         Kind::Title,
@@ -74,6 +83,15 @@ pub(super) fn lines(lang: Lang, startup: &Startup<'_>) -> Vec<(Kind, String)> {
             "Markitai server listening on http://{address}",
             "Markitai 服务正在监听 http://{address}"),
     )];
+    if let Some(failed) = &startup.failed_update {
+        let current = &startup.current;
+        lines.push((
+            Kind::Warning,
+            text!(lang =>
+                "The update to {failed} failed; still {current}",
+                "更新到 {failed} 失败，仍是 {current}"),
+        ));
+    }
     if exposed(address) {
         if token.is_some() {
             lines.push((
@@ -133,6 +151,18 @@ pub(super) fn lines(lang: Lang, startup: &Startup<'_>) -> Vec<(Kind, String)> {
             "Jobs and history: {data}",
             "任务和历史：{data}"),
     ));
+    if let Some((latest, current, command)) = &startup.newer {
+        let separator = if lang == Lang::En { " " } else { "" };
+        lines.push((
+            Kind::Notice,
+            format!(
+                "  • {}{separator}{command}",
+                text!(lang =>
+                    "New version {latest} (current {current}):",
+                    "有新版本 {latest}（当前 {current}）：")
+            ),
+        ));
+    }
     lines.push((
         Kind::Fact,
         text!(lang =>
@@ -140,6 +170,38 @@ pub(super) fn lines(lang: Lang, startup: &Startup<'_>) -> Vec<(Kind, String)> {
             "按 Ctrl-C 停止；正在转换的任务会先完成，历史也会先保存。"),
     ));
     lines
+}
+
+/// What a server that restarted into a new version prints instead of the
+/// whole block: the address, and that the token stayed.
+pub(super) fn print_restarted(lang: Lang, address: SocketAddr, token: bool, from: &str) {
+    use crate::app::logging::{Shape, blank, console};
+    use crate::term::{Mark, Style, Tone};
+    let (version, _) = crate::update::current_identity();
+    let title = text!(lang =>
+        "Markitai {version} restarted, listening on",
+        "Markitai {version} 已重启，监听");
+    blank();
+    console(
+        Shape {
+            mark: Some(Mark::Title),
+            indent: 0,
+            tone: None,
+            wrap: false,
+        },
+        &format!(
+            "{} http://{address}",
+            Style::stderr().paint(Tone::Structure, &title)
+        ),
+    );
+    blank();
+    let line = match (token, lang) {
+        (true, Lang::En) => format!("Updated from {from}; the access token is unchanged"),
+        (true, Lang::Zh) => format!("已从 {from} 更新，访问令牌不变"),
+        (false, Lang::En) => format!("Updated from {from}"),
+        (false, Lang::Zh) => format!("已从 {from} 更新"),
+    };
+    console(Shape::item(Mark::Success), &line);
 }
 
 /// Why the listener could not be created, with what to try next.
@@ -180,6 +242,9 @@ mod tests {
             token,
             data,
             network: network.map(|ip| ip.parse().unwrap()),
+            newer: None,
+            failed_update: None,
+            current: "2.1.0".into(),
         }
     }
 
@@ -320,6 +385,31 @@ mod tests {
             lines.contains(&(Kind::Address, "http://192.168.1.20:3600/#token=tok".into())),
             "{lines:?}"
         );
+    }
+
+    #[test]
+    fn a_newer_release_sits_before_the_stop_line_and_a_failed_update_after_the_title() {
+        let data = Path::new("/d");
+        for (lang, notice, failed) in [
+            (
+                Lang::Zh,
+                "  • 有新版本 2.2.0（当前 2.1.0）：markitai update",
+                "更新到 2.2.0 失败，仍是 2.1.0",
+            ),
+            (
+                Lang::En,
+                "  • New version 2.2.0 (current 2.1.0): markitai update",
+                "The update to 2.2.0 failed; still 2.1.0",
+            ),
+        ] {
+            let mut with = startup("127.0.0.1:3600", Some("t"), None, data);
+            with.newer = Some(("2.2.0".into(), "2.1.0".into(), "markitai update".into()));
+            with.failed_update = Some("2.2.0".into());
+            let lines = lines(lang, &with);
+            let at = lines.len() - 2;
+            assert_eq!(lines[at], (Kind::Notice, notice.into()));
+            assert_eq!(lines[1], (Kind::Warning, failed.into()));
+        }
     }
 
     #[test]

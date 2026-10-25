@@ -186,6 +186,7 @@ mod tests {
             include_str!("store.rs"),
             include_str!("tickets.rs"),
             include_str!("types.rs"),
+            include_str!("update.rs"),
             include_str!("providers.rs"),
             include_str!("settings.rs"),
             include_str!("settings/editor.rs"),

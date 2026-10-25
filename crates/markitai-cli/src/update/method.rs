@@ -232,7 +232,6 @@ impl Method {
         })
     }
 
-    #[allow(dead_code)]
     pub(crate) fn in_place(&self) -> bool {
         matches!(self, Self::Setup(_))
     }

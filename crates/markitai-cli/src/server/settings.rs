@@ -21,6 +21,7 @@ use std::path::PathBuf;
 pub(super) use store::{Store, load_base, load_written};
 pub(super) use users::{Users, capabilities as user_capabilities, conversion_config};
 
+#[derive(Clone)]
 pub(crate) struct SettingsSource {
     pub path: PathBuf,
     pub origin: String,

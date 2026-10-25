@@ -9,8 +9,6 @@
 //! a terminal, CI, MCP, or a source build; `update.check: false` and
 //! `MARKITAI_NO_UPDATE_CHECK=1` turn both off.
 pub(crate) mod check;
-// The server's half arrives with `markitai serve`'s update support.
-#[allow(dead_code)]
 pub(crate) mod control;
 pub(crate) mod install;
 pub(crate) mod method;
@@ -34,16 +32,20 @@ const DAY: i64 = 24 * HOUR;
 /// How long a run waits for the check at its end, counted from its start.
 const CAP: Duration = Duration::from_secs(2);
 
-/// This build's version and whether it carries local changes. A debug build
-/// may pose as a release (`MARKITAI_TEST_UPDATE_AS=2.1.0`) so the tests can
-/// exercise what a release does; a release build ignores the variable.
+/// This build's version and whether it counts as a source build (local
+/// changes, or a debug build: releases and `cargo install` are release
+/// builds). A debug build may pose as a release (`MARKITAI_TEST_UPDATE_AS=2.1.0`)
+/// so the tests can exercise what a release does; a release build ignores
+/// the variable.
 pub(crate) fn current_identity() -> (String, bool) {
-    if cfg!(debug_assertions)
-        && let Some(posed) = std::env::var("MARKITAI_TEST_UPDATE_AS")
+    if cfg!(debug_assertions) {
+        return match std::env::var("MARKITAI_TEST_UPDATE_AS")
             .ok()
             .filter(|value| !value.is_empty())
-    {
-        return (posed, false);
+        {
+            Some(posed) => (posed, false),
+            None => (markitai_core::VERSION.to_owned(), true),
+        };
     }
     (
         markitai_core::VERSION.to_owned(),
@@ -325,7 +327,6 @@ pub(crate) fn command_for_notice() -> String {
         .unwrap_or_else(|| "markitai update".into())
 }
 
-#[allow(dead_code)]
 /// The newer release the cache knows of, for `serve` and `doctor` (no
 /// request, no record that it was shown).
 pub(crate) fn cached_newer(cfg: Option<&Value>) -> Option<(Version, Version)> {
