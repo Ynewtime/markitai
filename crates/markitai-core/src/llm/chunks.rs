@@ -236,11 +236,22 @@ impl Protected {
         // Scan only gaps; code and reference definitions cannot introduce markup.
         let blocks = ranges.clone();
         let mut cursor = 0;
+        // One styling tag's opening and closing stay one pair across the code
+        // and other blocks between them.
+        let mut styled = Styled::default();
         for range in blocks
             .into_iter()
             .chain(std::iter::once(source.len()..source.len()))
         {
-            inline_ranges(source, cursor, range.start, &mut ranges, 0, rules);
+            inline_ranges(
+                source,
+                cursor,
+                range.start,
+                &mut ranges,
+                0,
+                rules,
+                &mut styled,
+            );
             cursor = range.end;
         }
         crate::sort::by_key(&mut ranges, |r| r.start);
@@ -889,6 +900,9 @@ fn styling_tag(tag: &str) -> Option<(String, bool, bool)> {
 /// kept whole again.
 const LINK_DEPTH: u8 = 4;
 
+/// Per styling tag name, whether each tag still open carried attributes.
+type Styled = std::collections::HashMap<String, Vec<bool>>;
+
 fn inline_ranges(
     full: &str,
     start: usize,
@@ -896,6 +910,7 @@ fn inline_ranges(
     ranges: &mut Vec<std::ops::Range<usize>>,
     depth: u8,
     rules: Rules,
+    styled: &mut Styled,
 ) {
     let source = &full[start..end];
     let index = InlineIndex::new(source);
@@ -903,8 +918,6 @@ fn inline_ranges(
     let mut i = 0;
     let mut html_failed_until = 0;
     let mut comment_failed = false;
-    // Per styling tag name, whether each open tag carried attributes.
-    let mut styled: std::collections::HashMap<String, Vec<bool>> = Default::default();
     while i < source.len() {
         let rest = &source[i..];
         if rest.starts_with("\\[") || rest.starts_with("\\(") {
@@ -1009,6 +1022,7 @@ fn inline_ranges(
                             ranges,
                             depth + 1,
                             rules,
+                            styled,
                         );
                         ranges.push(start + label + 1..start + after - 1);
                         i = after;
@@ -1430,6 +1444,29 @@ mod tests {
         let protected = Protected::new(badge);
         assert!(protected.validate(&protected.text, &protected.text).is_ok());
         assert_eq!(protected.restore(&protected.text).unwrap(), badge);
+    }
+    #[test]
+    fn an_attributed_styling_pair_split_by_a_code_block_stays_one_pair() {
+        let source = "Text <u class=\"x\">before\n\n```\ncode line\n```\n\nafter</u> end.\n";
+        let protected = Protected::new(source);
+        // both ends hidden, as for a pair on one line
+        assert!(
+            !protected.text.contains("<u class") && !protected.text.contains("</u>"),
+            "{}",
+            protected.text
+        );
+        assert_eq!(protected.restore(&protected.text).unwrap(), source);
+        // a plain pair split the same way stays visible at both ends
+        let plain = "Text <u>before\n\n```\ncode\n```\n\nafter</u> end.\n";
+        let protected = Protected::new(plain);
+        assert!(
+            protected.text.contains("<u>before") && protected.text.contains("after</u>"),
+            "{}",
+            protected.text
+        );
+        // 2.0.0's rules are unchanged: every tag is a marker
+        let whole = Protected::with_rules(source, Rules::Whole);
+        assert!(!whole.text.contains("</u>"));
     }
     #[test]
     fn unicode_chunks_keep_tail_and_exact_concatenation() {
