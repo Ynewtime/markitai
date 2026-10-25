@@ -126,7 +126,17 @@ export function CompareView({
     element.classList.add("is-linked");
     return () => element.classList.remove("is-linked");
   }, [hover, byId]);
+  // On a touch screen a tap links a block until the next tap, and only a tap does: the mouse
+  // events a browser makes up when a pane scrolls (at the finger's or the last mouse's place) do
+  // not move or clear the link.
+  const touched = useRef(false);
+  const onMarkdownTap = (event: MouseEvent) => {
+    if (touched.current) pickMarkdown(event);
+  };
   const onMarkdownOver = (event: MouseEvent) => {
+    if (!touched.current) pickMarkdown(event);
+  };
+  const pickMarkdown = (event: MouseEvent) => {
     // The innermost block under the pointer: a paragraph inside a list item is its own.
     const element = (event.target as Element | null)?.closest?.(`${TARGET_SELECTOR}, .img-blocked`);
     const entry = element ? byElement.get(shownFor(element)) : undefined;
@@ -144,6 +154,7 @@ export function CompareView({
     if (box.top < frame.top || box.bottom > frame.bottom) element.scrollIntoView({ block: "center", behavior: "smooth" });
   };
   const onOriginalHover = (id: string | null) => {
+    if (id === null && touched.current) return;
     setHover(id ? linkOf(id) : null);
     if (id) reveal(id);
   };
@@ -198,9 +209,14 @@ export function CompareView({
     </div>
   );
   return (
-    <div class={phone ? "compare is-stacked" : "compare"} onMouseLeave={() => setHover(null)}>
+    <div
+      class={phone ? "compare is-stacked" : "compare"}
+      onPointerDown={(event) => (touched.current = event.pointerType === "touch")}
+      onPointerMove={(event) => event.pointerType === "mouse" && (touched.current = false)}
+      onMouseLeave={() => !touched.current && setHover(null)}
+    >
       {original}
-      <div class="compare-doc" onMouseOver={onMarkdownOver}>
+      <div class="compare-doc" onMouseOver={onMarkdownOver} onClick={onMarkdownTap}>
         <MarkdownView t={t} locale={locale} item={item} doc={doc} createdAt={createdAt} describe={describe} tab={tab} onTab={setTab} compact onRendered={onRendered} />
       </div>
     </div>

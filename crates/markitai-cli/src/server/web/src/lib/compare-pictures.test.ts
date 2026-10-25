@@ -107,3 +107,13 @@ test("rendering records a picture's file, and Compare reads the Base version onl
   assert.match(view, /const wantBase = basePath !== null && shownPages !== null && unplacedPictures\(shownPages\) > 0;/);
   assert.match(view, /if \(root && shownPages\) placePictures\(root, shownPages, basePages\);\s*setTargets\(root \? targetsOf\(root\) : \[\]\);/);
 });
+
+test("on a touch screen a tap links a block until the next tap", () => {
+  const view = readFileSync(new URL("../components/compare-view.tsx", import.meta.url), "utf8");
+  assert.match(view, /onPointerDown=\{\(event\) => \(touched\.current = event\.pointerType === "touch"\)\}/);
+  assert.match(view, /onMouseLeave=\{\(\) => !touched\.current && setHover\(null\)\}/);
+  assert.match(view, /const onMarkdownTap = \(event: MouseEvent\) => \{\s*if \(touched\.current\) pickMarkdown\(event\);/);
+  assert.match(view, /const onMarkdownOver = \(event: MouseEvent\) => \{\s*if \(!touched\.current\) pickMarkdown\(event\);/);
+  assert.match(view, /if \(id === null && touched\.current\) return;/);
+  assert.match(view, /<div class="compare-doc" onMouseOver=\{onMarkdownOver\} onClick=\{onMarkdownTap\}>/);
+});

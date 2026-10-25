@@ -382,7 +382,8 @@ draws pictures, a vector chart the conversion kept as a picture included
 reports them). A picture's page is its Base alt text (`Image on page 2`), else
 the page marker or page screenshot before it; in the LLM version, whose alt
 texts are the model's, a picture takes the page the Base version gives the same
-file (that version is read only then); a framed web page pairs by words as above (a backend
+file (that version is read only then). On a touch screen a tap outlines a block
+until the next tap; a framed web page pairs by words as above (a backend
 whose frame policy is still opaque shows the page without outlines); an
 uploaded HTML original pairs its headings and tables, a text
 file its headings. A block the original side cannot show (nothing pairs it, or the
