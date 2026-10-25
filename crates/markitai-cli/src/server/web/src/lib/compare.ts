@@ -255,6 +255,65 @@ function ownText(element: Element): string {
   return text;
 }
 
+/** A picture file's name as both versions of a result write it (`.markitai/assets/3f…9a.jpg` → `3f…9a.jpg`):
+ * a PDF's pictures are named by their content, so the Base and LLM Markdown name each one alike. */
+export function assetName(path: string): string {
+  const bare = path.trim().replace(/^<|>$/g, "").split(/[?#]/)[0] ?? "";
+  const name = bare.slice(bare.lastIndexOf("/") + 1);
+  try {
+    return decodeURIComponent(name);
+  } catch {
+    return name;
+  }
+}
+
+const PAGE_MARK = /<!--\s*page:\s*(\d{1,5})\s*-->/;
+const PAGE_SHOT = /!\[Page (\d{1,5})\]\([^)]*\)/;
+const PICTURE = /!\[([^\]]*)\]\(\s*(<[^>]*>|[^)\s]+)[^)]*\)/g;
+
+/** The page of each picture a PDF's Markdown shows, by file name, in the order the pictures come
+ * (one file may stand on several pages: identical pictures share it). A Base alt (`Image on page 3`)
+ * or a page-numbered name says it; otherwise the page marker or page screenshot before it does
+ * (`<!-- page: 3 -->`, `<!-- ![Page 3](…) -->`); null when nothing does. The LLM version's alt
+ * texts are the model's, so its pictures often take their pages from the Base version. */
+export function imagePages(markdown: string): Map<string, (number | null)[]> {
+  const pages = new Map<string, (number | null)[]>();
+  let page: number | null = null;
+  for (const line of markdown.split("\n")) {
+    const marked = PAGE_MARK.exec(line) ?? PAGE_SHOT.exec(line);
+    if (marked) page = Number(marked[1]);
+    for (const [whole, alt, path] of line.matchAll(PICTURE)) {
+      if (PAGE_SHOT.test(whole)) continue;
+      const name = assetName(path ?? "");
+      if (!name) continue;
+      const own = /^(?:Image|Chart) on page (\d{1,5})$/.exec((alt ?? "").trim()) ?? /\.pdf-(\d{1,5})-\d+\.[a-z0-9]+$/i.exec(name);
+      pages.set(name, [...(pages.get(name) ?? []), own ? Number(own[1]) : page]);
+    }
+  }
+  return pages;
+}
+
+/** How many of a version's pictures it gives no page (see imagePages). */
+export function unplacedPictures(pages: Map<string, (number | null)[]>): number {
+  let count = 0;
+  for (const list of pages.values()) count += list.filter((page) => page === null).length;
+  return count;
+}
+
+/** Gives each rendered picture without a page (`data-page`) the page `pages` names for its file, in
+ * order; `fallback` (the Base version's) fills the ones `pages` leaves open. */
+export function placePictures(root: ParentNode, pages: Map<string, (number | null)[]>, fallback?: Map<string, (number | null)[]>): void {
+  const seen = new Map<string, number>();
+  for (const image of root.querySelectorAll<HTMLElement>("img[data-asset]")) {
+    const name = assetName(image.dataset.asset ?? "");
+    const index = seen.get(name) ?? 0;
+    seen.set(name, index + 1);
+    if (image.dataset.page) continue;
+    const page = pages.get(name)?.[index] ?? fallback?.get(name)?.[index] ?? null;
+    if (page !== null && page >= 1) image.dataset.page = String(page);
+  }
+}
+
 /** Headings, tables and text blocks of a rendered Markdown body, in document order, with stable ids. */
 export function targetsOf(root: ParentNode): { element: HTMLElement; target: Target }[] {
   const result: { element: HTMLElement; target: Target }[] = [];

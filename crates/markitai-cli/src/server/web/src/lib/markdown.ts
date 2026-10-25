@@ -534,7 +534,9 @@ export function rewrite(fragment: DocumentFragment, context: RenderContext, numb
       } else image.setAttribute("src", url);
       image.setAttribute("loading", "lazy");
       image.setAttribute("referrerpolicy", "no-referrer");
-      // A PDF's picture names its page: Compare finds it there.
+      // A PDF's picture names its page: Compare finds it there. Its file (named by its content, the
+      // same in both versions) lets Compare find the page of one whose alt text the model rewrote.
+      image.setAttribute("data-asset", path);
       const page = pdfImagePage(alt, path);
       if (page !== null) image.setAttribute("data-page", String(page));
       // A caption beside the picture that says exactly its alt text (an e-book's

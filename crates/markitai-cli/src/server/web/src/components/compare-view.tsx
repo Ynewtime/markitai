@@ -13,13 +13,13 @@
 // On phones the original sits above the Markdown.
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
-import { ApiError, downloadTicket, fetchBlob, fetchShotBlocks, fetchText, originalPagePath } from "../api/client.ts";
+import { ApiError, downloadTicket, fetchBlob, fetchShotBlocks, fetchText, filePath, originalPagePath } from "../api/client.ts";
 import { hasToken } from "../api/token.ts";
 import type { CaptureQuality, OriginalDescriptor } from "../api/types.ts";
 import { useOriginal } from "../hooks/use-original.ts";
 import type { ResultDocument } from "../hooks/use-result-document.ts";
 import type { Dict, Locale } from "../i18n/index.ts";
-import { norm, onShots, pageBlocks, pairBlocks, pairElements, shotBlocks, TARGET_SELECTOR, targetsOf, webViews, type Located, type Target } from "../lib/compare.ts";
+import { imagePages, norm, onShots, pageBlocks, pairBlocks, pairElements, placePictures, shotBlocks, TARGET_SELECTOR, targetsOf, unplacedPictures, webViews, type Located, type Target } from "../lib/compare.ts";
 import { download } from "../lib/download.ts";
 import { fmtBytes, readable } from "../lib/format.ts";
 import { loadLibraries, shownAs, shownFor } from "../lib/markdown.ts";
@@ -71,10 +71,38 @@ export function CompareView({
 
   useEffect(() => setHover(null), [item.key, snapView]);
 
+  // A PDF's pictures find their boxes by page. The LLM version's alt texts are the model's, so a
+  // picture whose page its own Markdown does not say takes it from the Base version, which names
+  // every picture by page (`Image on page 2`); both name a picture's file alike.
+  const pdfOriginal = descriptor?.kind === "pdf";
+  const shownPages = useMemo(() => (pdfOriginal && doc.markdown ? imagePages(doc.markdown) : null), [pdfOriginal, doc.markdown]);
+  const basePath = doc.pair && doc.shown === "llm" ? doc.pair.base : null;
+  const [baseText, setBaseText] = useState<{ path: string; text: string } | null>(null);
+  const wantBase = basePath !== null && shownPages !== null && unplacedPictures(shownPages) > 0;
+  const knownBase = basePath ? (doc.text(basePath) ?? (baseText?.path === basePath ? baseText.text : null)) : null;
+  useEffect(() => {
+    if (!wantBase || !basePath || knownBase !== null) return;
+    let stale = false;
+    fetchText(filePath(item.jobId, basePath), 64 * 1024 * 1024).then(
+      (text) => !stale && setBaseText({ path: basePath, text }),
+      // Without it those pictures stay unlinked, as before.
+      () => undefined,
+    );
+    return () => {
+      stale = true;
+    };
+  }, [wantBase, basePath, knownBase, item.jobId]);
+  const basePages = useMemo(() => (wantBase && knownBase ? imagePages(knownBase) : undefined), [wantBase, knownBase]);
+  const [rendered, setRendered] = useState(0);
   const onRendered = useCallback((root: HTMLElement | null) => {
     markdownRoot.current = root;
-    setTargets(root ? targetsOf(root) : []);
+    setRendered((count) => count + 1);
   }, []);
+  useEffect(() => {
+    const root = markdownRoot.current;
+    if (root && shownPages) placePictures(root, shownPages, basePages);
+    setTargets(root ? targetsOf(root) : []);
+  }, [rendered, shownPages, basePages]);
 
   const ordinals = useMemo(() => {
     const counters = { heading: 0, table: 0, block: 0, image: 0 };
