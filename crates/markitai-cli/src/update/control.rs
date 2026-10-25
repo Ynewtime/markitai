@@ -143,6 +143,10 @@ pub(crate) struct Status {
     pub(crate) pid: u32,
     /// Conversions running or queued: they finish before a restart.
     pub(crate) waiting_jobs: u64,
+    /// The update this server undid as it started (its failure file is
+    /// gone by then).
+    #[serde(default)]
+    pub(crate) undone: Option<Failed>,
 }
 
 fn client(timeout: Duration) -> Result<reqwest::blocking::Client, String> {
@@ -227,6 +231,13 @@ pub(crate) fn wait_for_restart(
         }
         if let Some((control, status)) = running(home) {
             if control.secret != before.secret {
+                if let Some(failure) = status
+                    .undone
+                    .as_ref()
+                    .filter(|failure| failure.to == version)
+                {
+                    return Restart::RolledBack(failure.reason.clone());
+                }
                 if status.version == version {
                     return Restart::Done(status);
                 }

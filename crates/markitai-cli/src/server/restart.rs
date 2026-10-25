@@ -39,6 +39,9 @@ pub(super) struct Handover {
     pub(super) token: Option<String>,
     /// The version the previous server ran.
     pub(super) from: Option<String>,
+    /// This process serves again after its restart failed (Windows: the
+    /// child it started may have only just closed the port).
+    pub(super) again: bool,
 }
 
 impl Handover {
@@ -91,6 +94,25 @@ impl Handover {
         }
         handover
     }
+
+    /// What this process keeps for itself when its restart failed: the
+    /// token, so open tabs stay signed in, and on Unix the listening socket,
+    /// so the port never closes.
+    pub(super) fn again(kept: Kept, token: Option<String>) -> Self {
+        #[cfg(unix)]
+        let listener = kept.listener.map(std::net::TcpListener::from);
+        #[cfg(not(unix))]
+        let listener = {
+            let _ = kept;
+            None
+        };
+        Self {
+            listener,
+            token,
+            from: None,
+            again: true,
+        }
+    }
 }
 
 #[cfg(unix)]
@@ -134,7 +156,8 @@ pub(super) async fn bind(
 }
 
 /// What the server keeps so it can be started again: a copy of the listening
-/// socket (Unix) and the token.
+/// socket (Unix).
+#[derive(Default)]
 pub(super) struct Kept {
     #[cfg(unix)]
     pub(super) listener: Option<std::os::fd::OwnedFd>,
@@ -173,7 +196,7 @@ pub(super) fn relaunch(
     exe: &Path,
     from: &str,
     token: Option<&str>,
-    kept: Kept,
+    kept: &Kept,
     handover: bool,
     home: &Path,
 ) -> Relaunched {
@@ -185,7 +208,7 @@ fn relaunch_with(
     exe: &Path,
     from: &str,
     token: Option<&str>,
-    kept: Kept,
+    kept: &Kept,
     handover: bool,
     home: &Path,
     environment: &[(&str, Option<&str>)],
@@ -222,11 +245,15 @@ fn relaunch_with(
                 _token_pipe = Some(read);
             }
         } else {
-            // Without handover the new program binds the port itself.
-            drop(kept);
+            // Without handover the new program binds the port itself (the
+            // kept copy closes on exec).
             command.env_remove(RESTARTED_FROM);
         }
         let error = command.exec();
+        // Serving again here: the kept socket is this process's alone again.
+        if let Some(listener) = &kept.listener {
+            close_on_exec(listener.as_raw_fd(), true);
+        }
         let _ = home;
         Relaunched::Failed(error.to_string())
     }
@@ -322,6 +349,7 @@ pub(super) fn roll_back_and_relaunch(
     home: &Path,
     reason: &str,
     token: Option<&str>,
+    kept: Kept,
 ) -> i32 {
     let lang = crate::app::i18n::lang();
     let (to, from) = (&pending.to, &pending.from);
@@ -347,10 +375,6 @@ pub(super) fn roll_back_and_relaunch(
     if cfg!(windows) && std::env::var_os(RESTARTED_FROM).is_some() {
         return 75;
     }
-    let kept = Kept {
-        #[cfg(unix)]
-        listener: None,
-    };
     // A debug build posing as the new version (the tests) runs as the old.
     let posed: &[(&str, Option<&str>)] = if cfg!(debug_assertions) {
         &[
@@ -360,8 +384,12 @@ pub(super) fn roll_back_and_relaunch(
     } else {
         &[]
     };
-    let handover = understands_handover(Some(from)) && token.is_some();
-    match relaunch_with(&pending.exe, to, token, kept, handover, home, posed) {
+    #[cfg(unix)]
+    let has_listener = kept.listener.is_some();
+    #[cfg(not(unix))]
+    let has_listener = false;
+    let handover = understands_handover(Some(from)) && (token.is_some() || has_listener);
+    match relaunch_with(&pending.exe, to, token, &kept, handover, home, posed) {
         Relaunched::Exited(code) => code,
         Relaunched::Failed(error) => {
             eprintln!("Error: Serve: cannot start {from} again: {error}");

@@ -149,7 +149,7 @@ Examples:
   markitai cache clear -y                 Clear without a confirmation prompt";
 
 #[derive(Parser, Debug, Clone)]
-#[command(name="markitai", version=markitai_core::VERSION,
+#[command(name="markitai", version=crate::update::shown_version(),
     about="Convert documents and URLs to Markdown", after_help=ROOT_AFTER_HELP,
     disable_help_subcommand=true, args_override_self=true)]
 struct Cli {

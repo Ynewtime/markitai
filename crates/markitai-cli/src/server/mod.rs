@@ -222,6 +222,7 @@ pub(crate) fn run(cfg: Value, source: SettingsSource, options: ServeOptions) -> 
             &home,
             "it stopped before it was ready",
             None,
+            restart::Kept::default(),
         ));
     }
     let pending = match start {
@@ -233,6 +234,16 @@ pub(crate) fn run(cfg: Value, source: SettingsSource, options: ServeOptions) -> 
     let handed_token = handover
         .as_ref()
         .and_then(|handover| handover.token.clone());
+    // And the handed socket (Unix), held only until the first start ends.
+    #[cfg(unix)]
+    let mut handed_kept = restart::Kept {
+        listener: handover
+            .as_ref()
+            .and_then(|handover| handover.listener.as_ref())
+            .and_then(|listener| std::os::fd::AsFd::as_fd(listener).try_clone_to_owned().ok()),
+    };
+    #[cfg(not(unix))]
+    let mut handed_kept = restart::Kept::default();
     // The update this run had to undo, told in its startup block.
     let mut undone: Option<String> = None;
     loop {
@@ -249,6 +260,7 @@ pub(crate) fn run(cfg: Value, source: SettingsSource, options: ServeOptions) -> 
             undone.take(),
         ));
         drop(runtime);
+        let handed = std::mem::take(&mut handed_kept);
         match outcome {
             Ok(Outcome::Stopped) => return Ok(()),
             Ok(Outcome::Restart {
@@ -256,13 +268,13 @@ pub(crate) fn run(cfg: Value, source: SettingsSource, options: ServeOptions) -> 
                 token,
                 kept,
             }) => {
-                let handover = restart::understands_handover(restart.to.as_deref());
+                let hands_over = restart::understands_handover(restart.to.as_deref());
                 match restart::relaunch(
                     &restart.exe,
                     &version,
                     token.as_deref(),
-                    kept,
-                    handover,
+                    &kept,
+                    hands_over,
                     &home,
                 ) {
                     restart::Relaunched::Exited(code) => std::process::exit(code),
@@ -276,6 +288,7 @@ pub(crate) fn run(cfg: Value, source: SettingsSource, options: ServeOptions) -> 
                         }
                         say_restart_failed(&to, &version, &reason);
                         undone = Some(to);
+                        handover = Some(restart::Handover::again(kept, token));
                     }
                 }
             }
@@ -286,6 +299,7 @@ pub(crate) fn run(cfg: Value, source: SettingsSource, options: ServeOptions) -> 
                         &home,
                         &message,
                         handed_token.as_deref(),
+                        handed,
                     ));
                 }
                 return Err(message);
@@ -332,7 +346,10 @@ async fn serve(
 ) -> Result<Outcome, Failure> {
     // A debug build can fail here on purpose: the tests of an update whose
     // new version does not start.
-    if cfg!(debug_assertions) && std::env::var_os("MARKITAI_TEST_UPDATE_FAIL_START").is_some() {
+    if cfg!(debug_assertions)
+        && (std::env::var_os("MARKITAI_TEST_UPDATE_FAIL_START").is_some()
+            || crate::update::test_pose().is_some_and(|(_, fail)| *fail))
+    {
         return Err(
             "cannot open the jobs folder (MARKITAI_TEST_UPDATE_FAIL_START)"
                 .to_owned()
@@ -377,9 +394,13 @@ async fn serve(
             .set_nonblocking(true)
             .and_then(|()| tokio::net::TcpListener::from_std(listener))
             .map_err(|e| e.to_string())?,
-        None => restart::bind(&options.host, options.port, handover.from.is_some())
-            .await
-            .map_err(|e| startup::bind_error(lang, &options.host, options.port, &e))?,
+        None => restart::bind(
+            &options.host,
+            options.port,
+            handover.from.is_some() || handover.again,
+        )
+        .await
+        .map_err(|e| startup::bind_error(lang, &options.host, options.port, &e))?,
     };
     let address = listener.local_addr().map_err(|e| e.to_string())?;
     let kept = restart::Kept::of(&listener);

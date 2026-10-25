@@ -5,6 +5,8 @@
 //! make it pose as a release with `MARKITAI_TEST_UPDATE_AS`.
 #[path = "support/console.rs"]
 mod console;
+#[path = "support/interrupt.rs"]
+mod interrupt;
 
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -13,7 +15,7 @@ use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// A fake GitHub release host: `/releases/latest/download/X` redirects to the
 /// latest version, `/releases/download/v<version>/<asset>` serves the files.
@@ -99,6 +101,38 @@ impl Releases {
             "RELEASE-NOTES.md",
             b"Faster tables and a new command.\n\n### Added\n\n- One\n".to_vec(),
         );
+    }
+
+    /// A Windows release: this binary as `markitai.exe`, posed as `version`
+    /// by its pose file, which also says whether it fails to start.
+    #[cfg(windows)]
+    fn publish_exe(&self, version: &str, fail: bool) {
+        use std::io::Write as _;
+        let name = format!("markitai-v{version}-{}.zip", target());
+        let pose = format!("{version}\n{}", if fail { "fail-start\n" } else { "" });
+        let program = std::fs::read(env!("CARGO_BIN_EXE_markitai")).unwrap();
+        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        // Stored: the debug program is large, and this is no test of deflate.
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored)
+            .large_file(program.len() > u32::MAX as usize / 2);
+        for (entry, bytes) in [
+            ("markitai.exe", program.as_slice()),
+            (POSE, pose.as_bytes()),
+            ("LICENSE", b"MIT\n".as_slice()),
+        ] {
+            writer.start_file(entry, options).unwrap();
+            writer.write_all(bytes).unwrap();
+        }
+        let archive = writer.finish().unwrap().into_inner();
+        let digest = hex(&<sha2::Sha256 as sha2::Digest>::digest(&archive));
+        self.put(version, &name, archive);
+        self.put(
+            version,
+            "SHA256SUMS",
+            format!("{digest}  {name}\n").into_bytes(),
+        );
+        self.put(version, "RELEASE-NOTES.md", b"Faster tables.\n".to_vec());
     }
 
     fn requests(&self) -> Vec<String> {
@@ -235,6 +269,30 @@ impl Home {
         }
     }
 
+    /// A setup.ps1 install of `version`: a copy of this binary posed by its
+    /// pose file, in a folder whose receipt lists both.
+    #[cfg(windows)]
+    fn setup_ps1(version: &str) -> Self {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("home/AppData/Local/Programs/markitai");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::copy(env!("CARGO_BIN_EXE_markitai"), dir.join("markitai.exe")).unwrap();
+        std::fs::write(dir.join(POSE), format!("{version}\n")).unwrap();
+        std::fs::write(dir.join("LICENSE"), "old\n").unwrap();
+        std::fs::write(
+            dir.join("receipt"),
+            format!(
+                "version={version}\ntarget={}\nfile=LICENSE\nfile={POSE}\nfile=markitai.exe\n",
+                target()
+            ),
+        )
+        .unwrap();
+        Self {
+            program: dir.join("markitai.exe"),
+            root,
+        }
+    }
+
     fn path(&self, name: &str) -> PathBuf {
         self.root.path().join(name)
     }
@@ -275,6 +333,151 @@ fn text(output: &Output) -> (String, String, i32) {
         String::from_utf8_lossy(&output.stderr).into_owned(),
         output.status.code().unwrap_or(-1),
     )
+}
+
+/// A server run from the setup install, with its token and port as it printed them.
+struct Serve {
+    child: std::process::Child,
+    port: u16,
+    token: String,
+    log: Arc<Mutex<String>>,
+}
+
+/// A debug build's pose file (`update::TEST_POSE`).
+#[cfg(windows)]
+const POSE: &str = "markitai-test-pose";
+
+#[cfg(unix)]
+const TOKEN: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+impl Serve {
+    /// On a free port with a known token.
+    #[cfg(unix)]
+    fn start(home: &Home, releases: &Releases) -> Self {
+        Self::start_with(
+            home,
+            releases,
+            &[("MARKITAI_SERVE_TOKEN", TOKEN)],
+            Some(free_port()),
+        )
+    }
+
+    /// With `extra` environment, on `port` (`None`: any).
+    fn start_with(
+        home: &Home,
+        releases: &Releases,
+        extra: &[(&str, &str)],
+        port: Option<u16>,
+    ) -> Self {
+        let mut command = home.command(releases, extra);
+        // Windows: a process group of its own on this console, for Ctrl-Break.
+        interrupt::interruptible(&mut command);
+        command
+            .args([
+                "serve",
+                "--port",
+                &port.unwrap_or(0).to_string(),
+                "--no-open",
+            ])
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped());
+        let mut child = command.spawn().unwrap();
+        let log = Arc::new(Mutex::new(String::new()));
+        let (copy, stderr) = (log.clone(), child.stderr.take().unwrap());
+        std::thread::spawn(move || {
+            for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+                copy.lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .push_str(&format!("{line}\n"));
+            }
+        });
+        let started = Instant::now();
+        let after = |text: &str, marker: &str, valid: fn(char) -> bool| {
+            text.split(marker)
+                .nth(1)
+                .and_then(|rest| rest.split(|c: char| !valid(c)).next())
+                .filter(|found| !found.is_empty())
+                .map(str::to_owned)
+        };
+        let (port, token) = loop {
+            let text = log.lock().unwrap().clone();
+            let port = after(&text, "http://127.0.0.1:", |c| c.is_ascii_digit());
+            let token = after(&text, "Access token: ", |c| c.is_ascii_alphanumeric());
+            if let (Some(port), Some(token)) = (port, token) {
+                break (port.parse().unwrap(), token);
+            }
+            assert!(started.elapsed() < Duration::from_secs(60), "{text}");
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        Self {
+            child,
+            port,
+            token,
+            log,
+        }
+    }
+
+    fn call(&self, method: &str, path: &str, body: Option<Value>) -> Option<(u16, Value)> {
+        let mut stream = TcpStream::connect(("127.0.0.1", self.port)).ok()?;
+        stream
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .ok()?;
+        let body = body.map(|body| body.to_string()).unwrap_or_default();
+        let request = format!(
+            "{method} {path} HTTP/1.1\r\nhost: 127.0.0.1:{}\r\nauthorization: Bearer {}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+            self.port,
+            self.token,
+            body.len()
+        );
+        stream.write_all(request.as_bytes()).ok()?;
+        let mut reply = String::new();
+        std::io::Read::read_to_string(&mut stream, &mut reply).ok()?;
+        let status = reply.split_whitespace().nth(1)?.parse().ok()?;
+        let body = reply.split_once("\r\n\r\n")?.1;
+        Some((status, serde_json::from_str(body).unwrap_or(Value::Null)))
+    }
+
+    /// `GET /api/update` until `done` holds.
+    fn wait(&self, label: &str, done: impl Fn(&Value) -> bool) -> Value {
+        let started = Instant::now();
+        loop {
+            if let Some((200, view)) = self.call("GET", "/api/update", None)
+                && done(&view)
+            {
+                return view;
+            }
+            assert!(
+                started.elapsed() < Duration::from_secs(90),
+                "{label}: {}",
+                self.log.lock().unwrap_or_else(|error| error.into_inner())
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+}
+
+impl Drop for Serve {
+    /// As Ctrl-C would; a Windows server's restarted child gets it too.
+    fn drop(&mut self) {
+        interrupt::interrupt(&self.child);
+        let started = Instant::now();
+        while started.elapsed() < Duration::from_secs(30) {
+            if matches!(self.child.try_wait(), Ok(Some(_))) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+fn free_port() -> u16 {
+    TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port()
 }
 
 #[test]
@@ -411,7 +614,6 @@ fn a_copy_no_setup_script_installed_gets_the_setup_command_and_changes_nothing()
 mod unix {
     use super::*;
     use std::io::Read;
-    use std::time::{Duration, Instant};
 
     #[test]
     fn a_setup_install_is_replaced_in_place_and_its_receipt_rewritten() {
@@ -735,104 +937,8 @@ mod unix {
         );
     }
 
-    /// A server run from the setup install, on a free port with a known token.
-    struct Serve {
-        child: std::process::Child,
-        port: u16,
-        log: Arc<Mutex<String>>,
-    }
-
-    const TOKEN: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-
-    impl Serve {
-        fn start(home: &Home, releases: &Releases) -> Self {
-            // A fixed port: a server put back without handover binds it again.
-            let free = TcpListener::bind("127.0.0.1:0")
-                .unwrap()
-                .local_addr()
-                .unwrap()
-                .port();
-            let mut command = home.command(releases, &[("MARKITAI_SERVE_TOKEN", TOKEN)]);
-            command
-                .args(["serve", "--port", &free.to_string(), "--no-open"])
-                .stdout(Stdio::null())
-                .stderr(Stdio::piped());
-            let mut child = command.spawn().unwrap();
-            let log = Arc::new(Mutex::new(String::new()));
-            let (copy, stderr) = (log.clone(), child.stderr.take().unwrap());
-            std::thread::spawn(move || {
-                for line in BufReader::new(stderr).lines().map_while(Result::ok) {
-                    copy.lock()
-                        .unwrap_or_else(|error| error.into_inner())
-                        .push_str(&format!("{line}\n"));
-                }
-            });
-            let started = Instant::now();
-            let port = loop {
-                let text = log.lock().unwrap().clone();
-                if let Some(port) = text
-                    .split("http://127.0.0.1:")
-                    .nth(1)
-                    .and_then(|rest| rest.split(|c: char| !c.is_ascii_digit()).next())
-                    .and_then(|port| port.parse().ok())
-                {
-                    break port;
-                }
-                assert!(started.elapsed() < Duration::from_secs(30), "{text}");
-                std::thread::sleep(Duration::from_millis(20));
-            };
-            Self { child, port, log }
-        }
-
-        fn call(&self, method: &str, path: &str, body: Option<Value>) -> Option<(u16, Value)> {
-            let mut stream = TcpStream::connect(("127.0.0.1", self.port)).ok()?;
-            stream
-                .set_read_timeout(Some(Duration::from_secs(10)))
-                .ok()?;
-            let body = body.map(|body| body.to_string()).unwrap_or_default();
-            let request = format!(
-                "{method} {path} HTTP/1.1\r\nhost: 127.0.0.1:{}\r\nauthorization: Bearer {TOKEN}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
-                self.port,
-                body.len()
-            );
-            stream.write_all(request.as_bytes()).ok()?;
-            let mut reply = String::new();
-            stream.read_to_string(&mut reply).ok()?;
-            let status = reply.split_whitespace().nth(1)?.parse().ok()?;
-            let body = reply.split_once("\r\n\r\n")?.1;
-            Some((status, serde_json::from_str(body).unwrap_or(Value::Null)))
-        }
-
-        /// `GET /api/update` until `done` holds.
-        fn wait(&self, label: &str, done: impl Fn(&Value) -> bool) -> Value {
-            let started = Instant::now();
-            loop {
-                if let Some((200, view)) = self.call("GET", "/api/update", None)
-                    && done(&view)
-                {
-                    return view;
-                }
-                assert!(
-                    started.elapsed() < Duration::from_secs(60),
-                    "{label}: {}",
-                    self.log.lock().unwrap_or_else(|error| error.into_inner())
-                );
-                std::thread::sleep(Duration::from_millis(50));
-            }
-        }
-    }
-
-    impl Drop for Serve {
-        fn drop(&mut self) {
-            unsafe {
-                libc::kill(self.child.id() as i32, libc::SIGINT);
-            }
-            let _ = self.child.wait();
-        }
-    }
-
     /// The new release's program: this binary posing as 2.2.0.
-    fn posing_program(extra: &str) -> String {
+    pub(super) fn posing_program(extra: &str) -> String {
         format!(
             "#!/bin/sh\n[ \"$1\" = --version ] && {{ echo \"markitai 2.2.0\"; exit 0; }}\nMARKITAI_TEST_UPDATE_AS=2.2.0 {extra} exec '{}' \"$@\"\n",
             env!("CARGO_BIN_EXE_markitai")
@@ -942,5 +1048,113 @@ mod unix {
         ] {
             assert!(log.contains(line), "{line}: {log}");
         }
+    }
+}
+
+/// `markitai update` restarting the server it finds (R2). Windows installs
+/// copies of this binary, each posed by its pose file; on Unix the setup.sh
+/// install and a posing script stand in for them. Both versions are newer
+/// than 2.1.0, so both take a handover.
+mod restart_by_cli {
+    use super::*;
+
+    const OLD: &[(&str, &str)] = &[("MARKITAI_TEST_UPDATE_AS", "2.1.1")];
+
+    /// A setup install of 2.1.1 and a release 2.2.0 that fails before it is
+    /// ready when `fail`.
+    fn installed(releases: &Releases, fail: bool) -> Home {
+        #[cfg(unix)]
+        {
+            let extra = if fail {
+                "MARKITAI_TEST_UPDATE_FAIL_START=1"
+            } else {
+                ""
+            };
+            releases.publish("2.2.0", &unix::posing_program(extra), false);
+            Home::setup_sh()
+        }
+        #[cfg(windows)]
+        {
+            releases.publish_exe("2.2.0", fail);
+            Home::setup_ps1("2.1.1")
+        }
+    }
+
+    /// Unix keeps the socket, so any port stays; Windows binds the same
+    /// port number again.
+    fn port() -> Option<u16> {
+        if cfg!(windows) {
+            Some(free_port())
+        } else {
+            None
+        }
+    }
+
+    /// `markitai update`, answering Enter (yes) at the restart prompt.
+    fn update(home: &Home, releases: &Releases) -> (String, i32) {
+        let mut command = home.command(
+            releases,
+            &[
+                ("MARKITAI_TEST_UPDATE_AS", "2.1.1"),
+                ("MARKITAI_TEST_UPDATE_INTERACTIVE", "1"),
+            ],
+        );
+        let mut child = command
+            .arg("update")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child.stdin.take().unwrap().write_all(b"\n").unwrap();
+        let output = child.wait_with_output().unwrap();
+        let (stdout, stderr, code) = text(&output);
+        (format!("{stdout}{stderr}"), code)
+    }
+
+    #[test]
+    fn markitai_update_restarts_the_server_on_its_port_with_its_token() {
+        let releases = Releases::start("2.2.0");
+        let home = installed(&releases, false);
+        // The token is the server's own (none in the environment).
+        let server = Serve::start_with(&home, &releases, OLD, port());
+        let (said, code) = update(&home, &releases);
+        assert_eq!(code, 0, "{said}");
+        assert!(said.contains("Restart it now? [Y/n]"), "{said}");
+        assert!(said.contains("markitai serve restarted: 2.2.0"), "{said}");
+        // The same port and token answer, from the new version.
+        let view = server.wait("the restart", |view| view["current"] == "2.2.0");
+        assert_eq!(view["updated_from"], "2.1.1", "{view}");
+        assert!(!home.path("mh/update-pending.json").exists());
+    }
+
+    #[test]
+    fn a_new_version_that_does_not_start_leaves_the_old_one_serving() {
+        let releases = Releases::start("2.2.0");
+        let home = installed(&releases, true);
+        let server = Serve::start_with(&home, &releases, OLD, port());
+        let (said, code) = update(&home, &releases);
+        assert_eq!(code, 1, "{said}");
+        assert!(said.contains("2.2.0"), "{said}");
+        assert!(!said.contains("came back as"), "{said}");
+        // The old version answers on the same port with the same token.
+        let view = server.wait("the rollback", |view| {
+            view["current"] == "2.1.1" && view["error"]["code"] == "start_failed"
+        });
+        assert_eq!(view["error"]["rolled_back"], true, "{view}");
+        #[cfg(windows)]
+        {
+            let dir = home.program.parent().unwrap();
+            assert_eq!(std::fs::read_to_string(dir.join(POSE)).unwrap(), "2.1.1\n");
+            let receipt = std::fs::read_to_string(dir.join("receipt")).unwrap();
+            assert!(receipt.starts_with("version=2.1.1\n"), "{receipt}");
+        }
+        #[cfg(unix)]
+        assert!(
+            std::fs::symlink_metadata(&home.program)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
     }
 }

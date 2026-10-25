@@ -178,6 +178,12 @@ impl Update {
     pub(super) fn new(cfg: &Value, loopback: bool, secret: String) -> Self {
         let current = updates::current_release();
         let detected = method::detect(&method::Facts::current());
+        // A folder swap a killed update left half done is undone first.
+        if let Method::Setup(install) = &detected
+            && let Ok(_exclusive) = install::exclusive(&markitai_core::config::home())
+        {
+            install::recover(&install.dir);
+        }
         let exe = match &detected {
             Method::Setup(install) => install.exe.clone(),
             _ => std::env::current_exe().unwrap_or_default(),
@@ -686,6 +692,7 @@ pub(super) async fn control_status(
         "pid": std::process::id(),
         "waiting_jobs": active_conversions(&state),
         "state": state.update.phase().name(),
+        "undone": state.update.undone,
     })))
 }
 

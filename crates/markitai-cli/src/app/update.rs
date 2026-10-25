@@ -123,6 +123,10 @@ fn elapsed(started: Instant) -> String {
 }
 
 fn interactive() -> bool {
+    // Debug builds: the tests answer the prompts through a pipe.
+    if cfg!(debug_assertions) && std::env::var_os("MARKITAI_TEST_UPDATE_INTERACTIVE").is_some() {
+        return true;
+    }
     io::stdin().is_terminal() && io::stderr().is_terminal()
 }
 

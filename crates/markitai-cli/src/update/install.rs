@@ -10,7 +10,9 @@
 //! kept beside it as `.markitai.old-<id>` until the update is committed.
 //! `setup.ps1` installs are one folder: every name its receipt lists is
 //! renamed aside (a running EXE can be renamed, not deleted), the new names
-//! renamed in, and on a failure everything goes back.
+//! renamed in, and on a failure everything goes back. The planned renames
+//! are written first (`.markitai-swap-<id>`): a run killed between them is
+//! undone by the next update, server start or setup.ps1.
 use super::check::{self, Base, Failure, Timeouts};
 use super::method::{Receipt, Script, SetupInstall};
 use super::version::Version;
@@ -914,9 +916,24 @@ fn swap_folder(
             moving.push(name.clone());
         }
     }
+    let present: Vec<&str> = moving
+        .iter()
+        .filter(|name| std::fs::symlink_metadata(dir.join(name)).is_ok())
+        .map(String::as_str)
+        .collect();
+    let placing: Vec<&str> = names
+        .iter()
+        .map(String::as_str)
+        .chain(std::iter::once("receipt"))
+        .collect();
+    let journal = write_journal(dir, id, &present, &placing)
+        .map_err(|error| io_error("Can't record the update".into(), error, false))?;
     let mut swapped = Swapped::default();
     let fail = |swapped: &Swapped, name: &str, error: io::Error| {
-        let _ = swapped.rollback();
+        // Kept when something stayed: the next start finishes the undo.
+        if swapped.rollback().is_ok() {
+            let _ = std::fs::remove_file(&journal);
+        }
         if busy(&error) {
             Error::FileBusy {
                 name: name.to_owned(),
@@ -925,11 +942,8 @@ fn swap_folder(
             io_error(format!("Can't replace {name}"), error, true)
         }
     };
-    for name in &moving {
+    for name in present {
         let path = dir.join(name);
-        if std::fs::symlink_metadata(&path).is_err() {
-            continue;
-        }
         let aside = dir.join(format!("{name}.old-{id}"));
         if let Err(error) = rename(&path, &aside, &format!("busy:{name}")) {
             return Err(fail(&swapped, name, error));
@@ -939,19 +953,110 @@ fn swap_folder(
         }
         swapped.aside.push((path, aside));
     }
-    for name in names.iter().chain(std::iter::once(&"receipt".to_owned())) {
+    // The tests' kill between the two loops: nothing is put back here.
+    fault("killed").map_err(|error| io_error("Killed".into(), error, false))?;
+    for name in placing {
         let path = dir.join(name);
         if let Err(error) = rename(&unpacked.join(name), &path, &format!("place:{name}")) {
             return Err(fail(&swapped, name, error));
         }
         swapped.placed.push(path);
     }
+    // A journal left behind would undo this install later: then undo it now.
+    if let Err(error) = std::fs::remove_file(&journal) {
+        return Err(fail(&swapped, "receipt", error));
+    }
     Ok(swapped)
 }
 
+/// A folder swap's journal: `.markitai-swap-<id>`.
+const JOURNAL: &str = ".markitai-swap-";
+
+fn is_id(id: &str) -> bool {
+    id.len() == 32 && id.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+/// Record a folder swap before its first rename: the names set aside as
+/// `<name>.old-<id>` (`aside=`) and the names placed (`place=`).
+fn write_journal(dir: &Path, id: &str, aside: &[&str], place: &[&str]) -> io::Result<PathBuf> {
+    let path = dir.join(format!("{JOURNAL}{id}"));
+    let mut text = String::from("format=1\n");
+    for name in aside {
+        text.push_str(&format!("aside={name}\n"));
+    }
+    for name in place {
+        text.push_str(&format!("place={name}\n"));
+    }
+    let mut file = std::fs::File::create(&path)?;
+    file.write_all(text.as_bytes())?;
+    file.sync_all()?;
+    Ok(path)
+}
+
+/// Undo the folder swaps a killed run left half done: the names it placed
+/// go, the copies it set aside come back. Run under the update lock (or by
+/// setup.ps1). Returns the ids of journals that could not be undone whole;
+/// their copies are not leftovers.
+pub(crate) fn recover(dir: &Path) -> Vec<String> {
+    let mut stuck = Vec::new();
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return stuck;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let Some(id) = name.strip_prefix(JOURNAL).filter(|id| is_id(id)) else {
+            continue;
+        };
+        let undone = std::fs::read_to_string(entry.path())
+            .and_then(|text| undo_journal(dir, id, &text))
+            .and_then(|()| std::fs::remove_file(entry.path()));
+        if undone.is_err() {
+            stuck.push(id.to_owned());
+        }
+    }
+    stuck
+}
+
+fn undo_journal(dir: &Path, id: &str, text: &str) -> io::Result<()> {
+    let list = |key: &str| -> Vec<&str> {
+        text.lines()
+            .filter_map(|line| line.strip_prefix(key)?.strip_prefix('='))
+            .filter(|name| {
+                safe_relative(Path::new(name)).is_some_and(|path| path.components().count() == 1)
+            })
+            .collect()
+    };
+    let (aside, place) = (list("aside"), list("place"));
+    let mut first = None;
+    // A placed name nothing was set aside for did not exist before.
+    for name in place
+        .iter()
+        .filter(|name| !aside.iter().any(|old| old.eq_ignore_ascii_case(name)))
+    {
+        if let Err(error) = remove_any(&dir.join(name)) {
+            first.get_or_insert(error);
+        }
+    }
+    // A name never set aside is still the old one.
+    for name in aside {
+        let kept = dir.join(format!("{name}.old-{id}"));
+        if std::fs::symlink_metadata(&kept).is_err() {
+            continue;
+        }
+        let path = dir.join(name);
+        let _ = remove_any(&path);
+        if let Err(error) = markitai_core::platform::rename(&kept, &path) {
+            first.get_or_insert(error);
+        }
+    }
+    first.map_or(Ok(()), Err)
+}
+
 /// Remove what earlier updates left in the install folder: work folders and
-/// old copies (`.markitai-new-<id>`, `*.old-<id>`), except `keep`.
+/// old copies (`.markitai-new-<id>`, `*.old-<id>`), except `keep`. A swap a
+/// killed run left half done is undone first.
 pub(crate) fn remove_leftovers(install: &SetupInstall, keep: &[PathBuf]) {
+    let stuck = recover(&install.dir);
     let Ok(entries) = std::fs::read_dir(&install.dir) else {
         return;
     };
@@ -961,7 +1066,7 @@ pub(crate) fn remove_leftovers(install: &SetupInstall, keep: &[PathBuf]) {
             .strip_prefix(".markitai-new-")
             .or_else(|| name.strip_prefix(".markitai.old-"))
             .or_else(|| name.rsplit_once(".old-").map(|(_, id)| id))
-            .is_some_and(|id| id.len() == 32 && id.bytes().all(|byte| byte.is_ascii_hexdigit()));
+            .is_some_and(|id| is_id(id) && !stuck.iter().any(|stuck| stuck == id));
         if leftover && !keep.contains(&entry.path()) {
             let _ = remove_any(&entry.path());
         }
@@ -1267,6 +1372,90 @@ pub(crate) mod tests {
                 Some("2.1.0")
             );
         }
+    }
+
+    #[test]
+    fn a_swap_killed_between_its_renames_is_undone_by_the_next_start() {
+        let root = tempfile::tempdir().unwrap();
+        let install = folder_install(root.path());
+        let work = prepare(&install).unwrap();
+        let unpacked = new_folder_release(&work.path);
+        // Killed after every old name is aside and before any new one is in.
+        fail_at(Some("killed"));
+        let error = swap(&install, &release("2.2.0", "a.zip", ""), &unpacked).unwrap_err();
+        fail_at(None);
+        assert!(!error.rolled_back());
+        assert!(!install.dir.join("markitai.exe").exists());
+        // As a killed run would: the work folder stays, half moved out.
+        std::fs::rename(unpacked.join("NOTICE"), install.dir.join("NOTICE")).unwrap();
+        let journal: Vec<String> = std::fs::read_dir(&install.dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with(JOURNAL))
+            .collect();
+        assert_eq!(journal.len(), 1, "{journal:?}");
+        std::mem::forget(work);
+        // The next update's cleanup puts the old files back, not deletes them.
+        remove_leftovers(&install, &[]);
+        for name in ["markitai.exe", "mkai.exe", "markitai-mcp.exe", "LICENSE"] {
+            assert_eq!(read(&install.dir.join(name)), format!("old {name}"));
+        }
+        assert_eq!(read(&install.dir.join("docs/index.md")), "old docs");
+        assert_eq!(
+            Receipt::parse(&read(&install.dir.join("receipt"))).get("version"),
+            Some("2.1.0")
+        );
+        let mut names: Vec<String> = std::fs::read_dir(&install.dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        assert_eq!(
+            names,
+            [
+                "LICENSE",
+                "docs",
+                "markitai-mcp.exe",
+                "markitai.exe",
+                "mkai.exe",
+                "notes.txt",
+                "receipt"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_journal_that_cannot_be_undone_keeps_its_copies() {
+        let root = tempfile::tempdir().unwrap();
+        let install = folder_install(root.path());
+        let id = "0123456789abcdef0123456789abcdef";
+        std::fs::rename(
+            install.dir.join("LICENSE"),
+            install.dir.join(format!("LICENSE.old-{id}")),
+        )
+        .unwrap();
+        // Its old copy cannot go back over a folder that will not go.
+        std::fs::create_dir(install.dir.join("LICENSE")).unwrap();
+        write_journal(&install.dir, id, &["LICENSE"], &["LICENSE"]).unwrap();
+        // A folder in the way of the rename back: it holds a file and is
+        // read-only, so it cannot be removed.
+        let blocked = install.dir.join("LICENSE");
+        std::fs::write(blocked.join("x"), "x").unwrap();
+        let mut permissions = std::fs::metadata(&blocked).unwrap().permissions();
+        permissions.set_readonly(true);
+        std::fs::set_permissions(&blocked, permissions.clone()).unwrap();
+        let stuck = recover(&install.dir);
+        if !stuck.is_empty() {
+            assert_eq!(stuck, [id]);
+            remove_leftovers(&install, &[]);
+            assert!(install.dir.join(format!("LICENSE.old-{id}")).exists());
+        }
+        #[allow(clippy::permissions_set_readonly_false)]
+        permissions.set_readonly(false);
+        std::fs::set_permissions(&blocked, permissions).unwrap();
+        // Once it can, the next start finishes the undo.
+        remove_leftovers(&install, &[]);
+        assert_eq!(read(&install.dir.join("LICENSE")), "old LICENSE");
     }
 
     #[test]

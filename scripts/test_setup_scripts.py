@@ -414,6 +414,18 @@ Assert ((Get-Content -Raw (Join-Path $install "receipt")) -match "version=2.0.1"
 Assert (@(Get-ChildItem $install -Force | Where-Object { $_.Name -match '\.old-[0-9a-f]{32}$|^\.markitai-' }).Count -eq 0) "nothing left aside"
 Remove-Item function:Move-Item
 
+# A `markitai update` killed between its renames left its journal: undone.
+$id = "ab" * 16
+Set-Content -LiteralPath (Join-Path $install ".markitai-swap-$id") -Value @("format=1", "aside=markitai.exe", "aside=mkai.exe", "aside=receipt", "place=markitai.exe", "place=mkai.exe", "place=NOTICE", "place=receipt")
+foreach ($name in @("markitai.exe", "mkai.exe", "receipt")) { Move-Item -LiteralPath (Join-Path $install $name) -Destination (Join-Path $install "$name.old-$id") }
+Set-Content -LiteralPath (Join-Path $install "NOTICE") -Value "new"
+Set-Content -NoNewline -LiteralPath (Join-Path $install "markitai.exe") -Value "exe 2.2.0"
+[void](Remove-Leftovers $install)
+foreach ($name in @("markitai.exe", "mkai.exe")) { Assert ((Get-Content -Raw (Join-Path $install $name)) -eq "exe 2.0.1") "$name back after a killed update" }
+Assert ((Get-Content -Raw (Join-Path $install "receipt")) -match "version=2.0.1") "receipt back after a killed update"
+Assert (-not (Test-Path (Join-Path $install "NOTICE"))) "a killed update's new name goes"
+Assert (@(Get-ChildItem $install -Force | Where-Object { $_.Name -match '\.old-[0-9a-f]{32}$|^\.markitai-' }).Count -eq 0) "its journal and copies go"
+
 Install-Release $second $install @{ Version = "2.0.2" } "x86_64-pc-windows-msvc" | Out-Null
 Assert (-not (Test-Path (Join-Path $install "licenses"))) "the previous release's files go"
 Assert (Test-Path (Join-Path $install "user-notes.txt")) "still kept"

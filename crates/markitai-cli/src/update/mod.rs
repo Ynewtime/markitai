@@ -31,11 +31,14 @@ const DAY: i64 = 24 * HOUR;
 
 /// This build's version and whether it counts as a source build (local
 /// changes, or a debug build: releases and `cargo install` are release
-/// builds). A debug build may pose as a release (`MARKITAI_TEST_UPDATE_AS=2.1.0`)
-/// so the tests can exercise what a release does; a release build ignores
-/// the variable.
+/// builds). A debug build may pose as a release (`MARKITAI_TEST_UPDATE_AS=2.1.0`,
+/// or a [`test_pose`] file) so the tests can exercise what a release does; a
+/// release build ignores both.
 pub(crate) fn current_identity() -> (String, bool) {
     if cfg!(debug_assertions) {
+        if let Some((posed, _)) = test_pose() {
+            return (posed.clone(), false);
+        }
         return match std::env::var("MARKITAI_TEST_UPDATE_AS")
             .ok()
             .filter(|value| !value.is_empty())
@@ -48,6 +51,33 @@ pub(crate) fn current_identity() -> (String, bool) {
         markitai_core::VERSION.to_owned(),
         markitai_core::build_info::dirty(),
     )
+}
+
+/// The pose file of a debug build: [`test_pose`].
+pub(crate) const TEST_POSE: &str = "markitai-test-pose";
+
+/// Debug builds: a `markitai-test-pose` file beside the program poses it as
+/// the release its first line names, and a `fail-start` line makes `serve`
+/// fail before it is ready. The Windows tests install copies of this binary
+/// that way: the file is swapped with the release like any other.
+pub(crate) fn test_pose() -> Option<&'static (String, bool)> {
+    static POSE: std::sync::OnceLock<Option<(String, bool)>> = std::sync::OnceLock::new();
+    if !cfg!(debug_assertions) {
+        return None;
+    }
+    POSE.get_or_init(|| {
+        let exe = std::env::current_exe().ok()?;
+        let text = std::fs::read_to_string(exe.with_file_name(TEST_POSE)).ok()?;
+        let mut lines = text.lines().map(str::trim);
+        let version = lines.next().filter(|line| !line.is_empty())?.to_owned();
+        Some((version, lines.any(|line| line == "fail-start")))
+    })
+    .as_ref()
+}
+
+/// What `--version` prints: a posed debug build's [`test_pose`] version.
+pub(crate) fn shown_version() -> &'static str {
+    test_pose().map_or(markitai_core::VERSION, |(posed, _)| posed.as_str())
 }
 
 /// This build's version as a release version; `None` for a source build

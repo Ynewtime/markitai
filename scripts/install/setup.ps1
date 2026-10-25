@@ -523,10 +523,49 @@ function Get-ForeignNames {
 # exactly the names this script creates.
 $LeftoverPattern = '^((markitai|mkai|markitai-mcp)\.exe\.old-|\.markitai-new-)[0-9a-f]{32}$'
 
+# `markitai update` writes the renames it plans (.markitai-swap-<id>: the
+# names it sets aside as <name>.old-<id>, then the names it places) before
+# the first one. A journal still there means the update was killed midway:
+# the names it placed go and the old copies come back. Returns the ids it
+# could not undo whole; their copies are not leftovers.
+function Restore-Swaps {
+    param([string]$Directory)
+    $stuck = @()
+    foreach ($journal in @(Get-ChildItem -LiteralPath $Directory -Force -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^\.markitai-swap-[0-9a-f]{32}$' })) {
+        $id = $journal.Name.Substring(15)
+        try {
+            $aside = @()
+            $place = @()
+            foreach ($line in @(Get-Content -LiteralPath $journal.FullName -ErrorAction Stop)) {
+                if ($line -notmatch '^(aside|place)=([^\\/:]+)$') { continue }
+                $kind = $Matches[1]
+                $name = $Matches[2]
+                if ($name -match '^\.+$') { continue }
+                if ($kind -eq "aside") { $aside += $name } else { $place += $name }
+            }
+            foreach ($name in $place) {
+                if ($aside -contains $name) { continue }
+                $path = [IO.Path]::Combine($Directory, $name)
+                if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction Stop }
+            }
+            foreach ($name in $aside) {
+                $path = [IO.Path]::Combine($Directory, $name)
+                if (-not (Test-Path -LiteralPath "$path.old-$id")) { continue }
+                if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction Stop }
+                Move-Item -LiteralPath "$path.old-$id" -Destination $path -ErrorAction Stop
+            }
+            Remove-Item -LiteralPath $journal.FullName -Force -ErrorAction Stop
+        } catch { $stuck += $id }
+    }
+    return $stuck
+}
+
 function Remove-Leftovers {
     param([string]$Directory)
+    $stuck = @(Restore-Swaps $Directory)
     $left = $false
     foreach ($item in @(Get-ChildItem -LiteralPath $Directory -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -match $LeftoverPattern })) {
+        if (@($stuck | Where-Object { $item.Name.EndsWith($_) }).Count) { $left = $true; continue }
         try { Remove-Item -LiteralPath $item.FullName -Recurse -Force } catch { $left = $true }
     }
     return $left
@@ -622,6 +661,8 @@ function Complete-Install {
 # Returns the receipt of what is installed now.
 function Install-Release {
     param([string]$Unpacked, [string]$Directory, [hashtable]$Release, [string]$Target)
+    # A killed update's swap is undone first: its old receipt comes back.
+    if (Test-Path -LiteralPath $Directory) { [void](Restore-Swaps $Directory) }
     $previous = Read-Receipt $Directory
     $stage = New-Staging $Unpacked $Directory $Release $Target $previous
     # Only now, with the new release staged, does uv's Python markitai go.
@@ -835,6 +876,7 @@ function Write-GettingStarted {
 function Invoke-Uninstall {
     Write-Intro (Msg "welcome_uninstall")
     $directory = Get-DefaultInstallDirectory
+    if (Test-Path -LiteralPath $directory) { [void](Restore-Swaps $directory) }
     $receipt = Read-Receipt $directory
     if ($receipt) {
         if (Remove-Names $directory (@($receipt.Names) + @("receipt"))) { Write-Info (Msg "old_in_use") }
