@@ -336,7 +336,10 @@ pub(crate) fn detect(facts: &Facts) -> Method {
     if cargo_install(facts, exe) {
         return Method::Cargo;
     }
-    if let Some(method) = packaged_path(exe, facts.windows) {
+    // macOS names the invoked link (`/usr/local/bin/markitai`); its target
+    // (`…/Cellar/…`, `/nix/store/…`) says who installed it.
+    let resolved = std::fs::canonicalize(exe).unwrap_or_else(|_| exe.clone());
+    if let Some(method) = packaged_path(&resolved, facts.windows) {
         return method;
     }
     Method::Unknown {
@@ -395,7 +398,15 @@ fn setup_install(facts: &Facts, exe: &Path) -> Option<SetupInstall> {
             return None;
         }
         let installed = dir.join("markitai.exe");
-        if !same_file(&installed, exe) {
+        // `mkai.exe` is a copy setup installs too: any EXE the receipt lists here.
+        let listed = exe
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| {
+                names.iter().any(|listed| listed.eq_ignore_ascii_case(name))
+                    && name.to_ascii_lowercase().ends_with(".exe")
+            });
+        if !same_file(&installed, exe) && !(listed && same_file(&dir.join(exe.file_name()?), exe)) {
             return None;
         }
         return Some(SetupInstall {
