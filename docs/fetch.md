@@ -137,7 +137,8 @@ Messages, `--json`, reports and recorded history name a URL the same way (no
 userinfo; each secret path segment and each secret query or fragment value
 replaced by `REDACTED`), as its output's front matter does. A secret path
 segment is one the fetch policy counts as credential material (below), such as
-the token in `/reset/<token>`. The log file hides the same path segments, as
+the token in `/reset/<token>`; a query or fragment value that repeats it
+(`/reset/<token>?id=<token>`) is replaced too. The log file hides the same path segments, as
 `[REDACTED]`, and keeps no query or fragment at all. Bookkeeping that must tell
 two such URLs apart keeps the address as given in owner-only files: a batch's resume state and output
 records under the output folder's `.markitai/`, and the fetch cache, which keys

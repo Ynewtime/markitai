@@ -387,6 +387,12 @@ fn opaque(segment: &str) -> bool {
         && entropy(segment) >= 3.5
 }
 
+/// A value that reads as a secret by itself, wherever it stands: a JWT or a
+/// long random-looking token (what a path segment needs no context to be).
+pub(crate) fn secret_value(value: &str) -> bool {
+    opaque(value)
+}
+
 fn uuid(value: &str) -> bool {
     let groups: Vec<&str> = value.split('-').collect();
     groups.iter().map(|group| group.len()).eq([8, 4, 4, 4, 12])

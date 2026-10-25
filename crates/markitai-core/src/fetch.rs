@@ -17,7 +17,7 @@ mod remote;
 mod shortlinks;
 mod sites;
 
-pub(crate) use policy::{secret_parameter, secret_path_segments};
+pub(crate) use policy::{secret_parameter, secret_path_segments, secret_value};
 use remote::{Service, Services};
 
 /// A fetched response body at most: the limit of a local input file

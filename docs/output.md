@@ -93,7 +93,9 @@ none (`example_com.md`). A last segment that carries a secret (a token after
 `/reset/`, a long random-looking segment, see
 [strategy order](fetch.md#strategy-order-and-remote-fallback)) never names a file: the host does, as
 when there is no segment. When the URL has a query, the host comes first
-(`example_com_8080_search.md` for `https://example.com:8080/search?q=x`). Names
+(`example_com_8080_search.md` for `https://example.com:8080/search?q=x`); an
+identifying query value (`item?id=8863` gives `example_com_item_8863.md`) is left
+out when it repeats such a secret segment or reads as a token itself. Names
 are bounded to 200 characters and replace characters that file systems reject.
 
 Two refinements keep different pages apart, and differ from the reference, which

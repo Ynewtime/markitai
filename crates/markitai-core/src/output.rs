@@ -622,14 +622,30 @@ pub fn redact_url(source: &str) -> String {
     let Ok(mut url) = url::Url::parse(source) else {
         return source.to_owned();
     };
+    let repeated = secret_segment_values(&url);
     hide_userinfo_and_path_secrets(&mut url, "REDACTED");
-    if let Some(query) = redacted_parameters(url.query()) {
+    if let Some(query) = redacted_parameters(url.query(), &repeated) {
         url.set_query(Some(&query));
     }
-    if let Some(fragment) = redacted_parameters(url.fragment()) {
+    if let Some(fragment) = redacted_parameters(url.fragment(), &repeated) {
         url.set_fragment(Some(&fragment));
     }
     url.to_string()
+}
+
+/// The decoded text of each path segment that carries a secret: the same
+/// token repeated as a query value (`/reset/k7Q2?id=k7Q2`) is that secret too.
+fn secret_segment_values(url: &url::Url) -> Vec<String> {
+    if url.cannot_be_a_base() {
+        return Vec::new();
+    }
+    let path = url.path();
+    let secret = crate::fetch::secret_path_segments(path);
+    path.split('/')
+        .enumerate()
+        .filter(|(index, _)| secret.contains(index))
+        .map(|(_, segment)| percent_decoded(segment).unwrap_or_else(|| segment.to_owned()))
+        .collect()
 }
 
 /// A URL as a log line names it: what [`redact_url`] hides, with the path
@@ -682,19 +698,22 @@ pub fn url_without_credentials(source: &str) -> Option<String> {
     (redacted != parsed.as_str()).then_some(redacted)
 }
 
-/// `name=value` parameters with each secret value replaced, or `None` when
-/// none is secret and the text stays as written.
-fn redacted_parameters(text: Option<&str>) -> Option<String> {
+/// `name=value` parameters with each secret value replaced (a parameter named
+/// like a secret, or a value that repeats one of the path's secret segments),
+/// or `None` when none is secret and the text stays as written.
+fn redacted_parameters(text: Option<&str>, repeated: &[String]) -> Option<String> {
     let pairs: Vec<(String, String)> = url::form_urlencoded::parse(text?.as_bytes())
         .into_owned()
         .collect();
-    let secret = |key: &str| crate::fetch::secret_parameter(key);
-    if !pairs.iter().any(|(key, _)| secret(key)) {
+    let secret = |key: &str, value: &str| {
+        crate::fetch::secret_parameter(key) || repeated.iter().any(|token| token == value)
+    };
+    if !pairs.iter().any(|(key, value)| secret(key, value)) {
         return None;
     }
     let mut serializer = url::form_urlencoded::Serializer::new(String::new());
     for (key, value) in &pairs {
-        serializer.append_pair(key, if secret(key) { "REDACTED" } else { value });
+        serializer.append_pair(key, if secret(key, value) { "REDACTED" } else { value });
     }
     Some(serializer.finish())
 }
@@ -788,8 +807,9 @@ pub fn url_name(source: &str) -> String {
         Some(percent_decoded(segment).unwrap_or_else(|| segment.to_owned()))
     });
     // A page named by a query (`item?id=8863`, `watch?v=abc`) carries its
-    // identity there; without it two pages of one site share a name.
-    let identity = parsed.as_ref().and_then(identifying_query);
+    // identity there; without it two pages of one site share a name. A value
+    // that repeats a secret path segment or reads as a secret itself does not.
+    let identity = parsed.as_ref().and_then(|u| identifying_query(u, &secret_segment_values(u)));
     let raw = match (segment, identity) {
         (Some(path), identity) if parsed.as_ref().is_some_and(|u| u.query().is_some()) => {
             match identity {
@@ -826,11 +846,15 @@ fn identifies(key: &str) -> bool {
     })
 }
 
-/// The value of the first identifying query parameter, reduced to letters,
-/// digits, `-`, `_` and `.` and at most 64 characters.
-fn identifying_query(url: &url::Url) -> Option<String> {
+/// The value of the first identifying query parameter that is no secret
+/// (`repeated`: the path's secret segments), reduced to letters, digits, `-`,
+/// `_` and `.` and at most 64 characters.
+fn identifying_query(url: &url::Url, repeated: &[String]) -> Option<String> {
     url.query_pairs().find_map(|(key, value)| {
-        if !identifies(&key.to_ascii_lowercase()) {
+        if !identifies(&key.to_ascii_lowercase())
+            || repeated.iter().any(|token| *token == value)
+            || crate::fetch::secret_value(&value)
+        {
             return None;
         }
         let mut cleaned = String::new();
@@ -1416,6 +1440,11 @@ mod tests {
                 Some("http://127.0.0.1:8080/reset/REDACTED"),
             ),
             ("https://example.test/reset/REDACTED", None),
+            // The same secret repeated as a query value is hidden there too.
+            (
+                "https://example.test/reset/k7Q2mX9p?id=k7Q2mX9p&lang=en",
+                Some("https://example.test/reset/REDACTED?id=REDACTED&lang=en"),
+            ),
             ("not a url", None),
         ] {
             assert_eq!(
@@ -2284,6 +2313,25 @@ mod tests {
         assert_eq!(
             url_name(&format!("https://example.test/{token}?id=42")),
             "example_test_42"
+        );
+        // The secret repeated as an identifying query value does not name it
+        // either, nor does a query value that reads as a secret by itself.
+        assert_eq!(
+            url_name("https://example.test/reset/k7Q2mX9p?id=k7Q2mX9p"),
+            "example_test"
+        );
+        assert_eq!(
+            url_name(&format!("https://example.test/share?id={token}")),
+            "example_test_share"
+        );
+        // An ordinary identifying value still does.
+        assert_eq!(
+            url_name("https://example.test/item?id=8863"),
+            "example_test_item_8863"
+        );
+        assert_eq!(
+            url_name("https://www.youtube.com/watch?v=dQw4w9WgXcQ"),
+            "www_youtube_com_watch_dQw4w9WgXcQ"
         );
         // An ordinary last segment still names it.
         assert_eq!(url_name("https://example.test/share/notes"), "notes");
