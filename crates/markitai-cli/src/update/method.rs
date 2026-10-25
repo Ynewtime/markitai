@@ -468,7 +468,7 @@ fn packaged_path(exe: &Path, windows: bool) -> Option<Method> {
     }
     if text.contains("/Cellar/")
         || text.starts_with("/opt/homebrew/")
-        || text.starts_with("/home/linuxbrew/")
+        || text.contains("/.linuxbrew/")
     {
         return packaged("Homebrew", Some("brew upgrade markitai"));
     }
