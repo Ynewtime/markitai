@@ -105,6 +105,7 @@ These pages are for contributors and reviewers rather than users.
 
 - [Architecture](architecture.md) and [development](development.md).
 - [Compatibility](compatibility.md): contracts of reference release 1.2.0.
+- [Versioning](versioning.md): which version number a release raises.
 - [Native CI](ci.md): package builds and installed-package checks.
 - [Validation](validation/README.md): active checks and access to archived evidence.
 - Decisions: [native core](decisions/0001-native-core.md),

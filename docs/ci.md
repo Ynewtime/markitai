@@ -193,6 +193,7 @@ Two workflows serve markitai.dev from `website/` (see
 
 ## Releases
 
+Which number a release raises is decided by [versioning](versioning.md).
 `.github/workflows/release.yml` builds, tests and publishes a release in one
 run on GitHub-hosted runners. Pushing a `v2.*` tag publishes; starting it by
 hand (`gh workflow run release.yml`) is a dry run that builds and tests

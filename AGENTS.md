@@ -12,9 +12,12 @@ behavioral reference, not a build dependency. Contributor commands are in
   History rewriting requires an explicit user request, an isolated copy and
   expected remote-ref checks; ordinary pushes must not force-update history.
   Commit only explicit reviewed paths.
-- Keep **2.0.0-dev** until a new release is authorized. Deliver to `main` for user
-  verification; do not create releases/tags, publish packages or change visibility
-  without explicit authorization.
+- Keep the current version (the last release's) until a new release is
+  authorized. Deliver to `main` for user verification; do not create
+  releases/tags, publish packages or change visibility without explicit
+  authorization.
+- Pick a release's version bump by [versioning](docs/versioning.md); a change to
+  a stored format follows its stored-data rules.
 - Record test commands, source/artifact identities, fixture provenance and scope
   in ignored `.local/` evidence. Use Git history for completed work; do not keep
   duplicate status, handoff or completed-task documents in the user guides.

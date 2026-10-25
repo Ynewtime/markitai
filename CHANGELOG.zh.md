@@ -3,7 +3,8 @@
 本项目的所有重要变更都会记录在此文件中。
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)，
-版本号遵循[语义化版本](https://semver.org/spec/v2.0.0.html)规范。
+版本号遵循[语义化版本](https://semver.org/spec/v2.0.0.html)规范
+（各位数字对 markitai 的含义见[版本规则](docs/versioning.md)）。
 1.x 版本是 Python 实现，其说明见
 [1.2.0 更新日志](https://github.com/Ynewtime/markitai/blob/v1.2.0/CHANGELOG.zh.md)。
 

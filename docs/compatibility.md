@@ -5,7 +5,8 @@ executables with setup scripts on GitHub Releases and as wheels on PyPI for
 six platforms (see [bindings](bindings.md#installation)).
 Output quality takes precedence over byte-for-byte equality with the Python
 implementation. A supported extension or passing build is not a promise of
-complete format fidelity.
+complete format fidelity. What later releases may change is in
+[versioning](versioning.md).
 
 ## Commands and configuration
 
