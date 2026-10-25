@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { groupNotices, isUsedRetry, rowWarnings } from "./notices.ts";
 import { emptyOptions } from "./options.ts";
 import { publicSettings, requestView, wrapUnits } from "./request.ts";
@@ -121,4 +122,12 @@ test("an older request that names only its preset copies as that preset", () => 
   assert.equal(requestView(["notes.pdf"], { ...emptyOptions(), preset: "standard", screenshot: true }, null, false)?.command, "markitai notes.pdf -o output/ --llm --alt --desc --screenshot");
   // an unknown preset with null switches has nothing to spell out
   assert.equal(requestView(["notes.pdf"], { ...emptyOptions(), preset: "team" }, null, false)?.command, "markitai notes.pdf -o output/");
+});
+
+test("a submission with files and URLs keeps its URL strategy in the line", () => {
+  // a file and a URL run with fetch.strategy static: the strategy is for the URL, and the line runs both
+  assert.equal(requestView(["notes.pdf", "https://example.org/a"], null, { "fetch.strategy": "static" }, true)?.command, "markitai notes.pdf https://example.org/a -o output/ --strategy static");
+  const inspector = readFileSync(new URL("../components/inspector.tsx", import.meta.url), "utf8");
+  assert.match(inspector, /url: items\.some\(\(item\) => item\.kind === "url"\),/);
+  assert.ok(!/items\.every\(\(item\) => item\.kind === "url"\)/.test(inspector));
 });

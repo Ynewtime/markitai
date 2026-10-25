@@ -840,7 +840,8 @@ export function JobInspector({
     inputs: items.length <= 3 ? items.map((item) => item.name) : [],
     options: job.options,
     settings: job.settings,
-    url: items.length > 0 && items.every((item) => item.kind === "url"),
+    // the URL strategy applies to a submission's URLs, files and all
+    url: items.some((item) => item.kind === "url"),
     origin: job.origin,
   });
   const [requestOpen, toggleRequest] = useRequestOpen();
