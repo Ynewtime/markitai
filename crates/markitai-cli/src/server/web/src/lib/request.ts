@@ -70,6 +70,12 @@ function settingsFlags(settings: JobSettings, options: JobOptions | null, url: b
   const strategy = take("fetch.strategy");
   if (url && typeof strategy === "string") words.push("--strategy", shellQuote(strategy));
   if (take("fetch.cloudflare.convert_enabled") === true) words.push("--backend", "cloudflare");
+  // A run kept off remote services (`--no-remote-fetch`, `fetch.remote_consent: never`) says so, or
+  // a copied `--strategy jina` would send the URL out; `ask` has no flag and stays a chip.
+  if (settings["fetch.remote_consent"] === "never") {
+    take("fetch.remote_consent");
+    words.push("--no-remote-fetch");
+  }
   return { words, used };
 }
 

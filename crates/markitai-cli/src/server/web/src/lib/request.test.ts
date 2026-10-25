@@ -131,3 +131,14 @@ test("a submission with files and URLs keeps its URL strategy in the line", () =
   assert.match(inspector, /url: items\.some\(\(item\) => item\.kind === "url"\),/);
   assert.ok(!/items\.every\(\(item\) => item\.kind === "url"\)/.test(inspector));
 });
+
+test("a run kept off remote services copies with --no-remote-fetch", () => {
+  // `markitai https://example.org/a -s jina --no-remote-fetch`, as history records it
+  const view = requestView(["https://example.org/a"], null, { "fetch.strategy": "jina", "fetch.remote_consent": "never" }, true);
+  assert.equal(view?.command, "markitai https://example.org/a -o output/ --strategy jina --no-remote-fetch");
+  assert.deepEqual(view?.chips, []);
+  // `ask` has no flag: a chip
+  const ask = requestView(["https://example.org/a"], null, { "fetch.remote_consent": "ask" }, true);
+  assert.equal(ask?.command, "markitai https://example.org/a -o output/");
+  assert.deepEqual(ask?.chips, [{ key: "fetch.remote_consent", value: "ask" }]);
+});
