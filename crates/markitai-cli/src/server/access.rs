@@ -50,6 +50,9 @@ struct Saved {
 
 pub(super) struct Access {
     path: PathBuf,
+    /// Whether the saved tokens were read (or there were none): otherwise
+    /// no saved id is known, and none may count as revoked.
+    tokens_read: bool,
     tokens: RwLock<Vec<Entry>>,
     /// When each token was last presented; memory only.
     used: Mutex<HashMap<String, String>>,
@@ -121,6 +124,7 @@ impl Access {
     /// markitai wrote stops the start instead: replacing it would lose its
     /// tokens.
     pub(super) fn load(path: PathBuf) -> Result<Self, String> {
+        let mut known = true;
         let tokens = match read(&path) {
             Ok(tokens) => tokens,
             Err(Unreadable::Newer(version)) => {
@@ -133,15 +137,23 @@ impl Access {
                 eprintln!(
                     "Warning: Serve: ignoring the saved access tokens ({error}); no user token works until an admin creates or revokes one."
                 );
+                known = false;
                 Vec::new()
             }
         };
         Ok(Self {
             path,
+            tokens_read: known,
             tokens: RwLock::new(tokens),
             used: Mutex::new(HashMap::new()),
             write: Mutex::new(()),
         })
+    }
+
+    /// Whether the saved tokens were read at the start, so a saved id that
+    /// is not among them was revoked.
+    pub(super) fn tokens_read(&self) -> bool {
+        self.tokens_read
     }
 
     /// The user token `presented` is, as (id, label). The value is hashed and

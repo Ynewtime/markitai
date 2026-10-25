@@ -226,8 +226,11 @@ async fn serve(cfg: Value, source: SettingsSource, options: ServeOptions) -> Res
         users: settings::Users::new(serve_home.join("user-models")),
     });
     state.users.check_formats()?;
-    // The models of tokens revoked while the server was not running.
-    state.users.sweep(|id| state.access.exists(id));
+    // The models of tokens revoked while the server was not running; with
+    // unreadable tokens, none is known to be revoked.
+    if state.access.tokens_read() {
+        state.users.sweep(|id| state.access.exists(id));
+    }
     store::rehydrate(&state.root, &state.jobs).map_err(|e| e.to_string())?;
     // Under the lifetime lock: no other server sweeps this history.
     let _ = &service_lock;

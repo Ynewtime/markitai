@@ -730,7 +730,7 @@ Only each user token's SHA-256 is kept, in `MARKITAI_HOME/serve/access.json`
 owner-only, replaced atomically), so user tokens survive restarts and admin-token
 regeneration; `last_used_at` is kept in memory only. A file that cannot be read
 is left alone (with one warning, and no user token works) until an admin creates
-or revokes a token. A file whose `version` is above 1 was written by a newer
+or revokes a token; the users' saved models are kept meanwhile. A file whose `version` is above 1 was written by a newer
 markitai: the server does not start (`Access tokens <path> were written by a newer
 markitai …`) and changes neither it nor the users' models (see
 [versioning](versioning.md#stored-data)).

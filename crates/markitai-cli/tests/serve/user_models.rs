@@ -1678,3 +1678,37 @@ fn a_store_a_newer_markitai_wrote_stops_the_start_and_is_kept() {
     assert_eq!(tokens["tokens"][0]["model_count"], 1);
     server.stop();
 }
+
+#[test]
+fn unreadable_tokens_leave_every_users_models_in_place() {
+    let temp = tempfile::tempdir().unwrap();
+    let sentinel = Endpoint::start();
+    let server = start(temp.path(), &sentinel);
+    let (a_id, a) = user(&server, "Laptop A");
+    let reply = add(
+        &server,
+        &a,
+        json!([{"model_name":"default","model":"openai/own-model","api_key":USER_A_KEY}]),
+    );
+    assert_eq!(reply.status, 200, "{}", reply.text());
+    server.stop();
+    let serve = temp.path().join("home/serve");
+    let models = serve.join(format!("user-models/{a_id}.json"));
+    let saved = std::fs::read(&models).unwrap();
+    std::fs::write(serve.join("access.json"), b"{damaged").unwrap();
+    let server = start(temp.path(), &sentinel);
+    assert!(
+        server
+            .captured
+            .lock()
+            .unwrap()
+            .contains("ignoring the saved access tokens")
+    );
+    server.stop();
+    // No token is known to be revoked, so none of the models is deleted.
+    assert_eq!(std::fs::read(&models).unwrap(), saved);
+    assert_eq!(
+        std::fs::read(serve.join("access.json")).unwrap(),
+        b"{damaged"
+    );
+}
