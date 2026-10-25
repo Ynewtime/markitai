@@ -302,6 +302,12 @@ fn python_install() -> Option<PythonInstall> {
     PYTHON.get().cloned()
 }
 
+/// Whether this program runs inside the Python wheel (its executable is the
+/// interpreter, which cannot be started as markitai).
+pub(crate) fn in_python() -> bool {
+    PYTHON.get().is_some()
+}
+
 pub(crate) fn detect(facts: &Facts) -> Method {
     let source = super::version::Version::parse(&facts.version)
         .is_none_or(|version| version.is_prerelease());

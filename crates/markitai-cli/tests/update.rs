@@ -13,6 +13,7 @@ use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 /// A fake GitHub release host: `/releases/latest/download/X` redirects to the
 /// latest version, `/releases/download/v<version>/<asset>` serves the files.
@@ -20,6 +21,8 @@ struct Releases {
     port: u16,
     assets: Arc<Mutex<HashMap<String, Vec<u8>>>>,
     latest: Arc<Mutex<String>>,
+    /// Milliseconds every answer waits; `u64::MAX` never answers.
+    stall: Arc<Mutex<u64>>,
     seen: Arc<Mutex<Vec<String>>>,
 }
 
@@ -31,18 +34,29 @@ impl Releases {
             port,
             assets: Arc::default(),
             latest: Arc::new(Mutex::new(latest.into())),
+            stall: Arc::default(),
             seen: Arc::default(),
         };
-        let (assets, latest, seen) = (
+        let (assets, latest, seen, stall) = (
             releases.assets.clone(),
             releases.latest.clone(),
             releases.seen.clone(),
+            releases.stall.clone(),
         );
         std::thread::spawn(move || {
             for stream in listener.incoming() {
                 let Ok(stream) = stream else { break };
-                let (assets, latest, seen) = (assets.clone(), latest.clone(), seen.clone());
-                std::thread::spawn(move || answer(stream, &assets, &latest, &seen));
+                let (assets, latest, seen, stall) =
+                    (assets.clone(), latest.clone(), seen.clone(), stall.clone());
+                std::thread::spawn(move || {
+                    let wait = *stall.lock().unwrap();
+                    if wait == u64::MAX {
+                        std::thread::sleep(Duration::from_secs(120));
+                        return;
+                    }
+                    std::thread::sleep(Duration::from_millis(wait));
+                    answer(stream, &assets, &latest, &seen)
+                });
             }
         });
         releases
@@ -531,6 +545,10 @@ mod unix {
                 ),
                 0
             );
+            // Close-on-exec: only the run's stderr may hold the terminal, not
+            // a background check it starts.
+            libc::fcntl(master, libc::F_SETFD, libc::FD_CLOEXEC);
+            libc::fcntl(slave, libc::F_SETFD, libc::FD_CLOEXEC);
             (
                 std::fs::File::from(OwnedFd::from_raw_fd(master)),
                 OwnedFd::from_raw_fd(slave),
@@ -574,8 +592,12 @@ mod unix {
         let (_, stderr, code) = text(&convert(&[]).output().unwrap());
         assert_eq!(code, 0, "{stderr}");
         assert!(releases.requests().is_empty());
-        // On one: checked in the background, then the L1 line.
+        // On one: checked in the background (the run does not wait), then
+        // the next run names the release.
         let notice = "• 有新版本 2.2.0（当前 2.1.0）：";
+        let (first, code) = on_a_terminal(&mut convert(&[("TERM", "xterm")]));
+        assert_eq!(code, 0, "{first}");
+        wait_for_cache(&home, |cache| cache["latest"] == "2.2.0");
         let (shown, code) = on_a_terminal(&mut convert(&[
             ("MARKITAI_LANG", "zh"),
             ("TERM", "xterm"),
@@ -623,6 +645,93 @@ mod unix {
         assert!(
             shown.contains("• New version 2.3.0 (current 2.1.0): markitai update"),
             "{shown:?}"
+        );
+    }
+
+    fn wait_for_cache(home: &Home, done: impl Fn(&Value) -> bool) -> Value {
+        let started = std::time::Instant::now();
+        loop {
+            if let Ok(bytes) = std::fs::read(home.path("mh/update-check.json"))
+                && let Ok(cache) = serde_json::from_slice::<Value>(&bytes)
+                && done(&cache)
+            {
+                return cache;
+            }
+            assert!(
+                started.elapsed() < Duration::from_secs(20),
+                "the background check never wrote the cache"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
+    /// One conversion on a terminal, and how long it took.
+    fn timed(home: &Home, releases: &Releases) -> (String, Duration) {
+        let mut command = home.command(releases, &[("TERM", "xterm"), ("NO_COLOR", "1")]);
+        command.args(["a.txt", "-o", "out"]);
+        let started = std::time::Instant::now();
+        let (text, code) = on_a_terminal(&mut command);
+        assert_eq!(code, 0, "{text}");
+        (text, started.elapsed())
+    }
+
+    #[test]
+    fn a_release_host_that_never_answers_costs_a_run_nothing_and_backs_off() {
+        let releases = Releases::start("2.2.0");
+        *releases.stall.lock().unwrap() = u64::MAX;
+        let home = Home::plain();
+        std::fs::write(home.path("a.txt"), "Words.\n").unwrap();
+        let (_, quiet) = timed(&home, &releases);
+        let (_, baseline) = {
+            let mut off = home.command(
+                &releases,
+                &[("TERM", "xterm"), ("MARKITAI_NO_UPDATE_CHECK", "1")],
+            );
+            off.args(["a.txt", "-o", "out"]);
+            let started = std::time::Instant::now();
+            let result = on_a_terminal(&mut off);
+            (result.0, started.elapsed())
+        };
+        assert!(
+            quiet < baseline + Duration::from_millis(900),
+            "{quiet:?} vs {baseline:?}"
+        );
+        // The attempt is recorded before the request: the next run does not ask again.
+        let cache = wait_for_cache(&home, |cache| cache["retry_at"].is_i64());
+        assert_eq!(cache["failures"], 1);
+        let asked = releases.requests().len();
+        let (_, again) = timed(&home, &releases);
+        assert!(again < baseline + Duration::from_millis(900), "{again:?}");
+        std::thread::sleep(Duration::from_millis(300));
+        assert_eq!(
+            releases.requests().len(),
+            asked,
+            "{:?}",
+            releases.requests()
+        );
+    }
+
+    #[test]
+    fn a_slow_release_host_is_read_after_the_run_and_named_by_the_next() {
+        let releases = Releases::start("2.2.0");
+        releases.publish("2.2.0", "#!/bin/sh\n", false);
+        *releases.stall.lock().unwrap() = 1200;
+        let home = Home::plain();
+        std::fs::write(home.path("a.txt"), "Words.\n").unwrap();
+        let (first, took) = timed(&home, &releases);
+        assert!(
+            took < Duration::from_millis(1200),
+            "the run waited for the check: {took:?}"
+        );
+        assert!(!first.contains("New version"), "{first:?}");
+        // The version is saved as soon as it is known, before the description.
+        let cache = wait_for_cache(&home, |cache| cache["latest"] == "2.2.0");
+        assert_eq!(cache["failures"], 0);
+        let (second, took) = timed(&home, &releases);
+        assert!(took < Duration::from_millis(1200), "{took:?}");
+        assert!(
+            second.contains("New version 2.2.0 (current 2.1.0)"),
+            "{second:?}"
         );
     }
 

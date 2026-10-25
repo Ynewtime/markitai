@@ -20,8 +20,7 @@ use crate::term::{Mark, Style, Tone};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 use version::Version;
 
 /// The cache file in `MARKITAI_HOME`.
@@ -29,8 +28,6 @@ pub(crate) const CACHE: &str = "update-check.json";
 const FORMAT: u32 = 1;
 const HOUR: i64 = 3600;
 const DAY: i64 = 24 * HOUR;
-/// How long a run waits for the check at its end, counted from its start.
-const CAP: Duration = Duration::from_secs(2);
 
 /// This build's version and whether it counts as a source build (local
 /// changes, or a debug build: releases and `cargo install` are release
@@ -182,7 +179,9 @@ impl Cache {
         self.retry_at = None;
     }
 
-    /// One hour after the first failure, doubling up to a day.
+    /// One hour after the first failure, doubling up to a day. A check
+    /// records this before it asks (`attempting`): one that never finishes
+    /// (a run that ended, a request that never answers) counts as failed.
     pub(crate) fn failed(&mut self, now: i64) {
         self.failures = self.failures.saturating_add(1);
         let wait = (HOUR << (self.failures - 1).min(5)).min(DAY);
@@ -215,40 +214,59 @@ pub(crate) fn base_for(method: &method::Method) -> Result<check::Base, String> {
     check::Base::resolve(recorded.as_deref())
 }
 
-/// Ask for the latest release and record the answer (and on a new version
-/// its description). Returns the cache as saved.
-pub(crate) fn refresh(home: &Path, base: &check::Base, timeouts: check::Timeouts) -> Option<Cache> {
+/// Record a check about to ask, as a failure until it answers, so one that
+/// never finishes still backs off. Returns the cache as saved.
+pub(crate) fn attempting(home: &Path) -> Option<Cache> {
     let mut cache = Cache::load(home)?;
-    let now = now();
-    match check::latest(base, timeouts) {
-        Ok(latest) => {
-            let known =
-                cache.latest.as_deref() == Some(&latest.to_string()) && cache.lead.is_some();
-            let lead = (!known)
-                .then(|| check::lead(base, &latest, timeouts))
-                .flatten();
-            cache.succeeded(now, &latest, lead);
-        }
-        Err(_) => cache.failed(now),
-    }
+    cache.failed(now());
     let _ = cache.save(home);
     Some(cache)
 }
 
-/// A check started for a run, finished (or abandoned) at its end.
+/// Record the latest release as soon as it is known (its description is
+/// asked for afterwards, and saved when it comes).
+pub(crate) fn learned(home: &Path, latest: &Version) -> Option<Cache> {
+    let mut cache = Cache::load(home)?;
+    cache.succeeded(now(), latest, None);
+    let _ = cache.save(home);
+    Some(cache)
+}
+
+/// Save a release's description in the cache, if it still names that release.
+pub(crate) fn described(home: &Path, latest: &Version, lead: Option<String>) {
+    let Some(lead) = lead else { return };
+    if let Some(mut cache) = Cache::load(home)
+        && cache.latest.as_deref() == Some(&latest.to_string())
+    {
+        cache.lead = Some(lead);
+        let _ = cache.save(home);
+    }
+}
+
+/// Ask for the latest release and record the answer, then (for a release not
+/// described yet) its description. Returns the cache as saved.
+pub(crate) fn refresh(home: &Path, base: &check::Base, timeouts: check::Timeouts) -> Option<Cache> {
+    let before = attempting(home)?;
+    let latest = check::latest(base, timeouts).ok()?;
+    let cache = learned(home, &latest)?;
+    let known = before.latest.as_deref() == Some(&latest.to_string()) && before.lead.is_some();
+    if !known {
+        described(home, &latest, check::lead(base, &latest, timeouts));
+    }
+    Cache::load(home).or(Some(cache))
+}
+
+/// The daily check of a run. The run never waits for it: the markitai
+/// program hands it to a detached `markitai update --check` that outlives
+/// the run, the Python wheel to a thread that ends with the process; either
+/// records the attempt before asking, and the next run reads the cache.
 pub(crate) struct Background {
-    started: Instant,
-    done: Option<mpsc::Receiver<()>>,
     current: Option<Version>,
 }
 
 impl Background {
     pub(crate) fn none() -> Self {
-        Self {
-            started: Instant::now(),
-            done: None,
-            current: None,
-        }
+        Self { current: None }
     }
 
     /// Start the check when this run may show the notice and a check is due.
@@ -259,39 +277,59 @@ impl Background {
         }
         let home = markitai_core::config::home();
         let due = Cache::load(&home).is_some_and(|cache| cache.due(now()));
-        let mut background = Self {
-            current,
-            ..Self::none()
-        };
+        let background = Self { current };
         if due {
             let detected = method::detect(&method::Facts::current());
-            if let Ok(base) = base_for(&detected) {
-                let (sender, receiver) = mpsc::channel();
-                let spawned = std::thread::Builder::new()
-                    .name("markitai-update-check".into())
-                    .spawn(move || {
-                        refresh(&home, &base, check::NOTICE);
-                        let _ = sender.send(());
-                    });
-                if spawned.is_ok() {
-                    background.done = Some(receiver);
+            if method::in_python() {
+                if let Ok(base) = base_for(&detected) {
+                    let _ = std::thread::Builder::new()
+                        .name("markitai-update-check".into())
+                        .spawn(move || {
+                            refresh(&home, &base, check::NOTICE);
+                        });
                 }
+            } else {
+                spawn_check();
             }
         }
         background
     }
 
-    /// At the run's end: wait for the check up to the cap, then the line to
-    /// show (once a day per version), recorded as shown.
+    /// At the run's end: the line to show from what the cache knows (once a
+    /// day per version), recorded as shown. Nothing waits for a check.
     pub(crate) fn finish(self, lang: Lang, style: Style) -> Option<String> {
-        let current = self.current?;
-        // A check still running after the cap is abandoned (the process
-        // ends); what an earlier check learnt still counts.
-        if let Some(done) = self.done {
-            let _ = done.recv_timeout(CAP.saturating_sub(self.started.elapsed()));
-        }
-        take_notice(&current, lang, style)
+        take_notice(&self.current?, lang, style)
     }
+}
+
+/// `markitai update --check --json` in the background, detached from the run
+/// (its own process group, no console, no output), so it may finish after
+/// the run has ended.
+fn spawn_check() {
+    let Ok(program) = std::env::current_exe() else {
+        return;
+    };
+    let mut command = std::process::Command::new(program);
+    command
+        .args(["update", "--check", "--json"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        use windows_sys::Win32::System::Threading::{
+            CREATE_NEW_PROCESS_GROUP, CREATE_NO_WINDOW, DETACHED_PROCESS,
+        };
+        command.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
+    }
+    // The child is not waited for; the system reaps it after this process ends.
+    let _ = command.spawn();
 }
 
 /// The L1 line when the cache knows a newer release and it was not shown in

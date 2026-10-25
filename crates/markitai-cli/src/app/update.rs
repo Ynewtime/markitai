@@ -16,7 +16,7 @@ use crate::update::control;
 use crate::update::install::{self, Error};
 use crate::update::method::{self, Method, SetupInstall};
 use crate::update::version::Version;
-use crate::update::{self as updates, Cache};
+use crate::update::{self as updates};
 use serde_json::json;
 use std::io::{self, BufRead, IsTerminal, Write};
 use std::path::Path;
@@ -271,14 +271,22 @@ pub(super) fn run(options: &Options) -> CliResult<i32> {
         }
     };
     let home = markitai_core::config::home();
-    // The latest release, asked now; recorded for the notice too.
+    // The latest release, asked now; recorded for the notice too. The attempt
+    // is recorded first (as a failure until it answers), so a check that
+    // never finishes still backs off.
+    let before = updates::attempting(&home);
     let latest = match check::latest(&base, check::COMMAND) {
+        // A mirror's `latest` may name a pre-release: never installed unasked.
+        Ok(latest) if latest.is_prerelease() && wanted.is_none() => {
+            out.say(
+                Shape::verdict(Mark::Success),
+                format!("markitai {current} is up to date"),
+                format!("markitai {current} 已是最新"),
+            );
+            return finish(&report, 0);
+        }
         Ok(latest) => latest,
         Err(failure) => {
-            if let Some(mut cache) = Cache::load(&home) {
-                cache.failed(now());
-                let _ = cache.save(&home);
-            }
             let (english, chinese) = failure_text(&failure);
             report.error = Some((failure.code().into(), english.clone()));
             if options.check {
@@ -300,25 +308,22 @@ pub(super) fn run(options: &Options) -> CliResult<i32> {
     report.latest = Some(latest.to_string());
     report.newer = latest > current;
     report.notes_url = Some(base.notes_url(&latest));
-    let cached = Cache::load(&home);
-    let lead = cached
+    // Saved before the description is asked for.
+    updates::learned(&home, &latest);
+    let lead = before
         .as_ref()
         .filter(|cache| cache.latest.as_deref() == Some(&latest.to_string()))
         .and_then(|cache| cache.lead.clone());
     let target = wanted.clone().unwrap_or_else(|| latest.clone());
     let lead = if target == latest {
-        lead.or_else(|| check::lead(&base, &latest, check::COMMAND))
+        lead.or_else(|| {
+            let lead = check::lead(&base, &latest, check::COMMAND);
+            updates::described(&home, &latest, lead.clone());
+            lead
+        })
     } else {
         check::lead(&base, &target, check::COMMAND)
     };
-    if let Some(mut cache) = cached {
-        cache.succeeded(
-            now(),
-            &latest,
-            (target == latest).then(|| lead.clone()).flatten(),
-        );
-        let _ = cache.save(&home);
-    }
     if target == current || (wanted.is_none() && latest < current) {
         out.say(
             Shape::verdict(Mark::Success),
@@ -448,12 +453,6 @@ pub(super) fn run(options: &Options) -> CliResult<i32> {
             }
         }
     }
-}
-
-fn now() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs() as i64)
 }
 
 fn nothing_changed(out: &Out) {
