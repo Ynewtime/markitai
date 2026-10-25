@@ -166,3 +166,25 @@ test("Save sends additions and removals as one batch under the page's revision",
   const page = readFileSync(new URL("../components/settings-models.tsx", import.meta.url), "utf8");
   assert.match(page, /settings\?\.batch_remove === true[^\n]*\n[^\n]*\n\s*accept\(await addDeployments\(revision, deployments, remove\)\)/);
 });
+
+test("Kimi #6: a Moonshot model saved at one region is not this other region's, and an explicit one matches its own", () => {
+  const saved = [
+    deployment("moonshot/kimi-k3"),
+    // the server reports a saved address by its origin only
+    deployment("moonshot/kimi-k3-cn", { api_base: "https://api.moonshot.cn" }),
+  ];
+  const listed = [candidate("moonshot/kimi-k3"), candidate("moonshot/kimi-k3-cn")];
+  const china = pickerRows("moonshot", listed, saved, "default", "https://api.moonshot.cn/v1", "https://api.moonshot.ai/v1");
+  // on the China page: the .cn model is configured, the default-region one is not (unticking it must not delete it)
+  assert.deepEqual(china.map((row) => [row.model, row.saved.map((item) => item.model)]), [
+    ["moonshot/kimi-k3-cn", ["moonshot/kimi-k3-cn"]],
+    ["moonshot/kimi-k3", []],
+  ]);
+  assert.deepEqual(removals(china, new Set(["moonshot/kimi-k3"])), []);
+  // on the default page: the other way round
+  const global = pickerRows("moonshot", listed, saved, "default", "https://api.moonshot.ai/v1", "https://api.moonshot.ai/v1");
+  assert.deepEqual(global.map((row) => [row.model, row.saved.map((item) => item.model)]), [
+    ["moonshot/kimi-k3", ["moonshot/kimi-k3"]],
+    ["moonshot/kimi-k3-cn", []],
+  ]);
+});

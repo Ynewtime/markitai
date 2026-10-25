@@ -34,12 +34,25 @@ export function refusedHosts(endpoints: readonly string[] | undefined, asked: st
 
 const normalizeEndpoint = (value: string | null | undefined) => (value ?? "").trim().replace(/\/+$/, "").toLowerCase();
 
-/** Whether a deployment is routed at this endpoint. A deployment the provider
- * reaches at its own default address stores none, so an absent stored address
- * matches; the model id already names the provider. */
-export function sameEndpoint(stored: string | null | undefined, effective: string): boolean {
-  const value = normalizeEndpoint(stored);
-  return value === "" || value === normalizeEndpoint(effective);
+const originOf = (value: string | null | undefined): string => {
+  const text = (value ?? "").trim();
+  if (!text) return "";
+  try {
+    return new URL(text).origin.toLowerCase();
+  } catch {
+    return normalizeEndpoint(text);
+  }
+};
+
+/** Whether a deployment is routed at this endpoint. The server tells a saved address by its origin
+ * only (`https://api.moonshot.cn`, never the path), so origins are compared. A deployment the
+ * provider reaches at its own default address stores none: it is at the page of that default
+ * (`defaultBase`), not at another region's or a gateway's; without a known default it matches. */
+export function sameEndpoint(stored: string | null | undefined, effective: string, defaultBase?: string | null): boolean {
+  const own = originOf(stored);
+  const page = originOf(effective);
+  if (!own) return !page || !defaultBase || page === originOf(defaultBase);
+  return own === (page || originOf(defaultBase));
 }
 
 /** A model ID without its provider prefix (`openai/gpt-5-mini` → `gpt-5-mini`). */
@@ -144,15 +157,6 @@ export interface PickerRow {
   unlisted: boolean;
 }
 
-const originOf = (value: string | null | undefined): string => {
-  const text = (value ?? "").trim();
-  if (!text) return "";
-  try {
-    return new URL(text).origin.toLowerCase();
-  } catch {
-    return normalizeEndpoint(text);
-  }
-};
 
 /**
  * The rows of a provider page's model list: every listed model, each with the
@@ -172,7 +176,7 @@ export function pickerRows(
   defaultBase?: string | null,
 ): PickerRow[] {
   const prefix = `${provider === "custom" ? "openai" : provider}/`;
-  const here = deployments.filter((deployment) => deployment.routing_group === group.trim() && sameEndpoint(deployment.api_base, endpoint));
+  const here = deployments.filter((deployment) => deployment.routing_group === group.trim() && sameEndpoint(deployment.api_base, endpoint, defaultBase));
   const listed = candidates.map((candidate) => candidate.model);
   const rows: PickerRow[] = candidates.map((candidate) => ({
     model: candidate.model,
