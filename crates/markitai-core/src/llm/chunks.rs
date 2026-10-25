@@ -578,11 +578,16 @@ impl Protected {
     /// Reject an answer that re-creates the content a marker already stands
     /// for (for example transcribing a fenced block visible in an image):
     /// restore puts the literal back, so the second copy would duplicate it.
+    /// Text the source itself shows (a link whose words are its address) is
+    /// no copy: only more of it than the source shows is.
     pub fn no_literal_copies(&self, answer: &str) -> Result<()> {
         let haystack = squash(&self.without_markers(answer));
+        let shown = squash(&self.without_markers(&self.text));
         for (_, literal) in &self.literals {
             let core = squash(&literal_core(literal));
-            if core.chars().count() >= 32 && haystack.contains(&core) {
+            if core.chars().count() >= 32
+                && haystack.matches(&core).count() > shown.matches(&core).count()
+            {
                 return Err(Error::Conversion(
                     "the model's answer wrote out again a part of the document that is kept exactly as it is (code, a link, an image), which would have doubled it, so it was not used".into(),
                 ));
@@ -1337,6 +1342,21 @@ mod tests {
         let copied = format!(
             "Setup:\n\n{token}\n\n```sh\ncd app\nbun install\nbunx vite --port 5173\n```\n\nThen open the preview.\n"
         );
+        assert!(protected.no_literal_copies(&copied).is_err());
+    }
+    #[test]
+    fn a_link_whose_words_are_its_address_is_no_copy_of_it() {
+        // Readable links hide only the address; here the words are the same
+        // address, so an unchanged answer shows it once, as the source does.
+        let url = "https://example.test/a/very/long/path/that/exceeds/thirty-two-characters";
+        let source = format!("See [{url}]({url}) for details.\n");
+        let protected = Protected::new(&source);
+        assert!(protected.no_literal_copies(&protected.text).is_ok());
+        assert_eq!(protected.restore(&protected.text).unwrap(), source);
+        // Writing the address out once more, beside the link, is a copy.
+        let copied = protected
+            .text
+            .replace("for details", &format!("at {url} for details"));
         assert!(protected.no_literal_copies(&copied).is_err());
     }
     #[test]
