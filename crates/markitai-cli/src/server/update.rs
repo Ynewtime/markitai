@@ -576,7 +576,10 @@ fn run(state: &Arc<State>, target: Version) {
             }
             if told != Some(waiting) {
                 say(
-                    format!("Waiting for {waiting} conversion(s) to finish"),
+                    format!(
+                        "Waiting for {waiting} conversion{} to finish",
+                        if waiting == 1 { "" } else { "s" }
+                    ),
                     format!("等待 {waiting} 个转换完成"),
                     Mark::Info,
                 );
@@ -627,7 +630,11 @@ fn run(state: &Arc<State>, target: Version) {
                 say("Update cancelled".into(), "已取消更新".into(), Mark::Skip);
             } else {
                 let reason = error.reason();
-                say(format!("Error: {reason}"), reason.clone(), Mark::Error);
+                say(
+                    format!("Error: {reason}"),
+                    crate::app::update::reason_zh(&error),
+                    Mark::Error,
+                );
                 if error.rolled_back() {
                     say(
                         format!("Rolled back; still {current}"),
@@ -769,7 +776,10 @@ fn drain_and_restart(state: &Arc<State>) {
         }
         if told != Some(waiting) {
             say(
-                format!("Waiting for {waiting} conversion(s) to finish"),
+                format!(
+                    "Waiting for {waiting} conversion{} to finish",
+                    if waiting == 1 { "" } else { "s" }
+                ),
                 format!("等待 {waiting} 个转换完成"),
                 Mark::Info,
             );

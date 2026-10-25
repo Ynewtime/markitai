@@ -524,6 +524,35 @@ fn not_in_place(out: &Out, detected: &Method) {
     }
 }
 
+/// [`Error::reason`] in Chinese, for the serve terminal.
+pub(crate) fn reason_zh(error: &Error) -> String {
+    match error {
+        Error::Fetch(failure) => failure_text(failure).1,
+        Error::Checksum { expected, actual } => format!(
+            "SHA-256 不匹配，已删除下载的文件（{} ≠ {}）",
+            install::short_digest(actual),
+            install::short_digest(expected)
+        ),
+        Error::DiskFull { dir, needed } => format!(
+            "磁盘空间不足：{} 需要 {}",
+            dir.display(),
+            install::megabytes(*needed)
+        ),
+        Error::NotWritable { dir, .. } => format!("无法写入 {}：权限不足", dir.display()),
+        Error::FileBusy { name } => format!("无法替换 {name}：另一个程序正在使用"),
+        Error::StartFailed { reason, .. } => format!("新版本无法启动：{reason}"),
+        Error::Foreign { dir, names } => format!(
+            "{} 里有不是这次安装创建的文件：{}",
+            dir.display(),
+            names.join("、")
+        ),
+        Error::Archive(reason) => format!("发行归档无法使用：{reason}"),
+        Error::Io { error, .. } => format!("无法安装：{error}"),
+        Error::Cancelled => "已取消".into(),
+        Error::Busy => "另一个更新正在进行".into(),
+    }
+}
+
 /// What a failure means and what to do, as step lines.
 fn explain(out: &Out, error: &Error, current: &Version, install: &SetupInstall) {
     let step =
@@ -578,10 +607,13 @@ fn explain(out: &Out, error: &Error, current: &Version, install: &SetupInstall) 
             format!("新版本无法启动：{reason}"),
         ),
         Error::Foreign { dir, names } => {
-            let (dir, names) = (shown(dir), names.join(", "));
+            let dir = shown(dir);
             step(
-                format!("{dir} holds files this install didn't create: {names}"),
-                format!("{dir} 里有不是这次安装创建的文件：{names}"),
+                format!(
+                    "{dir} holds files this install didn't create: {}",
+                    names.join(", ")
+                ),
+                format!("{dir} 里有不是这次安装创建的文件：{}", names.join("、")),
             );
         }
         Error::Archive(reason) => step(

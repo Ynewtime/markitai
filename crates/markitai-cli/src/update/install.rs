@@ -491,7 +491,18 @@ fn archive_error(error: impl std::fmt::Display) -> Error {
 /// keeps its own), within size limits. Returns the unpacked folder.
 pub(crate) fn unpack(work: &Work, downloaded: &Downloaded) -> Result<PathBuf, Error> {
     let destination = work.path.join("unpacked");
-    std::fs::create_dir(&destination).map_err(archive_error)?;
+    // A full disk is said as such; other write errors as an unusable archive.
+    let written_error = |error: io::Error| {
+        if error.raw_os_error() == Some(28) || error.kind() == io::ErrorKind::StorageFull {
+            Error::DiskFull {
+                dir: work.path.parent().unwrap_or(&work.path).to_owned(),
+                needed: space_needed(downloaded.size),
+            }
+        } else {
+            archive_error(error)
+        }
+    };
+    std::fs::create_dir(&destination).map_err(&written_error)?;
     let file = std::fs::File::open(&downloaded.archive).map_err(archive_error)?;
     let mut written = 0u64;
     let mut count = 0usize;
@@ -520,16 +531,18 @@ pub(crate) fn unpack(work: &Work, downloaded: &Downloaded) -> Result<PathBuf, Er
             }
             let target = destination.join(&name);
             if entry.is_dir() {
-                std::fs::create_dir_all(&target).map_err(archive_error)?;
+                std::fs::create_dir_all(&target).map_err(&written_error)?;
                 continue;
             }
             account(entry.size())?;
             if let Some(parent) = target.parent() {
-                std::fs::create_dir_all(parent).map_err(archive_error)?;
+                std::fs::create_dir_all(parent).map_err(&written_error)?;
             }
-            let mut output = std::fs::File::create(&target).map_err(archive_error)?;
+            let mut output = std::fs::File::create(&target)
+                .and_then(|output| fault("unpack").map(|()| output))
+                .map_err(&written_error)?;
             let copied = io::copy(&mut (&mut entry).take(UNPACKED_LIMIT), &mut output)
-                .map_err(archive_error)?;
+                .map_err(&written_error)?;
             if copied != entry.size() {
                 return Err(Error::Archive(format!("short member {shown}")));
             }
@@ -544,16 +557,18 @@ pub(crate) fn unpack(work: &Work, downloaded: &Downloaded) -> Result<PathBuf, Er
             let target = destination.join(&name);
             match entry.header().entry_type() {
                 tar::EntryType::Directory => {
-                    std::fs::create_dir_all(&target).map_err(archive_error)?;
+                    std::fs::create_dir_all(&target).map_err(&written_error)?;
                 }
                 tar::EntryType::Regular | tar::EntryType::Continuous => {
                     account(entry.size())?;
                     if let Some(parent) = target.parent() {
-                        std::fs::create_dir_all(parent).map_err(archive_error)?;
+                        std::fs::create_dir_all(parent).map_err(&written_error)?;
                     }
-                    let mut output = std::fs::File::create(&target).map_err(archive_error)?;
+                    let mut output = std::fs::File::create(&target)
+                        .and_then(|output| fault("unpack").map(|()| output))
+                        .map_err(&written_error)?;
                     io::copy(&mut (&mut entry).take(UNPACKED_LIMIT), &mut output)
-                        .map_err(archive_error)?;
+                        .map_err(&written_error)?;
                     #[cfg(unix)]
                     {
                         use std::os::unix::fs::PermissionsExt;
@@ -1487,6 +1502,19 @@ pub(crate) mod tests {
         );
         let archive = work.path.join("a.tar.gz");
         std::fs::write(&archive, &bytes).unwrap();
+        // A full disk while unpacking is said as such.
+        fail_at(Some("unpack"));
+        let full = unpack(
+            &work,
+            &Downloaded {
+                archive: archive.clone(),
+                size: bytes.len() as u64,
+            },
+        )
+        .unwrap_err();
+        fail_at(None);
+        assert_eq!(full.code(), "disk_full", "{full:?}");
+        std::fs::remove_dir_all(work.path.join("unpacked")).unwrap();
         let unpacked = unpack(
             &work,
             &Downloaded {

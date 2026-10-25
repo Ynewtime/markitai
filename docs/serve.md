@@ -22,13 +22,16 @@ settings writes unavailable until restart without those overrides.
 The server checks for a new release once a day (`update.check`) and names it in
 its startup lines. One that listens on loopback also has `GET/POST/DELETE
 /api/update` and `Capabilities.update` (contract v1.24, admin only, never through
-a forwarding proxy); a server reachable from the network has neither. `POST
+a forwarding proxy); a server reachable from the network, or under another name
+(`--allowed-host`), has neither. `POST
 {"version"}` takes only the release the server found and updates a setup-script
 install: download and verify while conversions run, hold new ones (503
 `updating`), let running and queued ones finish, swap, restart on the same
 address with the same token. A new version that does not get ready puts the old
 one back. The workbench's update entry uses these routes ([web UI](web-ui.md#updating-the-server)). `markitai update` restarts a running server through `/api/update/restart`
-with the owner-only secret in `MARKITAI_HOME/serve/control`.
+with the owner-only secret in `MARKITAI_HOME/serve/control`. These control routes
+exist on every server, exposed or not, and answer only a direct loopback
+connection that sends the secret.
 
 ## Machine-readable API description
 

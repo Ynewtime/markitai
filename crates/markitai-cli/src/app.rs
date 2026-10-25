@@ -71,7 +71,7 @@ mod reasons;
 #[path = "app/remote_consent.rs"]
 mod remote_consent;
 #[path = "app/update.rs"]
-mod update;
+pub(crate) mod update;
 #[path = "app/usage_zh.rs"]
 mod usage_zh;
 #[path = "app/warnings.rs"]
