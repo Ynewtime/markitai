@@ -278,6 +278,11 @@ fn describe(command: &str) -> Option<Description> {
             "通过标准输入/输出运行原生 MCP 服务\n\n工具：convert_document 与 convert_url 转换单个文档或网页，batch_convert 启动目录或 URL 列表任务，job_status 查询任务。由 MCP 客户端启动本命令；它在 stdout 回答，日志写 stderr。",
             MCP_AFTER,
         ),
+        "update" => describe_with(
+            "检查新版本并更新这份安装",
+            "检查新版本并更新这份安装。\n\n安装脚本装的 markitai 会就地替换：先按发行版的 SHA256SUMS 校验归档，并在替换任何文件前试启动一次新程序；任何一步失败都会全部恢复。其他安装方式（uv、pipx、pip、cargo、包管理器）给出更新它们的命令。正在运行的 markitai serve 会询问是否重启到新版本。退出状态：0 已是最新或已更新，10 有新版本但未在这里安装，1 失败，130 被中断。",
+            "示例:\n  markitai update                  安装最新版本\n  markitai update --check          只检查（有新版本时退出 10）\n  markitai update --check --json   以 JSON 输出结果\n  markitai update --version 2.0.1  安装指定版本",
+        ),
         "list" => describe_with(
             "显示生效的配置；密钥已脱敏",
             "",
@@ -631,6 +636,18 @@ const ARGUMENTS: &[(&str, &str, &str)] = &[
         "监听的网卡地址。所有 API 客户端都需要启动时打印的访问令牌（或 MARKITAI_SERVE_TOKEN）",
     ),
     ("serve", "port", "监听端口"),
+    ("update", "check", "只检查，不做改动。有新版本时退出 10"),
+    ("update", "json", "在 stdout 输出一个 JSON 对象"),
+    (
+        "update",
+        "release",
+        "安装这个版本而不是最新版本（较旧的版本会先询问）",
+    ),
+    (
+        "update",
+        "yes",
+        "回答“是”：安装较旧的版本时不询问。不会重启正在运行的服务",
+    ),
     ("serve", "no_open", "启动后不打开浏览器"),
     (
         "serve",

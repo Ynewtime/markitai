@@ -70,6 +70,8 @@ mod progress;
 mod reasons;
 #[path = "app/remote_consent.rs"]
 mod remote_consent;
+#[path = "app/update.rs"]
+mod update;
 #[path = "app/usage_zh.rs"]
 mod usage_zh;
 #[path = "app/warnings.rs"]
@@ -87,7 +89,7 @@ use chrono::{Local, SecondsFormat};
 use clap::{ArgAction, CommandFactory, FromArgMatches, Parser, Subcommand};
 use markitai_core::{ConversionOutput, ConversionUsage, ConvertContext, ConvertOptions, config};
 use serde_json::{Value, json};
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Instant;
@@ -467,6 +469,31 @@ enum Command {
         after_help = MCP_AFTER_HELP
     )]
     Mcp,
+    /// Check for a newer release and update this installation.
+    #[command(
+        long_about = "Check for a newer release and update this installation.\n\n\
+            A setup-script install is replaced in place: the archive is checked against\n\
+            the release's SHA256SUMS and started once before anything is replaced, and a\n\
+            failure puts everything back. Other installs (uv, pipx, pip, cargo, a package\n\
+            manager) get the command that updates them. A running markitai serve is offered\n\
+            a restart into the new version. Exit status: 0 up to date or updated, 10 a newer\n\
+            release exists but was not installed here, 1 failed, 130 interrupted.",
+        after_help = "Examples:\n  markitai update                  Install the latest release\n  markitai update --check          Only check (exit 10 when newer)\n  markitai update --check --json   The answer as JSON\n  markitai update --version 2.0.1  Install a particular release"
+    )]
+    Update {
+        #[arg(long)]
+        /// Only check; change nothing. Exit 10 when a newer release exists.
+        check: bool,
+        #[arg(long)]
+        /// Print one JSON object on stdout.
+        json: bool,
+        #[arg(long = "version", id = "release", value_name = "X.Y.Z", action = ArgAction::Set)]
+        /// Install this release instead of the latest (an older one asks first).
+        release: Option<String>,
+        #[arg(short = 'y', long)]
+        /// Answer yes: install an older release without asking. A running server is not restarted.
+        yes: bool,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -671,11 +698,55 @@ pub fn run(mut arguments: Vec<std::ffi::OsString>) -> i32 {
         }
     };
     let code = settle_stdout(code);
+    finish_update_check(code);
     if let Err(error) = logging::finish(code) {
         logging::fatal(&error.to_string());
         return if code == 0 { 1 } else { code };
     }
     code
+}
+
+/// The daily update check of a conversion run (`crate::update`), started
+/// once its configuration is known and finished after its last line.
+static UPDATE_CHECK: Mutex<Option<crate::update::Background>> = Mutex::new(None);
+
+/// Whether this run may show the new-version notice: a conversion whose
+/// Markdown goes to files (not stdout), not JSON, not quiet, not a preview,
+/// with a terminal on stderr.
+fn notice_wanted(cli: &Cli) -> bool {
+    let json_stdout = cli.output.is_none()
+        && cli
+            .format
+            .as_deref()
+            .is_some_and(|format| format.eq_ignore_ascii_case("json"));
+    (cli.output.is_some() || cli.interactive)
+        && !cli.json
+        && !json_stdout
+        && !cli.quiet
+        && !cli.dry_run
+        && io::stderr().is_terminal()
+}
+
+fn start_update_check(cli: &Cli, cfg: &Value) {
+    let background = crate::update::Background::start(notice_wanted(cli), Some(cfg));
+    *UPDATE_CHECK.lock().unwrap_or_else(|e| e.into_inner()) = Some(background);
+}
+
+/// The L1 notice after a run that ended normally (not a usage error or an
+/// interrupt), once a day per version.
+fn finish_update_check(code: i32) {
+    let background = UPDATE_CHECK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .take();
+    let Some(background) = background else { return };
+    if matches!(code, 2 | 130 | 143) || crate::signals::interrupted().is_some() {
+        return;
+    }
+    if let Some(line) = background.finish(i18n::lang(), Style::stderr()) {
+        logging::blank();
+        logging::console(logging::Shape::PLAIN, &line);
+    }
 }
 
 /// A usage error in Chinese on stderr, when the terminal language is Chinese
@@ -859,6 +930,7 @@ fn execute(cli: &Cli) -> CliResult<i32> {
         return Ok(0);
     }
     let cfg = conversion_config(cli, overrides)?;
+    start_update_check(cli, &cfg);
     if cli.interactive {
         let Some(run) = guided::collect(cli, cfg)? else {
             say!(logging::Shape::verdict(Mark::Skip); "Cancelled.", "已取消。");
@@ -2216,7 +2288,9 @@ pub(crate) fn renamed_because_of(written: &Path, source: &str) -> Option<String>
 
 /// The subcommand a missing input is most likely a typo of, within two edits.
 fn mistyped_subcommand(input: &str) -> Option<&'static str> {
-    const COMMANDS: [&str; 7] = ["config", "init", "doctor", "cache", "auth", "serve", "mcp"];
+    const COMMANDS: [&str; 8] = [
+        "config", "init", "doctor", "cache", "auth", "serve", "mcp", "update",
+    ];
     if input.len() < 3 || !input.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
         return None;
     }
@@ -3057,6 +3131,19 @@ fn subcommand(cli: &Cli, command: &Command, overrides: Option<Value>) -> CliResu
             .map_err(runtime)?;
         }
         Command::Mcp => crate::mcp::run(cli.config.clone(), overrides).map_err(runtime)?,
+        Command::Update {
+            check,
+            json: as_json,
+            release,
+            yes,
+        } => {
+            return update::run(&update::Options {
+                check: *check,
+                json: *as_json,
+                version: release.clone(),
+                yes: *yes,
+            });
+        }
     }
     Ok(0)
 }
@@ -3664,6 +3751,7 @@ mod tests {
             ("inti", "init"),
             ("Doctor", "doctor"),
             ("serv", "serve"),
+            ("upadte", "update"),
         ] {
             assert_eq!(mistyped_subcommand(typed), Some(command), "{typed}");
         }

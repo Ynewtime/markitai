@@ -25,6 +25,7 @@ mod signals;
 mod sort;
 mod task;
 mod term;
+mod update;
 
 /// Runs the command line `arguments`, the program name first (which selects
 /// the MCP launcher when it is `markitai-mcp`), and returns the exit status
@@ -34,6 +35,19 @@ pub fn run(arguments: Vec<std::ffi::OsString>) -> i32 {
     let code = app::run(arguments);
     signals::yield_to_handler();
     code
+}
+
+/// [`run`] for the Python wheel's entry points, which also say how the
+/// wheel was installed (`prefix`, `executable`, `installer`, `user`), so
+/// `markitai update` can name the command that updates it.
+pub fn run_python(
+    arguments: Vec<std::ffi::OsString>,
+    install: std::collections::HashMap<String, String>,
+) -> i32 {
+    if let Some(install) = update::method::PythonInstall::from_map(&install) {
+        update::method::set_python_install(install);
+    }
+    run(arguments)
 }
 
 /// glibc gives each thread that allocates a heap of its own, up to eight per

@@ -96,7 +96,7 @@ fn fit(text: &str, limit: usize, unicode: bool) -> String {
     format!("{ellipsis}{kept}")
 }
 
-fn clock(seconds: u64) -> String {
+pub(super) fn clock(seconds: u64) -> String {
     if seconds >= 3600 {
         format!(
             "{}:{:02}:{:02}",
@@ -245,6 +245,62 @@ impl Progress {
 }
 
 impl Drop for Progress {
+    fn drop(&mut self) {
+        clear();
+    }
+}
+
+/// A status line the caller words itself, under a step: `  ⠹ text  tail`,
+/// the spinner in the accent colour and `tail` (a clock) in gray, redrawn
+/// at most every [`REDRAW`]. Dropping it erases the line.
+pub(super) struct Status {
+    enabled: bool,
+    frame: usize,
+    drawn: Option<Instant>,
+}
+
+impl Status {
+    pub(super) fn new(enabled: bool) -> Self {
+        Self {
+            enabled,
+            frame: 0,
+            drawn: None,
+        }
+    }
+
+    pub(super) fn show(&mut self, text: &str, tail: &str) {
+        if !self.enabled || self.drawn.is_some_and(|at| at.elapsed() < REDRAW) {
+            return;
+        }
+        self.drawn = Some(Instant::now());
+        const FRAMES: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+        const ASCII_FRAMES: [char; 4] = ['|', '/', '-', '\\'];
+        let style = Style::stderr();
+        let frames: &[char] = if style.unicode {
+            &FRAMES
+        } else {
+            &ASCII_FRAMES
+        };
+        let spinner = frames[self.frame % frames.len()].to_string();
+        self.frame += 1;
+        let room = columns().saturating_sub(1);
+        let text = fit(
+            text,
+            room.saturating_sub(4 + tail.chars().map(width).sum::<usize>()),
+            style.unicode,
+        );
+        draw(
+            &format!("  {spinner} {text}{tail}"),
+            &format!(
+                "  {} {text}{}",
+                style.paint(Tone::Accent, &spinner),
+                style.paint(Tone::Secondary, tail)
+            ),
+        );
+    }
+}
+
+impl Drop for Status {
     fn drop(&mut self) {
         clear();
     }

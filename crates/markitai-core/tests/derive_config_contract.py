@@ -60,10 +60,16 @@ def main() -> None:
         "reasoning_effort": {"anyOf": [{"enum": efforts, "type": "string"}, {"type": "null"}], "default": None},
         **{key: params[key] for key in list(params)[list(params).index("max_tokens") + 1 :]},
     }
+    # Rust-only update check (`markitai update`, the new-version notice).
+    schema["$defs"] = dict(sorted({**schema["$defs"], "UpdateConfig": {
+        "properties": {"check": {"default": True, "type": "boolean"}}, "type": "object",
+    }}.items()))
+    schema["properties"]["update"] = {"$ref": "#/$defs/UpdateConfig", "default": {}}
     defaults = reference.MarkitaiConfig().model_dump(mode="json")
     defaults["output"]["page_markers"] = False
     defaults["output"]["format"] = "markdown"
     defaults["output"]["text_only"] = False
+    defaults["update"] = {"check": True}
 
     root = Path(__file__).resolve().parents[1]
     expected = {

@@ -144,8 +144,8 @@ fn english_help_is_unchanged_in_every_way_the_language_can_be_chosen() {
         std::fs::write(snapshot_path(), &current).unwrap();
     }
     let expected = std::fs::read_to_string(snapshot_path()).unwrap();
-    // 59 help texts: the root and 25 commands twice, and seven other entries.
-    assert_eq!(expected.matches("\n=== ").count() + 1, 59);
+    // 61 help texts: the root and 26 commands twice, and seven other entries.
+    assert_eq!(expected.matches("\n=== ").count() + 1, 61);
     assert!(
         current == expected,
         "English help differs from {SNAPSHOT}; if the change is intended, regenerate the snapshot"
@@ -201,7 +201,7 @@ fn chinese_help_offers_the_same_commands_and_options_inside_80_columns() {
     let english_paths = command_paths(root.path(), &[], "Commands:");
     let chinese_paths = command_paths(root.path(), &zh, "命令:");
     assert_eq!(english_paths, chinese_paths);
-    assert_eq!(chinese_paths.len(), 26);
+    assert_eq!(chinese_paths.len(), 27);
     for path in &chinese_paths {
         for flag in ["-h", "--help"] {
             let mut args: Vec<&str> = path.iter().map(String::as_str).collect();

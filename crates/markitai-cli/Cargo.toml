@@ -49,12 +49,16 @@ url = "2"
 zip = { version = "9.0.5", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 # The same backend as zip: no new code. Decompresses the gzip-embedded web assets.
 flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
+# The update check and `markitai update` (src/update/): the core's client, and
+# the release archive formats the setup scripts read (tar.gz, and zip above).
+reqwest = { version = "0.13.5", default-features = false, features = ["blocking"] }
+tar = { version = "0.4.46", default-features = false }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Globalization", "Win32_System_Console", "Win32_System_Threading"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Globalization", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_Threading"] }
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -62,6 +62,15 @@ pub use fetch::cloudflare::cloudflare_capabilities;
 pub use fetch::consent::{ConsentRequest, RemoteFallback, RemoteNotice, set_remote_fallback};
 pub use images::is_image_extension;
 pub use llm_runtime::LlmRuntime;
+
+/// A blocking HTTP client builder that trusts what every markitai client
+/// trusts (the built-in roots and the system's, see `trust.rs`) and goes
+/// through the proxy decision of runtime downloads (`proxy::http_api`). The
+/// CLI's update check and `markitai update` use it.
+#[doc(hidden)]
+pub fn http_client_builder() -> Result<reqwest::blocking::ClientBuilder> {
+    proxy::http_api(trust::client_builder())
+}
 /// Whether `found` is a `major.minor` format number above `current` (also
 /// `major.minor`): a record a newer markitai wrote, which this build refuses
 /// and leaves as it is rather than reading it as damaged.

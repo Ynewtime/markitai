@@ -167,5 +167,8 @@
   "presets": {},
   "history": {
     "record": false
+  },
+  "update": {
+    "check": true
   }
 }

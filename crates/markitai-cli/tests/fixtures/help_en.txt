@@ -11,6 +11,7 @@ Commands:
   auth    Inspect subscription authentication or delegate login to an official runtime
   serve   Run the native REST conversion service and web interface
   mcp     Run the native MCP service over standard input/output
+  update  Check for a newer release and update this installation
 
 Arguments:
   [INPUT]
@@ -158,6 +159,7 @@ Commands:
   auth    Inspect subscription authentication or delegate login to an official runtime
   serve   Run the native REST conversion service and web interface
   mcp     Run the native MCP service over standard input/output
+  update  Check for a newer release and update this installation
 
 Arguments:
   [INPUT]
@@ -699,6 +701,70 @@ Configuration:
 Examples:
   markitai mcp                          Serve the tools to an MCP client over stdio
   markitai -c cfg.json mcp              Serve with a particular configuration file
+=== markitai update -h (exit 0, stderr 0 bytes) ===
+Check for a newer release and update this installation
+
+Usage: markitai update [OPTIONS]
+
+Options:
+      --check            Only check; change nothing. Exit 10 when a newer release exists
+      --json             Print one JSON object on stdout
+      --version <X.Y.Z>  Install this release instead of the latest (an older one asks first)
+  -y, --yes              Answer yes: install an older release without asking. A running server is
+                         not restarted
+  -h, --help             Print help (see more with '--help')
+
+Configuration:
+  -c, --config <PATH>
+          Configuration path; must exist except for config set/edit, which can create it
+      --config-json <JSON>
+          Deep-merge inline JSON over the config file; explicit conversion flags still win
+
+Examples:
+  markitai update                  Install the latest release
+  markitai update --check          Only check (exit 10 when newer)
+  markitai update --check --json   The answer as JSON
+  markitai update --version 2.0.1  Install a particular release
+=== markitai update --help (exit 0, stderr 0 bytes) ===
+Check for a newer release and update this installation.
+
+A setup-script install is replaced in place: the archive is checked against
+the release's SHA256SUMS and started once before anything is replaced, and a
+failure puts everything back. Other installs (uv, pipx, pip, cargo, a package
+manager) get the command that updates them. A running markitai serve is offered
+a restart into the new version. Exit status: 0 up to date or updated, 10 a newer
+release exists but was not installed here, 1 failed, 130 interrupted.
+
+Usage: markitai update [OPTIONS]
+
+Options:
+      --check
+          Only check; change nothing. Exit 10 when a newer release exists
+
+      --json
+          Print one JSON object on stdout
+
+      --version <X.Y.Z>
+          Install this release instead of the latest (an older one asks first)
+
+  -y, --yes
+          Answer yes: install an older release without asking. A running server is not restarted
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+Configuration:
+  -c, --config <PATH>
+          Configuration path; must exist except for config set/edit, which can create it
+
+      --config-json <JSON>
+          Deep-merge inline JSON over the config file; explicit conversion flags still win
+
+Examples:
+  markitai update                  Install the latest release
+  markitai update --check          Only check (exit 10 when newer)
+  markitai update --check --json   The answer as JSON
+  markitai update --version 2.0.1  Install a particular release
 === markitai config list -h (exit 0, stderr 0 bytes) ===
 Show the effective configuration; secrets are redacted
 
@@ -1362,6 +1428,7 @@ Commands:
   auth    Inspect subscription authentication or delegate login to an official runtime
   serve   Run the native REST conversion service and web interface
   mcp     Run the native MCP service over standard input/output
+  update  Check for a newer release and update this installation
 
 Arguments:
   [INPUT]
@@ -1511,6 +1578,7 @@ Commands:
   auth    Inspect subscription authentication or delegate login to an official runtime
   serve   Run the native REST conversion service and web interface
   mcp     Run the native MCP service over standard input/output
+  update  Check for a newer release and update this installation
 
 Arguments:
   [INPUT]
