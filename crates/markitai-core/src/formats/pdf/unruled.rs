@@ -7,7 +7,7 @@
 //! padding sets rows further apart. Only a table with that evidence is
 //! reconstructed; anything else stays with the caller's paragraph flow, which
 //! declines side-by-side text and leaves the page to the page reader.
-use super::{Line, Run, heading_level, line_y, lines, markdown_cell, runs};
+use super::{Line, Run, append_wrapped, heading_level, line_y, lines, markdown_cell, runs};
 use pdf_inspector::TextItem;
 use std::ops::Range;
 
@@ -601,34 +601,13 @@ fn continuation(lines: &[Line], shape: &Shape, headings: &[f32]) -> Option<Found
     build(lines, 0..end, &shape.columns, Pitch::Continue(shape.pitch))
 }
 
-/// A cell's text: its lines rejoined, as the column width wrapped them. A
-/// line ending in a hyphen after a letter joins the next without a space.
+/// A cell's text: its lines rejoined, as the column width wrapped them (see
+/// [`append_wrapped`]).
 fn cell_markdown(cell: Cell) -> String {
     let items: Vec<TextItem> = cell.lines.into_iter().flat_map(|l| l.items).collect();
     let mut output: Vec<Run> = Vec::new();
     for line in lines(items) {
-        let mut current = runs(&line).into_iter();
-        let Some(first) = current.next() else {
-            continue;
-        };
-        let hyphenated = output.last().is_some_and(|last| {
-            let mut tail = last.text.chars().rev();
-            tail.next() == Some('-') && tail.next().is_some_and(char::is_alphabetic)
-        }) && first.text.starts_with(char::is_alphabetic);
-        match output.last_mut() {
-            Some(last) => {
-                if !hyphenated && !last.text.ends_with(char::is_whitespace) {
-                    last.text.push(' ');
-                }
-                if last.joins(first.style, first.link.as_ref()) {
-                    last.text.push_str(&first.text);
-                } else {
-                    output.push(first);
-                }
-            }
-            None => output.push(first),
-        }
-        output.extend(current);
+        append_wrapped(&mut output, runs(&line));
     }
     markdown_cell(&output)
 }

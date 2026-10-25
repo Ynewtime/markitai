@@ -305,8 +305,16 @@ line.
 Ruled tables are reconstructed from complete horizontal and vertical borders.
 Stroked lines and thin filled polygons are supported, including transformed
 coordinates and a nonzero page origin. The complete grid determines the column
-count: empty cells and empty trailing columns remain. Multiple physical text
-lines in a cell use `<br>`. A row spanning a border, an incomplete grid or
+count: empty cells and empty trailing columns remain. A cell's lines that its
+width wrapped are one line of text: a line wrapped when the first word of the
+next (two characters of CJK text) would not have fit after it within the cell's
+width less the table's padding (the narrowest gap its text leaves to a border).
+They join with a space, none between CJK characters, and none after a hyphen
+that ends a word or number at the wrap (`long-term`, `extra-ordinary`,
+`10-12`: the hyphen stays), except before a lower-case word of three letters or
+fewer (`short- and long-term`). Every other line break in a cell is a `<br>`: a
+line that ends early, a list item or numbered line, a blank line, a change of
+size. A row spanning a border, an incomplete grid or
 overlapping table regions prevents speculative reconstruction. The first row with
 text is represented as a Markdown table header (a row with nothing in it above
 it heads nothing); this representation does not establish that an untagged PDF
@@ -337,8 +345,8 @@ or have another column's line centred between two of a cell's lines; a step 12%
 declines the table. Cells whose text overlaps vertically form one row, so
 vertically centred cells of different heights stay together. A run the
 extractor merged across two neighbouring cells is split at the space nearest
-the column edge, and a cell's wrapped lines are rejoined with spaces (after a
-line-end hyphen that follows a letter, without one). The table needs three rows,
+the column edge, and a cell's wrapped lines are rejoined as a ruled table's
+wrapped lines are (above). The table needs three rows,
 each of two cells or more, two rows of three cells, a cell that wraps, no cell
 overlapping two rows of another column, and no more than a third of its cells
 over twelve words. A line of one cell just above or below it stays with the

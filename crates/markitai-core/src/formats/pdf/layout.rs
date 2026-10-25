@@ -1800,23 +1800,18 @@ fn table(grid: &Grid, items: &mut Vec<TextItem>) -> Option<Table> {
     {
         return None;
     }
+    let padding = cell_padding(&grid.xs, &cells);
     // Each row's cells, and whether its text is bold throughout.
     let mut rendered: Vec<(Vec<String>, bool)> = Vec::with_capacity(rows);
     for row in 0..rows {
         let mut values = Vec::with_capacity(columns);
         let mut bold = true;
         for column in 0..columns {
-            let cell: Vec<Vec<Run>> = lines(std::mem::take(&mut cells[row * columns + column]))
-                .iter()
-                .map(runs)
-                .collect();
-            bold &= cell.iter().flatten().all(|run| run.style.bold);
-            values.push(
-                cell.iter()
-                    .map(|runs| markdown_cell(runs))
-                    .collect::<Vec<_>>()
-                    .join("<br>"),
-            );
+            let cell = lines(std::mem::take(&mut cells[row * columns + column]));
+            let measure = grid.xs[column + 1] - grid.xs[column] - 2. * padding;
+            let (value, cell_bold) = ruled_cell(&cell, measure);
+            bold &= cell_bold;
+            values.push(value);
         }
         rendered.push((values, bold));
     }
@@ -1860,6 +1855,120 @@ fn table(grid: &Grid, items: &mut Vec<TextItem>) -> Option<Table> {
 
 fn markdown_cell(runs: &[Run]) -> String {
     markdown(runs).replace('|', "\\|")
+}
+
+/// The padding of a ruled table's cells: the narrowest gap any of its text
+/// leaves to a border of its cell (`cells` in rows of `xs.len() - 1`). A
+/// cell's text is set left, right or centred between equal paddings, so the
+/// closest edge of some run shows it; text touching a border (none) makes it
+/// zero, which only keeps line breaks.
+fn cell_padding(xs: &[f32], cells: &[Vec<TextItem>]) -> f32 {
+    let columns = xs.len() - 1;
+    cells
+        .iter()
+        .enumerate()
+        .flat_map(|(index, cell)| {
+            let (left, right) = (xs[index % columns], xs[index % columns + 1]);
+            cell.iter()
+                .map(move |item| (item.x - left).min(right - (item.x + item.width)))
+        })
+        .fold(f32::INFINITY, f32::min)
+        .clamp(0., f32::MAX)
+}
+
+/// A ruled cell's Markdown, and whether its text is bold throughout: lines
+/// the cell's width wrapped (see [`wraps_in_cell`]) rejoined as one, each
+/// other line break a `<br>`.
+fn ruled_cell(lines: &[Line], measure: f32) -> (String, bool) {
+    let mut bold = true;
+    let mut parts: Vec<Vec<Run>> = Vec::new();
+    for (index, line) in lines.iter().enumerate() {
+        let line_runs = runs(line);
+        bold &= line_runs.iter().all(|run| run.style.bold);
+        match parts.last_mut() {
+            Some(part) if wraps_in_cell(&lines[index - 1], line, measure) => {
+                append_wrapped(part, line_runs);
+            }
+            _ => parts.push(line_runs),
+        }
+    }
+    let value = parts
+        .iter()
+        .map(|runs| markdown_cell(runs))
+        .collect::<Vec<_>>()
+        .join("<br>");
+    (value, bold)
+}
+
+/// Whether line `below` of a ruled cell continues line `above`, which the
+/// cell's width `measure` (between its paddings) wrapped: the first word of
+/// `below` would not have fit after `above` (two characters of CJK text,
+/// which breaks between any two but keeps a closing mark with the one before
+/// it), at the size of `above`, at most [`NEW_BLOCK`] lines below it. A line
+/// that ends early is a line break of the cell's own, as is one followed by a
+/// list item or a numbered line, which starts a line where it falls.
+fn wraps_in_cell(above: &Line, below: &Line, measure: f32) -> bool {
+    let (Some(start), Some(first)) = (above.items.first(), below.items.first()) else {
+        return false;
+    };
+    let end = above
+        .items
+        .iter()
+        .map(|i| i.x + i.width)
+        .fold(f32::NEG_INFINITY, f32::max);
+    let text = first.text.trim_start();
+    let gap = above.y - below.y;
+    if (below.size - above.size).abs() > above.size * 0.1
+        || gap <= 0.
+        || gap > above.size.max(below.size) * NEW_BLOCK
+        || list_prefix(text).is_some()
+        || number_prefix(text).is_some()
+    {
+        return false;
+    }
+    let chars = text.chars().count().max(1);
+    let cjk = text.starts_with(cjk_text);
+    let word = if cjk {
+        2.min(chars)
+    } else {
+        text.split_whitespace()
+            .next()
+            .map_or(0, |w| w.chars().count())
+    };
+    let space = if cjk { 0. } else { below.size * 0.25 };
+    let word_width = first.width * word as f32 / chars as f32;
+    end - start.x + space + word_width > measure
+}
+
+/// Appends the runs of a line to the text of the line it wrapped from, as
+/// [`append_runs`] joins a paragraph's lines, but for a word or number range
+/// the wrap split after its hyphen (`long-` `term`, `extra-` `ordinary`,
+/// `10-` `12`), which joins without a space and keeps the hyphen (only the
+/// page's dictionary could tell a compound from a word broken to fit). A
+/// suspended hyphen before a lower-case word of three letters or fewer
+/// (`short-` `and long-term`) keeps the space.
+fn append_wrapped(output: &mut Vec<Run>, source: Vec<Run>) {
+    let split = output.last().is_some_and(|last| {
+        let mut tail = last.text.chars().rev();
+        matches!(tail.next(), Some('-' | '\u{2010}'))
+            && tail.next().is_some_and(char::is_alphanumeric)
+    }) && source.first().is_some_and(|first| {
+        let word = first.text.split_whitespace().next().unwrap_or_default();
+        word.starts_with(char::is_alphanumeric)
+            && (word.chars().filter(|c| c.is_alphabetic()).count() > 3
+                || !word.starts_with(char::is_lowercase))
+    });
+    if !split {
+        append_runs(output, source);
+        return;
+    }
+    // A line's runs carry the spaces between them (see [`runs`]).
+    for run in source {
+        match output.last_mut() {
+            Some(last) if last.joins(run.style, run.link.as_ref()) => last.text.push_str(&run.text),
+            _ => output.push(run),
+        }
+    }
 }
 
 /// What `segment` makes of the lines between ruled tables.
@@ -3571,6 +3680,50 @@ mod tests {
             "{markdown}"
         );
         assert!(!markdown.contains("**Plain text"), "{markdown}");
+    }
+
+    #[test]
+    fn wrapped_cell_lines_join_by_script_and_hyphen() {
+        let plain = Style {
+            bold: false,
+            italic: false,
+            underline: false,
+            strike: false,
+            code: false,
+            script: 0,
+        };
+        let join = |lines: &[&str]| {
+            let mut output = Vec::new();
+            for line in lines {
+                let run = Run {
+                    text: (*line).into(),
+                    style: plain,
+                    link: None,
+                };
+                append_wrapped(&mut output, vec![run]);
+            }
+            markdown(&output)
+        };
+        for (lines, joined) in [
+            (
+                &["the old pilot boat before the rains", "go."][..],
+                "the old pilot boat before the rains go.",
+            ),
+            (&["单元格文", "本，它"], "单元格文本，它"),
+            (&["中文 English", "words"], "中文 English words"),
+            (
+                &["the extra-", "ordinary proposal"],
+                "the extra-ordinary proposal",
+            ),
+            (&["a long‐", "term lease"], "a long‐term lease"),
+            (&["Hinds-", "Radix"], "Hinds-Radix"),
+            (&["pages 10-", "12"], "pages 10-12"),
+            // A suspended hyphen and a spaced dash keep the space.
+            (&["short-", "and long-term"], "short- and long-term"),
+            (&["Monday -", "Friday"], "Monday - Friday"),
+        ] {
+            assert_eq!(join(lines), joined, "{lines:?}");
+        }
     }
 
     #[test]

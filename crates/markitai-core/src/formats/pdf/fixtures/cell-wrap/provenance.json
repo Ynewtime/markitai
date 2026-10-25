@@ -1,0 +1,20 @@
+[
+  {
+    "file": "cell-wrap.pdf",
+    "bytes": 4853,
+    "sha256": "f7c3449cf261e06ef8bd4421a812da1c3225cf4cae421c2b42bd378022d42854",
+    "content": "invented harbour and workshop tables, no real data",
+    "authored": "written for these tests in markitai-rust",
+    "generator": "make.py cell_wrap(): ReportLab 5.1.0 SimpleDocTemplate (invariant) with three ruled Table flowables of Paragraph cells in Helvetica 10/12 and STSong-Light 10/13 (CJK wrapping), one per page",
+    "purpose": "ruled cells that the column width wraps (an English sentence whose last word alone wraps, a centred header, Chinese text between characters) read as one line, while a cell's own line breaks (short lines, a label above numbered and bulleted lines, an empty line, a sentence ending short of the edge, a centred two-line header) keep <br>"
+  },
+  {
+    "file": "cell-hyphens.pdf",
+    "bytes": 1767,
+    "sha256": "2b98d235deae6faa7efe9c5ea15c3a332ad5ad2b93d5230d1188ccb943b43ede",
+    "content": "invented harbour and workshop tables, no real data",
+    "authored": "written for these tests in markitai-rust",
+    "generator": "make.py cell_hyphens(): ReportLab 5.1.0 canvas (invariant), a ruled table drawn line by line, each cell wrapped greedily at the column's inner width with explicit hyphenation and break points",
+    "purpose": "a word split after its hyphen at a wrap joins without a space and keeps the hyphen (extra-ordinary, long-term), a suspended hyphen before its conjunction keeps the space, and a short line ending in a hyphen stays a line break"
+  }
+]
