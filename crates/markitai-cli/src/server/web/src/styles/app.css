@@ -7319,6 +7319,32 @@ input[type="password"],
   overflow: auto;
   resize: vertical;
 }
+/* the page's own caret (json-highlight.tsx): a font-high bar centred on its line in every browser;
+   the textarea's caret is hidden only while this one is in place */
+.config-caret {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 1;
+  width: 1.5px;
+  margin-left: -0.75px;
+  background: var(--text-1);
+  pointer-events: none;
+  animation: caret-blink 1500ms steps(1) infinite;
+}
+.config-code.has-caret textarea {
+  caret-color: transparent;
+}
+@keyframes caret-blink {
+  50% {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .config-caret {
+    animation: none;
+  }
+}
 .config-editor textarea::selection {
   background: color-mix(in srgb, var(--accent) 22%, transparent);
   color: transparent;
@@ -7342,11 +7368,14 @@ input[type="password"],
   color: var(--text-3);
 }
 @media (forced-colors: active) {
-  .config-highlight {
+  .config-highlight,
+  .config-caret {
     display: none;
   }
-  .config-editor textarea {
+  .config-editor textarea,
+  .config-code.has-caret textarea {
     color: CanvasText;
+    caret-color: CanvasText;
   }
 }
 .config-check {
