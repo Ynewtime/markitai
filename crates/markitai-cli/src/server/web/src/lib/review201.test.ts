@@ -36,7 +36,7 @@ test("L8: a bubble opened from the keyboard stays while focus is on its control"
 
 test("M2: the options dialog has a history entry, so Back closes it and stays on Convert", () => {
   const panel = read("../components/options-panel.tsx");
-  assert.match(panel, /history\.pushState\(\{ wb: OPTIONS_ENTRY \}, "", location\.href\);/);
+  assert.match(panel, /if \(listEntry\(\)\?\.wb !== OPTIONS_ENTRY\) history\.pushState\(\{ wb: OPTIONS_ENTRY \}, "", location\.href\);/);
   // Back (popstate off the entry) closes the dialog; closing by hand goes back over the entry
   assert.match(panel, /const onPop = \(\) => \{\s*if \(listEntry\(\)\?\.wb === OPTIONS_ENTRY\) return;/);
   assert.match(panel, /if \(pushed\.current && listEntry\(\)\?\.wb === OPTIONS_ENTRY\) \{\s*backing\.current = true;\s*history\.back\(\);/);

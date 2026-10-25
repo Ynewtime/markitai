@@ -103,7 +103,9 @@ export function OptionsPanel({
   }, []);
   useEffect(() => {
     if (!open) return;
-    history.pushState({ wb: OPTIONS_ENTRY }, "", location.href);
+    // Forward can land on the dialog's earlier entry while it is closed: opening again reuses it,
+    // so one Back still closes it.
+    if (listEntry()?.wb !== OPTIONS_ENTRY) history.pushState({ wb: OPTIONS_ENTRY }, "", location.href);
     pushed.current = true;
     const onPop = () => {
       if (listEntry()?.wb === OPTIONS_ENTRY) return;
