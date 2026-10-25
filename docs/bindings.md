@@ -129,7 +129,7 @@ self-contained static package.
 
 ## Version identifiers and adapter differences
 
-The engine identifies itself with the Cargo version (`2.1.0`; between
+The engine identifies itself with the Cargo version (`2.2.0`; between
 releases, for example, `2.1.0-dev`). Python's `markitai.__version__`, Node's
 exported `version`, Go's `Version()` and the C version function report that
 engine identifier. Distribution metadata uses the package manager's spelling:

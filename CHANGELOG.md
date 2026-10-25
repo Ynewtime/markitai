@@ -8,6 +8,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Releases 1.x were the Python implementation; their notes are in the
 [1.2.0 changelog](https://github.com/Ynewtime/markitai/blob/v1.2.0/CHANGELOG.md).
 
+## [2.2.0] - 2026-10-26
+
+Adds `markitai update` and a notice when a newer release is out. To get 2.2.0, update the way you installed: run the setup command again, or `uv tool upgrade markitai` / `pip install -U markitai`.
+
+### Added
+
+- `markitai update` updates a setup-script install in place (other installs get their command) and offers to restart a running `markitai serve`.
+- A newer release is named once a day after a run, in the `markitai serve` startup lines and in `doctor`; `update.check: false` or `MARKITAI_NO_UPDATE_CHECK=1` turns this off.
+- A `markitai serve` that listens only on this computer can be updated from the workbench (an icon beside the sidebar toggle) and comes back on the same address with the same access token.
+
+### Changed
+
+- The setup scripts suggest `markitai update` for updating.
+
+### Fixed
+
+- Data saved by a newer markitai is refused, not misread or replaced, when going back to an older version.
+- `markitai serve` no longer deletes users' saved models when its access-token file cannot be read.
+
 ## [2.1.0] - 2026-10-25
 
 Adds Kimi Code, a few workbench features and fixes for 2.0.0. Update the way you installed: run the setup command again, or `uv tool upgrade markitai` / `pip install -U markitai`.

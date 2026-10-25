@@ -8,6 +8,25 @@
 1.x 版本是 Python 实现，其说明见
 [1.2.0 更新日志](https://github.com/Ynewtime/markitai/blob/v1.2.0/CHANGELOG.zh.md)。
 
+## [2.2.0] - 2026-10-26
+
+新增 `markitai update` 命令和新版本提示。获取 2.2.0 请按原来的安装方式更新：重新运行安装命令，或执行 `uv tool upgrade markitai` / `pip install -U markitai`。
+
+### 新增
+
+- `markitai update` 就地更新安装脚本装的 markitai（其他安装方式给出更新命令），并询问是否重启正在运行的 `markitai serve`。
+- 有新版本时，转换结束后每天最多提示一次，`markitai serve` 的启动信息和 `doctor` 里也会显示；用 `update.check: false` 或 `MARKITAI_NO_UPDATE_CHECK=1` 关闭。
+- 只在本机监听的 `markitai serve` 可以在工作台里更新（侧栏折叠按钮旁的图标），重启后地址和访问令牌不变。
+
+### 变更
+
+- 安装脚本给出的更新命令改为 `markitai update`。
+
+### 修复
+
+- 换回较旧版本时，更新版本的 markitai 保存的数据会被拒绝使用，不再被误读或覆盖。
+- 访问令牌文件无法读取时，`markitai serve` 不再删除用户保存的模型。
+
 ## [2.1.0] - 2026-10-25
 
 新增 Kimi Code 和几项工作台功能，并修复 2.0.0 的问题。按原来的安装方式更新：重新运行安装命令，或执行 `uv tool upgrade markitai` / `pip install -U markitai`。

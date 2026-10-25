@@ -79,11 +79,11 @@ install one by hand on macOS or Linux, extract it into a new folder and keep
 the files together, which preserves both aliases and the offline guides:
 
 ```sh
-Archive="$HOME/Downloads/markitai-v2.1.0-aarch64-apple-darwin.tar.gz"
-Install="$HOME/.local/share/markitai/2.1.0"
+Archive="$HOME/Downloads/markitai-v2.2.0-aarch64-apple-darwin.tar.gz"
+Install="$HOME/.local/share/markitai/2.2.0"
 mkdir -p "$Install" && tar -xzf "$Archive" -C "$Install"
 export PATH="$Install:$PATH"
-markitai --version                  # markitai 2.1.0
+markitai --version                  # markitai 2.2.0
 ```
 
 The `export` applies to this terminal; for new terminals add the same line to
@@ -95,8 +95,8 @@ On Windows, choose the archive for the system architecture (Settings → System
 extract it in PowerShell:
 
 ```powershell
-$Archive = "$HOME\Downloads\markitai-v2.1.0-aarch64-pc-windows-msvc.zip"
-$Install = Join-Path $env:LOCALAPPDATA "Programs\markitai-2.1.0"
+$Archive = "$HOME\Downloads\markitai-v2.2.0-aarch64-pc-windows-msvc.zip"
+$Install = Join-Path $env:LOCALAPPDATA "Programs\markitai-2.2.0"
 Expand-Archive -LiteralPath $Archive -DestinationPath $Install
 $env:Path = "$Install;$env:Path"
 markitai --version
@@ -132,7 +132,7 @@ came from the project and its checksum matches `SHA256SUMS`, remove the mark
 from that file before extracting it:
 
 ```sh
-xattr -d com.apple.quarantine markitai-v2.1.0-aarch64-apple-darwin.tar.gz
+xattr -d com.apple.quarantine markitai-v2.2.0-aarch64-apple-darwin.tar.gz
 ```
 
 If you have already extracted it, run the same command on
