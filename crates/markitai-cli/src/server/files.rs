@@ -290,23 +290,47 @@ fn line_count(mut reader: impl Read) -> std::io::Result<u64> {
     Ok(lines + u64::from(last != b'\n'))
 }
 
-/// Line counts of whole results by path, size and modification time: an
-/// excerpt of a large result is read only to its limit, and its count is
-/// read once instead of on every request. Bounded; a full table starts over.
+/// Line counts of whole results by path, size, modification time and a
+/// fingerprint of their first and last bytes: an excerpt of a large result is
+/// read only to its limit, and its count is read once instead of on every
+/// request. The fingerprint tells apart two versions of the same size written
+/// within one tick of a coarse clock (HFS+ and exFAT keep seconds). Bounded; a
+/// full table starts over.
 static LINE_COUNTS: OnceLock<Mutex<HashMap<PathBuf, Counted>>> = OnceLock::new();
-/// A file's size and modification time, and its lines.
-type Counted = (u64, SystemTime, u64);
+/// A file's size, modification time and fingerprint, and its lines.
+type Counted = (u64, SystemTime, u64, u64);
 const LINE_COUNTS_MAX: usize = 256;
+/// Bytes read from each end of a file for its fingerprint.
+const FINGERPRINT_BYTES: u64 = 4096;
 
-/// The lines of the file at `path`, counted once per size and modification time.
+/// A hash of the file's first and last [`FINGERPRINT_BYTES`].
+fn fingerprint(file: &mut File, size: u64) -> std::io::Result<u64> {
+    use std::hash::{Hash, Hasher};
+    use std::io::{Seek, SeekFrom};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    let mut buffer = vec![0u8; FINGERPRINT_BYTES.min(size) as usize];
+    file.read_exact(&mut buffer)?;
+    buffer.hash(&mut hasher);
+    if size > FINGERPRINT_BYTES {
+        file.seek(SeekFrom::Start(size - FINGERPRINT_BYTES))?;
+        file.read_exact(&mut buffer)?;
+        buffer.hash(&mut hasher);
+    }
+    Ok(hasher.finish())
+}
+
+/// The lines of the file at `path`, counted once per version (size,
+/// modification time and fingerprint).
 fn file_lines(path: &FsPath) -> std::io::Result<u64> {
-    let meta = fs::metadata(path)?;
+    let mut file = File::open(path)?;
+    let meta = file.metadata()?;
     let Ok(modified) = meta.modified() else {
-        return line_count(File::open(path)?);
+        return line_count(file);
     };
+    let print = fingerprint(&mut file, meta.len())?;
     let counts = LINE_COUNTS.get_or_init(Default::default);
-    if let Some((size, time, lines)) = counts.lock().unwrap().get(path)
-        && (*size, *time) == (meta.len(), modified)
+    if let Some((size, time, seen, lines)) = counts.lock().unwrap().get(path)
+        && (*size, *time, *seen) == (meta.len(), modified, print)
     {
         return Ok(*lines);
     }
@@ -315,7 +339,7 @@ fn file_lines(path: &FsPath) -> std::io::Result<u64> {
     if counts.len() >= LINE_COUNTS_MAX {
         counts.clear();
     }
-    counts.insert(path.to_owned(), (meta.len(), modified, lines));
+    counts.insert(path.to_owned(), (meta.len(), modified, print, lines));
     Ok(lines)
 }
 
@@ -973,11 +997,23 @@ mod excerpt_tests {
             .unwrap()
             .get(&path)
             .copied();
-        assert_eq!(key.map(|(size, _, lines)| (size, lines)), Some((8, 2)));
+        assert_eq!(key.map(|(size, _, _, lines)| (size, lines)), Some((8, 2)));
         assert_eq!(file_lines(&path).unwrap(), 2);
         // Another size is counted again.
         fs::write(&path, "one\ntwo\nthree").unwrap();
         assert_eq!(file_lines(&path).unwrap(), 3);
+        // The same size written within the same modification time (a coarse
+        // clock: HFS+ and exFAT keep seconds) is counted again too.
+        let time = fs::metadata(&path).unwrap().modified().unwrap();
+        fs::write(&path, "a\nb\nc\nd\ne\nfff").unwrap();
+        File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(time)
+            .unwrap();
+        assert_eq!(fs::metadata(&path).unwrap().len(), 13);
+        assert_eq!(file_lines(&path).unwrap(), 6);
     }
 
     /// A result file is never sent as a script or style sheet the
