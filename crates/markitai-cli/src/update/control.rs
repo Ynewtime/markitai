@@ -38,6 +38,9 @@ pub(crate) struct Control {
     pub(crate) address: String,
     pub(crate) version: String,
     pub(crate) secret: String,
+    /// The program the server runs (and restarts into); absent from an older server.
+    #[serde(default)]
+    pub(crate) exe: Option<PathBuf>,
 }
 
 pub(crate) fn path(home: &Path) -> PathBuf {
@@ -80,7 +83,24 @@ impl Control {
             address: address.to_string(),
             version: super::current_identity().0,
             secret,
+            exe: std::env::current_exe().ok(),
         }
+    }
+
+    /// The same, naming the program the server restarts into.
+    pub(crate) fn with_exe(mut self, exe: PathBuf) -> Self {
+        self.exe = Some(exe);
+        self
+    }
+
+    /// Whether the server runs `program` (this install), so a restart starts the new version.
+    pub(crate) fn runs(&self, program: &Path) -> bool {
+        self.exe.as_deref().is_some_and(|exe| {
+            match (std::fs::canonicalize(exe), std::fs::canonicalize(program)) {
+                (Ok(left), Ok(right)) => left == right,
+                _ => exe == program,
+            }
+        })
     }
 
     pub(crate) fn write(&self, home: &Path) -> io::Result<()> {
@@ -184,6 +204,8 @@ pub(crate) enum Restart {
     /// Still waiting (the time ran out or the wait was cancelled); the
     /// server restarts by itself once its conversions finish.
     Pending,
+    /// A server of another version answers: not this install's (no rollback happened).
+    Other(String),
 }
 
 /// Wait until a server of `version` answers in place of `before`, telling
@@ -208,7 +230,7 @@ pub(crate) fn wait_for_restart(
                 if status.version == version {
                     return Restart::Done(status);
                 }
-                return Restart::RolledBack(format!("it came back as {}", status.version));
+                return Restart::Other(status.version);
             }
             waiting(status.waiting_jobs);
         }

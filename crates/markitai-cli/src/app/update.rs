@@ -135,7 +135,9 @@ fn ask(lang: Lang, english: &str, chinese: &str, default_yes: bool) -> bool {
     let _ = stderr.flush();
     drop(stderr);
     let mut answer = String::new();
-    if io::stdin().lock().read_line(&mut answer).unwrap_or(0) == 0 {
+    let read = io::stdin().lock().read_line(&mut answer).unwrap_or(0);
+    // Ctrl-C at the prompt is "no", whatever follows it (Enter alone included).
+    if read == 0 || crate::signals::interrupted().is_some() {
         let _ = writeln!(io::stderr());
         return false;
     }
@@ -419,6 +421,8 @@ pub(super) fn run(options: &Options) -> CliResult<i32> {
     match apply(&out, install, &base, &target, options) {
         Ok(restarted) => {
             report.action = if restarted { "restarted" } else { "updated" };
+            // Interrupted at the restart prompt: installed, nothing restarted.
+            let interrupted = crate::signals::interrupted().is_some();
             out.blank();
             let time = elapsed(started);
             if downgrade {
@@ -434,7 +438,7 @@ pub(super) fn run(options: &Options) -> CliResult<i32> {
                     format!("已更新到 {target}（{time}）"),
                 );
             }
-            finish(&report, 0)
+            finish(&report, if interrupted { CANCELLED } else { 0 })
         }
         Err(error) => {
             report.error = Some((error.code().into(), error.reason()));
@@ -740,7 +744,9 @@ fn offer_restart(
     };
     let address = control.address.clone();
     let version = status.version.clone();
-    let restartable = control::supports_handover(target)
+    // Only a server running this install's program restarts into the new version.
+    let restartable = control.runs(&install.exe)
+        && control::supports_handover(target)
         && Version::parse(&status.version)
             .is_some_and(|running| control::supports_handover(&running));
     if options.yes || options.json || !interactive() || !restartable {
@@ -837,6 +843,18 @@ fn offer_restart(
             reason,
             rolled_back: true,
         }),
+        control::Restart::Other(version) => {
+            out.say(
+                Shape::item(Mark::Warning),
+                format!("markitai serve came back as {version}"),
+                format!("markitai serve 重启后仍是 {version}"),
+            );
+            control::Pending::clear(home);
+            Ok(Restarted {
+                done: false,
+                kept: false,
+            })
+        }
         control::Restart::Pending => {
             out.say(
                 Shape::item(Mark::Info),

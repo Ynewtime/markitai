@@ -342,11 +342,32 @@ fn forbidden() -> ApiError {
     )
 }
 
+/// The request names this computer (`localhost` or a loopback address): one
+/// that came through a proxy under another name does not.
+fn loopback_host(request: &Request) -> bool {
+    let Some(host) = request
+        .headers()
+        .get("host")
+        .and_then(|value| value.to_str().ok())
+    else {
+        return false;
+    };
+    let name = match host.rsplit_once(':') {
+        Some((name, port)) if port.bytes().all(|byte| byte.is_ascii_digit()) => name,
+        _ => host,
+    };
+    let name = name.trim_start_matches('[').trim_end_matches(']');
+    name.eq_ignore_ascii_case("localhost")
+        || name
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.to_canonical().is_loopback())
+}
+
 /// The admin, directly: the guard has already refused user tokens.
 fn admin(request: &Request) -> ApiResult<()> {
     let admin = request.extensions().get::<super::security::Principal>()
         == Some(&super::security::Principal::Admin);
-    if admin && loopback_peer(request) {
+    if admin && loopback_peer(request) && loopback_host(request) {
         Ok(())
     } else {
         Err(forbidden())
@@ -461,7 +482,8 @@ pub(super) async fn cancel(
 ) -> ApiResult<Response> {
     admin(&request)?;
     let phase = state.update.phase();
-    if !phase.cancellable() {
+    // A restart `markitai update` asked for has its files swapped already.
+    if !phase.cancellable() || state.update.lock().by_cli {
         return Err(ApiError::new(
             409,
             "not_cancellable",
@@ -791,7 +813,8 @@ pub(super) fn start_checks(state: &Arc<State>, cfg: &Value) {
 
 /// Write the control file once the server listens.
 pub(super) fn publish_control(state: &State, address: std::net::SocketAddr) {
-    let control = Control::new(address, state.update.secret.clone());
+    let control =
+        Control::new(address, state.update.secret.clone()).with_exe(state.update.exe.clone());
     if let Err(error) = control.write(&state.update.home) {
         eprintln!("Warning: Serve: cannot write the control file: {error}");
     }

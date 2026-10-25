@@ -384,7 +384,13 @@ async fn serve(
     let address = listener.local_addr().map_err(|e| e.to_string())?;
     let kept = restart::Kept::of(&listener);
     let check_cfg = cfg.clone();
-    let mut update = update::Update::new(&cfg, !startup::exposed(address), security::new_token());
+    // A server also reachable under another name (--allowed-host, a proxy) is
+    // treated as exposed: no web update.
+    let mut update = update::Update::new(
+        &cfg,
+        !startup::exposed(address) && options.allowed_host.is_empty(),
+        security::new_token(),
+    );
     update.undone = crate::update::control::Pending::take_failure(&markitai_core::config::home())
         .filter(|failed| {
             update
