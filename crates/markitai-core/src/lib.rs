@@ -89,7 +89,7 @@ pub fn local_ocr_available() -> bool {
     ocr::available()
 }
 
-pub use ocr::{LocalOcrModel, LocalOcrModelState};
+pub use ocr::{LocalOcrModel, LocalOcrModelState, lang_spelling as ocr_lang_spelling};
 
 /// The model files the portable OCR engine needs for the configuration's
 /// `ocr.lang`, each with whether it is installed; `None` when this process

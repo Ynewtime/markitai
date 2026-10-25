@@ -806,22 +806,23 @@ fn configured(cfg: &Value) -> Result<String> {
         .pointer("/ocr/lang")
         .and_then(Value::as_str)
         .unwrap_or("en");
-    if configured.len() > 48 {
-        return Err(Error::Config(
-            "ocr.lang is not a supported language identifier".into(),
-        ));
+    lang_spelling(configured)
+        .ok_or_else(|| Error::Config("ocr.lang is not a supported language identifier".into()))
+}
+
+/// An `ocr.lang` value as OCR reads it (lower case, `-` for `_`), or `None`
+/// when it is no language identifier at all: letters and digits in parts
+/// joined by `-` or `_`, at most 48 characters.
+pub fn lang_spelling(value: &str) -> Option<String> {
+    if value.len() > 48 {
+        return None;
     }
-    let normalized = configured.trim().to_ascii_lowercase().replace('_', "-");
-    if normalized.is_empty()
-        || !normalized
+    let normalized = value.trim().to_ascii_lowercase().replace('_', "-");
+    (!normalized.is_empty()
+        && normalized
             .split('-')
-            .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_alphanumeric()))
-    {
-        return Err(Error::Config(
-            "ocr.lang is not a supported language identifier".into(),
-        ));
-    }
-    Ok(normalized)
+            .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_alphanumeric())))
+    .then_some(normalized)
 }
 
 /// The Vision language a normalized `ocr.lang` spelling asks for.

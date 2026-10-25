@@ -86,6 +86,15 @@ pub(crate) fn of(cfg: &Value) -> Map<String, Value> {
     let mut settings = Map::new();
     for key in keys {
         let current = value(key);
+        // OCR's language is free text in the configuration: kept only when it
+        // is a language identifier OCR would read, never an arbitrary string.
+        if key == "ocr.lang"
+            && current
+                .as_str()
+                .is_none_or(|lang| markitai_core::ocr_lang_spelling(lang).is_none())
+        {
+            continue;
+        }
         if current != default(key) {
             settings.insert(key.to_owned(), current);
         }
@@ -138,6 +147,24 @@ mod tests {
         );
         cfg["fetch"]["remote_consent"] = json!("ask");
         assert_eq!(of(&cfg)["fetch.remote_consent"], "ask");
+    }
+
+    #[test]
+    fn an_ocr_language_is_kept_only_as_a_language_identifier() {
+        let mut cfg = markitai_core::config::defaults();
+        cfg["ocr"]["enabled"] = json!(true);
+        cfg["ocr"]["lang"] = json!("zh_Hant");
+        assert_eq!(of(&cfg)["ocr.lang"], "zh_Hant");
+        // Anything OCR would refuse (an address with credentials) is not recorded.
+        for bad in [
+            "https://user:secret@example.test/private",
+            "en zh",
+            "",
+            "x".repeat(49).as_str(),
+        ] {
+            cfg["ocr"]["lang"] = json!(bad);
+            assert!(!of(&cfg).contains_key("ocr.lang"), "{bad}");
+        }
     }
 
     #[test]
