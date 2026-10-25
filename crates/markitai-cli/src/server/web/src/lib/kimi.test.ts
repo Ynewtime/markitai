@@ -156,3 +156,19 @@ test("Kimi's brand mark is its own beside Moonshot's", () => {
   assert.ok(BRAND_MARKS.kimi.paths[0] !== BRAND_MARKS.moonshot.paths[0]);
   assert.equal(BRAND_MARKS.kimi.viewBox, "0 0 24 24");
 });
+
+test("Refresh on the Kimi card keeps sending the key to the address typed by hand", async () => {
+  const { kimiTypedBase } = await import("./kimi.ts");
+  // first Load models with a typed gateway: that address
+  assert.equal(kimiTypedBase("https://gateway.example.test/v1", null), "https://gateway.example.test/v1");
+  // it listed the models and fills the field: Refresh uses it again, never the built-in hosts
+  assert.equal(kimiTypedBase("https://gateway.example.test/v1", { base: "https://gateway.example.test/v1", typed: true }), "https://gateway.example.test/v1");
+  // an address the page filled in after finding the service: Refresh searches again
+  assert.equal(kimiTypedBase("https://api.moonshot.cn/v1", { base: "https://api.moonshot.cn/v1", typed: false }), "");
+  // the reader changed the found address: that address
+  assert.equal(kimiTypedBase(" https://other.example.test/v1 ", { base: "https://api.moonshot.cn/v1", typed: false }), "https://other.example.test/v1");
+  assert.equal(kimiTypedBase("  ", null), "");
+  const page = readFileSync(new URL("../components/settings-models.tsx", import.meta.url), "utf8");
+  assert.match(page, /const typed = kimiTypedBase\(draftBase, kimiFound\);/);
+  assert.match(page, /setKimiFound\(\{ service, base, typed: typed !== "" \}\);/);
+});

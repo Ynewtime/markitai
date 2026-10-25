@@ -72,6 +72,15 @@ export function kimiServiceAt(base: string): KimiService {
  * key in the form Kimi Code's docs show (`sk-kimi-…`) at Kimi Code first, so it
  * usually reaches only the service that issued it. Either way the other one is
  * tried when the first refuses the key. */
+/** The address Load models on the Kimi card sends the key to by hand, or "" to let it find the
+ * service: an address the reader typed, also on Refresh once it listed the models (it then fills
+ * the field); not one the page filled in itself after finding the service. */
+export function kimiTypedBase(draftBase: string, found: { base: string; typed: boolean } | null): string {
+  const base = draftBase.trim();
+  if (!base) return "";
+  return base !== found?.base || found.typed ? base : "";
+}
+
 export function kimiOrder(key: string): KimiService[] {
   return key.trim().startsWith("sk-kimi-") ? ["kimi_code", "moonshot"] : ["moonshot", "kimi_code"];
 }

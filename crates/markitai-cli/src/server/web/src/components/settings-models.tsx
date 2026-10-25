@@ -12,7 +12,7 @@ import type { Dict, Locale } from "../i18n/index.ts";
 import { serviceNote } from "../i18n/errors.ts";
 import { addingIsBlocked, listFailure, providerWords, regionBlocked, runtimeFailure, testFailure, type TestFailure } from "../lib/model-test.ts";
 import { endpointFor, modelName, pickerRows, refusedHosts, removals } from "../lib/models.ts";
-import { isKimiCard, kimiOrder, kimiServiceAt, kimiServices, type KimiService } from "../lib/kimi.ts";
+import { isKimiCard, kimiOrder, kimiServiceAt, kimiServices, kimiTypedBase, type KimiService } from "../lib/kimi.ts";
 import { isSubscription, listsModels, ownEndpointLogin, usesCloudCredentials } from "../lib/provider-catalog.ts";
 import {
   CredentialInputError,
@@ -519,7 +519,7 @@ export function ModelsSettings({
   const [region, setRegion] = useState<{ base: string; kept: boolean } | null>(null);
   /** On the Kimi card (lib/kimi.ts): the service that took the key and the address that listed its
    * models; `refused` once every service refused it. */
-  const [kimiFound, setKimiFound] = useState<{ service: KimiService; base: string } | null>(null);
+  const [kimiFound, setKimiFound] = useState<{ service: KimiService; base: string; typed: boolean } | null>(null);
   const [kimiRefused, setKimiRefused] = useState(false);
   const [selected, setSelected] = useState(new Set<string>());
   /** Models this group and endpoint already route that the reader unticked. */
@@ -725,7 +725,8 @@ export function ModelsSettings({
    * regions), or only the address typed by hand. The address that listed the models fills the field. */
   const loadKimi = async (refresh: boolean) => {
     if (!services) return;
-    const typed = draftBase.trim() !== "" && draftBase.trim() !== kimiFound?.base ? draftBase.trim() : "";
+    // a typed address keeps getting the key on Refresh; only a found one lets the page search again
+    const typed = kimiTypedBase(draftBase, kimiFound);
     const order = typed ? [kimiServiceAt(typed)] : kimiOrder(draftKey);
     let result: DiscoveryResult | null = null;
     let service = order[0]!;
@@ -746,7 +747,7 @@ export function ModelsSettings({
       return;
     }
     const base = result.api_base ?? (typed || services[service].default_base || "");
-    setKimiFound({ service, base });
+    setKimiFound({ service, base, typed: typed !== "" });
     setDraftBase(base);
   };
 
