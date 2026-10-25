@@ -63,6 +63,8 @@ pub(crate) enum Error {
         rolled_back: bool,
     },
     Cancelled,
+    /// Another update of this home runs (`markitai update`, or a server's).
+    Busy,
 }
 
 impl Error {
@@ -70,6 +72,7 @@ impl Error {
     pub(crate) fn code(&self) -> &'static str {
         match self {
             Self::Cancelled => "cancelled",
+            Self::Busy => "update_running",
             Self::Fetch(_) => "offline",
             Self::Checksum { .. } | Self::Archive(_) => "checksum",
             Self::DiskFull { .. } => "disk_full",
@@ -117,7 +120,32 @@ impl Error {
             Self::Archive(reason) => format!("The release archive is unusable: {reason}"),
             Self::Io { what, error, .. } => format!("{what}: {error}"),
             Self::Cancelled => "Cancelled".into(),
+            Self::Busy => "Another update is running".into(),
         }
+    }
+}
+
+/// Held while an update runs: one at a time per Markitai home.
+#[derive(Debug)]
+pub(crate) struct Exclusive(#[allow(dead_code)] std::fs::File);
+
+pub(crate) fn exclusive(home: &Path) -> Result<Exclusive, Error> {
+    let io = |error| Error::Io {
+        what: "Can't take the update lock".into(),
+        error,
+        rolled_back: false,
+    };
+    markitai_core::output::create_private_dir(home).map_err(io)?;
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(home.join("update.lock"))
+        .map_err(io)?;
+    match file.try_lock() {
+        Ok(()) => Ok(Exclusive(file)),
+        Err(std::fs::TryLockError::WouldBlock) => Err(Error::Busy),
+        Err(std::fs::TryLockError::Error(error)) => Err(io(error)),
     }
 }
 
@@ -1392,6 +1420,15 @@ pub(crate) mod tests {
         fail_at(Some("prepare"));
         assert!(prepare(&install).is_err());
         fail_at(None);
+    }
+
+    #[test]
+    fn one_update_at_a_time_per_home() {
+        let home = tempfile::tempdir().unwrap();
+        let held = exclusive(home.path()).unwrap();
+        assert!(matches!(exclusive(home.path()), Err(Error::Busy)));
+        drop(held);
+        assert!(exclusive(home.path()).is_ok());
     }
 
     #[test]

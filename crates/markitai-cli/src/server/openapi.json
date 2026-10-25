@@ -1223,7 +1223,7 @@
           "target": { "type": ["string", "null"], "description": "The version an update in progress installs" },
           "progress": { "type": ["object", "null"], "description": "While `downloading`", "properties": { "done": { "type": "integer" }, "total": { "type": ["integer", "null"] } } },
           "waiting_jobs": { "type": "integer", "description": "Conversions running or queued; a restart waits for them" },
-          "error": { "type": ["object", "null"], "description": "Why the last update failed (also one the last start undid): `code` is `offline`, `checksum`, `disk_full`, `not_writable`, `file_busy`, `start_failed`, `install_failed` or `cancelled`; `rolled_back` when files had been replaced and were put back (else nothing changed)", "properties": { "code": { "type": "string" }, "reason": { "type": "string" }, "rolled_back": { "type": "boolean" }, "version": { "type": "string" } } },
+          "error": { "type": ["object", "null"], "description": "Why the last update failed (also one the last start undid): `code` is `offline`, `checksum`, `disk_full`, `not_writable`, `file_busy`, `start_failed`, `install_failed`, `update_running` (`markitai update` was updating this install) or `cancelled`; `rolled_back` when files had been replaced and were put back (else nothing changed)", "properties": { "code": { "type": "string" }, "reason": { "type": "string" }, "rolled_back": { "type": "boolean" }, "version": { "type": "string" } } },
           "updated_from": { "type": ["string", "null"], "description": "The version this server ran before it restarted into this one" },
           "by": { "type": ["string", "null"], "enum": ["web", "cli", null], "description": "Who started the update in progress: the page, or `markitai update`" }
         }

@@ -578,6 +578,10 @@ fn explain(out: &Out, error: &Error, current: &Version, install: &SetupInstall) 
             format!("Can't install: {error}"),
             format!("无法安装：{error}"),
         ),
+        Error::Busy => step(
+            "Another update is running; try again when it has finished".into(),
+            "另一个更新正在进行；它结束后再试".into(),
+        ),
         Error::Cancelled => {
             out.say(
                 Shape::item(Mark::Skip),
@@ -632,6 +636,7 @@ fn apply(
     // Ctrl-C is recorded and acted on between steps until the swap begins.
     let _guard = crate::signals::Guard::install().ok();
     let cancelled = || crate::signals::interrupted().is_some();
+    let _exclusive = install::exclusive(&home)?;
     let pending = control::Pending::load(&home);
     let keep: Vec<_> = pending
         .iter()

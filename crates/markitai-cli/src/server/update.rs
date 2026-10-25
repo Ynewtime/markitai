@@ -503,6 +503,8 @@ fn run(state: &Arc<State>, target: Version) {
             .base
             .clone()
             .ok_or_else(|| install::Error::Archive("no release base".into()))?;
+        let _exclusive = install::exclusive(&update.home)?;
+        install::remove_leftovers(installed, &[]);
         let work = install::prepare(installed)?;
         let release = install::resolve(&base, &target, &installed.target(), check::COMMAND)?;
         let downloaded = install::download(
