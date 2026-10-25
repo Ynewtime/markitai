@@ -123,6 +123,10 @@ stateDiagram-v2
 - CLI runs started with [`--record-history`](/guide/cli#record-history) appear too; Details says "Recorded by: the command line". Their URL items can be retried or enhanced; their file items cannot, because the CLI keeps only the outputs.
 - An `--llm-batch` run that stopped waiting lists its pending items as skipped (pending batch). Collect them with the `markitai --llm-batch-collect` command the run printed; the workbench refuses to retry them, which would pay twice.
 
+## Updating
+
+The startup lines name a newer release. `markitai update` updates the program and offers to restart the server: it lets running and queued conversions finish, then comes back on the same address with the same token. If the new version does not start, the old one is put back.
+
 ## API
 
 The workbench runs on a REST + SSE API that scripts call with the same token: `POST /api/jobs` to submit, `GET /api/jobs/{job_id}/events` for progress, `GET /api/jobs/{job_id}/archive` for the zip. The OpenAPI document is `GET /api/openapi.json`. Routes and the main error codes: [API reference](/guide/serve-reference#api).

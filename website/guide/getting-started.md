@@ -24,7 +24,7 @@ With a terminal it then offers the optional parts, `markitai doctor --fix`: loca
 | `MARKITAI_DOWNLOAD_URL=URL` | Download from a mirror of the GitHub Releases |
 | `NO_COLOR=1` | No colours |
 
-Run the install command again to update. Setup keeps a receipt of the files it installed: an update replaces and an uninstall removes only those, and on Windows the user Path entry goes only if setup added it. The new release is staged before anything is replaced, so a failed Windows update leaves the previous one in place. To uninstall (your `~/.markitai` stays):
+Run `markitai update` to update (running the install command again also works). Setup keeps a receipt of the files it installed: an update replaces and an uninstall removes only those, and on Windows the user Path entry goes only if setup added it. The new release is staged before anything is replaced, so a failed Windows update leaves the previous one in place. To uninstall (your `~/.markitai` stays):
 
 ::: code-group
 ```bash [Linux/macOS]

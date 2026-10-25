@@ -404,3 +404,18 @@ markitai doctor | Out-File -Encoding utf8 doctor.txt
 ### `markitai mcp`
 
 通过 stdio 启动 [MCP 服务器](/zh/guide/mcp)；`markitai-mcp` 与它相同。
+
+### `markitai update`
+
+检查新版本。安装脚本装的 markitai 会就地替换：先按发行版的 `SHA256SUMS` 校验归档并试启动一次，任何一步失败都会全部恢复。其他安装方式（uv、pipx、pip、cargo、包管理器）给出更新它们的命令。正在运行的 `markitai serve` 会询问是否重启；它会先完成进行中的转换。
+
+| 命令 | 作用 |
+|------|------|
+| `update` | 安装最新版本 |
+| `update --check` | 只检查 |
+| `update --json` | 在 stdout 输出一个 JSON 对象 |
+| `update --version <X.Y.Z>` | 安装这个版本；较旧的版本先询问（无终端时加 `--yes`） |
+
+退出码：`0` 已是最新或已更新，`10` 有新版本但没有在这里安装，`1` 失败。
+
+终端上的转换结束后，有新版本时每天最多提示一次：`• 有新版本 2.2.0（当前 2.1.0）：markitai update`。检查在后台进行，每天最多一次；JSON、stdout 输出、`-q`、CI 与 MCP 不检查。用 `markitai config set update.check false` 或 `MARKITAI_NO_UPDATE_CHECK=1` 关闭。

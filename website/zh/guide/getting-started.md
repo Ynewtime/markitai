@@ -24,7 +24,7 @@
 | `MARKITAI_DOWNLOAD_URL=URL` | 从 GitHub Releases 的镜像下载 |
 | `NO_COLOR=1` | 不用颜色 |
 
-再运行一次安装命令即可更新。安装脚本会留一份清单（receipt），记下它装了哪些文件：更新只替换、卸载只删除这些文件；Windows 上只有安装脚本自己加的用户 Path 条目才会被移除。新版本先放到暂存位置再替换，所以 Windows 上更新失败时，旧版本原样保留。卸载（`~/.markitai` 会保留）：
+运行 `markitai update` 即可更新（再运行一次安装命令也可以）。安装脚本会留一份清单（receipt），记下它装了哪些文件：更新只替换、卸载只删除这些文件；Windows 上只有安装脚本自己加的用户 Path 条目才会被移除。新版本先放到暂存位置再替换，所以 Windows 上更新失败时，旧版本原样保留。卸载（`~/.markitai` 会保留）：
 
 ::: code-group
 ```bash [Linux/macOS]

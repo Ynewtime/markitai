@@ -404,3 +404,18 @@ The [web workspace](/guide/serve) at `http://127.0.0.1:3600`, opened in the brow
 ### `markitai mcp`
 
 The [MCP server](/guide/mcp) over stdio; `markitai-mcp` is the same.
+
+### `markitai update`
+
+Checks for a newer release. A setup-script install is replaced in place: the archive is checked against the release's `SHA256SUMS` and started once first, and a failure puts everything back. Other installs (uv, pipx, pip, cargo, a package manager) get the command that updates them. A running `markitai serve` is offered a restart; it finishes its conversions first.
+
+| Command | Effect |
+|---------|--------|
+| `update` | Install the latest release |
+| `update --check` | Only check |
+| `update --json` | One JSON object on stdout |
+| `update --version <X.Y.Z>` | Install this release; an older one asks first (`--yes` without a terminal) |
+
+It exits `0` up to date or updated, `10` when a newer release exists but is not installed here, `1` on a failure.
+
+After a run on a terminal, a newer release is named once a day: `• New version 2.2.0 (current 2.1.0): markitai update`. The check runs in the background at most daily and never for JSON, stdout output, `-q`, CI or MCP. Turn it off with `markitai config set update.check false` or `MARKITAI_NO_UPDATE_CHECK=1`.

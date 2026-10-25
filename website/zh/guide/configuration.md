@@ -188,6 +188,9 @@ markitai config validate              # 还会对不起作用的键给出警告
   },
   "security": {
     "pdf_sanitize": "warn"
+  },
+  "update": {
+    "check": true
   }
 }
 ```
@@ -648,6 +651,7 @@ markitai ./docs --no-cache-for "*.pdf"
 | 设置 | 默认值 | 说明 |
 |------|--------|------|
 | `history.record` | `false` | 把 CLI 运行记入网页工作台历史（`--record-history`） |
+| `update.check` | `true` | 每天检查一次新版本并在终端提示（[`markitai update`](/zh/guide/cli#markitai-update)）；`MARKITAI_NO_UPDATE_CHECK=1` 同样关闭 |
 
 ## 不再生效的设置 {#settings-without-effect}
 

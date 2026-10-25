@@ -123,6 +123,10 @@ stateDiagram-v2
 - 用 [`--record-history`](/zh/guide/cli#record-history) 启动的 CLI 运行也会出现在这里，详情显示“记录来源：命令行”。其中的 URL 条目可以重试或增强；文件条目不行，因为 CLI 只保留了输出。
 - `--llm-batch` 运行如果停止了等待，尚未完成的条目显示为已跳过（pending batch）。请用那次运行打印的 `markitai --llm-batch-collect` 命令收取结果；工作台不允许重试它们，否则会付两次费。
 
+## 更新 {#updating}
+
+有新版本时，启动信息里会写出来。`markitai update` 更新程序，并询问是否重启服务：它先让进行中和排队的转换完成，再以同样的地址和访问令牌回来。新版本起不来时会换回旧版本。
+
 ## API
 
 工作台建立在一套 REST + SSE API 之上，脚本可以带同一个令牌直接调用：`POST /api/jobs` 提交，`GET /api/jobs/{job_id}/events` 看进度，`GET /api/jobs/{job_id}/archive` 下载 zip。OpenAPI 文档位于 `GET /api/openapi.json`。路由和主要错误代码见 [API 参考](/zh/guide/serve-reference#api)。

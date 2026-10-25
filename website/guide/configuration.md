@@ -188,6 +188,9 @@ Every setting with its default, as `markitai config list` prints it:
   },
   "security": {
     "pdf_sanitize": "warn"
+  },
+  "update": {
+    "check": true
   }
 }
 ```
@@ -648,6 +651,7 @@ A searchable scan's OCR layer (invisible text over a picture covering the page) 
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `history.record` | `false` | Record CLI runs in the web workspace history (`--record-history`) |
+| `update.check` | `true` | Check for a newer release once a day and name it on the terminal ([`markitai update`](/guide/cli#markitai-update)); `MARKITAI_NO_UPDATE_CHECK=1` also turns it off |
 
 ## Settings Without Effect
 
