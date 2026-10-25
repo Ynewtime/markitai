@@ -113,3 +113,12 @@ test("the copied command quotes every value and never reads a file name as an op
   assert.equal(requestView(["-v notes.md"], emptyOptions(), {}, false)?.command, "markitai './-v notes.md' -o output/");
   assert.equal(requestView(["https://example.org/-a"], emptyOptions(), {}, true)?.command, "markitai https://example.org/-a -o output/");
 });
+
+test("an older request that names only its preset copies as that preset", () => {
+  // pre-v1.22 web/API job: the preset and null switches, which follow it
+  assert.equal(requestView(["notes.pdf"], { ...emptyOptions(), preset: "rich" }, null, false)?.command, "markitai notes.pdf -o output/ --preset rich");
+  // one switch set against the preset: the rest still follow it when spelled out
+  assert.equal(requestView(["notes.pdf"], { ...emptyOptions(), preset: "standard", screenshot: true }, null, false)?.command, "markitai notes.pdf -o output/ --llm --alt --desc --screenshot");
+  // an unknown preset with null switches has nothing to spell out
+  assert.equal(requestView(["notes.pdf"], { ...emptyOptions(), preset: "team" }, null, false)?.command, "markitai notes.pdf -o output/");
+});

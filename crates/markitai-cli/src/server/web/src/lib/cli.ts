@@ -30,7 +30,8 @@ export function namedPreset(options: JobOptions, preset: Preset | null, table: P
   if (preset === null) return null;
   const features = knownFeatures(preset, table);
   if (features === null) return null;
-  return FEATURES.every((key) => options[key] === features[key]) ? features : null;
+  // A switch left null follows the preset (an older request names only its preset).
+  return FEATURES.every((key) => (options[key] ?? features[key]) === features[key]) ? features : null;
 }
 
 /** Staged files as the command line names them: each file `./name`, a folder's files once as `./folder/`. */
@@ -50,10 +51,12 @@ export function requestFlags(options: JobOptions, table: PresetTable = BUILTIN_P
   const preset = options.preset as Preset | null;
   const named = namedPreset(options, preset, table);
   const features = named ?? { llm: false, ocr: false, alt: false, desc: false, screenshot: false };
+  // a switch left null is the preset's, also when the line spells the switches out
+  const own = preset !== null ? knownFeatures(preset, table) : null;
   const words: string[] = [];
   if (named !== null && preset !== null) words.push("--preset", shellQuote(preset));
   for (const key of FEATURES) {
-    const value = options[key];
+    const value = options[key] ?? own?.[key] ?? null;
     if (value !== null && value !== undefined && value !== features[key]) words.push(value ? `--${key}` : `--no-${key}`);
   }
   if (options.profile !== null) words.push("--profile", shellQuote(options.profile));
