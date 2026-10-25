@@ -18,6 +18,7 @@ markitai scan.png --ocr --no-llm -o out/
 markitai -c isolated.json doctor --json
 markitai serve --port 3600 --no-open
 markitai mcp
+markitai update --check                       # 有新版本时退出 10
 ```
 
 ## 开发包与 Windows 入口
@@ -184,6 +185,14 @@ MARKITAI_LANG=zh markitai doctor
   使用启动时含 fragment token 的浏览器地址。详见[服务](serve.md)。
 - `mcp` 提供 `convert_document`、`convert_url`、`batch_convert`、`job_status`。
   使用绝对路径，stdout 专供协议，配置及结果见[MCP](mcp.md)。
+- `update` 检查新版本。安装脚本装的副本就地替换：按发行版 `SHA256SUMS` 校验、
+  先试启动一次再替换，失败则全部恢复；其他安装方式只给出更新命令。`--check` 只检查，
+  `--json` 在 stdout 输出一个对象，`--version X.Y.Z` 安装指定版本（较旧的版本先询问，
+  无终端时需 `--yes`）。正在运行的 `serve` 会询问是否重启。退出码：0 已是最新或已更新，
+  10 有新版本但未在此安装，1 失败，130 中断。
+- 终端上的转换结束后，有新版本时每天最多提示一次：`• 有新版本 2.2.0（当前 2.1.0）：markitai update`。
+  检查在后台进行，每天最多一次，最多等 2 秒；JSON、stdout 输出、`-q`、非终端、CI、MCP 与源码构建
+  不检查。用 `update.check: false` 或 `MARKITAI_NO_UPDATE_CHECK=1` 关闭。
 
 转换 `--json` 顶层为 `version`、`ok`、`error`、`batch`、`items`、`totals`。
 逐项读取 `items[].status`（completed/failed/skipped/pending）、`output`、`error`、

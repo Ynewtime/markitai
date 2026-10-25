@@ -17,6 +17,19 @@ snapshot for newly admitted jobs and retries; an active job keeps its original
 snapshot. CLI model/provider session overrides remain effective and make
 settings writes unavailable until restart without those overrides.
 
+## Updates
+
+The server checks for a new release once a day (`update.check`) and names it in
+its startup lines. One that listens on loopback also has `GET/POST/DELETE
+/api/update` and `Capabilities.update` (contract v1.24, admin only, never through
+a forwarding proxy); a server reachable from the network has neither. `POST
+{"version"}` takes only the release the server found and updates a setup-script
+install: download and verify while conversions run, hold new ones (503
+`updating`), let running and queued ones finish, swap, restart on the same
+address with the same token. A new version that does not get ready puts the old
+one back. `markitai update` restarts a running server through `/api/update/restart`
+with the owner-only secret in `MARKITAI_HOME/serve/control`.
+
 ## Machine-readable API description
 
 Each finished item's [document JSON](json-output.md), the same object `markitai -f json`

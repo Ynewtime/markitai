@@ -805,7 +805,8 @@ job options `format` (under `document_json`), `ocr_lang` (with `ocr_languages` a
 `ocr_lang` in the capabilities), `ocr_all_pages` and `page_markers`, and the same
 keys as saved defaults; contract v1.22 adds `settings`, read when present, to jobs
 and items, and v1.23 `markdown_lines` to a result, so the Details count the lines of
-an output whose start is an excerpt); a missing feature hides its control instead of failing (no Stop
+an output whose start is an excerpt; v1.24 `Capabilities.update` and `/api/update`
+on a loopback server, see [service](serve.md#updates)); a missing feature hides its control instead of failing (no Stop
 remaining, no Compare, archives saved through the page, history read job by job,
 images read from the file route).
 `docs_url` points the Docs link at the backend's own documentation (both servers name
