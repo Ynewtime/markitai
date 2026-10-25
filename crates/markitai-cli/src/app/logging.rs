@@ -628,30 +628,6 @@ fn session_lock(directory: &Path, stem: &str) -> Option<PathBuf> {
 /// the sentence after the URL would be taken for a path and hidden.
 const CHINESE_PUNCTUATION: &str = "，。、；：！？（）【】「」『』《》“”";
 
-/// A configured secret shorter than this (a one-letter user name, a cookie
-/// named `c`) is hidden only where it stands alone: hidden inside every word
-/// it would blank that letter throughout the line, and reveal nothing.
-const SHORT_SECRET: usize = 4;
-
-/// `text` with each occurrence of `secret` that no letter or digit touches
-/// replaced by `[REDACTED]`.
-fn replace_alone(text: &str, secret: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut rest = text;
-    while let Some(start) = rest.find(secret) {
-        let end = start + secret.len();
-        let before = rest[..start].chars().next_back();
-        let after = rest[end..].chars().next();
-        let alone =
-            !before.is_some_and(char::is_alphanumeric) && !after.is_some_and(char::is_alphanumeric);
-        out.push_str(&rest[..start]);
-        out.push_str(if alone { "[REDACTED]" } else { secret });
-        rest = &rest[end..];
-    }
-    out.push_str(rest);
-    out
-}
-
 fn redact(message: &str, secrets: &[String]) -> String {
     let mut safe = String::with_capacity(message.len().min(65536));
     let mut rest = message;
@@ -676,12 +652,10 @@ fn redact(message: &str, secrets: &[String]) -> String {
         rest = &url[end..];
     }
     safe.push_str(rest);
+    // A short configured secret (a one-letter user name) is hidden only where
+    // it stands alone, as the core hides it everywhere it shows provider words.
     for secret in secrets {
-        safe = if secret.chars().count() < SHORT_SECRET {
-            replace_alone(&safe, secret)
-        } else {
-            safe.replace(secret, "[REDACTED]")
-        };
+        safe = markitai_core::output::hide_secret(&safe, secret, "[REDACTED]");
     }
     safe = safe
         .chars()

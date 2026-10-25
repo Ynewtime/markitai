@@ -618,6 +618,33 @@ pub fn prepare(source: &str, name: &str, doc: &mut Document, cfg: &Value) -> Con
 /// carries a secret replaced by `REDACTED`, and no value of a query or
 /// form-like fragment parameter that carries a secret (the fetch policy's
 /// judgement of segments and parameter names, see [`log_url`]).
+/// `text` with a known secret replaced by `marker`: everywhere when it is 4
+/// characters or longer, and only where no letter or digit touches it when it
+/// is shorter (a local server's placeholder key `x`, a user name `u`), which
+/// would otherwise blank that letter throughout. An empty secret hides nothing.
+pub fn hide_secret(text: &str, secret: &str, marker: &str) -> String {
+    if secret.is_empty() {
+        return text.to_owned();
+    }
+    if secret.chars().count() >= 4 {
+        return text.replace(secret, marker);
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find(secret) {
+        let end = start + secret.len();
+        let before = rest[..start].chars().next_back();
+        let after = rest[end..].chars().next();
+        let alone =
+            !before.is_some_and(char::is_alphanumeric) && !after.is_some_and(char::is_alphanumeric);
+        out.push_str(&rest[..start]);
+        out.push_str(if alone { marker } else { secret });
+        rest = &rest[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
 pub fn redact_url(source: &str) -> String {
     let Ok(mut url) = url::Url::parse(source) else {
         return source.to_owned();

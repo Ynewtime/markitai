@@ -236,8 +236,8 @@ const REASON_BYTES: u64 = 8 * 1024;
 /// Every occurrence of a secret replaced, for text a service sent back.
 pub(crate) fn without_secrets(text: &str, secrets: &[&str]) -> String {
     let mut text = text.to_owned();
-    for secret in secrets.iter().filter(|secret| secret.len() >= 4) {
-        text = text.replace(secret, "REDACTED");
+    for secret in secrets {
+        text = crate::output::hide_secret(&text, secret, "REDACTED");
     }
     text
 }
@@ -692,6 +692,15 @@ fn named(service: Service, error: Error) -> Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_short_secret_in_a_service_reply_is_hidden_where_it_stands_alone() {
+        assert_eq!(
+            without_secrets("account ab1 refused token ab1; see ab12", &["ab1"]),
+            "account REDACTED refused token REDACTED; see ab12"
+        );
+        assert_eq!(without_secrets("nothing here", &[""]), "nothing here");
+    }
 
     #[test]
     fn jina_text_header_lines_are_read_and_anything_else_is_left_alone() {

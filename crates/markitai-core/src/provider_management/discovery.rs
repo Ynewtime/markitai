@@ -70,8 +70,8 @@ fn provider_message(body: &[u8], key: Option<&str>) -> String {
         .filter(|word| !word.is_empty())
         .collect::<Vec<_>>()
         .join(" ");
-    if let Some(key) = key.filter(|key| key.len() >= 4) {
-        words = words.replace(key, "…");
+    if let Some(key) = key {
+        words = crate::output::hide_secret(&words, key, "…");
     }
     let mut message: String = words.chars().take(MAX_MESSAGE).collect();
     if words.chars().count() > MAX_MESSAGE {
@@ -339,4 +339,23 @@ pub(super) fn parse(provider: &str, data: &Value) -> Result<Value> {
             "The provider has more models; only its bounded first page is shown".into();
     }
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_refused_key_is_never_repeated_even_a_short_one() {
+        let body = br#"{"error":{"message":"invalid key x (key x expired); expected sk-..."}}"#;
+        assert_eq!(
+            provider_message(body, Some("x")),
+            "invalid key … (key … expired); expected sk-..."
+        );
+        let body = br#"{"error":{"message":"key sk-test-0000 is not valid"}}"#;
+        assert_eq!(
+            provider_message(body, Some("sk-test-0000")),
+            "key … is not valid"
+        );
+    }
 }

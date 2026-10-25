@@ -219,8 +219,8 @@ fn parsed(body: &[u8]) -> Option<Value> {
 }
 
 fn shown_code(value: &Value, status: u16, entry: &Deployment) -> Option<String> {
-    let key = entry.key.as_deref().filter(|key| key.len() >= 4);
-    error_code(value, status).filter(|code| key.is_none_or(|key| !code.contains(key)))
+    let key = entry.key.as_deref().unwrap_or_default();
+    error_code(value, status).filter(|code| crate::output::hide_secret(code, key, "\u{0}") == *code)
 }
 
 /// The error's type, code and status names (`invalid_request_error`,
@@ -310,8 +310,8 @@ fn shown(text: &str, entry: &Deployment, prompts: &Prompts) -> Option<String> {
         .map(|ch| if ch.is_control() { ' ' } else { ch })
         .collect();
     let mut text = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    if let Some(key) = entry.key.as_deref().filter(|key| key.len() >= 4) {
-        text = text.replace(key, "[REDACTED]");
+    if let Some(key) = entry.key.as_deref() {
+        text = crate::output::hide_secret(&text, key, "[REDACTED]");
     }
     let text = without_quotations(&without_credentials(&text));
     if text.trim().is_empty() {
@@ -708,6 +708,14 @@ mod tests {
             "LLM returned HTTP 404: The model gemini-2.5-flash-preview-09-2025-thinking does not exist (request 123e4567-e89b-12d3-a456-426614174000)"
         );
         assert!(said.starts_with("LLM returned HTTP 401 (invalid_request_error): Incorrect API key provided: [REDACTED]."), "{said}");
+        // A short key (a local server's placeholder `abc`) is hidden where it
+        // stands alone, and words that merely contain it stay readable.
+        let short = br#"{"error":{"message":"bad key abc for user abcd","code":"abc"}}"#;
+        let said = http(401, short, &entry("abc"), &prompts("text"));
+        assert_eq!(
+            said,
+            "LLM returned HTTP 401: bad key [REDACTED] for user abcd"
+        );
 
         // A quotation of the document is dropped, and an unquoted echo
         // withholds the whole message, also through JSON escapes.
