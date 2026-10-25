@@ -49,43 +49,7 @@ impl Server {
     /// With `MARKITAI_SERVE_TOKEN` among `variables` the server requires that
     /// token; otherwise it runs with `--no-auth`.
     fn start_with(root: &Path, variables: &[(&str, &std::ffi::OsStr)]) -> Self {
-        if !root.join("config.json").exists() {
-            configure(root);
-        }
-        let mut command = Command::new(env!("CARGO_BIN_EXE_markitai"));
-        console::english(command.env_clear());
-        for key in ["PATH", "HOME", "TMPDIR", "TEMP", "TMP", "SYSTEMROOT"] {
-            if let Some(value) = std::env::var_os(key) {
-                command.env(key, value);
-            }
-        }
-        command.envs(variables.iter().copied());
-        let mut child = command
-            .current_dir(root)
-            .env("HOME", root)
-            .env("MARKITAI_HOME", root.join("home"))
-            .env("NO_PROXY", "127.0.0.1,localhost")
-            .args([
-                "--config",
-                "config.json",
-                "serve",
-                "--host",
-                "127.0.0.1",
-                "--port",
-                "0",
-                "--no-open",
-            ])
-            .args(
-                (!variables
-                    .iter()
-                    .any(|(name, _)| *name == "MARKITAI_SERVE_TOKEN"))
-                .then_some("--no-auth"),
-            )
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
+        let mut child = Self::command(root, variables).spawn().unwrap();
         let captured = Arc::new(Mutex::new(String::new()));
         let copy = captured.clone();
         let reader = child.stderr.take().unwrap();
@@ -123,6 +87,70 @@ impl Server {
             }
         });
         server
+    }
+    /// The `serve` process `start_with` starts.
+    fn command(root: &Path, variables: &[(&str, &std::ffi::OsStr)]) -> Command {
+        if !root.join("config.json").exists() {
+            configure(root);
+        }
+        let mut command = Command::new(env!("CARGO_BIN_EXE_markitai"));
+        console::english(command.env_clear());
+        for key in ["PATH", "HOME", "TMPDIR", "TEMP", "TMP", "SYSTEMROOT"] {
+            if let Some(value) = std::env::var_os(key) {
+                command.env(key, value);
+            }
+        }
+        command.envs(variables.iter().copied());
+        command
+            .current_dir(root)
+            .env("HOME", root)
+            .env("MARKITAI_HOME", root.join("home"))
+            .env("NO_PROXY", "127.0.0.1,localhost")
+            .args([
+                "--config",
+                "config.json",
+                "serve",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                "0",
+                "--no-open",
+            ])
+            .args(
+                (!variables
+                    .iter()
+                    .any(|(name, _)| *name == "MARKITAI_SERVE_TOKEN"))
+                .then_some("--no-auth"),
+            )
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped());
+        command
+    }
+    /// A server that must refuse to start: its exit status and stderr. One
+    /// still running after the wait is stopped, and the test fails.
+    fn refused(root: &Path, variables: &[(&str, &std::ffi::OsStr)]) -> (Option<i32>, String) {
+        let mut child = Self::command(root, variables).spawn().unwrap();
+        let deadline = Instant::now() + WAIT;
+        let status = loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                break status;
+            }
+            if Instant::now() > deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("the server started");
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        };
+        let mut stderr = String::new();
+        child
+            .stderr
+            .take()
+            .unwrap()
+            .read_to_string(&mut stderr)
+            .unwrap();
+        (status.code(), stderr)
     }
     fn request(&self, method: &str, path: &str, headers: &[(&str, &str)], body: &[u8]) -> Reply {
         request(self.port, method, path, headers, body)

@@ -159,6 +159,13 @@ pub(crate) enum Error {
     Invalid(String),
     JsonSyntax(String),
     ForeignScope(String),
+    /// A base whose format number is above the one this build reads: a newer
+    /// markitai wrote it, so it is refused and left as it is (the store fills
+    /// in the path).
+    Newer {
+        path: PathBuf,
+        version: String,
+    },
     Busy,
     Limit(&'static str),
     Sequence(String),
@@ -179,6 +186,12 @@ impl fmt::Display for Error {
             Self::Invalid(message) => write!(f, "Invalid recovery state: {message}"),
             Self::JsonSyntax(message) => write!(f, "Invalid recovery JSON: {message}"),
             Self::ForeignScope(message) => write!(f, "Recovery state scope mismatch: {message}"),
+            Self::Newer { path, version } => write!(
+                f,
+                "Recovery state {} was written by a newer markitai (format {version}, this markitai reads {}) and is left unchanged; upgrade markitai to resume it, or write to another output directory",
+                path.display(),
+                codec::FORMAT
+            ),
             Self::Busy => f.write_str("Another process owns this recovery checkpoint"),
             Self::Limit(kind) => write!(f, "Recovery state {kind} limit exceeded"),
             Self::Sequence(message) => write!(f, "Recovery journal sequence error: {message}"),

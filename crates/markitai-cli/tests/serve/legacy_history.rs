@@ -398,3 +398,47 @@ fn legacy_delete_removes_the_correct_pair_and_retains_sibling_shared_assets() {
     assert!(!folder.exists());
     server.stop();
 }
+
+#[test]
+fn a_job_a_newer_markitai_saved_is_not_listed_rewritten_or_swept() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let server = Server::start(root);
+    let mut ids = Vec::new();
+    for (name, text) in [
+        ("note.txt", "Invented note.\n"),
+        ("other.txt", "Other note.\n"),
+    ] {
+        let job = server.submit(&[(name, text.as_bytes())], json!([]), json!({}));
+        let id = job["job_id"].as_str().unwrap().to_owned();
+        server.done(&id);
+        ids.push(id);
+    }
+    server.stop();
+    let (newer, kept) = (&ids[0], &ids[1]);
+    let meta = root.join("home/serve/jobs").join(newer).join("meta.json");
+    let mut value: Value = serde_json::from_slice(&std::fs::read(&meta).unwrap()).unwrap();
+    value["version"] = json!(3);
+    value["a_newer_field"] = json!({"kept": true});
+    // Past retention: the newer markitai decides when it goes, not this one.
+    value["finished_at"] = json!(hours_ago(24 * 30));
+    let bytes = serde_json::to_vec_pretty(&value).unwrap();
+    std::fs::write(&meta, &bytes).unwrap();
+    let server = Server::start(root);
+    let listed: Vec<Value> = server.json("/api/history").as_array().unwrap().clone();
+    assert_eq!(
+        listed.iter().map(|job| &job["job_id"]).collect::<Vec<_>>(),
+        [kept]
+    );
+    let path = format!("/api/history/{newer}");
+    assert_eq!(server.request("DELETE", &path, &[], &[]).status, 404);
+    assert!(
+        server.captured.lock().unwrap().contains(&format!(
+            "job {newer} was written by a newer markitai (format 3, this markitai reads 2); it is not listed and is left unchanged"
+        )),
+        "{}",
+        server.captured.lock().unwrap()
+    );
+    server.stop();
+    assert_eq!(std::fs::read(&meta).unwrap(), bytes);
+}

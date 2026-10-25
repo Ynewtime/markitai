@@ -40,6 +40,9 @@ fn read(path: &Path) -> io::Result<Value> {
     {
         return Err(io::Error::other("invalid image metadata shape"));
     }
+    if let Some(message) = markitai_core::output::newer_image_metadata(path, &value) {
+        return Err(io::Error::other(message));
+    }
     Ok(value)
 }
 pub(super) struct ImageMetadataLock(File);
@@ -261,6 +264,31 @@ mod tests {
         assert_eq!(
             fs::read(out.join("assets/images.json")).unwrap(),
             b"bad JSON"
+        );
+    }
+    #[test]
+    fn final_metadata_a_newer_markitai_wrote_is_not_overwritten() {
+        let root = tempfile::tempdir().unwrap();
+        let stage = root.path().join("stage");
+        let out = root.path().join("out");
+        fs::create_dir_all(stage.join("assets")).unwrap();
+        fs::create_dir_all(out.join("assets")).unwrap();
+        fs::write(
+            stage.join("assets/images.json"),
+            json!({"images":[]}).to_string(),
+        )
+        .unwrap();
+        let newer = json!({"version":"2.0","images":[],"a_newer_key":true}).to_string();
+        fs::write(out.join("assets/images.json"), &newer).unwrap();
+        let error = prepare(&stage, &out).err().unwrap().to_string();
+        assert!(
+            error
+                .contains("was written by a newer markitai (format 2.0, this markitai writes 1.0)"),
+            "{error}"
+        );
+        assert_eq!(
+            fs::read_to_string(out.join("assets/images.json")).unwrap(),
+            newer
         );
     }
 }

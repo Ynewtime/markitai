@@ -10,6 +10,8 @@ use std::sync::Mutex;
 static OUTPUT_LOCK: Mutex<()> = Mutex::new(());
 pub(crate) mod fence;
 mod image_metadata;
+#[doc(hidden)]
+pub use image_metadata::newer_image_metadata;
 mod iri;
 pub(crate) mod stdout_assets;
 pub(crate) mod text_only;

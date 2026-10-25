@@ -567,7 +567,10 @@ Jobs live below `MARKITAI_HOME/serve/jobs/<12-hex-id>/`, containing private
 compare screenshots), and an atomically replaced `meta.json`. Job, upload and output root directories use mode
 0700 and generated metadata/uploads use mode 0600 on Unix. Current server
 metadata uses the existing version-2 shape, with additive native output-base and
-asset indexes, per-item options, and internal file-transaction commit identifiers. Existing CLI and reference terminal histories are readable. Legacy artifact lists
+asset indexes, per-item options, and internal file-transaction commit identifiers. Existing CLI and reference terminal histories are readable.
+A job whose `version` is above 2 was written by a newer markitai: it is not
+listed, recovered, rewritten or deleted by retention, and one warning names it
+(see [versioning](versioning.md#stored-data)). Legacy artifact lists
 recover assets referenced in Markdown, including visible `assets/` profiles;
 assets without references and without a native item index are still downloadable
 by path and included in the ZIP, but are not guessed into an item artifact list.
@@ -727,7 +730,10 @@ Only each user token's SHA-256 is kept, in `MARKITAI_HOME/serve/access.json`
 owner-only, replaced atomically), so user tokens survive restarts and admin-token
 regeneration; `last_used_at` is kept in memory only. A file that cannot be read
 is left alone (with one warning, and no user token works) until an admin creates
-or revokes a token.
+or revokes a token. A file whose `version` is above 1 was written by a newer
+markitai: the server does not start (`Access tokens <path> were written by a newer
+markitai …`) and changes neither it nor the users' models (see
+[versioning](versioning.md#stored-data)).
 
 ### Users' own models and shared models
 
@@ -738,7 +744,9 @@ A user token manages models of its own under `/api/me/models` (with the
 is `no-store`). They are kept per token in
 `MARKITAI_HOME/serve/user-models/<token id>.json` (owner-only, replaced
 atomically), never in the configuration file, and are deleted when the token is
-revoked (a file left by a failed deletion is removed at the next start). A user
+revoked (a file left by a failed deletion is removed at the next start). A file
+whose `version` is above 1 was written by a newer markitai: the server does not
+start, names it, and leaves it as it is. A user
 has at most 50 (409 `model_limit`). Each needs a key of the user's own, or an
 address of its own for a server that takes none (422 `key_or_address_required`);
 a provider that signs in with the server's own account or cloud login

@@ -62,6 +62,25 @@ pub use fetch::cloudflare::cloudflare_capabilities;
 pub use fetch::consent::{ConsentRequest, RemoteFallback, RemoteNotice, set_remote_fallback};
 pub use images::is_image_extension;
 pub use llm_runtime::LlmRuntime;
+/// Whether `found` is a `major.minor` format number above `current` (also
+/// `major.minor`): a record a newer markitai wrote, which this build refuses
+/// and leaves as it is rather than reading it as damaged.
+#[doc(hidden)]
+pub fn newer_format(found: &str, current: &str) -> bool {
+    fn number(text: &str) -> Option<(u64, u64)> {
+        let (major, minor) = text.split_once('.')?;
+        let part = |part: &str| {
+            (!part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
+                .then(|| part.parse().ok())
+                .flatten()
+        };
+        Some((part(major)?, part(minor)?))
+    }
+    number(found)
+        .zip(number(current))
+        .is_some_and(|(found, current)| found > current)
+}
+
 /// Lowercase hexadecimal spelling of digest bytes, as `{:x}` rendered them
 /// before `sha2` 0.11 (whose output arrays do not implement `LowerHex`).
 #[doc(hidden)]

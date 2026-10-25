@@ -166,7 +166,10 @@ URL records use the enhanced output stem. Alt-only does not create this sidecar.
 The publisher serializes cross-process updates with a stable lock and atomically
 replaces the bounded sidecar. Legacy `assets.json` / `assets` / `asset` spellings
 are accepted. Malformed existing metadata is preserved and reported as an error,
-rather than reset as in the reference implementation. Metadata merging does not
+rather than reset as in the reference implementation. So is an index whose
+`version` is above `1.0`, which a newer markitai wrote (`Image metadata <path>
+was written by a newer markitai …`), so it is never rewritten in this format.
+Metadata merging does not
 claim a transaction spanning every Markdown and asset file.
 
 A PDF page no reader recovered the text of (a scan) is read by a model from the page

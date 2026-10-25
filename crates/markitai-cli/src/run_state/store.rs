@@ -468,6 +468,10 @@ impl StateStore {
         }
         match codec::decode(&bytes, &self.scope, self.allow_symlinks, self.limits) {
             Ok(snapshot) => Ok(DiskBase::Valid(Box::new(snapshot))),
+            Err(Error::Newer { version, .. }) => Err(Error::Newer {
+                path: self.base.clone(),
+                version,
+            }),
             Err(error @ (Error::ForeignScope(_) | Error::Io(_))) => Err(error),
             Err(error) => Ok(DiskBase::Corrupt(error.to_string())),
         }

@@ -1873,3 +1873,41 @@ fn legacy_directory_takeover_retains_completed_work_raw_pair_and_quiet_contract(
         assert_eq!(server.count("POST", "MARKERXLEGACYXRETRY"), 2);
     }
 }
+
+#[test]
+fn a_state_written_by_a_newer_markitai_is_refused_and_left_unchanged() {
+    let root = tempfile::tempdir().unwrap();
+    let server = Server::start();
+    configure(root.path(), &server, false);
+    write(root.path(), "in/a.txt", "Invented text.\n");
+    let output = root.path().join("out");
+    let first = invoke(root.path(), &["in", "-o", "out"]);
+    assert!(first.status.success(), "{first:?}");
+    let path = state_path(&output);
+    let mut value = snapshot(&output);
+    value["version"] = json!("2.0");
+    let bytes = serde_json::to_vec(&value).unwrap();
+    std::fs::write(&path, &bytes).unwrap();
+    let listing = |directory: &Path| {
+        let mut names: Vec<_> = std::fs::read_dir(directory)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        names.sort();
+        names
+    };
+    let states = listing(&output.join(".markitai/states"));
+    let documents = markdown_files(&output);
+    for args in [&["in", "-o", "out", "--resume"][..], &["in", "-o", "out"]] {
+        let refused = invoke(root.path(), args);
+        let stderr = String::from_utf8_lossy(&refused.stderr);
+        assert_eq!(refused.status.code(), Some(1), "{args:?}: {stderr}");
+        assert!(
+            stderr.contains("was written by a newer markitai (format 2.0, this markitai reads 1.0) and is left unchanged"),
+            "{args:?}: {stderr}"
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        assert_eq!(listing(&output.join(".markitai/states")), states);
+        assert_eq!(markdown_files(&output), documents);
+    }
+}

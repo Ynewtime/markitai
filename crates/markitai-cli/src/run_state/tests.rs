@@ -621,6 +621,52 @@ fn explicit_foreign_scope_is_neither_quarantined_nor_overwritten_by_begin() {
 }
 
 #[test]
+fn a_newer_format_is_refused_and_left_unchanged_by_load_and_begin() {
+    for version in ["1.1", "2.0", "10.0"] {
+        let fixture = Fixture::directory();
+        let snapshot = fenced(discovered(&["a.txt"]), &fixture.scope, 0);
+        let mut value: Value = serde_json::from_slice(
+            &codec::encode(&snapshot, &fixture.scope, false, Limits::default()).unwrap(),
+        )
+        .unwrap();
+        value["version"] = json!(version);
+        let bytes = serde_json::to_vec(&value).unwrap();
+        std::fs::create_dir_all(fixture.directory_path()).unwrap();
+        std::fs::write(fixture.base(), &bytes).unwrap();
+        let sidecar = b"newer journal evidence\n";
+        std::fs::write(fixture.journal(), sidecar).unwrap();
+        let mut store = fixture.open();
+        let before = same_directory_files(&fixture);
+        for error in [
+            store.load().map(|_| ()).unwrap_err(),
+            store.begin(discovered(&["a.txt"])).unwrap_err(),
+        ] {
+            assert!(matches!(&error, Error::Newer { path, version: found }
+                if path == &fixture.base() && found == version));
+            let message = error.to_string();
+            assert!(
+                message.contains("was written by a newer markitai"),
+                "{message}"
+            );
+            assert!(message.contains(&format!("format {version}, this markitai reads 1.0")));
+        }
+        assert_eq!(std::fs::read(fixture.base()).unwrap(), bytes);
+        assert_eq!(std::fs::read(fixture.journal()).unwrap(), sidecar);
+        assert_eq!(same_directory_files(&fixture), before);
+    }
+    // Other values are damage, as before: preserved, then replaced.
+    for version in ["0.9", "one", "2", "1.0.1"] {
+        let fixture = Fixture::directory();
+        std::fs::create_dir_all(fixture.directory_path()).unwrap();
+        std::fs::write(fixture.base(), json!({"version": version}).to_string()).unwrap();
+        assert!(matches!(
+            fixture.open().load().unwrap(),
+            LoadOutcome::Corrupt { .. }
+        ));
+    }
+}
+
+#[test]
 fn rejected_unknown_oversized_and_unsafe_events_do_not_mutate_or_consume_sequence() {
     let fixture = Fixture::directory();
     let limits = Limits {

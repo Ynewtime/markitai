@@ -204,6 +204,7 @@ async fn serve(cfg: Value, source: SettingsSource, options: ServeOptions) -> Res
     // Normalized settings always carry both limits (defaults 10 and 5, minimum 1).
     let file_count = cfg["batch"]["concurrency"].as_u64().unwrap_or(10) as usize;
     let url_count = cfg["batch"]["url_concurrency"].as_u64().unwrap_or(5) as usize;
+    let access = access::Access::load(serve_home.join("access.json"))?;
     let state = Arc::new(State {
         settings: settings::Store::new(cfg, source).map_err(|error| error.detail)?,
         root,
@@ -221,9 +222,10 @@ async fn serve(cfg: Value, source: SettingsSource, options: ServeOptions) -> Res
         allowed_hosts,
         tickets: tickets::Tickets::default(),
         previews: original::Previews::default(),
-        access: access::Access::load(serve_home.join("access.json")),
+        access,
         users: settings::Users::new(serve_home.join("user-models")),
     });
+    state.users.check_formats()?;
     // The models of tokens revoked while the server was not running.
     state.users.sweep(|id| state.access.exists(id));
     store::rehydrate(&state.root, &state.jobs).map_err(|e| e.to_string())?;

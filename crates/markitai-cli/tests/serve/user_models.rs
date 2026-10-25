@@ -1629,3 +1629,52 @@ fn a_users_batch_adds_and_removes_in_one_change() {
         ]
     );
 }
+
+#[test]
+fn a_store_a_newer_markitai_wrote_stops_the_start_and_is_kept() {
+    let temp = tempfile::tempdir().unwrap();
+    let sentinel = Endpoint::start();
+    let server = start(temp.path(), &sentinel);
+    let (a_id, a) = user(&server, "Laptop A");
+    let reply = add(
+        &server,
+        &a,
+        json!([{"model_name":"default","model":"openai/own-model","api_key":USER_A_KEY}]),
+    );
+    assert_eq!(reply.status, 200, "{}", reply.text());
+    server.stop();
+    let serve = temp.path().join("home/serve");
+    let models = serve.join(format!("user-models/{a_id}.json"));
+    let stores = [
+        (serve.join("access.json"), "Access tokens", "were"),
+        (models.clone(), "A user token's models", "were"),
+    ];
+    let files = [serve.join("access.json"), models.clone()];
+    for (file, store, verb) in &stores {
+        let original = std::fs::read(file).unwrap();
+        let mut newer: Value = serde_json::from_slice(&original).unwrap();
+        newer["version"] = json!(2);
+        std::fs::write(file, newer.to_string()).unwrap();
+        let before: Vec<_> = files.iter().map(|f| std::fs::read(f).unwrap()).collect();
+        let (code, stderr) = Server::refused(
+            temp.path(),
+            &[("MARKITAI_SERVE_TOKEN", std::ffi::OsStr::new(ADMIN))],
+        );
+        assert_eq!(code, Some(1), "{stderr}");
+        assert!(
+            stderr.contains(&format!(
+                "{store} {} {verb} written by a newer markitai (format 2, this markitai reads 1)",
+                file.display()
+            )),
+            "{stderr}"
+        );
+        let after: Vec<_> = files.iter().map(|f| std::fs::read(f).unwrap()).collect();
+        assert_eq!(after, before, "{store}");
+        std::fs::write(file, original).unwrap();
+    }
+    // Put back, the files serve as before.
+    let server = start(temp.path(), &sentinel);
+    let tokens = ok(&server, "GET", "/api/access-tokens", ADMIN, None);
+    assert_eq!(tokens["tokens"][0]["model_count"], 1);
+    server.stop();
+}

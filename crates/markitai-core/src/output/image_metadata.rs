@@ -7,6 +7,21 @@ use std::fs::{File, OpenOptions, TryLockError};
 use std::time::{Duration, Instant};
 
 const MAX_BYTES: u64 = 16 * 1024 * 1024;
+/// The index's format (`version`), Python markitai's too.
+const FORMAT: &str = "1.0";
+
+/// The refusal of an index at `path` a newer markitai wrote: merging into it
+/// would rewrite it in this format without what this build does not know.
+#[doc(hidden)]
+pub fn newer_image_metadata(path: &Path, index: &Value) -> Option<String> {
+    let version = index.get("version")?.as_str()?;
+    crate::newer_format(version, FORMAT).then(|| {
+        format!(
+            "Image metadata {} was written by a newer markitai (format {version}, this markitai writes {FORMAT}) and is left unchanged; upgrade markitai, or write to another output directory",
+            path.display()
+        )
+    })
+}
 
 fn invalid(message: &str) -> Error {
     Error::Conversion(message.into())
@@ -80,6 +95,9 @@ fn read(path: &Path, allow_symlinks: bool) -> Result<Option<Value>> {
         return Err(invalid(
             "Existing image metadata must be an object; its bytes were retained",
         ));
+    }
+    if let Some(message) = newer_image_metadata(path, &value) {
+        return Err(Error::Conversion(message));
     }
     for key in ["images", "assets"] {
         if value.get(key).is_some_and(|value| !value.is_array()) {
@@ -167,7 +185,7 @@ pub(super) fn publish(
         images: Vec<Value>,
     }
     let index = Index {
-        version: "1.0",
+        version: FORMAT,
         created: old
             .get("created")
             .cloned()
@@ -222,6 +240,34 @@ mod tests {
             std::fs::write(&path, bytes).unwrap();
             assert!(publish(dir.path(), &[json!({"asset":"a.png"})], "source", false).is_err());
             assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        }
+    }
+
+    #[test]
+    fn an_index_a_newer_markitai_wrote_is_refused_and_left_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("images.json");
+        for version in ["1.1", "2.0"] {
+            let bytes = json!({"version":version,"created":"first",
+                "images":[{"path":"one.png"}],"a_newer_key":true})
+            .to_string();
+            std::fs::write(&path, &bytes).unwrap();
+            let error = publish(dir.path(), &[json!({"asset":"a.png"})], "source", false)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                error.contains(&format!(
+                    "{} was written by a newer markitai (format {version}, this markitai writes 1.0) and is left unchanged",
+                    path.display()
+                )),
+                "{error}"
+            );
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), bytes);
+        }
+        // This format, and an index without one (Python's), merge as before.
+        for old in [json!({"version":"1.0","images":[]}), json!({"images":[]})] {
+            std::fs::write(&path, old.to_string()).unwrap();
+            publish(dir.path(), &[json!({"asset":"a.png"})], "source", false).unwrap();
         }
     }
 

@@ -30,6 +30,8 @@ pub(super) const MAX_TOKENS: usize = 50;
 /// A label's characters at most.
 const MAX_LABEL: usize = 60;
 const PREFIX: &str = "mku_";
+/// The file's format number (`version`).
+const FORMAT: u64 = 1;
 
 #[derive(Clone, Serialize, Deserialize)]
 struct Entry {
@@ -115,23 +117,31 @@ fn io_failed() -> ApiError {
 impl Access {
     /// The tokens saved at `path`. A missing file holds none; an unreadable or
     /// invalid one is left as it is (until an admin creates or revokes a
-    /// token) and the service starts without user tokens.
-    pub(super) fn load(path: PathBuf) -> Self {
+    /// token) and the service starts without user tokens. A file a newer
+    /// markitai wrote stops the start instead: replacing it would lose its
+    /// tokens.
+    pub(super) fn load(path: PathBuf) -> Result<Self, String> {
         let tokens = match read(&path) {
             Ok(tokens) => tokens,
-            Err(error) => {
+            Err(Unreadable::Newer(version)) => {
+                return Err(format!(
+                    "Access tokens {} were written by a newer markitai (format {version}, this markitai reads {FORMAT}) and are left unchanged; upgrade markitai to serve with them, or start it with another MARKITAI_HOME",
+                    path.display()
+                ));
+            }
+            Err(Unreadable::Invalid(error)) => {
                 eprintln!(
                     "Warning: Serve: ignoring the saved access tokens ({error}); no user token works until an admin creates or revokes one."
                 );
                 Vec::new()
             }
         };
-        Self {
+        Ok(Self {
             path,
             tokens: RwLock::new(tokens),
             used: Mutex::new(HashMap::new()),
             write: Mutex::new(()),
-        }
+        })
     }
 
     /// The user token `presented` is, as (id, label). The value is hashed and
@@ -245,27 +255,45 @@ impl Access {
     }
 }
 
-fn read(path: &FilePath) -> Result<Vec<Entry>, String> {
+/// Why the saved tokens are not used.
+enum Unreadable {
+    /// A newer markitai's format number.
+    Newer(u64),
+    Invalid(String),
+}
+
+impl From<String> for Unreadable {
+    fn from(error: String) -> Self {
+        Self::Invalid(error)
+    }
+}
+
+fn read(path: &FilePath) -> Result<Vec<Entry>, Unreadable> {
     let bytes = match markitai_core::config::read_file(path) {
         Ok(None) => return Ok(Vec::new()),
         Ok(Some(bytes)) => bytes,
-        Err(error) => return Err(format!("{}: {error}", path.display())),
+        Err(error) => return Err(format!("{}: {error}", path.display()).into()),
     };
-    let saved: Saved =
+    let value: serde_json::Value =
         serde_json::from_slice(&bytes).map_err(|error| format!("{}: {error}", path.display()))?;
-    if saved.version != 1 {
-        return Err(format!(
-            "{}: unsupported version {}",
-            path.display(),
-            saved.version
-        ));
+    // Before the shape: a newer format may have changed it.
+    if let Some(version) = value["version"]
+        .as_u64()
+        .filter(|version| *version > FORMAT)
+    {
+        return Err(Unreadable::Newer(version));
+    }
+    let saved: Saved =
+        serde_json::from_value(value).map_err(|error| format!("{}: {error}", path.display()))?;
+    if saved.version != FORMAT as u32 {
+        return Err(format!("{}: unsupported version {}", path.display(), saved.version).into());
     }
     if saved.tokens.len() > MAX_TOKENS || !saved.tokens.iter().all(valid) {
-        return Err(format!("{}: invalid token entry", path.display()));
+        return Err(format!("{}: invalid token entry", path.display()).into());
     }
     let mut ids = std::collections::HashSet::new();
     if !saved.tokens.iter().all(|entry| ids.insert(&entry.id)) {
-        return Err(format!("{}: duplicate token id", path.display()));
+        return Err(format!("{}: duplicate token id", path.display()).into());
     }
     Ok(saved.tokens)
 }
@@ -273,7 +301,7 @@ fn read(path: &FilePath) -> Result<Vec<Entry>, String> {
 /// Replace the file atomically (staged beside it, owner-only, then renamed).
 fn save(path: &FilePath, tokens: &[Entry]) -> std::io::Result<()> {
     let mut bytes = serde_json::to_vec_pretty(&Saved {
-        version: 1,
+        version: FORMAT as u32,
         tokens: tokens.to_vec(),
     })
     .map_err(std::io::Error::other)?;
@@ -434,7 +462,7 @@ mod tests {
     fn only_digests_are_saved_and_a_restart_reads_them_back() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("serve/access.json");
-        let access = Access::load(path.clone());
+        let access = Access::load(path.clone()).unwrap();
         let created = access.create("Laptop".into()).unwrap();
         let token = created["token"].as_str().unwrap().to_owned();
         assert_eq!(created["hint"], token[token.len() - 4..]);
@@ -458,7 +486,7 @@ mod tests {
             let mode = std::fs::metadata(&path).unwrap().permissions().mode();
             assert_eq!(mode & 0o777, 0o600);
         }
-        let restarted = Access::load(path.clone());
+        let restarted = Access::load(path.clone()).unwrap();
         let (id, label) = restarted.authenticate(&token).unwrap();
         assert_eq!(
             (id.as_str(), label.as_str()),
@@ -472,7 +500,7 @@ mod tests {
         assert!(restarted.authenticate(&token).is_none());
         assert_eq!(restarted.revoke(&id).unwrap_err().reason, "token_not_found");
         assert!(
-            Access::load(path).list()["tokens"]
+            Access::load(path).unwrap().list()["tokens"]
                 .as_array()
                 .unwrap()
                 .is_empty()
@@ -484,7 +512,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("access.json");
         std::fs::write(&path, b"{not json").unwrap();
-        let access = Access::load(path.clone());
+        let access = Access::load(path.clone()).unwrap();
         assert!(access.list()["tokens"].as_array().unwrap().is_empty());
         assert_eq!(std::fs::read(&path).unwrap(), b"{not json");
         for index in 0..MAX_TOKENS {
@@ -497,12 +525,34 @@ mod tests {
         let saved: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         assert_eq!(saved["tokens"].as_array().unwrap().len(), MAX_TOKENS);
         // A file that cannot be replaced changes nothing in memory.
-        let blocked = Access::load(temp.path().join("missing-dir/file/access.json"));
+        let blocked = Access::load(temp.path().join("missing-dir/file/access.json")).unwrap();
         std::fs::write(temp.path().join("missing-dir"), b"a file, not a folder").unwrap();
         assert_eq!(
             blocked.create("Blocked".into()).unwrap_err().reason,
             "settings_io_failed"
         );
         assert!(blocked.list()["tokens"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_newer_format_is_refused_and_left_unchanged() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("access.json");
+        // A newer format may change the rest of the shape too.
+        let newer = br#"{"version":2,"tokens":{"renamed":true}}"#;
+        std::fs::write(&path, newer).unwrap();
+        let Err(error) = Access::load(path.clone()) else {
+            panic!("a newer file was used");
+        };
+        assert!(error.starts_with(&format!("Access tokens {}", path.display())));
+        assert!(error.contains(
+            "were written by a newer markitai (format 2, this markitai reads 1) and are left unchanged"
+        ));
+        assert_eq!(std::fs::read(&path).unwrap(), newer);
+        // An older or unknown version is a damaged file, kept until a change.
+        for version in ["0", "\"2\""] {
+            std::fs::write(&path, format!(r#"{{"version":{version},"tokens":[]}}"#)).unwrap();
+            assert!(Access::load(path.clone()).is_ok());
+        }
     }
 }

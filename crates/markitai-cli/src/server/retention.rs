@@ -108,6 +108,7 @@ pub(super) fn sweep(
         let folder = entry.path();
         if !entry.file_type()?.is_dir()
             || markitai_core::output::check_path(&folder, false).is_err()
+            || store::newer(&folder).is_some()
             || !unregistered_expired(&folder, now)
         {
             continue;

@@ -33,6 +33,9 @@ pub(in crate::server) struct Lists {
     pub shared_weights: BTreeMap<String, u64>,
 }
 
+/// A user's file's format number (`version`).
+const FORMAT: u32 = 1;
+
 #[derive(Serialize, Deserialize)]
 struct Saved {
     version: u32,
@@ -79,7 +82,7 @@ fn read(path: &Path) -> Result<Lists, String> {
     };
     let saved: Saved =
         serde_json::from_slice(&bytes).map_err(|error| format!("{}: {error}", path.display()))?;
-    if saved.version != 1 {
+    if saved.version != FORMAT {
         return Err(format!(
             "{}: unsupported version {}",
             path.display(),
@@ -118,7 +121,7 @@ fn save(
 ) -> std::io::Result<bool> {
     markitai_core::output::create_private_dir(directory)?;
     let mut bytes = serde_json::to_vec_pretty(&Saved {
-        version: 1,
+        version: FORMAT,
         models: lists.models.clone(),
         providers: lists.providers.clone(),
         shared_weights: lists.shared_weights.clone(),
@@ -255,6 +258,33 @@ impl Users {
         }
         let _ = markitai_core::platform::sync_directory(&self.directory);
         Ok(count)
+    }
+
+    /// Refuse a saved file a newer markitai wrote: this one would read it as
+    /// damaged, hold no models for its user and replace it at the next change.
+    pub(in crate::server) fn check_formats(&self) -> Result<(), String> {
+        let Ok(entries) = std::fs::read_dir(&self.directory) else {
+            return Ok(());
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().is_none_or(|extension| extension != "json") {
+                continue;
+            }
+            let Ok(Some(bytes)) = markitai_core::config::read_file(&path) else {
+                continue;
+            };
+            let version = serde_json::from_slice::<Value>(&bytes)
+                .ok()
+                .and_then(|value| value["version"].as_u64());
+            if let Some(version) = version.filter(|version| *version > u64::from(FORMAT)) {
+                return Err(format!(
+                    "A user token's models {} were written by a newer markitai (format {version}, this markitai reads {FORMAT}) and are left unchanged; upgrade markitai to serve with them, or start it with another MARKITAI_HOME",
+                    path.display()
+                ));
+            }
+        }
+        Ok(())
     }
 
     /// Delete the files of tokens that no longer exist (`current` says which

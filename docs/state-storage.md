@@ -315,7 +315,11 @@ files inherit the states directory's ACL). Before
 replacing a corrupt base, the store preserves both base and sidecar in
 unique same-directory quarantine files, syncs them and retains private file
 permissions. Oversized quarantine copies fail while leaving originals in place.
-Foreign scope is an error, not corruption to overwrite as a fresh run. I/O failure
+Foreign scope is an error, not corruption to overwrite as a fresh run. So is a
+base whose `version` is a format number above `1.0`: a newer markitai wrote it,
+and both `--resume` and a fresh run stop with `Recovery state <path> was written
+by a newer markitai (format 2.0, this markitai reads 1.0) and is left unchanged`
+before anything in the states directory changes (see [versioning](versioning.md#stored-data)). I/O failure
 poisons the writer; callers must reopen and recover rather than append after an
 uncertain partial write. Temporary staging is cleaned up when publication fails.
 

@@ -305,7 +305,7 @@ pub(super) fn persist(folder: &Path, data: &JobData) -> std::io::Result<()> {
             .clone();
     }
     let mut meta = json!({"job_id":data.id,"created_at":data.created_at,"finished_at":data.finished_at,
-        "status":data.status,"options":data.options,"dir_size_bytes":data.size,"version":2,"items":items,
+        "status":data.status,"options":data.options,"dir_size_bytes":data.size,"version":FORMAT,"items":items,
         "native_bases":data.bases,"native_assets":data.assets,"native_transactions":data.transactions});
     if let Some(label) = &data.label {
         meta["label"] = json!(label);
@@ -353,6 +353,19 @@ pub(super) fn rehydrate(
             continue;
         }
         let folder = entry.path();
+        if let Some(version) = newer(&folder) {
+            // Not read, recovered, rewritten or swept: this one would drop
+            // what it does not know.
+            static REPORTED: Mutex<Vec<String>> = Mutex::new(Vec::new());
+            let mut reported = REPORTED.lock().unwrap();
+            if !reported.contains(&id) {
+                eprintln!(
+                    "Warning: Serve: job {id} was written by a newer markitai (format {version}, this markitai reads {FORMAT}); it is not listed and is left unchanged"
+                );
+                reported.push(id);
+            }
+            continue;
+        }
         // One damaged job folder must not hide every other job or stop the
         // server. It stays in place and is tried again on the next scan.
         let data = match load(&folder, &id) {
@@ -375,6 +388,22 @@ pub(super) fn rehydrate(
             .or_insert_with(|| Arc::new(Job::new(folder, data)));
     }
     Ok(())
+}
+
+/// The format number (`version`) of the job records this build writes.
+const FORMAT: u64 = 2;
+
+/// The format number of the job saved in `folder` when a newer markitai
+/// wrote it.
+pub(super) fn newer(folder: &Path) -> Option<u64> {
+    let path = safe_file(folder, "meta.json").ok()?;
+    if fs::metadata(&path).ok()?.len() > 16 * 1024 * 1024 {
+        return None;
+    }
+    let value: Value = serde_json::from_slice(&fs::read(path).ok()?).ok()?;
+    value["version"]
+        .as_u64()
+        .filter(|version| *version > FORMAT)
 }
 
 /// Reads one job folder; `None` for folders that are not saved jobs.
@@ -402,7 +431,7 @@ fn load(folder: &Path, id: &str) -> std::io::Result<Option<JobData>> {
     if value["status"] != "done" && !interrupted {
         return Ok(None);
     }
-    if interrupted && (value["job_id"] != id || value["version"] != 2) {
+    if interrupted && (value["job_id"] != id || value["version"] != FORMAT) {
         return Ok(None);
     }
     let Some(raw_items) = value["items"].as_array() else {

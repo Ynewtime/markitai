@@ -491,7 +491,7 @@ mod router_tests {
             allowed_hosts: HashSet::from(["trusted.example".into()]),
             tickets: Default::default(),
             previews: Default::default(),
-            access: super::super::access::Access::load(root.join("access.json")),
+            access: super::super::access::Access::load(root.join("access.json")).unwrap(),
             users: super::super::settings::Users::new(root.join("user-models")),
         });
         Router::new()

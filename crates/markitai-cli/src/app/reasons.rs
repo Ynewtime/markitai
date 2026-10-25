@@ -333,6 +333,14 @@ const RULES: &[(&str, &str)] = &[
     ),
     ("Invalid recovery state: {}", "恢复状态无效：{}"),
     (
+        "Image metadata {} was written by a newer markitai (format {}, this markitai writes {}) and is left unchanged; upgrade markitai, or write to another output directory",
+        "图片元数据 {} 由更新版本的 markitai 写入（格式 {}，当前版本写入 {}），未做任何改动；请升级 markitai，或改用另一个输出目录",
+    ),
+    (
+        "Recovery state {} was written by a newer markitai (format {}, this markitai reads {}) and is left unchanged; upgrade markitai to resume it, or write to another output directory",
+        "恢复状态 {} 由更新版本的 markitai 写入（格式 {}，当前版本只能读取 {}），未做任何改动；请升级 markitai 后再续跑，或改用另一个输出目录",
+    ),
+    (
         "Recovery state scope mismatch: {}",
         "恢复状态的范围不匹配：{}",
     ),
@@ -572,6 +580,10 @@ const RULES: &[(&str, &str)] = &[
     ),
     // The service's own diagnostics.
     (
+        "Access tokens {} were written by a newer markitai (format {}, this markitai reads {}) and are left unchanged; upgrade markitai to serve with them, or start it with another MARKITAI_HOME",
+        "访问令牌文件 {} 由更新版本的 markitai 写入（格式 {}，当前版本只能读取 {}），未做任何改动；请升级 markitai 后再启动服务，或换一个 MARKITAI_HOME 启动",
+    ),
+    (
         "Serve: ignoring the saved access tokens ({}); no user token works until an admin creates or revokes one.",
         "服务：忽略已保存的访问令牌（{}）；在管理员新建或吊销令牌之前，所有用户令牌都不可用。",
     ),
@@ -588,6 +600,10 @@ const RULES: &[(&str, &str)] = &[
         "服务：清理过期历史失败：{}",
     ),
     ("Serve task failed: {}", "服务任务失败：{}"),
+    (
+        "Serve: job {} was written by a newer markitai (format {}, this markitai reads {}); it is not listed and is left unchanged",
+        "服务：任务 {} 由更新版本的 markitai 写入（格式 {}，当前版本只能读取 {}），不会列出，也未做任何改动",
+    ),
     (
         "Serve: skipped unreadable history job {}: {}",
         "服务：跳过无法读取的历史任务 {}：{}",
@@ -616,6 +632,10 @@ const RULES: &[(&str, &str)] = &[
     (
         "Serve: rejected job cleanup task failed: {}",
         "服务：清理被拒绝任务的后台任务失败：{}",
+    ),
+    (
+        "A user token's models {} were written by a newer markitai (format {}, this markitai reads {}) and are left unchanged; upgrade markitai to serve with them, or start it with another MARKITAI_HOME",
+        "用户令牌的模型文件 {} 由更新版本的 markitai 写入（格式 {}，当前版本只能读取 {}），未做任何改动；请升级 markitai 后再启动服务，或换一个 MARKITAI_HOME 启动",
     ),
     (
         "Serve: ignoring a user token's saved models ({}); it has none until it saves one.",

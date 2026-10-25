@@ -14,6 +14,9 @@ fn invalid(message: &str) -> Error {
     Error::Invalid(message.into())
 }
 
+/// The envelope version this build reads and writes (Python markitai's too).
+pub(crate) const FORMAT: &str = "1.0";
+
 /// What a finished item cost, took and produced, kept with its entry so a
 /// resumed batch reports the items an earlier run finished. The first eleven
 /// are Python markitai's names (its state stores them the same way); the
@@ -524,11 +527,13 @@ pub(crate) fn decode(
     deserializer
         .end()
         .map_err(|_| Error::JsonSyntax("trailing content after base".into()))?;
-    if raw
-        .version
-        .as_deref()
-        .is_some_and(|version| version != "1.0")
-    {
+    if let Some(version) = raw.version.as_deref().filter(|version| *version != FORMAT) {
+        if markitai_core::newer_format(version, FORMAT) {
+            return Err(Error::Newer {
+                path: PathBuf::new(),
+                version: version.to_owned(),
+            });
+        }
         return Err(invalid("unsupported state version"));
     }
     let options = raw.options.unwrap_or_default();
@@ -799,7 +804,7 @@ pub(crate) fn encode(
     // Compact: indentation of nested usage rows would cost more than the data.
     serialized(
         &WireSnapshot {
-            version: "1.0",
+            version: FORMAT,
             options: OrderedOptions(&snapshot.options),
             documents,
             urls,
