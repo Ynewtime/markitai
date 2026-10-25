@@ -11,6 +11,7 @@
 // document of its models, connections and weights for the shared models, never
 // the server's configuration.
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { setUnsaved } from "../lib/unsaved.ts";
 import { ApiError, fetchConfigDocument, saveConfigDocument, type ConfigScope } from "../api/client.ts";
 import type { ConfigDocument } from "../api/types.ts";
 import type { Dict } from "../i18n/index.ts";
@@ -67,6 +68,11 @@ export function ConfigSettings({
   const original = useMemo(() => editorText(raw), [raw]);
   const layout = useMemo(() => textLayout(raw), [raw]);
   const changed = doc !== null && text !== original;
+  // A reload after an update would lose the edit: the page offers it instead.
+  useEffect(() => {
+    setUnsaved("config", changed);
+    return () => setUnsaved("config", false);
+  }, [changed]);
   // Checked as it is typed, a moment after the last key.
   const [problem, setProblem] = useState<string | null>(null);
   useEffect(() => {

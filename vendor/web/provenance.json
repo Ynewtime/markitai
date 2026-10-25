@@ -156,9 +156,9 @@
     "source": "https://registry.npmjs.org/@phosphor-icons/react/-/react-2.1.10.tgz",
     "package_integrity": "sha512-vt8Tvq8GLjheAZZYa+YG/pW7HDbov8El/MANW8pOAz4eGxrwhnbfrQZq0Cp4q8zBEu8NIhHdnr+r8thnfRSNYA==",
     "member": "package/dist/defs/*.es.js (path data of the listed icons)",
-    "bytes": 26840,
-    "sha256": "978d4689b05f73a1e148988f3eab427c3eebf8fc7ddde341027b50820ae73d18",
-    "obtained": "generated: the SVG path strings of 71 icons were extracted from the members below; bundled into dist/app.js",
+    "bytes": 27101,
+    "sha256": "d3c006215104b817b6eeddb37e83d62c83721f79224091a8b1bcc5f1a4428203",
+    "obtained": "generated: the SVG path strings of 72 icons were extracted from the members below; bundled into dist/app.js",
     "derived_from": [
       {
         "member": "package/dist/defs/FileText.es.js",
@@ -504,6 +504,11 @@
         "member": "package/dist/defs/Terminal.es.js",
         "bytes": 1923,
         "sha256": "007ce924ac1ab5a3a8c7a5916d1706a793ee4dc6060168904476bbd548ab979b"
+      },
+      {
+        "member": "package/dist/defs/ArrowCircleUp.es.js",
+        "bytes": 2358,
+        "sha256": "db297b6d76340c5f98e69a25393fe1aba3a026d6a509f3ecf5dff272a9301f5d"
       }
     ]
   },

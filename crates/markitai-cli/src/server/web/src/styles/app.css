@@ -7475,3 +7475,285 @@ input[type="password"],
     margin-bottom: 2px;
   }
 }
+
+/* ------------------------------------------------------------ update (v1.24) */
+
+/* the entry: an icon beside the sidebar toggle (or before Docs/GitHub on a phone); a dot while a release
+   waits, a spinner while the server works on it, red after a failure */
+.sidebar-head .upd-icon {
+  width: 32px;
+  height: 32px;
+  margin-left: auto;
+  border-radius: var(--r-sm);
+}
+.upd-icon {
+  color: var(--text-1);
+}
+.upd-icon.is-on {
+  background: var(--sel-strong);
+}
+.upd-icon.is-failed {
+  color: var(--err);
+}
+.upd-dot {
+  position: absolute;
+  top: calc(50% - 10px);
+  left: calc(50% + 4px);
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-1);
+  pointer-events: none;
+}
+/* the version, on hover (wide) or after a long press (phone) */
+.upd-icon[data-tip]:hover::after,
+.upd-icon.is-tip::after {
+  content: attr(data-tip);
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 50%;
+  z-index: 60;
+  padding: 4px 8px;
+  border-radius: var(--r-xs);
+  background: var(--accent);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--accent-contrast);
+  white-space: nowrap;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+:root[data-rail] .sidebar-head .upd-icon[data-tip]:hover::after {
+  top: 50%;
+  left: calc(100% + 10px);
+  transform: translateY(-50%);
+}
+.phone-links .upd-icon.is-tip::after,
+.phone-links .upd-icon[data-tip]:hover::after {
+  right: 0;
+  left: auto;
+  transform: none;
+}
+/* while the update menu is open the flyout is the label */
+.upd-icon.is-on::after {
+  display: none;
+}
+
+/* the card: one row system, rows of 28 px, 12 px apart, a 16 px icon column and the text 24 px in */
+.upd-card {
+  display: grid;
+  gap: 12px;
+}
+.upd-r {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+}
+.upd-ic {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  color: var(--text-1);
+}
+.upd-tx {
+  min-width: 0;
+  font-size: var(--text-ui);
+  line-height: 20px;
+  color: var(--text-1);
+}
+.upd-end {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+.upd-title {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.upd-title b {
+  font-size: var(--text-base);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.upd-title span {
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+}
+.upd-lead {
+  display: -webkit-box;
+  margin: -4px 0 0 24px;
+  overflow: hidden;
+  font-size: var(--text-sm);
+  line-height: 18px;
+  color: var(--text-3);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+/* the status row: its text and a smaller grey value on one baseline, centred on the row */
+.upd-pair {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.upd-num {
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+}
+.upd-r.is-muted .upd-ic,
+.upd-r.is-muted .upd-tx {
+  color: var(--text-3);
+}
+.upd-r.is-error .upd-ic,
+.upd-r.is-error .upd-tx {
+  font-weight: 600;
+  color: var(--err);
+}
+.upd-sub {
+  margin: 0 0 0 24px;
+  font-size: var(--text-sm);
+  line-height: 18px;
+  color: var(--text-3);
+}
+.upd-steps {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+}
+.upd-steps > span {
+  /* how far the current step is (downloading sets it inline) */
+  --p: 100%;
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  font-size: var(--text-xs);
+  line-height: 14px;
+  color: var(--text-3);
+}
+.upd-steps > span::before {
+  content: "";
+  justify-self: stretch;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--hairline);
+}
+.upd-steps > span.is-done {
+  color: var(--text-2);
+}
+.upd-steps > span.is-done::before {
+  background: var(--text-1);
+}
+.upd-steps > span.is-now {
+  font-weight: 600;
+  color: var(--text-1);
+}
+.upd-steps > span.is-now::before {
+  background: linear-gradient(to right, var(--text-1) var(--p), var(--hairline) var(--p));
+}
+.upd-steps > span.is-failed {
+  font-weight: 600;
+  color: var(--err);
+}
+.upd-steps > span.is-failed::before {
+  background: var(--err);
+}
+.upd-acts {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.upd-card .btn.btn-icon {
+  width: 28px;
+  padding: 0;
+}
+.upd-card .sheet-cli {
+  min-height: 32px;
+  padding: 1px 1px 1px 12px;
+}
+
+/* wide: a flyout beside the sidebar, at the entry's height */
+.menu.upd-pop {
+  position: fixed;
+  right: auto;
+  bottom: auto;
+  width: 304px;
+  padding: 12px;
+}
+
+/* a held Convert says why */
+.tool-convert.is-held {
+  opacity: 0.55;
+}
+/* a one-line notice: its mark, text, action and close on one centre line */
+.toast.is-line {
+  align-items: center;
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+.toast.is-line .note-mark,
+.toast.is-line .toast-copy,
+.toast.is-line .note-action {
+  margin-top: 0;
+  padding-top: 0;
+}
+/* the mono ✓ and the mono action draw high in their boxes: measured, these put their ink on the
+   text's centre */
+.toast.is-line .note-mark:not(:has(.spinner)) {
+  position: relative;
+  top: 3px;
+}
+.toast.is-line .note-action {
+  position: relative;
+  top: 2px;
+}
+.toast.is-line .note-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+}
+
+@media (max-width: 760px) {
+  .phone-top .phone-links .upd-icon {
+    color: var(--text-1);
+  }
+  .phone-top .phone-links .upd-icon.is-failed {
+    color: var(--err);
+  }
+  .upd-dot {
+    top: calc(50% - 11px);
+    left: calc(50% + 5px);
+  }
+  /* the sheet: the update's controls keep 11 px text in 28 px, each reaching 4 px further for a finger */
+  .upd-sheet .sheet-body {
+    padding: 4px 16px calc(20px + env(safe-area-inset-bottom));
+  }
+  .upd-sheet .btn {
+    height: 28px;
+    padding: 2px 10px 0;
+    font-size: var(--text-xs);
+  }
+  .upd-sheet .btn.btn-icon {
+    width: 28px;
+    padding: 0;
+  }
+  .upd-sheet .btn::before,
+  .upd-sheet .icon-btn::before {
+    content: "";
+    position: absolute;
+    inset: -4px;
+  }
+  .upd-sheet .sheet-cli .cli-text {
+    font-size: var(--text-xs);
+  }
+}

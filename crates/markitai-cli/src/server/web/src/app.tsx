@@ -20,12 +20,14 @@ import { Shell, useSidebar } from "./components/shell.tsx";
 import type { PanelState } from "./components/conversions-page.tsx";
 import { StateBlock } from "./components/state-block.tsx";
 import { TokenDialog } from "./components/token-dialog.tsx";
+import { UpdateEntry, UpdatePanel } from "./components/update.tsx";
 import { UrlInput } from "./components/url-input.tsx";
 import type { InspectorContext, ItemActionsApi, JobActionsApi } from "./components/inspector.tsx";
 import { useCloudflareConsent } from "./hooks/use-cloudflare-consent.ts";
 import { useConnectivity } from "./hooks/use-connectivity.ts";
 import { useConversions } from "./hooks/use-conversions.ts";
 import { useMedia } from "./hooks/use-media.ts";
+import { takeUpdated, useUpdate } from "./hooks/use-update.ts";
 import { detectLocale, dicts, loadLocale, storeLocale, type Locale } from "./i18n/index.ts";
 import { apiErrorText } from "./i18n/errors.ts";
 import { LANG_TAGS } from "./i18n/locale.ts";
@@ -40,12 +42,16 @@ import { initialComposer, publicOptions, readRemembered, remember, resolveOption
 import { prepareRetryBatch, retryBatchAnnouncement, submitRetryBatch } from "./lib/retry-batch.ts";
 import { ADMIN_SECTIONS, DIALOG_ENTRY, entryOnly, listEntry, listQuery, ONLY_ENTRY, OPEN_MODE, parseListState, parseRoute, routePath, SUMMARY_ENTRY, type PaneMode, type Route, type Section } from "./lib/route.ts";
 import { canRetry, waitingJobs, type SessionItem } from "./lib/session.ts";
+import { hasUnsaved } from "./lib/unsaved.ts";
+import { notesFor } from "./lib/update.ts";
 import { parseUrls } from "./lib/urls.ts";
 
 const DEFAULT_DOCS = "https://markitai.dev";
 const DEFAULT_SOURCE = "https://github.com/Ynewtime/markitai";
 /** Below this width the inspector is a bottom sheet and the preview a full-screen view. */
 const PHONE = "(max-width: 960px)";
+/** Below this width the sidebar gives way to the top bar, and the update card is a bottom sheet. */
+const SHEET = "(max-width: 760px)";
 
 interface Upload {
   loaded: number;
@@ -667,8 +673,49 @@ export function App() {
     if (upload.loaded >= upload.total) return t.uploadDone;
     return t.uploadProgress(Math.min(99, Math.floor((upload.loaded / upload.total) * 100)), fmtBytes(upload.loaded), fmtBytes(upload.total));
   })();
+  // ---- updating a loopback server (v1.24): the entry, its card, the held Convert and the restart
+  const sheet = useMedia(SHEET);
+  const typedRef = useRef(false);
+  typedRef.current = urlText.trim() !== "" || staged !== null;
+  const update = useUpdate({
+    caps,
+    hasUnsaved: () => typedRef.current || hasUnsaved(),
+    onFailure: (error) => {
+      const [first = ""] = describe(error).text.split(/(?<=[.!?。！？])\s*/);
+      note({ id: "update", tone: "error", text: first });
+    },
+    onReloadOffer: (version) =>
+      note({ id: "update-done", tone: "success", line: true, text: dicts[localeRef.current].updDone(version), action: { label: dicts[localeRef.current].updReload, run: () => location.reload() } }),
+    onBack: () => {
+      refreshCaps();
+      void conversionsRef.current.refresh();
+    },
+  });
+  // The tab reloaded into the new version: say so once, with the release notes.
+  useEffect(() => {
+    const version = takeUpdated();
+    if (version === null) return;
+    note({
+      id: "update-done",
+      tone: "success",
+      line: true,
+      text: dicts[localeRef.current].updDone(version),
+      action: { label: dicts[localeRef.current].updNotes, run: () => void window.open(notesFor(sourceUrl, version), "_blank", "noopener,noreferrer") },
+    });
+  }, []);
+  const updateTarget = update.status?.target ?? update.status?.latest ?? "";
+  // Another tab (or `markitai update`) is updating, or this card is closed: a busy note while conversions are held.
+  const updateNote: Note | null =
+    update.holding && !update.open
+      ? { id: "update-busy", tone: "success", text: update.reconnecting || update.status?.state === "restarting" ? t.updRestartNote : t.updBusyNote(updateTarget), busy: true, line: true }
+      : null;
+
   // An upload in progress is the newest strip until it ends (Cancel stops it).
-  const stack: Note[] = [...notes, ...(submitting ? [{ id: "upload", tone: "success" as const, text: uploadText, busy: true, action: { label: t.cancelSubmit, run: cancelSubmit } }] : [])].slice(-MAX_NOTES);
+  const stack: Note[] = [
+    ...notes,
+    ...(updateNote ? [updateNote] : []),
+    ...(submitting ? [{ id: "upload", tone: "success" as const, text: uploadText, busy: true, action: { label: t.cancelSubmit, run: cancelSubmit } }] : []),
+  ].slice(-MAX_NOTES);
 
   const composerPanel = (
     <OptionsPanel
@@ -709,6 +756,7 @@ export function App() {
           onClearStaged={() => setStaged(null)}
           onRemoveStaged={(file) => setStaged((current) => (current ? removeStaged(current, file) : null))}
           tools={tools}
+          held={update.holding}
         />
       )}
     />
@@ -963,9 +1011,13 @@ export function App() {
         onToggle={toggleSidebar}
         onNavigate={navigate}
         sections={sections}
+        updateEntry={(place) => <UpdateEntry t={t} update={update} place={place} />}
       >
         {page}
       </Shell>
+      {update.open && update.look !== null && (
+        <UpdatePanel t={t} update={update} phone={sheet} onCopied={(ok) => note({ tone: ok ? "success" : "error", text: ok ? t.copied : t.copyFailed })} />
+      )}
       {cloudflare.pending && cloudflare.scope && (
         <CloudflareDialog
           t={t}

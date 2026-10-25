@@ -237,6 +237,48 @@ export interface Capabilities {
   ocr_languages?: string[];
   /** v1.20 (`features.ocr_lang`): the server's configured `ocr.lang`, what a job without `ocr_lang` reads with. */
   ocr_lang?: string;
+  /** v1.24, only for the admin of a server that listens on loopback: a newer release and the update's state. */
+  update?: UpdateSummary;
+}
+
+/** v1.24: where an update stands. */
+export type UpdateState = "idle" | "downloading" | "verifying" | "waiting" | "installing" | "restarting" | "failed";
+
+/** v1.24: `Capabilities.update`, the summary of `GET /api/update`. */
+export interface UpdateSummary {
+  current: string | null;
+  latest: string | null;
+  newer: boolean;
+  can_apply: boolean;
+  method: string;
+  state: UpdateState;
+}
+
+/** v1.24: why an update failed (also one the last start undid), and whether files were put back. */
+export interface UpdateError {
+  code: string;
+  reason: string;
+  rolled_back: boolean;
+  version?: string;
+}
+
+/** v1.24: `GET /api/update`. */
+export interface UpdateStatus {
+  state: UpdateState;
+  current: string | null;
+  latest: string | null;
+  newer: boolean;
+  notes_url: string | null;
+  lead: string | null;
+  method: string;
+  command: string | null;
+  can_apply: boolean;
+  target: string | null;
+  progress: { done: number; total: number | null } | null;
+  waiting_jobs: number;
+  error: UpdateError | null;
+  updated_from: string | null;
+  by: "web" | "cli" | null;
 }
 
 /** v1.16: the backend's build: its version, the commit it was built from and when. */

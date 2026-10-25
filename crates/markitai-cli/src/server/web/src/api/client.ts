@@ -24,6 +24,7 @@ import type {
   ProviderCredentials,
   SettingsView,
   ShotBlocks,
+  UpdateStatus,
   UserModelsView,
   UserToken,
 } from "./types.ts";
@@ -418,6 +419,12 @@ export function modelsApi(scope: ModelsScope) {
 export type ModelsApi = ReturnType<typeof modelsApi>;
 export const openConfig = () => json<null>(`${MODELS_BASE.admin}/config/open`, { method: "POST" });
 export const regenerateToken = () => json<RegeneratedToken>("/api/access-token/regenerate", { method: "POST", body: {} });
+
+/** v1.24: the update of a loopback server (admin only). */
+export const fetchUpdate = () => json<UpdateStatus>("/api/update");
+/** Only the release the server found; another answers 409 `version_changed`. */
+export const startUpdate = (version: string) => json<UpdateStatus>("/api/update", { method: "POST", body: { version } });
+export const cancelUpdate = () => json<UpdateStatus>("/api/update", { method: "DELETE" });
 
 /** Only a revision conflict keeps a settings draft for review; other 409s are plain errors. */
 export const isRevisionConflict = (error: unknown): boolean =>

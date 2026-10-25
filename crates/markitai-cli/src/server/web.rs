@@ -529,19 +529,14 @@ mod tests {
                 .into_iter()
                 .map(|(name, _)| name)
                 .collect();
-            // Served (contract v1.24) before the workbench reads it: its
-            // update sheet comes in the next step.
-            let mut documented = keys(&schema["components"]["schemas"][schema_name]["properties"]);
-            if interface_name == "Capabilities" {
-                documented.remove("update");
-            }
             assert_eq!(
-                declared, documented,
+                declared,
+                keys(&schema["components"]["schemas"][schema_name]["properties"]),
                 "{interface_name}: every documented field must be declared exactly once"
             );
         }
         // Nested llm fields must not be mistaken for top-level capabilities.
-        assert_eq!(interface("Capabilities").len(), 15);
+        assert_eq!(interface("Capabilities").len(), 16);
         assert_eq!(interface("CloudflareCapability").len(), 6);
     }
 }

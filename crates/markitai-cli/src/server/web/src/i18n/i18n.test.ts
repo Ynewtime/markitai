@@ -86,6 +86,7 @@ test("every reason the Rust service sends and every core error code has localize
     "original.rs",
     "retention.rs",
     "settings.rs",
+    "update.rs",
     ...readdirSync(new URL("settings/", server)).map((name) => `settings/${name}`),
   ]
     .map((name) => read(name))

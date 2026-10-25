@@ -17,8 +17,10 @@ export interface Note {
   title?: string;
   detail?: string;
   action?: { label: string; run: () => void };
-  /** Busy notices (an upload) show an arrow and never leave by themselves. */
+  /** Busy notices (an upload, an update) show a spinner and never leave by themselves. */
   busy?: boolean;
+  /** One short line: its parts centred on one line. */
+  line?: boolean;
 }
 
 /** The most notices shown at once; a fourth removes the oldest at once. */
@@ -45,7 +47,7 @@ function Toast({ note, closeLabel, detailsLabel, lead, onDismiss }: { note: Note
   }, [note, paused, leaving]);
   return (
     <li
-      class={`toast is-${note.tone}${leaving ? " is-leaving" : ""}`}
+      class={`toast is-${note.tone}${note.line ? " is-line" : ""}${leaving ? " is-leaving" : ""}`}
       onPointerEnter={() => setHeld((state) => ({ ...state, pointer: true }))}
       onPointerLeave={() => setHeld((state) => ({ ...state, pointer: false, press: false }))}
       onPointerDown={(event) => {
@@ -70,7 +72,7 @@ function Toast({ note, closeLabel, detailsLabel, lead, onDismiss }: { note: Note
       }}
     >
       <span class="note-mark" aria-hidden="true">
-        {note.busy ? "↑" : MARK[note.tone]}
+        {note.busy ? <span class="spinner" /> : MARK[note.tone]}
       </span>
       <div class="toast-copy">
         <p class="toast-text">

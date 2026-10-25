@@ -11,6 +11,13 @@ export const ja: Record<MessageKey, string> = {
   errInternal: "サービスで内部エラーが発生しました。もう一度お試しください。繰り返し発生する場合は、サーバーのログを確認してください。",
   errTryAgain: "今回はタスクを作成できませんでした。もう一度送信してください。",
   errShuttingDown: "サービスは終了処理中のため、新しい処理を受け付けられません。",
+  errUpdating: "サーバーを更新中です。新しい変換は再起動後に始まります。",
+  errUpdateForbidden: "サーバーの更新には、このコンピューターで管理者トークンが必要です。",
+  errVersionChanged: "その間に新しいリリースが見つかりました。再読み込みしてやり直してください。",
+  errUpdateRunning: "すでに更新が実行中です。",
+  errUpdateUnavailable: "このインストールは専用のコマンドで更新します。",
+  errNotCancellable: "インストール中のため、更新はもうキャンセルできません。",
+  errControlForbidden: "この API はサーバーのコンピューター上の markitai update 専用です。",
   errHostNotAllowed:
     "サービスはこのアドレスを受け付けません。localhost、IP アドレス、または --allowed-host で許可した名前で開いてください。",
   errOriginNotAllowed: "サービスが別のサイトからのリクエストを拒否しました。",

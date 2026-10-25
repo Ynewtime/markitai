@@ -67,6 +67,7 @@ export function UrlInput({
   onClearStaged,
   onRemoveStaged,
   tools,
+  held = false,
 }: {
   t: Dict;
   text: string;
@@ -79,6 +80,8 @@ export function UrlInput({
   onRemoveStaged?: (file: File) => void;
   /** Controls placed at the start of the bottom bar. */
   tools?: ComponentChildren;
+  /** v1.24: the server is updating and holds new conversions until it has restarted. */
+  held?: boolean;
 }) {
   const [sending, setSending] = useState(false);
   const field = useRef<HTMLTextAreaElement>(null);
@@ -128,14 +131,14 @@ export function UrlInput({
         {tools}
         <button
           type="button"
-          class="tool tool-convert"
-          aria-label={t.convert}
-          disabled={busy || sending || empty}
+          class={held ? "tool tool-convert is-held" : "tool tool-convert"}
+          aria-label={held ? t.updHeld : t.convert}
+          disabled={busy || sending || empty || held}
           aria-busy={busy || sending || undefined}
           onClick={() => void submit()}
         >
           <Icon name="ArrowRight" size={14} />
-          <span class="tool-text">{t.convert}</span>
+          <span class="tool-text">{held ? t.updHeld : t.convert}</span>
         </button>
       </div>
     </div>

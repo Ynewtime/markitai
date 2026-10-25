@@ -78,8 +78,11 @@ pub(super) async fn capabilities(
         .filter_map(|name| Some((name.to_string(), markitai_core::config::preset(&cfg, name)?)))
         .collect();
     let update = super::update::capability(&state, admin);
+    // A release's own version; a debug build posing as a release (the update
+    // tests) reports the posed one, as it does after a restart into it.
+    let version = crate::update::current_identity().0;
     let mut capabilities = json!({
-        "version":markitai_core::VERSION,
+        "version":version,
         "build":build(),
         "implementation":"rust",
         "docs_url":DOCS_URL,
@@ -118,7 +121,7 @@ fn build() -> Value {
         .filter(|epoch| *epoch != 0)
         .and_then(|epoch| chrono::DateTime::<chrono::Utc>::from_timestamp(epoch, 0))
         .map(|at| at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true));
-    json!({"version":markitai_core::VERSION,"commit":commit,"built_at":built_at,
+    json!({"version":crate::update::current_identity().0,"commit":commit,"built_at":built_at,
         "dirty":build_info::DIRTY == "1"})
 }
 

@@ -542,6 +542,19 @@ says so, and the models are saved with it, also for a key the server reads from
 its environment (a saved connection is told to change its address instead). A
 key that neither Kimi service takes gets one sentence saying so.
 
+## Updating the server
+
+With `Capabilities.update` (the admin of a loopback server, v1.24) an icon with a dot sits beside the sidebar
+toggle, or before Docs and GitHub in the phone's top bar; hover or a long press names the version, and it
+turns into a spinner while the server updates and red after a failure. It opens one card, a flyout beside
+the sidebar or a bottom sheet: the version, the release's one line and notes link, then **Update and restart**
+with an inline confirmation (how many conversions finish first), a stepper (download, verify, install,
+restart) with one status row (`12.1 / 31.2 MB`, `SHA-256`, the wait), Cancel until installing, and a failure
+with what it left. Another install shows its command to copy. While new conversions are held, Convert says so
+and a busy note shows in every tab; after the restart the page reloads itself (a notice offers it instead
+when the config editor or a dialog holds edits) and says the new version, with its release notes. Without
+`update` (an exposed server, a user token, Python markitai) nothing shows.
+
 ## Job controls
 
 - **Uploads** use XMLHttpRequest so the page can show the percentage and bytes

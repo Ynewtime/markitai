@@ -100,6 +100,8 @@ export interface ShellProps {
   onNavigate: (route: Route) => void;
   /** The settings pages this token may open, in sidebar order. */
   sections: Section[];
+  /** v1.24: the update entry, beside the sidebar toggle or before the phone's links (`components/update.tsx`). */
+  updateEntry?: (place: "sidebar" | "phone") => ComponentChildren;
   children: ComponentChildren;
 }
 
@@ -132,7 +134,7 @@ function useFinished(active: number): "none" | "shown" | "leaving" {
   return state;
 }
 
-export function Shell({ t, route, version, docsUrl, sourceUrl, active, total, collapsed, onToggle, onNavigate, sections, children }: ShellProps) {
+export function Shell({ t, route, version, docsUrl, sourceUrl, active, total, collapsed, onToggle, onNavigate, sections, updateEntry, children }: ShellProps) {
   const [mac] = useState(() => isMacPlatform(browserPlatform()));
   const shortcut = sidebarShortcut(mac);
   // Ctrl+B / ⌘B folds or unfolds the sidebar, as its toggle does: not while typing (a field or the
@@ -191,6 +193,7 @@ export function Shell({ t, route, version, docsUrl, sourceUrl, active, total, co
             <Logo size={26} />
             <span class="brand-name">Markitai</span>
           </a>
+          {updateEntry?.("sidebar")}
           <button
             type="button"
             class="rail-toggle"
@@ -246,6 +249,7 @@ export function Shell({ t, route, version, docsUrl, sourceUrl, active, total, co
           </a>
           {/* Docs and GitHub are links, not settings: two quiet icons at the bar's end */}
           <span class="phone-links">
+            {updateEntry?.("phone")}
             <a class="icon-btn" href={docsUrl} target="_blank" rel="noopener noreferrer" aria-label={t.docsLabel} aria-describedby="phone-links-note">
               <Icon name="BookOpen" size={19} />
             </a>
