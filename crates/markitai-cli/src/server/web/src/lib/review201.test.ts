@@ -31,7 +31,7 @@ test("M3: Escape on an open (i) bubble closes the bubble only", () => {
 test("L8: a bubble opened from the keyboard stays while focus is on its control", () => {
   const tip = read("../components/help-tooltip.tsx");
   const timer = tip.slice(tip.indexOf("const timer = setTimeout"), tip.indexOf("AUTO_HIDE_MS + extraMs"));
-  assert.match(timer, /!hovered\.current && !anchor\.current\?\.querySelector\(":focus-visible"\) && !anchor\.current\?\.matches\(":focus-visible"\)/);
+  assert.match(timer, /!hovered\.current && !keyboardOn\(anchor\.current\)/);
 });
 
 test("M2: the options dialog has a history entry, so Back closes it and stays on Convert", () => {
@@ -149,4 +149,11 @@ test("Ctrl+B / ⌘B folds the sidebar, never while typing or over a dialog", asy
   assert.match(shell, /if \(!document\.getElementById\("sidebar"\)\?\.getClientRects\(\)\.length\) return;/);
   assert.match(shell, /aria-keyshortcuts=\{shortcut\.aria\}/);
   assert.match(shell, /data-tip=\{`\$\{collapsed \? t\.expandSidebar : t\.collapseSidebar\} \$\{shortcut\.label\}`\}/);
+});
+
+test("Kimi #13: a pointer leaving a keyboard-opened (i) leaves its bubble open", () => {
+  const tip = read("../components/help-tooltip.tsx");
+  assert.match(tip, /const keyboardOn = \(anchor: HTMLElement \| null\): boolean => Boolean\(anchor && \(anchor\.matches\(":focus-visible"\) \|\| anchor\.querySelector\(":focus-visible"\)\)\);/);
+  const soon = tip.slice(tip.indexOf("const hideSoon = () => {"), tip.indexOf("const show = () => {"));
+  assert.match(soon, /if \(!keyboardOn\(anchor\.current\)\) setOpen\(false\);/);
 });

@@ -14,6 +14,9 @@ const AUTO_HIDE_MS = 4000;
 const PER_ITEM_MS = 1500;
 let serial = 0;
 
+/** Keyboard focus is on the bubble's control: the bubble is its description and stays. */
+const keyboardOn = (anchor: HTMLElement | null): boolean => Boolean(anchor && (anchor.matches(":focus-visible") || anchor.querySelector(":focus-visible")));
+
 /** One choice of a row: what it does and, when it is unavailable, why. */
 export interface HelpItem {
   label: string;
@@ -53,7 +56,9 @@ export function HelpTooltip({
   };
   const hideSoon = () => {
     cancelHide();
-    hideTimer.current = setTimeout(() => setOpen(false), 150);
+    hideTimer.current = setTimeout(() => {
+      if (!keyboardOn(anchor.current)) setOpen(false);
+    }, 150);
   };
   const show = () => {
     cancelHide();
@@ -240,7 +245,7 @@ function useBubble({
     // A pointer resting on the anchor or the bubble keeps it, and so does keyboard focus on
     // its control (the bubble is that control's description); leaving hides it.
     const timer = setTimeout(() => {
-      if (!hovered.current && !anchor.current?.querySelector(":focus-visible") && !anchor.current?.matches(":focus-visible")) dismiss();
+      if (!hovered.current && !keyboardOn(anchor.current)) dismiss();
     }, AUTO_HIDE_MS + extraMs);
     return () => {
       clearTimeout(timer);
