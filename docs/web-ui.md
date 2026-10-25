@@ -13,7 +13,7 @@ conversions and a grey pulsing dot while something converts, which turns green a
 everything is done and fades six seconds later), the Settings sections
 (Appearance, Models, Access token, Edit config; a user token sees Appearance,
 its own Models and Edit config for them, see [Access token](#access-token)), and Docs and GitHub at the bottom, with the version
-(`2.0.1`) in small muted text beside Docs and the commit it was built from beside GitHub (`-dirty` after
+(`2.1.0`) in small muted text beside Docs and the commit it was built from beside GitHub (`-dirty` after
 it when built with uncommitted changes), and under them, as small muted text centred rather than a row,
 `Build: 20261017 19:54`, the build's date and time in the viewer's time zone (the label stays `Build:` in every
 language; the full stamp with seconds and offset is the tooltip); the icon rail leaves it out. Its button collapses it to a 60px icon rail; each entry
@@ -24,7 +24,7 @@ with a dialog, a menu or the conversion window open, or on a phone. On phones th
 sidebar gives way to a top bar, with Docs (book) and GitHub (GitHub mark) as
 two muted 44 px icon buttons at its end, and a bottom tab bar (Convert, Conversions,
 Settings); Settings there is the list of the same sections, then one centred muted
-monospace line, `2.0.1 · b73d56f7 · 20261024 18:38` (version, commit linking to GitHub,
+monospace line, `2.1.0 · b73d56f7 · 20261024 18:38` (version, commit linking to GitHub,
 build time). Docs opens markitai.dev in Chinese (`/zh/`) when the page is Chinese and the
 backend's `docs_url` is markitai.dev; any other `docs_url` opens as it is. Every view is an address (`/`, `/jobs`, `/settings/models`,
 `/settings/appearance`, `/settings/access`, `/settings/config`), so reloads, Back and new tabs keep
@@ -809,7 +809,7 @@ an output whose start is an excerpt); a missing feature hides its control instea
 remaining, no Compare, archives saved through the page, history read job by job,
 images read from the file route).
 `docs_url` points the Docs link at the backend's own documentation (both servers name
-`https://markitai.dev/`; Rust before 2.0.1 named its Markdown docs on GitHub). The pricing link
+`https://markitai.dev/`; Rust before 2.1.0 named its Markdown docs on GitHub). The pricing link
 opens the page beside an `index.md` address, or `guide/<page>` under a site root
 (`https://markitai.dev` or `https://markitai.dev/`); the subscriptions' Setup guide
 links always open markitai.dev in the page's language.

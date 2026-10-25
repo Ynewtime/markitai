@@ -1,4 +1,4 @@
-// 2.0.1 owner items (2026-10-24): the properties panel names every key markitai writes and
+// 2.1.0 owner items (2026-10-24): the properties panel names every key markitai writes and
 // leaves out what another row says; Docs and GitHub move to the phone header; a single choice
 // of more than three options is a menu button.
 import assert from "node:assert/strict";

@@ -1,4 +1,4 @@
-// 2.0.1 owner decision (2026-10-24, option B): the conversion options leave the page for a dialog, a
+// 2.1.0 owner decision (2026-10-24, option B): the conversion options leave the page for a dialog, a
 // sheet from the bottom on a phone and a centred dialog near the top on a wider screen. Its first page
 // lists the groups with their values; a group opens in place; the foot keeps the command and the defaults.
 import assert from "node:assert/strict";

@@ -1,4 +1,4 @@
-// 2.0.1 owner items (2026-10-24, design G): Details open with a quiet "request options" row above
+// 2.1.0 owner items (2026-10-24, design G): Details open with a quiet "request options" row above
 // the status line, the command line folded under it (one choice per browser), and the start of the
 // result as Rendered or Source with its real line count.
 import assert from "node:assert/strict";

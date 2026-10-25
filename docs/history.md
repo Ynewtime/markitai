@@ -44,7 +44,7 @@ This can leave a successful conversion without a history archive.
 The archive contains `meta.json` and `out/`. Metadata uses the reference job
 schema: `job_id`, `created_at`, `finished_at`, `status`, `options`,
 `dir_size_bytes`, `items`. Job status is `done` even when all conversions failed.
-Options are exactly `preset`, `llm`, `ocr`, `origin:"cli"` and, since 2.0.1,
+Options are exactly `preset`, `llm`, `ocr`, `origin:"cli"` and, since 2.1.0,
 `settings`: what the run converted with, as in [serve](serve.md#retry-enhancement-and-item-deletion)
 (the workbench's Details show it as the command line). Size counts copied
 outputs and assets after rewriting, excluding metadata.

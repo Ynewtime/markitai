@@ -163,7 +163,7 @@ export function noticeModels(kind: NoticeKind, text: string): string[] {
 }
 
 /** A model answer that could not be used, requested again and answered (both backends' info notice
- * `llm.answer_retried`, in its 2.0.1 and its earlier wording): nothing is missing and nothing is to be
+ * `llm.answer_retried`, in its 2.1.0 and its earlier wording): nothing is missing and nothing is to be
  * done, so like the terminal (which shows it with -v only) the workbench does not show it; the cost
  * already counts the second request. */
 export const isUsedRetry = (text: string): boolean =>

@@ -180,7 +180,7 @@ pub(super) struct Protected {
 pub(super) enum Rules {
     /// markitai 2.0.0: a link and every HTML tag are one marker each.
     Whole,
-    /// From 2.0.1: a link's words and attribute-less styling tags stay
+    /// From 2.1.0: a link's words and attribute-less styling tags stay
     /// readable; only the link's address is a marker.
     Readable,
 }

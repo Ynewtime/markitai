@@ -1,4 +1,4 @@
-// The list's select-all box (2.0.1): three states over what the filters list, a click that checks all of it
+// The list's select-all box (2.1.0): three states over what the filters list, a click that checks all of it
 // or clears, and submission headers that agree with it.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";

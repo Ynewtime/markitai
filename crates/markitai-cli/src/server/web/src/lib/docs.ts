@@ -1,5 +1,5 @@
 // Addresses in the backend's own documentation, from `docs_url`: a page beside an `index.md` address (the
-// Markdown docs Rust servers before 2.0.1 named), or under `guide/` of a site root such as `https://markitai.dev` or `https://markitai.dev/`
+// Markdown docs Rust servers before 2.1.0 named), or under `guide/` of a site root such as `https://markitai.dev` or `https://markitai.dev/`
 // (the VitePress site markitai.dev). Any other address is kept as it is.
 import type { Locale } from "../i18n/locale.ts";
 

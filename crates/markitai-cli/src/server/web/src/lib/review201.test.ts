@@ -1,4 +1,4 @@
-// 2.0.1 pre-release review of the rc (2026-10-25): the findings fixed in the workbench.
+// 2.1.0 pre-release review of the rc (2026-10-25): the findings fixed in the workbench.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";

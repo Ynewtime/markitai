@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { docsPage } from "./docs.ts";
 
-test("an index.md docs address maps to the page beside it (Rust before 2.0.1)", () => {
+test("an index.md docs address maps to the page beside it (Rust before 2.1.0)", () => {
   const rust = "https://github.com/Ynewtime/markitai/blob/main/docs/index.md";
   assert.equal(docsPage(rust, "pricing"), "https://github.com/Ynewtime/markitai/blob/main/docs/pricing.md");
   assert.equal(docsPage(rust, "subscription-chatgpt"), "https://github.com/Ynewtime/markitai/blob/main/docs/subscription-chatgpt.md");

@@ -186,7 +186,7 @@ const FAMILIES: &[(&str, Level, &str, &str, Subject)] = &[
         "a later answer was used",
         Subject::None,
     ),
-    // The wording before 2.0.1, still in older histories and reports.
+    // The wording before 2.1.0, still in older histories and reports.
     (
         "llm.answer_retried",
         Level::Info,

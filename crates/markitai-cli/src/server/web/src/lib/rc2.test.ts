@@ -1,4 +1,4 @@
-// 2.0.1 owner items on the release candidate (2026-10-25): the options dialog's command scrolls
+// 2.1.0 owner items on the release candidate (2026-10-25): the options dialog's command scrolls
 // instead of being cut, the properties line stays put and folded says only "Properties · N", and
 // Details' result start in Source opens Preview's Source.
 import assert from "node:assert/strict";

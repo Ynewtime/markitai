@@ -4,7 +4,7 @@ use crate::{ConversionFailure, DetailedResult};
 use serde::{Deserialize, Serialize};
 
 const PLAN_VERSION: u32 = 1;
-/// The marker rules of plans frozen from 2.0.1 on (`chunks::Rules::Readable`);
+/// The marker rules of plans frozen from 2.1.0 on (`chunks::Rules::Readable`);
 /// a plan without the field was frozen by 2.0.0 (`chunks::Rules::Whole`).
 const MARKER_RULES: u8 = 2;
 
@@ -285,7 +285,7 @@ pub enum Prepared {
 pub struct Plan {
     version: u32,
     // How the request's markers were made: a pending batch frozen by 2.0.0
-    // is checked against its own markers when 2.0.1 collects it.
+    // is checked against its own markers when 2.1.0 collects it.
     #[serde(default = "whole_marker_rules")]
     marker_rules: u8,
     endpoint: Endpoint,
@@ -847,7 +847,7 @@ mod tests {
             panic!("cache is disabled");
         };
         let id = "69e09eb66ddf4601aaa461af0324f81b-1";
-        // The recording predates 2.0.1, which shows a link's words and hides
+        // The recording predates 2.1.0, which shows a link's words and hides
         // only its address: the recorded request and answer carried the whole
         // link as one marker, so they are read with the link written out.
         let link = "⟦MKTI:1976117f15854677:00000000⟧";
@@ -897,7 +897,7 @@ mod tests {
     /// A batch submitted with 2.0.0 and collected after the upgrade: its
     /// plan has no `marker_rules` and its request carries the whole link as
     /// one marker (the recording, unchanged). The paid answer is checked
-    /// against those markers and decodes; read with 2.0.1's markers it would
+    /// against those markers and decodes; read with 2.1.0's markers it would
     /// be refused.
     #[test]
     fn a_plan_frozen_by_2_0_0_reads_its_answer_with_its_own_markers() {
@@ -962,7 +962,7 @@ mod tests {
                 .contains("[the changelog](https://example.test/changelog)")
         );
         assert!(decoded.markdown.contains("print(\"unchanged code\")"));
-        // The same answer against a plan frozen with 2.0.1's markers is refused.
+        // The same answer against a plan frozen with 2.1.0's markers is refused.
         assert!(current.decode(&item, &cfg).is_err());
         // An unknown rules number is not guessed at.
         let mut future = serde_json::to_value(&*current).unwrap();

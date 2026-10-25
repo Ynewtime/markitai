@@ -1,4 +1,4 @@
-// Compare's outline (2.0.1): a hovered block's outline paints inside its chunk, so moving it never changes a
+// Compare's outline (2.1.0): a hovered block's outline paints inside its chunk, so moving it never changes a
 // chunk's containment (lifting it while a block was outlined left the old outline's edges on screen).
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";

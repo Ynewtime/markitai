@@ -425,7 +425,7 @@ backend; a custom prompt is `"custom"`. Credentials, addresses, headers and
 prompt text never appear. A retry records its own, an enhancement its own
 without changing the repeat selections, and CLI runs recorded with
 `--record-history` record theirs. `null` (or a missing field) marks a job
-recorded before 2.0.1. Like `options`, it is a record, not authorization.
+recorded before 2.1.0. Like `options`, it is a record, not authorization.
 
 Both operations reconvert the original retained upload or refetch the original
 URL. Enhancement is an explicit one-off attempt that turns the LLM on: an item
