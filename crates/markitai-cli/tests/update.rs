@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -76,7 +76,11 @@ impl Releases {
             hex(&<sha2::Sha256 as sha2::Digest>::digest(&archive))
         };
         self.put(version, &name, archive);
-        self.put(version, "SHA256SUMS", format!("{digest}  {name}\n").into_bytes());
+        self.put(
+            version,
+            "SHA256SUMS",
+            format!("{digest}  {name}\n").into_bytes(),
+        );
         self.put(
             version,
             "RELEASE-NOTES.md",
@@ -281,9 +285,17 @@ fn check_answers_with_its_exit_status_and_json() {
             &answer["newer"],
             &answer["action"]
         ),
-        (&json!("2.1.0"), &json!("2.2.0"), &json!(true), &json!("none"))
+        (
+            &json!("2.1.0"),
+            &json!("2.2.0"),
+            &json!(true),
+            &json!("none")
+        )
     );
-    assert_eq!(answer["notes_url"], format!("{}/tag/v2.2.0", releases.base()));
+    assert_eq!(
+        answer["notes_url"],
+        format!("{}/tag/v2.2.0", releases.base())
+    );
     // What was learnt is kept for the notice, with the release's description.
     assert_eq!(home.cache()["latest"], "2.2.0");
     assert_eq!(home.cache()["lead"], "Faster tables and a new command.");
@@ -307,7 +319,10 @@ fn check_answers_with_its_exit_status_and_json() {
 
 #[test]
 fn a_failed_check_is_exit_one_and_a_source_build_never_asks() {
-    let closed = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
+    let closed = TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap();
     let releases = Releases::start("2.2.0");
     let home = Home::plain();
     let offline = format!("http://{closed}/releases");
@@ -320,10 +335,17 @@ fn a_failed_check_is_exit_one_and_a_source_build_never_asks() {
     assert!(stderr.contains("Can't reach 127.0.0.1"), "{stderr}");
     // The failure starts the backoff.
     assert_eq!(home.cache()["failures"], 1);
-    let (_, stderr, code) = text(&home.run(&releases, &["update"], &[("MARKITAI_LANG", "zh"), ("MARKITAI_DOWNLOAD_URL", &offline)]));
+    let (_, stderr, code) = text(&home.run(
+        &releases,
+        &["update"],
+        &[("MARKITAI_LANG", "zh"), ("MARKITAI_DOWNLOAD_URL", &offline)],
+    ));
     assert_eq!(code, 1);
     assert!(stderr.contains("✗ 无法连接 127.0.0.1"), "{stderr}");
-    assert!(stderr.contains("• 未做改动") && stderr.contains("✗ 更新失败"), "{stderr}");
+    assert!(
+        stderr.contains("• 未做改动") && stderr.contains("✗ 更新失败"),
+        "{stderr}"
+    );
     // Without posing as a release, the debug build is a source build.
     let mut command = home.command(&releases, &[]);
     command.env_remove("MARKITAI_TEST_UPDATE_AS");
@@ -349,7 +371,10 @@ fn a_copy_no_setup_script_installed_gets_the_setup_command_and_changes_nothing()
     let (_, stderr, code) = text(&home.run(&releases, &["update"], &[]));
     assert_eq!(code, 10, "{stderr}");
     assert!(stderr.contains("◆ markitai 2.1.0 → 2.2.0"), "{stderr}");
-    assert!(stderr.contains("  Faster tables and a new command."), "{stderr}");
+    assert!(
+        stderr.contains("  Faster tables and a new command."),
+        "{stderr}"
+    );
     assert!(
         stderr.contains("! Can't tell how this copy was installed:"),
         "{stderr}"
@@ -381,12 +406,21 @@ mod unix {
         let (stdout, stderr, code) = text(&home.run(&releases, &["update", "--json"], &[]));
         assert_eq!(code, 0, "{stderr}");
         let answer: Value = serde_json::from_str(&stdout).unwrap();
-        assert_eq!((&answer["method"], &answer["action"]), (&json!("setup"), &json!("updated")));
+        assert_eq!(
+            (&answer["method"], &answer["action"]),
+            (&json!("setup"), &json!("updated"))
+        );
         let program = home.path("home/.local/bin/markitai");
         let version = Command::new(&program).arg("--version").output().unwrap();
-        assert_eq!(String::from_utf8_lossy(&version.stdout).trim(), "markitai 2.2.0");
+        assert_eq!(
+            String::from_utf8_lossy(&version.stdout).trim(),
+            "markitai 2.2.0"
+        );
         let current = home.path("home/.local/share/markitai/current");
-        assert_eq!(std::fs::read_to_string(current.join("LICENSE")).unwrap(), "MIT\n");
+        assert_eq!(
+            std::fs::read_to_string(current.join("LICENSE")).unwrap(),
+            "MIT\n"
+        );
         let receipt = std::fs::read_to_string(current.join("receipt")).unwrap();
         for line in [
             "version=2.2.0".to_owned(),
@@ -394,7 +428,10 @@ mod unix {
             "installer=setup.sh".into(),
             "format=1".into(),
         ] {
-            assert!(receipt.lines().any(|found| found == line), "{line}: {receipt}");
+            assert!(
+                receipt.lines().any(|found| found == line),
+                "{line}: {receipt}"
+            );
         }
         // The links stay, and nothing is left beside the program.
         let mut names: Vec<String> = std::fs::read_dir(home.path("home/.local/bin"))
@@ -412,13 +449,28 @@ mod unix {
         let home = Home::setup_sh();
         let (_, stderr, code) = text(&home.run(&releases, &["update"], &[("MARKITAI_LANG", "zh")]));
         assert_eq!(code, 1, "{stderr}");
-        assert!(stderr.contains("✗ SHA-256 不匹配，已删除下载的文件"), "{stderr}");
+        assert!(
+            stderr.contains("✗ SHA-256 不匹配，已删除下载的文件"),
+            "{stderr}"
+        );
         assert!(stderr.contains("• 未做改动"), "{stderr}");
         let program = home.path("home/.local/bin/markitai");
-        assert!(std::fs::symlink_metadata(&program).unwrap().file_type().is_symlink());
-        let receipt = std::fs::read_to_string(home.path("home/.local/share/markitai/current/receipt")).unwrap();
+        assert!(
+            std::fs::symlink_metadata(&program)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        let receipt =
+            std::fs::read_to_string(home.path("home/.local/share/markitai/current/receipt"))
+                .unwrap();
         assert!(receipt.starts_with("version=2.1.0\n"), "{receipt}");
-        assert_eq!(std::fs::read_dir(home.path("home/.local/bin")).unwrap().count(), 2);
+        assert_eq!(
+            std::fs::read_dir(home.path("home/.local/bin"))
+                .unwrap()
+                .count(),
+            2
+        );
     }
 
     #[test]
@@ -428,10 +480,18 @@ mod unix {
         let home = Home::setup_sh();
         let (_, stderr, code) = text(&home.run(&releases, &["update"], &[]));
         assert_eq!(code, 1, "{stderr}");
-        assert!(stderr.contains("The new version didn't start: broken"), "{stderr}");
+        assert!(
+            stderr.contains("The new version didn't start: broken"),
+            "{stderr}"
+        );
         assert!(stderr.contains("• Nothing changed"), "{stderr}");
         let program = home.path("home/.local/bin/markitai");
-        assert!(std::fs::symlink_metadata(&program).unwrap().file_type().is_symlink());
+        assert!(
+            std::fs::symlink_metadata(&program)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
     }
 
     #[test]
@@ -461,7 +521,13 @@ mod unix {
             };
             let window: *mut libc::winsize = &mut window;
             assert_eq!(
-                libc::openpty(&mut master, &mut slave, std::ptr::null_mut(), std::ptr::null_mut(), window),
+                libc::openpty(
+                    &mut master,
+                    &mut slave,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    window
+                ),
                 0
             );
             (
@@ -471,7 +537,9 @@ mod unix {
         };
         command.stdout(Stdio::null()).stderr(Stdio::from(slave));
         let mut child = command.spawn().unwrap();
-        // The slave's copy in `command` closes with it.
+        // Replacing the command's copy of the slave closes it, so the
+        // master reads to the end once the child exits.
+        command.stderr(Stdio::null());
         let reader = std::thread::spawn(move || {
             let mut bytes = Vec::new();
             let mut buffer = [0_u8; 4096];
@@ -495,9 +563,10 @@ mod unix {
         let releases = Releases::start("2.2.0");
         let home = Home::plain();
         std::fs::write(home.path("a.txt"), "Words.\n").unwrap();
+        // Without colour, so the lines read as plain text.
         let convert = |extra: &[(&str, &str)]| {
             let mut command = home.command(&releases, extra);
-            command.args(["a.txt", "-o", "out"]);
+            command.env("NO_COLOR", "1").args(["a.txt", "-o", "out"]);
             command
         };
         // Off a terminal: no check, no notice.
@@ -506,12 +575,23 @@ mod unix {
         assert!(releases.requests().is_empty());
         // On one: checked in the background, then the L1 line.
         let notice = "• 有新版本 2.2.0（当前 2.1.0）：";
-        let (shown, code) = on_a_terminal(&mut convert(&[("MARKITAI_LANG", "zh"), ("TERM", "xterm"), ("LANG", "zh_CN.UTF-8")]));
+        let (shown, code) = on_a_terminal(&mut convert(&[
+            ("MARKITAI_LANG", "zh"),
+            ("TERM", "xterm"),
+            ("LANG", "zh_CN.UTF-8"),
+        ]));
         assert_eq!(code, 0, "{shown}");
-        assert!(shown.contains(notice) && shown.contains("markitai update"), "{shown:?}");
+        assert!(
+            shown.contains(notice) && shown.contains("markitai update"),
+            "{shown:?}"
+        );
         assert_eq!(releases.requests().len(), 2, "{:?}", releases.requests());
         // Not again today, and no new request either.
-        let (again, _) = on_a_terminal(&mut convert(&[("MARKITAI_LANG", "zh"), ("TERM", "xterm"), ("LANG", "zh_CN.UTF-8")]));
+        let (again, _) = on_a_terminal(&mut convert(&[
+            ("MARKITAI_LANG", "zh"),
+            ("TERM", "xterm"),
+            ("LANG", "zh_CN.UTF-8"),
+        ]));
         assert!(!again.contains("有新版本"), "{again:?}");
         assert_eq!(releases.requests().len(), 2);
         // A newer release is news at once, unless checking is off, quiet, in CI or JSON.
@@ -525,17 +605,24 @@ mod unix {
             let (quiet, _) = on_a_terminal(&mut convert(&extra));
             assert!(!quiet.contains("New version"), "{extra:?}: {quiet:?}");
         }
-        for args in [&["a.txt", "-o", "out", "-q"][..], &["a.txt", "-o", "out", "--json"], &["a.txt"]] {
+        for args in [
+            &["a.txt", "-o", "out", "-q"][..],
+            &["a.txt", "-o", "out", "--json"],
+            &["a.txt"],
+        ] {
             let mut command = home.command(&releases, &[]);
             command.args(args);
             let (quiet, _) = on_a_terminal(&mut command);
             assert!(!quiet.contains("New version"), "{args:?}: {quiet:?}");
         }
         std::fs::write(home.path("cfg.json"), r#"{"update":{"check":false}}"#).unwrap();
-        let (off, _) = on_a_terminal(&mut convert(&[]).args(["-c", "cfg.json"]));
+        let (off, _) = on_a_terminal(convert(&[]).args(["-c", "cfg.json"]));
         assert!(!off.contains("New version"), "{off:?}");
         let (shown, _) = on_a_terminal(&mut convert(&[]));
-        assert!(shown.contains("• New version 2.3.0 (current 2.1.0): markitai update"), "{shown:?}");
+        assert!(
+            shown.contains("• New version 2.3.0 (current 2.1.0): markitai update"),
+            "{shown:?}"
+        );
     }
 
     /// A server run from the setup install, on a free port with a known token.
@@ -549,9 +636,15 @@ mod unix {
 
     impl Serve {
         fn start(home: &Home, releases: &Releases) -> Self {
+            // A fixed port: a server put back without handover binds it again.
+            let free = TcpListener::bind("127.0.0.1:0")
+                .unwrap()
+                .local_addr()
+                .unwrap()
+                .port();
             let mut command = home.command(releases, &[("MARKITAI_SERVE_TOKEN", TOKEN)]);
             command
-                .args(["serve", "--port", "0", "--no-open"])
+                .args(["serve", "--port", &free.to_string(), "--no-open"])
                 .stdout(Stdio::null())
                 .stderr(Stdio::piped());
             let mut child = command.spawn().unwrap();
@@ -559,7 +652,9 @@ mod unix {
             let (copy, stderr) = (log.clone(), child.stderr.take().unwrap());
             std::thread::spawn(move || {
                 for line in BufReader::new(stderr).lines().map_while(Result::ok) {
-                    copy.lock().unwrap().push_str(&format!("{line}\n"));
+                    copy.lock()
+                        .unwrap_or_else(|error| error.into_inner())
+                        .push_str(&format!("{line}\n"));
                 }
             });
             let started = Instant::now();
@@ -581,7 +676,9 @@ mod unix {
 
         fn call(&self, method: &str, path: &str, body: Option<Value>) -> Option<(u16, Value)> {
             let mut stream = TcpStream::connect(("127.0.0.1", self.port)).ok()?;
-            stream.set_read_timeout(Some(Duration::from_secs(10))).ok()?;
+            stream
+                .set_read_timeout(Some(Duration::from_secs(10)))
+                .ok()?;
             let body = body.map(|body| body.to_string()).unwrap_or_default();
             let request = format!(
                 "{method} {path} HTTP/1.1\r\nhost: 127.0.0.1:{}\r\nauthorization: Bearer {TOKEN}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
@@ -608,7 +705,7 @@ mod unix {
                 assert!(
                     started.elapsed() < Duration::from_secs(60),
                     "{label}: {}",
-                    self.log.lock().unwrap()
+                    self.log.lock().unwrap_or_else(|error| error.into_inner())
                 );
                 std::thread::sleep(Duration::from_millis(50));
             }
@@ -640,25 +737,49 @@ mod unix {
         let server = Serve::start(&home, &releases);
         let pid = server.child.id();
         let view = server.wait("the daily check", |view| view["latest"] == "2.2.0");
-        assert_eq!((&view["can_apply"], &view["method"]), (&json!(true), &json!("setup")));
+        assert_eq!(
+            (&view["can_apply"], &view["method"]),
+            (&json!(true), &json!("setup"))
+        );
         // The page cannot pick another version.
         let (status, refused) = server
             .call("POST", "/api/update", Some(json!({"version": "2.0.1"})))
             .unwrap();
-        assert_eq!((status, refused["reason"].as_str()), (409, Some("version_changed")));
+        assert_eq!(
+            (status, refused["reason"].as_str()),
+            (409, Some("version_changed"))
+        );
         let (status, started) = server
             .call("POST", "/api/update", Some(json!({"version": "2.2.0"})))
             .unwrap();
-        assert_eq!((status, started["state"].as_str()), (202, Some("downloading")), "{started}");
+        assert_eq!(
+            (status, started["state"].as_str()),
+            (202, Some("downloading")),
+            "{started}"
+        );
         let view = server.wait("the restart", |view| view["updated_from"] == "2.1.0");
-        assert_eq!((&view["current"], &view["state"]), (&json!("2.2.0"), &json!("idle")));
+        assert_eq!(
+            (&view["current"], &view["state"]),
+            (&json!("2.2.0"), &json!("idle"))
+        );
         // The same process, the same port and token; the old files are gone.
         assert_eq!(server.child.id(), pid);
-        assert!(home.path("home/.local/bin").read_dir().unwrap().all(|entry| {
-            !entry.unwrap().file_name().to_string_lossy().starts_with(".markitai")
-        }));
+        assert!(
+            home.path("home/.local/bin")
+                .read_dir()
+                .unwrap()
+                .all(|entry| {
+                    !entry
+                        .unwrap()
+                        .file_name()
+                        .to_string_lossy()
+                        .starts_with(".markitai")
+                })
+        );
         assert!(!home.path("mh/update-pending.json").exists());
-        let receipt = std::fs::read_to_string(home.path("home/.local/share/markitai/current/receipt")).unwrap();
+        let receipt =
+            std::fs::read_to_string(home.path("home/.local/share/markitai/current/receipt"))
+                .unwrap();
         assert!(receipt.starts_with("version=2.2.0\n"), "{receipt}");
         let log = server.log.lock().unwrap().clone();
         for line in [
@@ -675,7 +796,11 @@ mod unix {
     #[test]
     fn a_new_version_that_fails_before_it_is_ready_puts_the_old_one_back() {
         let releases = Releases::start("2.2.0");
-        releases.publish("2.2.0", &posing_program("MARKITAI_TEST_UPDATE_FAIL_START=1"), false);
+        releases.publish(
+            "2.2.0",
+            &posing_program("MARKITAI_TEST_UPDATE_FAIL_START=1"),
+            false,
+        );
         let home = Home::setup_sh();
         let server = Serve::start(&home, &releases);
         server.wait("the daily check", |view| view["latest"] == "2.2.0");
@@ -683,15 +808,28 @@ mod unix {
             .call("POST", "/api/update", Some(json!({"version": "2.2.0"})))
             .unwrap();
         // The old version serves again and says why.
-        let view = server.wait("the rollback", |view| view["error"]["code"] == "start_failed");
+        let view = server.wait("the rollback", |view| {
+            view["error"]["code"] == "start_failed"
+        });
         assert_eq!(view["current"], "2.1.0");
         assert_eq!(view["error"]["rolled_back"], true);
         let program = home.path("home/.local/bin/markitai");
-        assert!(std::fs::symlink_metadata(&program).unwrap().file_type().is_symlink());
-        let receipt = std::fs::read_to_string(home.path("home/.local/share/markitai/current/receipt")).unwrap();
+        assert!(
+            std::fs::symlink_metadata(&program)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        let receipt =
+            std::fs::read_to_string(home.path("home/.local/share/markitai/current/receipt"))
+                .unwrap();
         assert!(receipt.starts_with("version=2.1.0\n"), "{receipt}");
         let log = server.log.lock().unwrap().clone();
-        for line in ["✗ 2.2.0 didn't start:", "→ Back on 2.1.0", "! The update to 2.2.0 failed; still 2.1.0"] {
+        for line in [
+            "✗ 2.2.0 didn't start:",
+            "→ Back on 2.1.0",
+            "! The update to 2.2.0 failed; still 2.1.0",
+        ] {
             assert!(log.contains(line), "{line}: {log}");
         }
     }
