@@ -722,7 +722,7 @@ fn all_four_modes_publish_one_job_with_mode_appropriate_names_and_real_outputs()
         // The fixture configuration's own values are what the run converted with.
         assert_eq!(
             meta["options"],
-            json!({"preset":null,"llm":false,"ocr":false,"origin":"cli","settings":{"cache.enabled":false,"fetch.strategy":"static","image.compress":false,"image.filter.min_area":1,"image.filter.min_height":1,"image.filter.min_width":1}})
+            json!({"preset":null,"llm":false,"ocr":false,"origin":"cli","settings":{"cache.enabled":false,"fetch.remote_consent":"never","fetch.strategy":"static","image.compress":false,"image.filter.min_area":1,"image.filter.min_height":1,"image.filter.min_width":1}})
         );
         assert!(!job.join("uploads").exists());
     }

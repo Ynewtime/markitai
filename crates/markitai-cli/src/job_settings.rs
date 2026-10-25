@@ -31,6 +31,8 @@ const ALWAYS: &[&str] = &[
     "image.filter.deduplicate",
     "security.pdf_sanitize",
     "fetch.strategy",
+    // `never` is `--no-remote-fetch`: a copied command keeps the prohibition.
+    "fetch.remote_consent",
     "fetch.cloudflare.convert_enabled",
 ];
 
@@ -120,6 +122,22 @@ mod tests {
         );
         cfg["ocr"]["enabled"] = json!(true);
         assert_eq!(of(&cfg)["ocr.lang"], "ja");
+    }
+
+    #[test]
+    fn a_run_that_keeps_urls_off_remote_services_says_so() {
+        // `--no-remote-fetch` (or `fetch.remote_consent: never`): a copied
+        // `--strategy jina` must not lose the prohibition.
+        let mut cfg = markitai_core::config::defaults();
+        cfg["fetch"]["strategy"] = json!("jina");
+        cfg["fetch"]["remote_consent"] = json!("never");
+        cfg["fetch"]["no_remote"] = json!(true);
+        assert_eq!(
+            Value::Object(of(&cfg)),
+            json!({"fetch.strategy":"jina","fetch.remote_consent":"never"})
+        );
+        cfg["fetch"]["remote_consent"] = json!("ask");
+        assert_eq!(of(&cfg)["fetch.remote_consent"], "ask");
     }
 
     #[test]
