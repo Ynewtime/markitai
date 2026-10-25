@@ -18,7 +18,9 @@ it when built with uncommitted changes), and under them, as small muted text cen
 `Build: 20261017 19:54`, the build's date and time in the viewer's time zone (the label stays `Build:` in every
 language; the full stamp with seconds and offset is the tooltip); the icon rail leaves it out. Its button collapses it to a 60px icon rail; each entry
 keeps its name for assistive technology and shows it as a tooltip on hover and
-keyboard focus, and the choice is remembered in this browser. On phones the
+keyboard focus, and the choice is remembered in this browser. Ctrl+B (⌘B on a Mac) does the same, named in
+the button's tooltip and `aria-keyshortcuts`; it does nothing while typing in a field or the config editor,
+with a dialog, a menu or the conversion window open, or on a phone. On phones the
 sidebar gives way to a top bar, with Docs (book) and GitHub (GitHub mark) as
 two muted 44 px icon buttons at its end, and a bottom tab bar (Convert, Conversions,
 Settings); Settings there is the list of the same sections, then one centred muted

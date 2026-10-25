@@ -8,6 +8,7 @@ import type { ComponentChildren } from "preact";
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { commitLabel, type VersionLine } from "../lib/build.ts";
 import type { Dict } from "../i18n/index.ts";
+import { browserPlatform, isMacPlatform, isSidebarShortcut, isTypingTarget, sidebarShortcut } from "../lib/keys.ts";
 import { ownClick, routePath, type Route, type Section } from "../lib/route.ts";
 import { Icon, Logo } from "./icons.tsx";
 import type { IconName } from "./icon-paths.ts";
@@ -132,6 +133,23 @@ function useFinished(active: number): "none" | "shown" | "leaving" {
 }
 
 export function Shell({ t, route, version, docsUrl, sourceUrl, active, total, collapsed, onToggle, onNavigate, sections, children }: ShellProps) {
+  const [mac] = useState(() => isMacPlatform(browserPlatform()));
+  const shortcut = sidebarShortcut(mac);
+  // Ctrl+B / ⌘B folds or unfolds the sidebar, as its toggle does: not while typing (a field or the
+  // config editor keeps the keys), not over a dialog, a menu or the conversion window, and not on a
+  // phone, which has no sidebar.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || !isSidebarShortcut(event, mac)) return;
+      if (isTypingTarget(event.target as Element | null) || isTypingTarget(document.activeElement)) return;
+      if (document.querySelector('.veil, [role="dialog"], [aria-modal="true"], .confirm-card, .menu')) return;
+      if (!document.getElementById("sidebar")?.getClientRects().length) return;
+      event.preventDefault();
+      onToggle();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [mac, onToggle]);
   const section = route.view === "settings" ? route.section ?? sections[0] ?? "appearance" : null;
   const sectionLabels: Record<Section, string> = { appearance: t.navAppearanceShort, models: t.navModels, access: t.navAccess, config: t.navConfig };
   const settingsLink = (to: Section, icon: IconName, label: string) => (
@@ -179,7 +197,9 @@ export function Shell({ t, route, version, docsUrl, sourceUrl, active, total, co
             aria-controls="sidebar"
             aria-expanded={!collapsed}
             aria-label={collapsed ? t.expandSidebar : t.collapseSidebar}
-            data-tip={collapsed ? t.expandSidebar : t.collapseSidebar}
+            aria-keyshortcuts={shortcut.aria}
+            data-tip={`${collapsed ? t.expandSidebar : t.collapseSidebar} ${shortcut.label}`}
+            title={collapsed ? undefined : `${t.collapseSidebar} ${shortcut.label}`}
             onClick={onToggle}
           >
             <Icon name="SidebarSimple" size={17} />

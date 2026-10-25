@@ -118,3 +118,35 @@ test("L13: a cut value can be read: two lines and a tooltip, key tooltips, a fad
   assert.match(read("./scroll-cells.ts"), /cell\.classList\.toggle\("is-less", cell\.scrollLeft > 1\);/);
   assert.match(block(".sheet-cli .cli-text.is-less.is-more"), /mask-image: linear-gradient\(to right, transparent, #000 20px, #000 calc\(100% - 20px\), transparent\);/);
 });
+
+test("Ctrl+B / ⌘B folds the sidebar, never while typing or over a dialog", async () => {
+  const { isMacPlatform, isSidebarShortcut, isTypingTarget, sidebarShortcut } = await import("./keys.ts");
+  const press = (over: Partial<KeyboardEvent>) => ({ key: "b", code: "KeyB", metaKey: false, ctrlKey: false, altKey: false, shiftKey: false, isComposing: false, repeat: false, ...over });
+  assert.equal(isMacPlatform("MacIntel"), true);
+  assert.equal(isMacPlatform("macOS"), true);
+  assert.equal(isMacPlatform("Win32"), false);
+  assert.equal(isMacPlatform("Linux x86_64"), false);
+  assert.equal(isSidebarShortcut(press({ ctrlKey: true }), false), true);
+  assert.equal(isSidebarShortcut(press({ metaKey: true }), true), true);
+  // the other platform's modifier, an extra key, typing in an IME, a held key: no
+  assert.equal(isSidebarShortcut(press({ metaKey: true }), false), false);
+  assert.equal(isSidebarShortcut(press({ ctrlKey: true }), true), false);
+  assert.equal(isSidebarShortcut(press({ ctrlKey: true, shiftKey: true }), false), false);
+  assert.equal(isSidebarShortcut(press({ ctrlKey: true, isComposing: true }), false), false);
+  assert.equal(isSidebarShortcut(press({ ctrlKey: true, repeat: true }), false), false);
+  // the B key of another layout (code KeyB) counts
+  assert.equal(isSidebarShortcut(press({ ctrlKey: true, key: "и" }), false), true);
+  assert.equal(isSidebarShortcut(press({ ctrlKey: true, key: "n", code: "KeyN" }), false), false);
+  assert.deepEqual(sidebarShortcut(true), { label: "⌘B", aria: "Meta+B" });
+  assert.deepEqual(sidebarShortcut(false), { label: "Ctrl+B", aria: "Control+B" });
+  for (const tag of ["INPUT", "TEXTAREA", "SELECT"]) assert.equal(isTypingTarget({ tagName: tag }), true, tag);
+  assert.equal(isTypingTarget({ tagName: "DIV", isContentEditable: true }), true);
+  assert.equal(isTypingTarget({ tagName: "BUTTON", closest: () => null }), false);
+  assert.equal(isTypingTarget(null), false);
+  const shell = read("../components/shell.tsx");
+  assert.match(shell, /if \(isTypingTarget\(event\.target as Element \| null\) \|\| isTypingTarget\(document\.activeElement\)\) return;/);
+  assert.match(shell, /if \(document\.querySelector\('\.veil, \[role="dialog"\], \[aria-modal="true"\], \.confirm-card, \.menu'\)\) return;/);
+  assert.match(shell, /if \(!document\.getElementById\("sidebar"\)\?\.getClientRects\(\)\.length\) return;/);
+  assert.match(shell, /aria-keyshortcuts=\{shortcut\.aria\}/);
+  assert.match(shell, /data-tip=\{`\$\{collapsed \? t\.expandSidebar : t\.collapseSidebar\} \$\{shortcut\.label\}`\}/);
+});

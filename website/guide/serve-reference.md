@@ -31,6 +31,8 @@ The details behind the [web workspace guide](/guide/serve): access rules, user t
 
 ## Workspace Details
 
+**Sidebar.** Its button, or Ctrl+B (⌘B on a Mac), folds it to a rail of icons and back; the shortcut waits while you type or a window is open.
+
 **Build line.** The sidebar's foot names the server's build: the version beside **Docs**, the commit beside **GitHub** (`-dirty` when built with uncommitted changes), and under them `Build: 20261017 19:54` in your time zone (hover for the full time). On a phone, **Docs** and **GitHub** are the two icons at the right of the top bar, and the Settings page ends with one line: `2.0.1 · b73d56f7 · 20261024 18:38` (version, commit, build time).
 
 **Convert.** Files are staged with upload progress until **Convert**, and may share one submission with URLs. **Upload**'s menu also picks a folder. URLs are checked before anything is sent.
