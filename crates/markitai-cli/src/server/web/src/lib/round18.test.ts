@@ -148,7 +148,7 @@ test("styles: tables keep to the column, the front line, the status dot, the con
   assert.match(css, /\.live-dot > span \{[^}]*background: var\(--text-3\);[^}]*animation: pulse/);
   assert.match(css, /\.live-dot\.is-done > span \{\s*background: var\(--success\);\s*animation: none;/);
   assert.match(css, /\.config-editor textarea \{[^}]*color: transparent;/);
-  assert.match(css, /@media \(forced-colors: active\) \{\s*\.config-highlight \{\s*display: none;/);
+  assert.match(css, /@media \(forced-colors: active\) \{\s*\.config-highlight,\s*\.config-caret \{\s*display: none;/);
 });
 
 test("Compare never pairs a block with an earlier page when it is not found ahead", () => {
