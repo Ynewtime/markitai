@@ -502,7 +502,7 @@ pub(crate) fn unpack(work: &Work, downloaded: &Downloaded) -> Result<PathBuf, Er
             archive_error(error)
         }
     };
-    std::fs::create_dir(&destination).map_err(&written_error)?;
+    std::fs::create_dir(&destination).map_err(written_error)?;
     let file = std::fs::File::open(&downloaded.archive).map_err(archive_error)?;
     let mut written = 0u64;
     let mut count = 0usize;
@@ -531,18 +531,18 @@ pub(crate) fn unpack(work: &Work, downloaded: &Downloaded) -> Result<PathBuf, Er
             }
             let target = destination.join(&name);
             if entry.is_dir() {
-                std::fs::create_dir_all(&target).map_err(&written_error)?;
+                std::fs::create_dir_all(&target).map_err(written_error)?;
                 continue;
             }
             account(entry.size())?;
             if let Some(parent) = target.parent() {
-                std::fs::create_dir_all(parent).map_err(&written_error)?;
+                std::fs::create_dir_all(parent).map_err(written_error)?;
             }
             let mut output = std::fs::File::create(&target)
                 .and_then(|output| fault("unpack").map(|()| output))
-                .map_err(&written_error)?;
+                .map_err(written_error)?;
             let copied = io::copy(&mut (&mut entry).take(UNPACKED_LIMIT), &mut output)
-                .map_err(&written_error)?;
+                .map_err(written_error)?;
             if copied != entry.size() {
                 return Err(Error::Archive(format!("short member {shown}")));
             }
@@ -557,18 +557,18 @@ pub(crate) fn unpack(work: &Work, downloaded: &Downloaded) -> Result<PathBuf, Er
             let target = destination.join(&name);
             match entry.header().entry_type() {
                 tar::EntryType::Directory => {
-                    std::fs::create_dir_all(&target).map_err(&written_error)?;
+                    std::fs::create_dir_all(&target).map_err(written_error)?;
                 }
                 tar::EntryType::Regular | tar::EntryType::Continuous => {
                     account(entry.size())?;
                     if let Some(parent) = target.parent() {
-                        std::fs::create_dir_all(parent).map_err(&written_error)?;
+                        std::fs::create_dir_all(parent).map_err(written_error)?;
                     }
                     let mut output = std::fs::File::create(&target)
                         .and_then(|output| fault("unpack").map(|()| output))
-                        .map_err(&written_error)?;
+                        .map_err(written_error)?;
                     io::copy(&mut (&mut entry).take(UNPACKED_LIMIT), &mut output)
-                        .map_err(&written_error)?;
+                        .map_err(written_error)?;
                     #[cfg(unix)]
                     {
                         use std::os::unix::fs::PermissionsExt;
