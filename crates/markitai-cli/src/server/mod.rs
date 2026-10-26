@@ -318,6 +318,33 @@ pub(crate) fn run(cfg: Value, source: SettingsSource, options: ServeOptions) -> 
     }
 }
 
+/// Ctrl-C (and SIGTERM on Unix), registered now: the returned future ends
+/// at the first one, even one that came before it was awaited.
+#[cfg(unix)]
+fn shutdown_signals() -> std::io::Result<impl std::future::Future<Output = ()>> {
+    use tokio::signal::unix::{SignalKind, signal};
+    let mut interrupt = signal(SignalKind::interrupt())?;
+    let mut terminate = signal(SignalKind::terminate())?;
+    Ok(async move {
+        tokio::select! { _ = interrupt.recv() => {}, _ = terminate.recv() => {} }
+    })
+}
+
+#[cfg(windows)]
+fn shutdown_signals() -> std::io::Result<impl std::future::Future<Output = ()>> {
+    let mut interrupt = tokio::signal::windows::ctrl_c()?;
+    Ok(async move {
+        let _ = interrupt.recv().await;
+    })
+}
+
+#[cfg(not(any(unix, windows)))]
+fn shutdown_signals() -> std::io::Result<impl std::future::Future<Output = ()>> {
+    Ok(async {
+        let _ = tokio::signal::ctrl_c().await;
+    })
+}
+
 fn say_restart_failed(to: &str, current: &str, reason: &str) {
     use crate::app::logging::{Shape, shaped};
     let zh = crate::app::i18n::lang() == crate::app::i18n::Lang::Zh;
@@ -492,6 +519,9 @@ async fn serve(
     let _ = std::thread::Builder::new()
         .name("markitai-ocr-warm".into())
         .spawn(move || markitai_core::warm_local_ocr(&cfg));
+    // Listening for Ctrl-C and SIGTERM before the startup lines say the
+    // server is up: a signal from then on drains instead of killing it.
+    let interrupted = shutdown_signals().map_err(|e| e.to_string())?;
     let token = state.token();
     let restarted = handover.from.is_some();
     if restarted && state.update.updated_from.is_some() {
@@ -534,17 +564,6 @@ async fn serve(
     .with_graceful_shutdown(async move {
         let restarting = async {
             let _ = restart_requested.wait_for(Option::is_some).await;
-        };
-        #[cfg(unix)]
-        let interrupted = async {
-            let mut terminate =
-                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-                    .expect("install SIGTERM handler");
-            tokio::select! { _=tokio::signal::ctrl_c()=>{}, _=terminate.recv()=>{} }
-        };
-        #[cfg(not(unix))]
-        let interrupted = async {
-            let _ = tokio::signal::ctrl_c().await;
         };
         let restart = tokio::select! { _ = interrupted => false, _ = restarting => true };
         shutdown_state.closing.store(true, Ordering::SeqCst);
