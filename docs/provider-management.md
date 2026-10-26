@@ -77,8 +77,8 @@ Discovery no longer answers 503 for these. A `key_rejected` answer also names
 the endpoints that refused the key as `endpoints`, in the order tried.
 
 Some providers issue keys per region, and each endpoint refuses another
-region's key with HTTP 401: Moonshot AI, Kimi Code, MiniMax and Model Studio
-(`dashscope`); their regions are listed under
+region's key with HTTP 401: Moonshot AI, Kimi Code, MiniMax, Z.ai and Model
+Studio (`dashscope`); their regions are listed under
 [LLM](llm.md#keys-that-belong-to-a-region) and on the provider's card as
 `regions` (contract v1.25, the default first). A discovery for one of them with
 a key but no address (no `api_base`, no base variable) that the default endpoint
@@ -86,7 +86,7 @@ refuses tries the other regions in that order; when one lists the models, the
 answer carries its address as `api_base` (contract v1.21), which the workbench
 fills into the new connection's address so its models are saved with it. That
 includes a key the server reads from the provider's variable (`MOONSHOT_API_KEY`,
-`KIMI_API_KEY`, `MINIMAX_API_KEY`, `DASHSCOPE_API_KEY`): its models are added
+`KIMI_API_KEY`, `MINIMAX_API_KEY`, `ZAI_API_KEY`, `DASHSCOPE_API_KEY`): its models are added
 with `credential_provider_id: "env:<provider>"` and that `api_base`, the one
 address other than its own that the settings API lets the server's key go to.
 A request that names an address is sent there only.

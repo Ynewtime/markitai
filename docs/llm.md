@@ -282,14 +282,17 @@ a key in its documented `sk-kimi-` form).
 | `moonshot/` | International: `https://api.moonshot.ai/v1`; China: `https://api.moonshot.cn/v1` | platform.kimi.ai; platform.kimi.com (开放平台) | platform.kimi.ai/docs/guide/start-using-kimi-api |
 | `kimi_code/` | kimi.com: `https://api.kimi.com/coding/v1`; kimi.ai: `https://api.kimi.ai/coding/v1` | a Kimi Code membership, kimi.com; kimi.ai | Kimi Code's guide for Claude Code |
 | `minimax/` | Global: `https://api.minimax.io/v1`; Mainland China: `https://api.minimax.cn/v1` | platform.minimax.io; platform.minimax.cn | platform.minimax.io/docs/coding-plan/faq |
+| `zai/` | International: `https://api.z.ai/api/paas/v4`; China: `https://open.bigmodel.cn/api/paas/v4` | z.ai; bigmodel.cn (智谱开放平台) | docs.z.ai/guides/develop/http/introduction; docs.bigmodel.cn/cn/api/introduction |
 | `dashscope/` | Beijing: `https://dashscope.aliyuncs.com/compatible-mode/v1`; Singapore: `https://dashscope-intl.aliyuncs.com/compatible-mode/v1`; US (Virginia): `https://dashscope-us.aliyuncs.com/compatible-mode/v1`; Hong Kong: `https://cn-hongkong.dashscope.aliyuncs.com/compatible-mode/v1` | Model Studio, per region | alibabacloud.com/help/en/model-studio/base-url |
 
 Kimi Code takes `KIMI_API_KEY`, its address `KIMI_CODE_API_BASE` or
 `KIMI_CODE_BASE_URL` (model IDs such as `k3.1-pro`, `k3`,
-`kimi-for-coding`; the workbench lists the ones the key may use). MiniMax's M Plan
-keys (`sk-cp-…`) use the same addresses. Model Studio's Coding Plan keys
-(`sk-sp-…`) work only at the plan's own endpoints, for coding tools, and are not
-tried there; a workspace-dedicated Model Studio host
+`kimi-for-coding`; the workbench lists the ones the key may use). Z.ai's models
+are entered by hand, so the workbench has no list to find its region with; its
+and Zhipu's Coding Plan endpoints (`…/api/coding/paas/v4`) take either kind of
+key, as MiniMax's addresses take its M Plan keys (`sk-cp-…`). Model Studio's
+Coding Plan keys (`sk-sp-…`) work only at the plan's own endpoints, for coding
+tools, and are not tried there; a workspace-dedicated Model Studio host
 (`<workspace>.<region>.maas.aliyuncs.com`) is set as `api_base` and tried alone.
 
 Kimi Code is reached at its Anthropic-compatible Messages endpoint
