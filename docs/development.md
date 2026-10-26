@@ -105,6 +105,11 @@ from a clean commit with `cargo build --release --locked -p markitai-cli` and
 `uv run scripts/website_shots.py`; its docstring lists the inputs it fetches
 and what it needs installed.
 
+`uv run scripts/workbench_upload_e2e.py` drives the workbench's folder upload
+in Chromium against a `markitai serve` debug build: no job before Convert, one
+upload, and a refused submission that says why. `--ui DIR` tests unbuilt
+sources from a `node build.mjs` output; its docstring has the other options.
+
 A ```` ```mermaid ```` block becomes SVG while the site builds
 (`website/.vitepress/mermaid.ts`, Pele); a diagram Pele cannot draw fails the
 build. `website/NOTICE` credits the site's build dependencies, separately from
