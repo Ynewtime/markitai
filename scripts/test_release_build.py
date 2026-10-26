@@ -22,7 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def tar_with(path, members):
     """members: (name, kind, mode, payload-or-linkname)."""
-    with tarfile.open(path, "w:gz") as bundle:
+    with tarfile.open(path, "w:gz", compresslevel=1) as bundle:
         for name, kind, mode, value in members:
             info = tarfile.TarInfo(name)
             info.mode = mode
