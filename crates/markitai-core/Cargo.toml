@@ -6,6 +6,10 @@ rust-version.workspace = true
 publish.workspace = true
 license.workspace = true
 
+# No doc tests: the library has none, and rustdoc would still build one run.
+[lib]
+doctest = false
+
 [dependencies]
 tract-onnx = { version = "=0.23.8", default-features = false, optional = true }
 # tract's own matrix kernels on several threads (rayon), for text detection.
