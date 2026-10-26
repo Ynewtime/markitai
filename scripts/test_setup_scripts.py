@@ -12,7 +12,6 @@ import http.server
 import io
 import os
 import platform
-import pty
 import re
 import shutil
 import subprocess
@@ -170,6 +169,8 @@ class SetupShTests(unittest.TestCase):
 
     def run_with_terminal(self, answer="", **environment):
         """setup.sh with a terminal on stdin that has `answer` typed ahead."""
+        import pty  # Unix only (termios); the class is skipped on Windows.
+
         leader, follower = pty.openpty()
         try:
             os.write(leader, answer.encode())
