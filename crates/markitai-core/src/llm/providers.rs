@@ -799,46 +799,94 @@ pub(crate) fn listings() -> impl Iterator<Item = Listing> {
 }
 
 /// One region of a provider whose keys are issued per region: its endpoint
-/// and the site that issues the keys it accepts.
+/// and the site (or console region) that issues the keys it accepts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Region {
     pub base: &'static str,
     pub console: &'static str,
 }
 
-/// The regions of a provider whose key works only at the endpoint of the
-/// region that issued it, the documented default first (checked
-/// 2026-10-24). Moonshot's open platform issues keys on platform.kimi.ai
-/// (once platform.moonshot.ai) for api.moonshot.ai and on platform.kimi.com
-/// (once platform.moonshot.cn) for api.moonshot.cn; Kimi Code's membership
-/// has a kimi.com and a kimi.ai endpoint. Each answers a key it does not
-/// know with HTTP 401.
+/// A provider whose key works only at the endpoint of the region that issued
+/// it (each answers a key it does not know with HTTP 401), its regions with
+/// the documented default first, and what a refusal adds about keys of the
+/// same look that belong elsewhere.
+struct Regional {
+    prefix: &'static str,
+    regions: &'static [Region],
+    sibling: Option<&'static str>,
+}
+
+const fn region(base: &'static str, console: &'static str) -> Region {
+    Region { base, console }
+}
+
+/// The providers whose documentation says so (checked 2026-10-26, pages in
+/// `docs/llm.md`). Moonshot's open platform issues keys on platform.kimi.ai
+/// (once platform.moonshot.ai) and platform.kimi.com (once
+/// platform.moonshot.cn); Kimi Code's membership has a kimi.com and a kimi.ai
+/// endpoint. MiniMax keys are Global or Mainland China ones. Model Studio
+/// keys belong to a region; its Coding Plan keys (`sk-sp-`) work only at the
+/// plan's own endpoints, which list models without checking the key, so they
+/// are named, not tried.
+const REGIONAL: &[Regional] = &[
+    Regional {
+        prefix: "moonshot",
+        regions: &[
+            region("https://api.moonshot.ai/v1", "platform.kimi.ai"),
+            region("https://api.moonshot.cn/v1", "platform.kimi.com"),
+        ],
+        sibling: Some("a Kimi Code membership key is used as kimi_code/<model>"),
+    },
+    Regional {
+        prefix: "kimi_code",
+        regions: &[
+            region("https://api.kimi.com/coding/v1", "kimi.com"),
+            region("https://api.kimi.ai/coding/v1", "kimi.ai"),
+        ],
+        sibling: Some("a Kimi platform key is used as moonshot/<model>"),
+    },
+    Regional {
+        prefix: "minimax",
+        regions: &[
+            region("https://api.minimax.io/v1", "platform.minimax.io"),
+            region("https://api.minimax.cn/v1", "platform.minimax.cn"),
+        ],
+        sibling: None,
+    },
+    Regional {
+        prefix: "dashscope",
+        regions: &[
+            region(
+                "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                "Model Studio's Beijing region",
+            ),
+            region(
+                "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+                "Model Studio's Singapore region",
+            ),
+            region(
+                "https://dashscope-us.aliyuncs.com/compatible-mode/v1",
+                "Model Studio's US (Virginia) region",
+            ),
+            region(
+                "https://cn-hongkong.dashscope.aliyuncs.com/compatible-mode/v1",
+                "Model Studio's Hong Kong region",
+            ),
+        ],
+        sibling: Some(
+            "a Coding Plan key (sk-sp-…) works only at the Coding Plan's endpoints, in coding tools",
+        ),
+    },
+];
+
+fn regional(prefix: &str) -> Option<&'static Regional> {
+    REGIONAL.iter().find(|entry| entry.prefix == prefix)
+}
+
+/// The regions of a provider that issues keys per region, the documented
+/// default first; empty for any other provider.
 pub(crate) fn regions(prefix: &str) -> &'static [Region] {
-    const MOONSHOT: [Region; 2] = [
-        Region {
-            base: "https://api.moonshot.ai/v1",
-            console: "platform.kimi.ai",
-        },
-        Region {
-            base: "https://api.moonshot.cn/v1",
-            console: "platform.kimi.com",
-        },
-    ];
-    const KIMI_CODE: [Region; 2] = [
-        Region {
-            base: "https://api.kimi.com/coding/v1",
-            console: "kimi.com",
-        },
-        Region {
-            base: "https://api.kimi.ai/coding/v1",
-            console: "kimi.ai",
-        },
-    ];
-    match prefix {
-        "moonshot" => &MOONSHOT,
-        "kimi_code" => &KIMI_CODE,
-        _ => &[],
-    }
+    regional(prefix).map_or(&[], |entry| entry.regions)
 }
 
 fn host(url: &str) -> Option<String> {
@@ -849,15 +897,18 @@ fn host(url: &str) -> Option<String> {
 
 /// What to try when a regional endpoint refuses a key, for an English
 /// message: the region the endpoint (a base or a request URL) serves, the
-/// others' endpoints, and the sibling service whose keys look the same
-/// (Moonshot's open platform and Kimi Code). `None` elsewhere.
+/// others' endpoints, and the keys of the same look that belong elsewhere
+/// (Moonshot's open platform and Kimi Code, Model Studio's Coding Plan).
+/// `None` elsewhere.
 pub(crate) fn region_hint(prefix: &str, endpoint: &str) -> Option<String> {
-    let regions = regions(prefix);
+    let entry = regional(prefix)?;
     let at = host(endpoint)?;
-    let here = regions
+    let here = entry
+        .regions
         .iter()
         .find(|region| host(region.base).as_deref() == Some(at.as_str()))?;
-    let others = regions
+    let mut others = entry
+        .regions
         .iter()
         .filter(|region| *region != here)
         .map(|region| {
@@ -866,14 +917,15 @@ pub(crate) fn region_hint(prefix: &str, endpoint: &str) -> Option<String> {
                 region.console, region.base
             )
         })
-        .collect::<Vec<_>>()
-        .join(", ");
-    let sibling = match prefix {
-        "moonshot" => "a Kimi Code membership key is used as kimi_code/<model>",
-        _ => "a Kimi platform key is used as moonshot/<model>",
+        .collect::<Vec<_>>();
+    let last = entry.sibling.map(str::to_owned).or_else(|| others.pop());
+    let others = match last {
+        Some(last) if !others.is_empty() => format!("{}, and {last}", others.join(", ")),
+        Some(last) => last,
+        None => String::new(),
     };
     Some(format!(
-        "{at} accepts keys from {} only: {others}, and {sibling}",
+        "{at} accepts keys from {} only: {others}",
         here.console
     ))
 }

@@ -292,14 +292,21 @@ fn lookup(provider: &str) -> Option<&'static ProviderEntry> {
 /// Discovery bases; Gemini and Ollama inference use different endpoint paths.
 /// The other OpenAI-compatible prefixes list `/models` beside their inference
 /// endpoint.
-/// Whether `base` is one of the endpoints of a provider that issues keys per
-/// region (Moonshot AI, Kimi Code): discovery sends a key that the default
-/// endpoint refuses to these too, and names the one that lists its models.
-pub fn provider_region_base(provider: &str, base: &str) -> bool {
-    let base = base.trim().trim_end_matches('/');
+/// The endpoints of a provider that issues keys per region (Moonshot AI,
+/// Kimi Code, MiniMax, Model Studio), the default first: discovery sends a
+/// key that the default endpoint refuses to the others in turn, and names the
+/// one that lists its models. Empty for any other provider.
+pub fn provider_regions(provider: &str) -> Vec<&'static str> {
     crate::llm::providers::regions(provider)
         .iter()
-        .any(|region| region.base == base)
+        .map(|region| region.base)
+        .collect()
+}
+
+/// Whether `base` is one of [`provider_regions`].
+pub fn provider_region_base(provider: &str, base: &str) -> bool {
+    let base = base.trim().trim_end_matches('/');
+    provider_regions(provider).contains(&base)
 }
 
 pub fn provider_default_base(provider: &str) -> Option<&'static str> {
@@ -581,16 +588,20 @@ fn discover_with_environment(
             )
         })
     };
-    let others: Vec<&str> = if regional && key.is_some() {
-        crate::llm::providers::regions(&provider)
-            .iter()
-            .map(|region| region.base)
-            .filter(|other| *other != base)
-            .collect()
+    let others = if regional && key.is_some() {
+        other_regions(&provider, &base)
     } else {
         Vec::new()
     };
     regional_list(&base, &others, list)
+}
+
+/// The endpoints a key refused at `base` is tried at next, in order.
+fn other_regions(provider: &str, base: &str) -> Vec<&'static str> {
+    provider_regions(provider)
+        .into_iter()
+        .filter(|other| *other != base)
+        .collect()
 }
 
 /// The list at `base`, else, while each endpoint refuses the key, at the
