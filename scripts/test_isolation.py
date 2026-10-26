@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 from audit_formats import run_worker
 import bounded_run
-from check import affected_crates, run_lanes, run_steps, test_command, test_skips, unshimmed_path
+from check import affected_crates, run_lanes, run_steps, runtime_free_path, test_command, test_skips, unshimmed_path
 from isolation import isolated_env
 
 
@@ -223,3 +223,23 @@ class CheckQuick(unittest.TestCase):
                          ["cargo", "nextest", "run", "--workspace", "--locked", "--no-fail-fast", "--", "--skip", "vision"])
         self.assertEqual(test_command(["markitai-cli"], False, {}),
                          ["cargo", "test", "-p", "markitai-cli", "--locked", "--no-fail-fast"])
+
+
+class CheckPath(unittest.TestCase):
+    def test_a_directory_with_a_subscription_runtime_keeps_its_other_programs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "tools").mkdir()
+            (root / "plain").mkdir()
+            for name in ["claude", "copilot.cmd", "uv"]:
+                (root / "tools" / name).write_text("")
+            path = os.pathsep.join([str(root / "plain"), str(root / "tools")])
+            found, hidden = runtime_free_path(path, root / "mirrors", ".EXE;.CMD")
+            self.assertEqual(hidden, [str(root / "tools")])
+            entries = found.split(os.pathsep)
+            self.assertEqual(entries[0], str(root / "plain"))
+            if os.name == "nt":
+                self.assertEqual(entries, [str(root / "plain")])
+            else:
+                self.assertEqual(sorted(child.name for child in Path(entries[1]).iterdir()), ["uv"])
+            self.assertEqual(runtime_free_path(str(root / "plain"), root / "mirrors"), (str(root / "plain"), []))

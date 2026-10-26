@@ -9,6 +9,7 @@ changed crates and of the crates that depend on them, and the helper tests
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import argparse
+import hashlib
 import io
 import json
 import os
@@ -25,6 +26,9 @@ from web_deps import WEB, stale_web_dependencies
 
 # Each interpreter names its own executable.
 PROBES = {"python3": ["-c", "import sys; print(sys.executable)"], "node": ["-p", "process.execPath"]}
+# The official subscription runtimes: the tests never start the developer's own
+# (hosted CI has none; the tests that need one play it with a fake runtime).
+RUNTIMES = ("copilot", "claude", "codex")
 # Changes here can affect every crate.
 EVERY_CRATE = ("Cargo.toml", "Cargo.lock", "vendor/", ".cargo/", "rust-toolchain", "clippy.toml", "rustfmt.toml",
                ".config/nextest.toml")
@@ -47,6 +51,35 @@ def unshimmed_path(path):
         if real and Path(real).resolve() != Path(found).resolve():
             directories.append(str(Path(real).parent))
     return os.pathsep.join(directories + ([path] if path else []))
+
+
+def runtime_free_path(path, mirrors, pathext=None):
+    """`path` without the subscription runtimes in RUNTIMES.
+
+    A directory holding one is replaced by a directory under `mirrors` that
+    links to everything else in it; where links need privileges (Windows) the
+    directory is left out. Returns the new PATH and the directories changed.
+    """
+    extensions = [""] + [extension.lower() for extension in (pathext or "").split(";") if extension]
+    entries, changed = [], []
+    for entry in path.split(os.pathsep) if path else []:
+        directory = Path(entry)
+        found = {directory / (name + extension) for name in RUNTIMES for extension in extensions
+                 if (directory / (name + extension)).is_file()}
+        if not found:
+            entries.append(entry)
+            continue
+        changed.append(entry)
+        if os.name == "nt":
+            continue
+        mirror = Path(mirrors) / hashlib.sha256(entry.encode()).hexdigest()[:12]
+        shutil.rmtree(mirror, ignore_errors=True)
+        mirror.mkdir(parents=True)
+        for child in directory.iterdir():
+            if child not in found:
+                (mirror / child.name).symlink_to(child)
+        entries.append(str(mirror))
+    return os.pathsep.join(entries), changed
 
 
 def install_web_dependencies(root, environment):
@@ -292,7 +325,10 @@ def main(argv=None):
     root = Path(__file__).resolve().parents[1]
     local = root / ".local"
     environment = isolated_env(local / "test-user-home", local / "test-home")
-    environment["PATH"] = unshimmed_path(os.environ.get("PATH", ""))
+    environment["PATH"], hidden = runtime_free_path(unshimmed_path(os.environ.get("PATH", "")),
+                                                    local / "check-path", environment.get("PATHEXT"))
+    if hidden:
+        print(f"check.py: the tests see no {', '.join(RUNTIMES)} from {', '.join(hidden)}", flush=True)
 
     def command(*arguments, quiet=False):
         def action():
