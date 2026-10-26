@@ -25,8 +25,10 @@ class CIProcessTests(unittest.TestCase):
         return run_logged([sys.executable, "-c", script], cwd=self.root,
                           env=dict(os.environ, HOME=str(self.root), MARKITAI_HOME=str(self.root)),
                           log=self.log, timeout=options.pop("timeout", 5), heartbeat=.05,
-                          progress=lambda event, **fields: self.events.append({"event": event, **fields}),
-                          **options)
+                          progress=options.pop("progress", self.record), **options)
+
+    def record(self, event, **fields):
+        self.events.append({"event": event, **fields})
 
     def test_heartbeat_preserves_output_without_echoing_it(self):
         result = self.run_stage("import time; print('synthetic-secret', flush=True); time.sleep(.3)")
@@ -168,8 +170,17 @@ class CIProcessTests(unittest.TestCase):
         # children each append to their own file. Once the stage is stopped, none may
         # grow: that holds however long the stop took, and shows any survivor.
         (self.root / "tree.py").write_text(TREE, encoding="utf-8")
+
+        def progress(event, **fields):
+            self.record(event, **fields)
+            # Once the whole tree beats, stop the stage as its deadline would (the
+            # same cleanup), instead of waiting out the deadline itself.
+            if event == "running" and b"ready" in self.log.read_bytes():
+                raise subprocess.TimeoutExpired("tree", 0)
+
         with self.assertRaises(subprocess.TimeoutExpired):
-            self.run_stage("import runpy; runpy.run_path('tree.py', run_name='__main__')", timeout=8)
+            self.run_stage("import runpy; runpy.run_path('tree.py', run_name='__main__')", timeout=8,
+                           progress=progress)
         record = self.events[-1] if self.events else None
         self.assertIn(b"ready", self.log.read_bytes(), record)
         self.assertEqual(record["event"], "cleanup", record)
