@@ -624,7 +624,10 @@ mod tests {
             &dir.join("receipt"),
             "version=2.2.0\nfile=markitai.exe\nfile=new.exe\n",
         );
-        assert_eq!(install.reread().receipt.all("file"), ["markitai.exe", "new.exe"]);
+        assert_eq!(
+            install.reread().receipt.all("file"),
+            ["markitai.exe", "new.exe"]
+        );
         write(
             &dir.join("receipt"),
             "version=2.1.0\ntarget=x86_64-pc-windows-msvc\npath_added=1\nfile=markitai.exe\nfile=mkai.exe\n",

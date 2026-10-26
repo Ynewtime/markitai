@@ -236,6 +236,13 @@ thread_local! {
     pub(crate) static FAIL_AT: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
 }
 
+#[cfg(test)]
+thread_local! {
+    /// What tests make every volume report: its free bytes, and whether
+    /// `current` is on another volume than the program.
+    pub(crate) static SPACE: std::cell::Cell<Option<(u64, bool)>> = const { std::cell::Cell::new(None) };
+}
+
 /// A failure injected by a test at `step`.
 fn fault(step: &str) -> io::Result<()> {
     #[cfg(test)]
@@ -328,6 +335,10 @@ pub(crate) fn prepare(install: &SetupInstall) -> Result<Work, Error> {
 
 /// Free bytes on the volume holding `dir`, when the system says.
 pub(crate) fn available_space(dir: &Path) -> Option<u64> {
+    #[cfg(test)]
+    if let Some((free, _)) = SPACE.get() {
+        return Some(free);
+    }
     #[cfg(unix)]
     {
         use std::os::unix::ffi::OsStrExt;
@@ -491,6 +502,15 @@ fn archive_error(error: impl std::fmt::Display) -> Error {
 /// keeps its own), within size limits. Returns the unpacked folder.
 pub(crate) fn unpack(work: &Work, downloaded: &Downloaded) -> Result<PathBuf, Error> {
     let destination = work.path.join("unpacked");
+    // Without a Content-Length the room was not checked before the download.
+    let dir = work.path.parent().unwrap_or(&work.path);
+    let needed = space_needed(downloaded.size);
+    if available_space(dir).is_some_and(|free| free < needed.saturating_sub(downloaded.size)) {
+        return Err(Error::DiskFull {
+            dir: dir.to_owned(),
+            needed,
+        });
+    }
     // A full disk is said as such; other write errors as an unusable archive.
     let written_error = |error: io::Error| {
         if error.raw_os_error() == Some(28) || error.kind() == io::ErrorKind::StorageFull {
@@ -813,6 +833,18 @@ fn swap_split(
 ) -> Result<Swapped, Error> {
     let program = install.dir.join("markitai");
     let kept = install.dir.join(format!(".markitai.old-{id}"));
+    // `current` on another volume takes a copy: room for it first.
+    if let Some(share) = install.receipt_dir.parent()
+        && !same_volume(&install.dir, share)
+    {
+        let needed = tree_size(unpacked, &["markitai", "mkai", "markitai-mcp"]);
+        if available_space(share).is_some_and(|free| free < needed) {
+            return Err(Error::DiskFull {
+                dir: share.to_owned(),
+                needed,
+            });
+        }
+    }
     let mut swapped = Swapped::default();
     if program.exists() {
         let linked = fault("keep").and_then(|()| std::fs::hard_link(&program, &kept));
@@ -876,6 +908,41 @@ fn swap_split(
         ));
     }
     Ok(swapped)
+}
+
+fn same_volume(left: &Path, right: &Path) -> bool {
+    #[cfg(test)]
+    if let Some((_, other)) = SPACE.get() {
+        return !other;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        match (std::fs::metadata(left), std::fs::metadata(right)) {
+            (Ok(left), Ok(right)) => left.dev() == right.dev(),
+            _ => false,
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (left, right);
+        false
+    }
+}
+
+/// The bytes of the files under `dir`, leaving out the top-level `except` names.
+fn tree_size(dir: &Path, except: &[&str]) -> u64 {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    entries
+        .flatten()
+        .filter(|entry| !except.iter().any(|name| entry.file_name() == *name))
+        .map(|entry| match entry.file_type() {
+            Ok(kind) if kind.is_dir() => tree_size(&entry.path(), &[]),
+            _ => entry.metadata().map_or(0, |metadata| metadata.len()),
+        })
+        .sum()
 }
 
 fn copy_tree(from: &Path, to: &Path) -> io::Result<()> {
@@ -1239,6 +1306,45 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn current_on_a_full_volume_of_its_own_changes_nothing() {
+        let root = tempfile::tempdir().unwrap();
+        let install = shell_install(root.path());
+        let work = prepare(&install).unwrap();
+        let unpacked = unpacked_release(
+            &work.path,
+            &[("markitai", "new program"), ("LICENSE", "new licence")],
+        );
+        SPACE.set(Some((4, true)));
+        let error = swap(&install, &release("2.2.0", "a.tar.gz", ""), &unpacked).unwrap_err();
+        SPACE.set(None);
+        assert_eq!(error.code(), "disk_full", "{error:?}");
+        assert!(!error.rolled_back());
+        assert!(
+            error
+                .reason()
+                .contains(&root.path().join("share/markitai").display().to_string()),
+            "{}",
+            error.reason()
+        );
+        assert_eq!(read(&install.exe), "old program");
+        assert_eq!(read(&install.receipt_dir.join("LICENSE")), "old licence");
+        assert!(
+            std::fs::read_dir(&install.dir)
+                .unwrap()
+                .flatten()
+                .all(|entry| !entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".markitai.old"))
+        );
+        // With room, the copy goes ahead.
+        SPACE.set(Some((1 << 30, true)));
+        swap(&install, &release("2.2.0", "a.tar.gz", ""), &unpacked).unwrap();
+        SPACE.set(None);
+        assert_eq!(read(&install.receipt_dir.join("LICENSE")), "new licence");
+    }
+
+    #[test]
     fn a_failure_in_the_middle_of_a_shell_swap_puts_everything_back() {
         for step in ["program", "share", "current", "current.new"] {
             let root = tempfile::tempdir().unwrap();
@@ -1559,6 +1665,20 @@ pub(crate) mod tests {
         fail_at(None);
         assert_eq!(full.code(), "disk_full", "{full:?}");
         std::fs::remove_dir_all(work.path.join("unpacked")).unwrap();
+        // So is too little room for what it unpacks to (a download without a
+        // Content-Length was not checked before).
+        SPACE.set(Some((bytes.len() as u64, false)));
+        let full = unpack(
+            &work,
+            &Downloaded {
+                archive: archive.clone(),
+                size: bytes.len() as u64,
+            },
+        )
+        .unwrap_err();
+        SPACE.set(None);
+        assert_eq!(full.code(), "disk_full", "{full:?}");
+        assert!(!work.path.join("unpacked").exists());
         let unpacked = unpack(
             &work,
             &Downloaded {
