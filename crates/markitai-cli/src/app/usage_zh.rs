@@ -101,7 +101,7 @@ const OTHERS: &[(&str, &str)] = &[
     ),
     ("  [possible values: {}]", "  [可选值：{}]"),
     ("  [subcommands: {}]", "  [子命令：{}]"),
-    ("Usage: {}", "用法: {}"),
+    ("Usage: {}", "用法：{}"),
     ("For more information, try '{}'.", "更多信息请运行 '{}'。"),
 ];
 
@@ -123,8 +123,8 @@ pub(super) fn render(error: &str, style: Style) -> Option<String> {
         } else if line.is_empty() {
             String::new()
         } else if let Some(text) = translated(OTHERS, line) {
-            if let Some(usage) = text.strip_prefix("用法: ") {
-                format!("{} {usage}", style.paint(Tone::Structure, "用法:"))
+            if let Some(usage) = text.strip_prefix("用法：") {
+                format!("{}{usage}", style.paint(Tone::Structure, "用法："))
             } else {
                 text
             }
@@ -148,7 +148,7 @@ mod tests {
         let english = "error: unexpected argument '--nope' found\n\n  tip: a similar argument exists: '--no-page-markers'\n\nUsage: markitai [OPTIONS] [INPUT] [COMMAND]\n\nFor more information, try '--help'.\n";
         assert_eq!(
             render(english, Style::PLAIN).unwrap(),
-            "错误：无法识别的参数 '--nope'\n\n  提示：有相似的参数：'--no-page-markers'\n\n用法: markitai [OPTIONS] [INPUT] [COMMAND]\n\n更多信息请运行 '--help'。\n"
+            "错误：无法识别的参数 '--nope'\n\n  提示：有相似的参数：'--no-page-markers'\n\n用法：markitai [OPTIONS] [INPUT] [COMMAND]\n\n更多信息请运行 '--help'。\n"
         );
     }
 
@@ -168,7 +168,7 @@ mod tests {
                 Style::PLAIN
             )
             .unwrap(),
-            "错误：缺少以下必需的参数：\n  <KEY>\n\n用法: markitai config get <KEY>\n"
+            "错误：缺少以下必需的参数：\n  <KEY>\n\n用法：markitai config get <KEY>\n"
         );
     }
 

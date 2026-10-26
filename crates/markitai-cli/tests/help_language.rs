@@ -216,7 +216,7 @@ fn chinese_help_offers_the_same_commands_and_options_inside_80_columns() {
                 option_names(&chinese),
                 "{args:?} offers different options"
             );
-            assert!(chinese.contains("用法: markitai"), "{args:?}\n{chinese}");
+            assert!(chinese.contains("用法：markitai"), "{args:?}\n{chinese}");
             for frame in [
                 "Usage:",
                 "Options:",
@@ -248,8 +248,8 @@ fn chinese_help_offers_the_same_commands_and_options_inside_80_columns() {
         "\n批量处理:\n",
         "\n缓存与图片:\n",
         "\n消息与日志:\n",
-        "\n-p 预设:\n",
-        "\n示例:\n",
+        "\n-p 预设：\n",
+        "\n示例：\n",
     ] {
         let at = help
             .find(heading)
@@ -263,7 +263,7 @@ fn chinese_help_offers_the_same_commands_and_options_inside_80_columns() {
 fn chinese_help_is_chosen_like_the_other_localized_commands() {
     let root = tempfile::tempdir().unwrap();
     let in_chinese =
-        |envs: &[(&str, &str)]| stdout(&run(root.path(), envs, &["--help"])).contains("用法:");
+        |envs: &[(&str, &str)]| stdout(&run(root.path(), envs, &["--help"])).contains("用法：");
     assert!(in_chinese(&[("MARKITAI_LANG", "zh")]));
     assert!(in_chinese(&[("MARKITAI_LANG", "zh_CN.UTF-8")]));
     assert!(in_chinese(&[("LANG", "zh_CN.UTF-8")]));
