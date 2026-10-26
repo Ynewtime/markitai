@@ -476,7 +476,6 @@ fn gnome_reads_a_whitelist_and_rejects_automatic_or_authenticated_modes() {
 #[cfg(unix)]
 mod process {
     use super::*;
-    use std::os::unix::fs::PermissionsExt;
 
     #[test]
     fn subprocess_reads_are_bounded_minimal_and_reap_their_group() {
@@ -484,17 +483,15 @@ mod process {
         let marker = dir.path().join("grandchild.pid");
         // One script: the first launch absorbs any OS scan of a new executable.
         let script = dir.path().join("tool");
-        std::fs::write(
+        crate::test_scripts::write_executable(
             &script,
-            format!(
+            &format!(
                 "#!/bin/sh\ncase \"$1\" in\n value) printf 'hello';;\n environment) env | cut -d= -f1 | sort;;\n \
                  failing) printf 'partial'; exit 3;;\n flood) head -c 70000 /dev/zero | tr '\\0' 'x';;\n \
                  hang) sleep 30 & echo $! > '{}'; wait;;\nesac\n",
                 marker.display()
             ),
-        )
-        .unwrap();
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
+        );
         let env = env(&[
             ("PATH", &format!("{}:/usr/bin:/bin", dir.path().display())),
             ("HOME", "/nonexistent-home"),

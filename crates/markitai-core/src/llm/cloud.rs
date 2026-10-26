@@ -1484,13 +1484,10 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         std::fs::create_dir(home.path().join(".aws")).unwrap();
         let script = home.path().join("creds.sh");
-        std::fs::write(
+        crate::test_scripts::write_executable(
             &script,
             "#!/bin/sh\necho '{\"Version\":1,\"AccessKeyId\":\"AKIDPROCESS\",\"SecretAccessKey\":\"s\",\"SessionToken\":\"t\"}'\n",
-        )
-        .unwrap();
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
+        );
         std::fs::write(
             home.path().join(".aws/config"),
             format!(

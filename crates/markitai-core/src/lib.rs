@@ -51,6 +51,8 @@ mod store_retry;
 pub mod subscription;
 #[cfg(target_os = "macos")]
 mod system_frameworks;
+#[cfg(all(test, unix))]
+mod test_scripts;
 mod trust;
 mod types;
 

@@ -508,15 +508,12 @@ fn typed_documents_report_the_exclusion_once_per_run() {
 #[cfg(unix)]
 #[test]
 fn a_refused_subscription_account_moves_to_an_api_deployment() {
-    use std::os::unix::fs::PermissionsExt;
     let root = tempfile::tempdir().unwrap();
     let executable = root.path().join("fake claude");
-    std::fs::write(
+    crate::test_scripts::write_executable(
         &executable,
         include_str!("../../../tests/conversion/claude_fixture.py"),
-    )
-    .unwrap();
-    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+    );
     let home = root.path().join("home");
     std::fs::create_dir(&home).unwrap();
     // The runtime answers, but its account is not a first-party subscription.

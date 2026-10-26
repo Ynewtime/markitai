@@ -75,10 +75,13 @@ fn odp_counts_only_actual_slides_not_master_pages_or_nested_shapes() {
 
 #[cfg(unix)]
 fn mock(root: &Path, script: &str) -> PathBuf {
-    use std::os::unix::fs::PermissionsExt;
     let path = root.join("mock soffice");
-    fs::write(&path,format!("#!/bin/sh\nset -eu\nout=''\nprevious=''\nfor value in \"$@\"; do\n if [ \"$previous\" = '--outdir' ]; then out=\"$value\"; fi\n previous=\"$value\"\ndone\n{script}\n")).unwrap();
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+    crate::test_scripts::write_executable(
+        &path,
+        &format!(
+            "#!/bin/sh\nset -eu\nout=''\nprevious=''\nfor value in \"$@\"; do\n if [ \"$previous\" = '--outdir' ]; then out=\"$value\"; fi\n previous=\"$value\"\ndone\n{script}\n"
+        ),
+    );
     path
 }
 #[cfg(unix)]
@@ -266,27 +269,16 @@ fn a_finished_launcher_takes_what_it_left_running_with_it() {
     let output = dir.path().join("output");
     fs::create_dir(&profile).unwrap();
     fs::create_dir(&output).unwrap();
-    // A test thread forking while the mock was written can hold it open for
-    // writing a moment longer, so its first start may fail (ETXTBSY).
-    for attempt in 1.. {
-        match process::convert(
-            &program,
-            &input,
-            &output,
-            &profile,
-            "pdf",
-            Instant::now() + Duration::from_secs(10),
-            MAX_BYTES,
-        ) {
-            Err(error) if attempt < 5 && error.to_string().contains("could not be started") => {
-                std::thread::sleep(Duration::from_millis(100));
-            }
-            result => {
-                result.unwrap();
-                break;
-            }
-        }
-    }
+    process::convert(
+        &program,
+        &input,
+        &output,
+        &profile,
+        "pdf",
+        Instant::now() + Duration::from_secs(10),
+        MAX_BYTES,
+    )
+    .unwrap();
     let pid = fs::read_to_string(&pidfile)
         .unwrap()
         .trim()
