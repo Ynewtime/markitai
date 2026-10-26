@@ -287,9 +287,8 @@ a key in its documented `sk-kimi-` form).
 
 Kimi Code takes `KIMI_API_KEY`, its address `KIMI_CODE_API_BASE` or
 `KIMI_CODE_BASE_URL` (model IDs such as `k3.1-pro`, `k3`,
-`kimi-for-coding`; the workbench lists the ones the key may use). Z.ai's models
-are entered by hand, so the workbench has no list to find its region with; its
-and Zhipu's Coding Plan endpoints (`…/api/coding/paas/v4`) take either kind of
+`kimi-for-coding`; the workbench lists the ones the key may use). Z.ai's and
+Zhipu's Coding Plan endpoints (`…/api/coding/paas/v4`) take either kind of
 key, as MiniMax's addresses take its M Plan keys (`sk-cp-…`). Model Studio's
 Coding Plan keys (`sk-sp-…`) work only at the plan's own endpoints, for coding
 tools, and are not tried there; a workspace-dedicated Model Studio host
@@ -514,11 +513,10 @@ inference hosts, gateways and local servers, each with its default base URL and
 first key variable. Model discovery lists a provider's models through
 `GET <base>/models` with the key as Bearer (Together AI's bare-array answer
 included), using the base variable when no `api_base` is given; a provider
-whose list request fails can still take model IDs by hand. Perplexity, Z.ai
-and Fireworks AI document no OpenAI-compatible model list (checked 2026-10-02:
-Fireworks lists models only through its account API), and Bedrock and Vertex AI
-are not listed either, so discovery answers `unavailable` with
-`source: "manual"` without a request, and their model IDs are entered by hand.
+whose list request fails, or answers in another shape, can still take model
+IDs by hand. Bedrock and Vertex AI are not listed, so discovery answers
+`unavailable` with `source: "manual"` without a request, and their model IDs are
+entered by hand.
 The subscription runtimes list their models through the installed runtime. The
 connection check works for every prefix.
 

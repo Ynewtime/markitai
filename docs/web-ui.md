@@ -482,8 +482,9 @@ others saves in one request: the additions and removals succeed or fail
 together.
 Every settings page keeps its primary action in one place, the pinned bar at the
 bottom (Load models, then Save, beside Cancel); a subscription needs no key or
-address, and Bedrock and Vertex AI (also Perplexity, Z.ai and Fireworks AI) take
-model IDs by hand, saved connections included, whatever a backend's card says. Vertex AI (like
+address, and Bedrock and Vertex AI take model IDs by hand, saved connections
+included, whatever a backend's card says, as does any provider whose model list
+a backend answers with `source: "manual"`. Vertex AI (like
 watsonx and GigaChat, when a backend offers them) takes no address, here or on
 its saved connection: it signs in with the server's own login, which the page
 names in a muted line, at its own endpoint, and takes no key either (a saved
