@@ -164,3 +164,15 @@ test("the card's \"now\" stays the running version until the page has reconnecte
   assert.match(read("../components/update.tsx"), /t\.updCurrent\(current\)/);
   assert.match(read("../components/update.tsx"), /const current = runningVersion\(update\.running, status\);/);
 });
+
+test("on a phone the done notice's Release notes reads like the page's buttons, not spaced capitals", () => {
+  const css = read("../styles/app.css");
+  const phone = css.slice(css.indexOf("@media (max-width: 760px) {\n  /* a notice's action on a phone"));
+  const rule = phone.slice(0, phone.indexOf("}"));
+  assert.match(rule, /\.toast\.is-line \.note-action/);
+  assert.match(rule, /text-transform: none;/);
+  assert.match(rule, /letter-spacing: 0;/);
+  assert.match(rule, /font-family: inherit;/);
+  // After the one-line notice's own offset, so it wins on a phone.
+  assert.ok(css.indexOf(rule) > css.indexOf(".toast.is-line .note-action {\n  position: relative;"));
+});

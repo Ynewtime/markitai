@@ -7744,6 +7744,17 @@ input[type="password"],
 }
 
 @media (max-width: 760px) {
+  /* a notice's action on a phone reads like the page's other buttons: sentence case, no tracking */
+  .toast .note-action,
+  .toast.is-line .note-action {
+    /* the sans action's ink centres on the larger message text 1 px lower */
+    top: 1px;
+    font-family: inherit;
+    font-size: var(--text-ui);
+    font-weight: 500;
+    letter-spacing: 0;
+    text-transform: none;
+  }
   .phone-top .phone-links .upd-icon {
     color: var(--text-1);
   }
