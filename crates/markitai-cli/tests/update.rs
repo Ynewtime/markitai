@@ -1093,6 +1093,52 @@ mod unix {
             assert!(log.contains(line), "{line}: {log}");
         }
     }
+
+    #[test]
+    fn a_new_version_that_hangs_before_it_is_ready_is_rolled_back() {
+        let releases = Releases::start("2.2.0");
+        releases.publish(
+            "2.2.0",
+            &posing_program("MARKITAI_TEST_UPDATE_HANG_START=1"),
+            false,
+        );
+        let home = Home::setup_sh("2.1.0");
+        // The watchdog's 30 seconds, shortened; nothing here is timed.
+        let server = Serve::start_with(
+            &home,
+            &releases,
+            &[
+                ("MARKITAI_SERVE_TOKEN", TOKEN),
+                ("MARKITAI_TEST_UPDATE_READY_MS", "300"),
+            ],
+            Some(free_port()),
+        );
+        let pid = server.child.id();
+        server.wait("the daily check", |view| view["latest"] == "2.2.0");
+        server
+            .call("POST", "/api/update", Some(json!({"version": "2.2.0"})))
+            .unwrap();
+        let view = server.wait("the rollback", |view| {
+            view["error"]["code"] == "start_failed"
+        });
+        assert_eq!(view["current"], "2.1.0");
+        assert!(
+            view["error"]["reason"]
+                .as_str()
+                .unwrap()
+                .contains("did not get ready"),
+            "{view}"
+        );
+        // The same process and port; the old program is back.
+        assert_eq!(server.child.id(), pid);
+        assert!(
+            std::fs::symlink_metadata(home.path("home/.local/bin/markitai"))
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert!(!home.path("mh/update-pending.json").exists());
+    }
 }
 
 /// `markitai update` restarting the server it finds (R2). Windows installs
@@ -1202,5 +1248,35 @@ mod restart_by_cli {
                 .file_type()
                 .is_symlink()
         );
+    }
+
+    /// Unix: the new version's own watchdog (the Windows parent's wait is
+    /// the other test's path) gives the port and token back.
+    #[cfg(unix)]
+    #[test]
+    fn a_new_version_that_hangs_before_it_is_ready_leaves_the_old_one_serving() {
+        let releases = Releases::start("2.2.0");
+        releases.publish(
+            "2.2.0",
+            &unix::posing_program("MARKITAI_TEST_UPDATE_HANG_START=1"),
+            false,
+        );
+        let home = Home::setup_sh("2.1.1");
+        let server = Serve::start_with(
+            &home,
+            &releases,
+            &[
+                ("MARKITAI_TEST_UPDATE_AS", "2.1.1"),
+                ("MARKITAI_TEST_UPDATE_READY_MS", "300"),
+            ],
+            None,
+        );
+        let (said, code) = update(&home, &releases);
+        assert_eq!(code, 1, "{said}");
+        assert!(said.contains("did not get ready"), "{said}");
+        let view = server.wait("the rollback", |view| {
+            view["current"] == "2.1.1" && view["error"]["code"] == "start_failed"
+        });
+        assert_eq!(view["error"]["rolled_back"], true, "{view}");
     }
 }

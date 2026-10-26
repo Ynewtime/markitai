@@ -231,6 +231,8 @@ pub(crate) fn run(cfg: Value, source: SettingsSource, options: ServeOptions) -> 
         _ => None,
     };
     let mut handover = Some(restart::Handover::take());
+    // Unix: a new version not ready in 30 seconds is undone.
+    let watchdog = restart::Watchdog::start(pending.as_ref(), &home, handover.as_ref());
     // Handed on again if this start fails and the old version takes it.
     let handed_token = handover
         .as_ref()
@@ -258,6 +260,7 @@ pub(crate) fn run(cfg: Value, source: SettingsSource, options: ServeOptions) -> 
             &options,
             handover.take().unwrap_or_default(),
             pending.as_ref().filter(|_| undone.is_none()),
+            watchdog.as_ref(),
             undone.take(),
         ));
         drop(runtime);
@@ -295,6 +298,12 @@ pub(crate) fn run(cfg: Value, source: SettingsSource, options: ServeOptions) -> 
             }
             Err(Failure { ready, message }) => {
                 if !ready && let Some(pending) = &pending {
+                    if watchdog.as_ref().is_some_and(|watch| !watch.finish()) {
+                        // The watchdog is undoing it already.
+                        loop {
+                            std::thread::park();
+                        }
+                    }
                     std::process::exit(restart::roll_back_and_relaunch(
                         pending,
                         &home,
@@ -343,6 +352,7 @@ async fn serve(
     options: &ServeOptions,
     handover: restart::Handover,
     pending: Option<&crate::update::control::Pending>,
+    watchdog: Option<&restart::Watchdog>,
     undone: Option<String>,
 ) -> Result<Outcome, Failure> {
     // A debug build can fail here on purpose: the tests of an update whose
@@ -356,6 +366,12 @@ async fn serve(
                 .to_owned()
                 .into(),
         );
+    }
+    // And hang before it is ready.
+    if cfg!(debug_assertions) && std::env::var_os("MARKITAI_TEST_UPDATE_HANG_START").is_some() {
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(3600));
+        }
     }
     let serve_home = markitai_core::config::home().join("serve");
     let root = serve_home.join("jobs");
@@ -461,8 +477,11 @@ async fn serve(
     retention::start(&state);
     let router = router(&state);
     let _ = state.address.set(address);
-    // Ready: the new version of an update stays, the old files go.
-    if let Some(pending) = pending {
+    // Ready: the new version of an update stays, the old files go (unless
+    // the watchdog has just undone it).
+    if let Some(pending) = pending
+        && watchdog.is_none_or(restart::Watchdog::finish)
+    {
         pending.commit(&markitai_core::config::home());
     }
     update::publish_control(&state, address);
