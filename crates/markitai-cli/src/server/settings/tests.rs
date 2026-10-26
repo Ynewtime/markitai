@@ -489,6 +489,16 @@ fn every_routed_provider_is_offered_with_its_group_mark_endpoint_key_and_discove
             "custom"
         ]
     );
+    // A provider whose keys belong to a region lists its regions, the default first.
+    assert_eq!(
+        card("minimax")["regions"],
+        json!(["https://api.minimax.io/v1", "https://api.minimax.cn/v1"])
+    );
+    assert_eq!(
+        card("dashscope")["regions"][0],
+        card("dashscope")["default_base"]
+    );
+    assert!(card("groq").get("regions").is_none());
     // Kimi Code takes a key of its own and lists its models.
     let kimi = card("kimi_code");
     assert_eq!(
@@ -848,6 +858,35 @@ fn an_environment_key_is_saved_at_its_providers_other_region_only() {
     assert_eq!(params["api_base"], "https://api.moonshot.cn/v1");
     assert_eq!(params["use_environment_credentials"], true);
     assert!(params["api_key"].is_null());
+    // Each regional provider's other regions, likewise.
+    for (model, credential, base) in [
+        (
+            "minimax/MiniMax-M3",
+            "env:minimax",
+            "https://api.minimax.cn/v1",
+        ),
+        (
+            "dashscope/qwen-plus",
+            "env:dashscope",
+            "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+        ),
+    ] {
+        ok(store.mutate(Mutation::Add(json!({
+            "model_name":"default",
+            "model":model,
+            "credential_provider_id":credential,
+            "api_base":base
+        }))));
+        let list = saved(&store)["llm"]["model_list"].clone();
+        let params = &list
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["litellm_params"]["model"] == model)
+            .unwrap()["litellm_params"];
+        assert_eq!(params["api_base"], base, "{model}");
+        assert_eq!(params["use_environment_credentials"], true, "{model}");
+    }
     // Another address, another provider's region, or another provider's key: as before.
     for (model, base) in [
         ("moonshot/kimi-k3", "https://api.example.test/v1"),
