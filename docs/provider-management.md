@@ -11,7 +11,11 @@ Discovery supports OpenAI, Anthropic, Gemini, DeepSeek, OpenRouter, Azure,
 Ollama, custom OpenAI-compatible endpoints and every OpenAI-compatible prefix of
 the routing table (`docs/llm.md`) through `GET <base>/models`, Together AI's bare
 array included, and Kimi Code (`kimi_code`, whose inference uses Kimi's
-Messages endpoint) through the same bearer-key `GET <base>/models`. The subscription providers
+Messages endpoint) through the same bearer-key `GET <base>/models`; Helicone
+lists at `/v1/models` and Cohere through its native `/v1/models?endpoint=chat`.
+Codestral, Cloudflare Workers AI, Galadriel, Bedrock and Vertex AI publish no
+list this build reads: they answer `unavailable` with `source: "manual"` without
+a request, and their model IDs are typed by hand. The subscription providers
 `copilot` and `claude-agent` ask their installed official runtime for its model
 list on every request (never cached, because a stored login can change);
 `chatgpt` returns the models the installed Codex offers for the signed-in

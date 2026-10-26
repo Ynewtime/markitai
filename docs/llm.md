@@ -512,9 +512,12 @@ like), grouped as common providers, subscriptions, model makers, clouds,
 inference hosts, gateways and local servers, each with its default base URL and
 first key variable. Model discovery lists a provider's models through
 `GET <base>/models` with the key as Bearer (Together AI's bare-array answer
-included), using the base variable when no `api_base` is given; a provider
-whose list request fails, or answers in another shape, can still take model
-IDs by hand. Bedrock and Vertex AI are not listed, so discovery answers
+included; Helicone at `/v1/models`; Cohere through its native
+`/v1/models?endpoint=chat`), using the base variable when no `api_base` is
+given; a provider whose list request fails, or answers in another shape, can
+still take model IDs by hand. Codestral (its endpoint answers `/models` with
+404), Cloudflare Workers AI and Galadriel (documented for chat completions only),
+Bedrock and Vertex AI are not listed (checked 2026-10-26), so discovery answers
 `unavailable` with `source: "manual"` without a request, and their model IDs are
 entered by hand.
 The subscription runtimes list their models through the installed runtime. The
