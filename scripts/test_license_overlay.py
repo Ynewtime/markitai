@@ -60,16 +60,22 @@ class LicenseOverlayTests(unittest.TestCase):
                             target = source / name
                             target.parent.mkdir(parents=True, exist_ok=True)
                             target.write_bytes(archive.extractfile(member).read())
-        if os.name != "nt":
-            for path in cls.pristine.rglob("*"):
-                if path.is_file():
-                    path.chmod(0o444)
+        # Listed once, so setUp makes each folder and link without stat calls
+        # (each one opens the file on Windows).
+        cls.folders, cls.files = [], []
+        for path in sorted(cls.pristine.rglob("*")):
+            (cls.folders if path.is_dir() else cls.files).append(path.relative_to(cls.pristine))
+            if os.name != "nt" and path.is_file():
+                path.chmod(0o444)
 
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
-        shutil.copytree(self.pristine, self.root, dirs_exist_ok=True, copy_function=_link_or_copy)
+        for folder in self.folders:
+            (self.root / folder).mkdir()
+        for name in self.files:
+            _link_or_copy(self.pristine / name, self.root / name)
         self.trash = self.root / "replaced"
         self.trash.mkdir()
         self.repository = self.root / "repository"
