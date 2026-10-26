@@ -499,6 +499,26 @@ fn every_routed_provider_is_offered_with_its_group_mark_endpoint_key_and_discove
         card("dashscope")["default_base"]
     );
     assert!(card("groq").get("regions").is_none());
+    // v1.27: its documented addresses, labelled: the regions, then plan endpoints.
+    assert_eq!(
+        card("zai")["endpoints"],
+        json!([
+            {"base":"https://api.z.ai/api/paas/v4","region":"global"},
+            {"base":"https://open.bigmodel.cn/api/paas/v4","region":"china"},
+            {"base":"https://api.z.ai/api/coding/paas/v4","region":"global","plan":"coding"},
+            {"base":"https://open.bigmodel.cn/api/coding/paas/v4","region":"china","plan":"coding"}
+        ])
+    );
+    assert_eq!(
+        card("minimax")["endpoints"],
+        json!([
+            {"base":"https://api.minimax.io/v1","region":"global"},
+            {"base":"https://api.minimax.cn/v1","region":"china"}
+        ])
+    );
+    assert_eq!(card("kimi_code")["endpoints"][0]["region"], "kimi.com");
+    assert_eq!(card("dashscope")["endpoints"].as_array().unwrap().len(), 5);
+    assert!(card("groq").get("endpoints").is_none());
     // Kimi Code takes a key of its own and lists its models.
     let kimi = card("kimi_code");
     assert_eq!(

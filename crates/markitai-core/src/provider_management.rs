@@ -305,6 +305,26 @@ pub fn provider_regions(provider: &str) -> Vec<&'static str> {
         .collect()
 }
 
+/// The documented endpoints a settings surface offers for a provider's
+/// address, as `{base, region, plan?}`: its regions, the default first, then
+/// its plan endpoints (`plan: "coding"`). `region` is an area code
+/// (`global`, `china`, `beijing`, `singapore`, `us_virginia`, `hong_kong`)
+/// or a site shown as written (`kimi.com`). Empty for a provider with one
+/// address or none.
+pub fn provider_endpoints(provider: &str) -> Vec<Value> {
+    let regions = crate::llm::providers::regions(provider);
+    let plans = crate::llm::providers::plan_endpoints(provider);
+    regions
+        .iter()
+        .map(|region| json!({"base":region.base,"region":region.area}))
+        .chain(
+            plans
+                .iter()
+                .map(|plan| json!({"base":plan.base,"region":plan.area,"plan":plan.plan})),
+        )
+        .collect()
+}
+
 /// Whether `base` is one of [`provider_regions`].
 pub fn provider_region_base(provider: &str, base: &str) -> bool {
     let base = base.trim().trim_end_matches('/');

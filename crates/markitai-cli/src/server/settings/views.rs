@@ -1,7 +1,7 @@
 use super::{SettingsSource, identity, model, store::Data};
 use markitai_core::provider_management::{
     catalog, environment_key_variable, held_key_variable, provider_default_base,
-    provider_entry as entry, provider_label, provider_regions,
+    provider_endpoints, provider_entry as entry, provider_label, provider_regions,
 };
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
@@ -28,6 +28,11 @@ fn facts(name: &str, card: &mut Value) {
     let regions = provider_regions(name);
     if !regions.is_empty() {
         card["regions"] = json!(regions);
+    }
+    // Its documented addresses, labelled, for the address field's list (v1.27).
+    let endpoints = provider_endpoints(name);
+    if !endpoints.is_empty() {
+        card["endpoints"] = json!(endpoints);
     }
     card["key_variable"] = json!(variable);
     card["key_optional"] = json!(entry.as_ref().is_some_and(|entry| entry.key_optional));

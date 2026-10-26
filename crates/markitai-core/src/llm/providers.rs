@@ -798,12 +798,25 @@ pub(crate) fn listings() -> impl Iterator<Item = Listing> {
     })
 }
 
-/// One region of a provider whose keys are issued per region: its endpoint
-/// and the site (or console region) that issues the keys it accepts.
+/// One region of a provider whose keys are issued per region: its endpoint,
+/// the site (or console region) that issues the keys it accepts, and the
+/// area code the settings surfaces name it by (`global`, `china`,
+/// `beijing`, `singapore`, `us_virginia`, `hong_kong`, or a site such as
+/// `kimi.com` shown as written).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Region {
     pub base: &'static str,
     pub console: &'static str,
+    pub area: &'static str,
+}
+
+/// A further documented endpoint of a regional provider that is no region of
+/// its own: a subscription plan's (`plan`, e.g. `coding`) at an area's site.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PlanEndpoint {
+    pub base: &'static str,
+    pub area: &'static str,
+    pub plan: &'static str,
 }
 
 /// A provider whose key works only at the endpoint of the region that issued
@@ -814,10 +827,24 @@ struct Regional {
     prefix: &'static str,
     regions: &'static [Region],
     sibling: Option<&'static str>,
+    /// Plan endpoints offered beside the regions, never tried with a key.
+    plans: &'static [PlanEndpoint],
 }
 
-const fn region(base: &'static str, console: &'static str) -> Region {
-    Region { base, console }
+const fn region(base: &'static str, console: &'static str, area: &'static str) -> Region {
+    Region {
+        base,
+        console,
+        area,
+    }
+}
+
+const fn coding_plan(base: &'static str, area: &'static str) -> PlanEndpoint {
+    PlanEndpoint {
+        base,
+        area,
+        plan: "coding",
+    }
 }
 
 /// The providers whose documentation says so (checked 2026-10-26, pages in
@@ -830,39 +857,52 @@ const fn region(base: &'static str, console: &'static str) -> Region {
 /// the billing), so they are no region. Model Studio
 /// keys belong to a region; its Coding Plan keys (`sk-sp-`) work only at the
 /// plan's own endpoints, which list models without checking the key, so they
-/// are named, not tried.
+/// are named, not tried. The plans' endpoints are offered as `plans`
+/// (docs.z.ai/devpack/faq, help.aliyun.com/zh/model-studio/more-tools); both
+/// plans are for supported coding tools only.
 const REGIONAL: &[Regional] = &[
     Regional {
         prefix: "moonshot",
         regions: &[
-            region("https://api.moonshot.ai/v1", "platform.kimi.ai"),
-            region("https://api.moonshot.cn/v1", "platform.kimi.com"),
+            region("https://api.moonshot.ai/v1", "platform.kimi.ai", "global"),
+            region("https://api.moonshot.cn/v1", "platform.kimi.com", "china"),
         ],
         sibling: Some("a Kimi Code membership key is used as kimi_code/<model>"),
+        plans: &[],
     },
     Regional {
         prefix: "kimi_code",
         regions: &[
-            region("https://api.kimi.com/coding/v1", "kimi.com"),
-            region("https://api.kimi.ai/coding/v1", "kimi.ai"),
+            region("https://api.kimi.com/coding/v1", "kimi.com", "kimi.com"),
+            region("https://api.kimi.ai/coding/v1", "kimi.ai", "kimi.ai"),
         ],
         sibling: Some("a Kimi platform key is used as moonshot/<model>"),
+        plans: &[],
     },
     Regional {
         prefix: "minimax",
         regions: &[
-            region("https://api.minimax.io/v1", "platform.minimax.io"),
-            region("https://api.minimax.cn/v1", "platform.minimax.cn"),
+            region("https://api.minimax.io/v1", "platform.minimax.io", "global"),
+            region("https://api.minimax.cn/v1", "platform.minimax.cn", "china"),
         ],
         sibling: None,
+        plans: &[],
     },
     Regional {
         prefix: "zai",
         regions: &[
-            region("https://api.z.ai/api/paas/v4", "z.ai"),
-            region("https://open.bigmodel.cn/api/paas/v4", "bigmodel.cn"),
+            region("https://api.z.ai/api/paas/v4", "z.ai", "global"),
+            region(
+                "https://open.bigmodel.cn/api/paas/v4",
+                "bigmodel.cn",
+                "china",
+            ),
         ],
         sibling: None,
+        plans: &[
+            coding_plan("https://api.z.ai/api/coding/paas/v4", "global"),
+            coding_plan("https://open.bigmodel.cn/api/coding/paas/v4", "china"),
+        ],
     },
     Regional {
         prefix: "dashscope",
@@ -870,23 +910,31 @@ const REGIONAL: &[Regional] = &[
             region(
                 "https://dashscope.aliyuncs.com/compatible-mode/v1",
                 "Model Studio's Beijing region",
+                "beijing",
             ),
             region(
                 "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
                 "Model Studio's Singapore region",
+                "singapore",
             ),
             region(
                 "https://dashscope-us.aliyuncs.com/compatible-mode/v1",
                 "Model Studio's US (Virginia) region",
+                "us_virginia",
             ),
             region(
                 "https://cn-hongkong.dashscope.aliyuncs.com/compatible-mode/v1",
                 "Model Studio's Hong Kong region",
+                "hong_kong",
             ),
         ],
         sibling: Some(
             "a Coding Plan key (sk-sp-…) works only at the Coding Plan's endpoints, in coding tools",
         ),
+        plans: &[coding_plan(
+            "https://coding.dashscope.aliyuncs.com/v1",
+            "beijing",
+        )],
     },
 ];
 
@@ -898,6 +946,12 @@ fn regional(prefix: &str) -> Option<&'static Regional> {
 /// default first; empty for any other provider.
 pub(crate) fn regions(prefix: &str) -> &'static [Region] {
     regional(prefix).map_or(&[], |entry| entry.regions)
+}
+
+/// The plan endpoints a regional provider documents beside its regions
+/// (Z.ai's and Zhipu's, Model Studio's Coding Plan); empty for any other.
+pub(crate) fn plan_endpoints(prefix: &str) -> &'static [PlanEndpoint] {
+    regional(prefix).map_or(&[], |entry| entry.plans)
 }
 
 fn host(url: &str) -> Option<String> {
