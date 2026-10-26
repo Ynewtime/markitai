@@ -11,11 +11,13 @@ import unittest
 import bounded_run
 
 # Starts `beat` (appends to a file every 50 ms, holding the inherited output),
-# says so and then waits for `seconds`.
-PARENT = """import subprocess, sys, time
+# says so once it beats and then waits for `seconds`.
+PARENT = """import os, subprocess, sys, time
 beat = "import sys, time\\nwith open(sys.argv[1], 'ab', buffering=0) as s:\\n    for _ in range(400): s.write(b'.'); time.sleep(0.05)"
 child = subprocess.Popen([sys.executable, "-c", beat, sys.argv[1]])
 open(sys.argv[2], "w").write(str(child.pid))
+while not (os.path.exists(sys.argv[1]) and os.path.getsize(sys.argv[1])):
+    time.sleep(0.01)
 print("started", flush=True)
 time.sleep(float(sys.argv[3]))
 """
