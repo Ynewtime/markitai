@@ -3,7 +3,7 @@
 // keeps the selected item and the open preview in its address, so reloads and
 // Back return to them. Notices sit in the page, never over its buttons.
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { ApiError, documentPath, fetchBlob, fetchCapabilities, fetchOriginal, filePath, itemArchivePath, NetworkError, setItemAssets, setTicketDownloads } from "./api/client.ts";
+import { ApiError, documentPath, fetchBlob, fetchCapabilities, fetchOriginal, filePath, itemArchivePath, NetworkError, NoAnswerError, setItemAssets, setTicketDownloads } from "./api/client.ts";
 import { setToken } from "./api/token.ts";
 import type { Capabilities, ConvertDefaultsView, JobOptions } from "./api/types.ts";
 import { CloudflareDialog } from "./components/cloudflare-dialog.tsx";
@@ -56,7 +56,18 @@ const SHEET = "(max-width: 760px)";
 interface Upload {
   loaded: number;
   total: number;
+  /** When the browser finished sending the body; the service's answer is still due. */
+  sentAt?: number;
 }
+
+/** How long a sent upload waits for the service's answer before it fails (a proxy
+ * that holds the request gives up at about 100 s). */
+const ANSWER_TIMEOUT_MS = 120_000;
+/** Gateway answers that carry no reason of the service's own. */
+const GATEWAY = new Set([502, 503, 504, 520, 521, 522, 523, 524, 525, 526, 527, 530]);
+/** A failed submission worth sending again as it is. */
+const resendable = (error: unknown) =>
+  error instanceof NetworkError || error instanceof NoAnswerError || (error instanceof ApiError && (error.status >= 500 || error.status === 408 || error.status === 429));
 
 let noteSequence = 0;
 
@@ -157,9 +168,11 @@ export function App() {
   const describe = useCallback((error: unknown): { text: string; detail: string } => {
     const words = dicts[localeRef.current];
     if (error instanceof NetworkError) return { text: words.submitNetworkFailed, detail: "" };
+    if (error instanceof NoAnswerError) return { text: words.submitNoAnswer(error.seconds), detail: "" };
     if (error instanceof ApiError) {
       const known = apiErrorText(localeRef.current, error.body);
       if (known) return known;
+      if (GATEWAY.has(error.status)) return { text: words.submitGateway(error.status), detail: error.detail };
       if (error.status === 413) return { text: words.submitTooLarge, detail: error.detail };
       if (error.status === 422) return { text: words.submitInvalid, detail: error.detail };
       if (error.status >= 500) return { text: words.submitServerFailed, detail: error.detail };
@@ -277,8 +290,11 @@ export function App() {
 
   // ---- submissions
   const [urlText, setUrlText] = useState("");
+  const urlTextRef = useRef(urlText);
+  urlTextRef.current = urlText;
   const urls = useMemo(() => parseUrls(urlText).urls, [urlText]);
   const [staged, setStaged] = useState<StagedSubmission | null>(null);
+  const [pickedAt, setPickedAt] = useState(0);
   const controllers = useRef(new Set<AbortController>());
   const [upload, setUpload] = useState<Upload | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -313,12 +329,14 @@ export function App() {
           authorized,
           {
             signal: controller.signal,
+            answerTimeout: ANSWER_TIMEOUT_MS,
             onProgress: (loaded, total) => {
               const now = Date.now();
               if (now - last < 100 && !(total > 0 && loaded >= total)) return;
               last = now;
-              setUpload({ loaded, total });
+              setUpload((state) => ({ ...state, loaded, total }));
             },
+            onSent: () => setUpload((state) => (state ? { ...state, sentAt: Date.now() } : state)),
           },
           label,
         );
@@ -374,6 +392,7 @@ export function App() {
       if (notes.length) note({ id: "drop", tone: "warning", text: notes.join(" · ") });
       stagedRef.current = next;
       setStaged(next);
+      setPickedAt(Date.now());
       // The staged list and its Convert button live on the Convert page.
       if (routeRef.current.view !== "convert") navigate({ view: "convert" });
     },
@@ -651,15 +670,36 @@ export function App() {
   // ---- notices from the store
   const submitError = conversions.submitError;
   const [tokenOpen, setTokenOpen] = useState(false);
-  // A refused submission is a strip with one sentence; the composer keeps its input.
+  // A refused submission says why, in the interface language (the service's wording
+  // under Details); the composer keeps its input, so Retry sends it again.
+  const submitUrlsRef = useRef(submitUrls);
+  submitUrlsRef.current = submitUrls;
   useEffect(() => {
     if (!submitError) return;
     const words = dicts[localeRef.current];
-    // One short sentence; the service's wording is not repeated in a strip.
     if (submitError instanceof ApiError && submitError.status === 401) {
       note({ id: "submit", tone: "error", text: words.submitNeedsToken, action: { label: words.enterToken, run: () => setTokenOpen(true) } });
     } else {
-      note({ id: "submit", tone: "error", text: submitError instanceof NetworkError ? words.submitNoServer : words.submitFailedShort });
+      const why = describe(submitError);
+      const [first = "", ...rest] = why.text.split(/(?<=[.!?。！？])\s*/);
+      const detail = [rest.join(" ").trim(), why.detail].filter(Boolean).join("\n");
+      note({
+        id: "submit",
+        tone: "error",
+        text: withLead(words.submitFailedLead, first, words.toastLead),
+        ...(detail ? { detail } : {}),
+        ...(resendable(submitError)
+          ? {
+              action: {
+                label: words.retryPlainVerb,
+                run: () => {
+                  dismiss("submit");
+                  void submitUrlsRef.current(urlTextRef.current).then((sent) => sent && setUrlText(""));
+                },
+              },
+            }
+          : {}),
+      });
     }
     conversions.clearSubmitError();
   }, [submitError]);
@@ -667,8 +707,19 @@ export function App() {
   useEffect(() => {
     if (restoreFailed) note({ id: "restore", tone: "warning", text: dicts[localeRef.current].restoreFailed, action: { label: dicts[localeRef.current].restoreRetry, run: () => void conversionsRef.current.retryRestore() } });
   }, [restoreFailed]);
+  // Once sent, the toast counts the seconds the service has not answered yet.
+  const [, setTick] = useState(0);
+  const sentAt = upload?.sentAt;
+  useEffect(() => {
+    if (sentAt === undefined) return;
+    const timer = setInterval(() => setTick((tick) => tick + 1), 1000);
+    return () => clearInterval(timer);
+  }, [sentAt]);
   const uploadText = (() => {
     if (!upload) return t.submitting;
+    const waited = upload.sentAt === undefined ? 0 : Math.floor((Date.now() - upload.sentAt) / 1000);
+    if (waited >= 3) return t.uploadWaiting(waited);
+    if (upload.sentAt !== undefined) return t.uploadDone;
     if (!(upload.total > 0)) return upload.loaded > 0 ? t.uploadUnknown(fmtBytes(upload.loaded)) : t.submitting;
     if (upload.loaded >= upload.total) return t.uploadDone;
     return t.uploadProgress(Math.min(99, Math.floor((upload.loaded / upload.total) * 100)), fmtBytes(upload.loaded), fmtBytes(upload.total));
@@ -757,6 +808,7 @@ export function App() {
           onRemoveStaged={(file) => setStaged((current) => (current ? removeStaged(current, file) : null))}
           tools={tools}
           held={update.holding}
+          pickedAt={pickedAt}
         />
       )}
     />

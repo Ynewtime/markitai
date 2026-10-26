@@ -881,6 +881,15 @@ main:focus {
 .toast.is-warning .note-mark {
   color: var(--note-mark-warn);
 }
+/* a busy notice's spinner stands where the mark does, centred on the first line */
+.note-mark:has(> .spinner) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-top: 4px;
+}
 .toast-copy {
   flex: 1;
   min-width: 0;
@@ -4176,8 +4185,9 @@ kbd {
   opacity: 0.55;
 }
 
-/* a spinner takes the same box as a status mark */
+/* a spinner takes the same box as a status mark, also where it sits in running text */
 .spinner {
+  display: inline-block;
   flex: none;
   width: 12px;
   height: 12px;

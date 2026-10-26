@@ -47,8 +47,11 @@ on a phone the short text actions (Full details, Show items, breadcrumbs) answer
 taps across 44 px.
 
 **Convert** (`/`) is a headline, one sentence and the composer: the URL field
-(Enter converts, Shift+Enter starts a new line, a pasted list grows the field up
-to six rows), Options, Upload (files) and Folder on the left, Convert on the
+(Enter converts what was typed, with any chosen files, and does nothing in an
+empty field; Shift+Enter starts a new line, a pasted list grows the field up
+to six rows; Convert ignores the second click of a double click, and a pointer
+click in the second after files are picked or dropped, which a closing system
+picker can deliver), Options, Upload (files) and Folder on the left, Convert on the
 right. Options opens the conversion options in a dialog (a sheet from the bottom
 edge on a phone, closed by dragging its handle down, tapping outside or Esc; a
 480 px dialog near the top elsewhere; the browser's Back closes either and stays on
@@ -423,7 +426,9 @@ its sentence (a short lead in bold when it has one), at most one text action
 when there is any, and a close button. Done and warning toasts leave after 5 s,
 never while pressed, hovered or focused; errors stay until closed; a swipe down
 dismisses one. An upload in progress is a toast with
-Cancel until it ends. Screen readers hear every notice (errors at once, others
+Cancel until it ends; once sent, it counts the seconds until the server answers
+and fails after 120 s. A refused submission names the reason (a proxy's
+gateway error by its HTTP status), with Retry when sending again can help. Screen readers hear every notice (errors at once, others
 politely). Lasting conditions are not notices: a conversion that ran without a
 model or whose history could not be saved says so in its window's Details, and a list
 that cannot load shows a panel (below).

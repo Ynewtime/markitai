@@ -16,6 +16,7 @@ macro_rules! api_routes {
 mod access;
 mod convert_defaults;
 mod documents;
+mod drain;
 mod files;
 mod http;
 mod jobs;
@@ -641,6 +642,8 @@ fn router(state: &Arc<State>) -> Router {
             state.clone(),
             security::guard,
         ))
+        // Outermost: a refusal from any layer above reads the upload it refused.
+        .layer(middleware::from_fn(drain::read_refused_bodies))
         .with_state(state.clone())
 }
 

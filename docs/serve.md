@@ -652,6 +652,12 @@ other clients cannot submit URL conversions: a full DNS/redirect-aware public-ne
 fetch policy has not been implemented. Such clients may still upload files and
 access/delete history, so expose this mode only as intended by its operator.
 
+A refused request (no token, another origin, too many items, a file over the
+limit) still has its upload read and discarded, up to 100 MiB and for at most
+120 s, before the answer, which then closes the connection. A reverse proxy or
+tunnel therefore relays the refusal and its reason instead of a 502. A body
+declared larger than that is refused without being read.
+
 `?token=` stays accepted for scripts and older clients, but a URL can end up in
 proxy and server logs, shell history and browser history, so prefer the header.
 For a download that a browser must open itself (a navigation cannot send

@@ -1,6 +1,6 @@
 // The Upload and Folder tools. Each is a visible label around a visually
-// hidden input, so the keyboard reaches the native picker. Chosen files start
-// a job at once; a folder waits for Convert.
+// hidden input, so the keyboard reaches the native picker. Chosen files and
+// folders wait in the composer until Convert.
 import type { ComponentChildren } from "preact";
 import type { Dict } from "../i18n/index.ts";
 import { selectFolderFiles } from "../lib/files.ts";
