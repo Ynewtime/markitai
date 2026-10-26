@@ -453,6 +453,19 @@ impl Serve {
         Some((status, serde_json::from_str(body).unwrap_or(Value::Null)))
     }
 
+    /// The captured log once it holds `line`.
+    #[cfg(unix)]
+    fn log_with(&self, line: &str) -> String {
+        let started = Instant::now();
+        loop {
+            let log = self.log.lock().unwrap().clone();
+            if log.contains(line) || started.elapsed() > Duration::from_secs(90) {
+                return log;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
     /// `GET /api/update` until `done` holds.
     fn wait(&self, label: &str, done: impl Fn(&Value) -> bool) -> Value {
         let started = Instant::now();
@@ -1018,7 +1031,9 @@ mod unix {
             std::fs::read_to_string(home.path("home/.local/share/markitai/current/receipt"))
                 .unwrap();
         assert!(receipt.starts_with("version=2.2.0\n"), "{receipt}");
-        let log = server.log.lock().unwrap().clone();
+        // The server answered; its last startup line may still be on its way
+        // through the pipe.
+        let log = server.log_with("✓ Updated from 2.1.0");
         for line in [
             "→ Updating to 2.2.0 (from the web workbench)",
             "✓ Downloaded and verified 2.2.0",
