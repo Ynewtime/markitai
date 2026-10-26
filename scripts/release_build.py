@@ -59,6 +59,10 @@ TARGETS = {
 # The oldest glibc the Linux builds (in the manylinux_2_28 image) may require.
 GLIBC_FLOOR = (2, 28)
 MACOS_MINIMUM = "11.0"
+# Targets a release builds on another host: the x86_64 macOS archive and wheel
+# are cross-compiled on the arm64 runners (same profile and minimum macOS),
+# which are much faster, and release.yml exercises them on an Intel Mac.
+CROSS_HOSTS = {"x86_64-apple-darwin": "aarch64-apple-darwin"}
 SERVER_NAME = "io.github.Ynewtime/markitai"
 REPOSITORY = "Ynewtime/markitai"
 # GitHub refuses a Release body over 125,000 characters; the notes stay well
@@ -347,11 +351,31 @@ def host_target():
                 if line.startswith("host: "))
 
 
+def check_build_host(target, host):
+    """A release builds `target` on its own host, or on the one CROSS_HOSTS names."""
+    if host != target and CROSS_HOSTS.get(target) != host:
+        hosts = " or ".join([target, *([CROSS_HOSTS[target]] if target in CROSS_HOSTS else [])])
+        raise SystemExit(f"Release builds for {target} run on {hosts}; this host is {host}")
+
+
+def check_macos_extension(wheel, target, minimum):
+    """A macOS wheel's native extension is built for `target` and records `minimum` macOS."""
+    with zipfile.ZipFile(wheel) as archive, tempfile.TemporaryDirectory() as directory:
+        names = [name for name in archive.namelist() if name.endswith(".so")]
+        if len(names) != 1:
+            raise SystemExit(f"{Path(wheel).name} holds {len(names)} native extensions, not 1")
+        extension = Path(directory) / "extension.so"
+        extension.write_bytes(archive.read(names[0]))
+        verify_target_executable(extension, target)
+        found = macho_minimum(extension)
+    if found != minimum:
+        raise SystemExit(f"{names[0]} records macOS {found}, not {minimum}")
+
+
 def build_cli(target, output):
     if target not in TARGETS:
         raise SystemExit(f"Not a release target: {target}")
-    if host_target() != target:
-        raise SystemExit(f"Release archives are built natively; this host is {host_target()}, not {target}")
+    check_build_host(target, host_target())
     output.mkdir(parents=True, exist_ok=True)
     environment = build_environment()
     windows = target in WINDOWS_TARGETS
@@ -567,6 +591,7 @@ def build_wheel(target, output):
         raise SystemExit(f"Release wheels are built with maturin {pinned}, not {' '.join(found)}")
     output.mkdir(parents=True, exist_ok=True)
     environment = build_environment()
+    check_build_host(target, host_target())
     command = ["maturin", "build", "--release", "--locked", "--target", target,
                "--interpreter", sys.executable]
     if target.endswith("-apple-darwin"):
@@ -581,6 +606,8 @@ def build_wheel(target, output):
         expected = f"-cp310-abi3-{TARGETS[target]}.whl"
         if not built[0].name.endswith(expected):
             raise SystemExit(f"{built[0].name} is not a {expected[1:]} wheel")
+        if target.endswith("-apple-darwin"):
+            check_macos_extension(built[0], target, environment["MACOSX_DEPLOYMENT_TARGET"])
         wheel = output / built[0].name
         if wheel.exists():
             wheel.unlink()

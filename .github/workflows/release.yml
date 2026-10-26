@@ -161,15 +161,17 @@ jobs:
       - name: Formatting, tests, lint and harness tests
         run: python scripts/check.py
 
-  # CLI archives, built natively. Linux builds run in the manylinux_2_28 image
-  # so that the archive needs glibc 2.28 at most.
+  # CLI archives, built natively but for x86_64 macOS: that one is
+  # cross-compiled on the arm64 runners (twice as fast, same profile and
+  # minimum macOS) and exercised by smoke-intel. Linux builds run in the
+  # manylinux_2_28 image so that the archive needs glibc 2.28 at most.
   cli:
     strategy:
       fail-fast: false
       matrix:
         include:
           - {target: aarch64-apple-darwin, os: macos-15}
-          - {target: x86_64-apple-darwin, os: macos-15-intel}
+          - {target: x86_64-apple-darwin, os: macos-15, cross: true}
           - {target: x86_64-unknown-linux-gnu, os: ubuntu-24.04, image: 'quay.io/pypa/manylinux_2_28_x86_64@sha256:076b19ef6e698f28649fa817c49d14443201e01da85240e8e52f93e8daa49bff'}
           - {target: aarch64-unknown-linux-gnu, os: ubuntu-24.04-arm, image: 'quay.io/pypa/manylinux_2_28_aarch64@sha256:270a5e59af09f02dfc07fe4bb2cb2c5625c76d085cfa47f87dd93d9026eacc75'}
           - {target: x86_64-pc-windows-msvc, os: windows-2025}
@@ -199,11 +201,12 @@ jobs:
             -v "$GITHUB_WORKSPACE:/io" -w /io "$IMAGE" sh scripts/release_container.sh cli "$TARGET" dist
       - name: Install Rust
         if: '!matrix.image'
-        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --target "$TARGET"
       - name: Build the archive
         if: '!matrix.image'
         run: python scripts/release_build.py cli --target "$TARGET" --output dist
       - name: Install and exercise the archive
+        if: '!matrix.cross'
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: python scripts/release_build.py smoke --target "$TARGET" dist/markitai-v"$VERSION"-"$TARGET".*
@@ -215,14 +218,15 @@ jobs:
           retention-days: 14
 
   # abi3 wheels (CPython 3.10+), one per platform. Each is installed into a
-  # new venv and runs its commands, the Python API and bindings/python/tests.
+  # new venv and runs its commands, the Python API and bindings/python/tests
+  # (the x86_64 macOS one, cross-compiled like its archive, in smoke-intel).
   wheel:
     strategy:
       fail-fast: false
       matrix:
         include:
           - {target: aarch64-apple-darwin, os: macos-15}
-          - {target: x86_64-apple-darwin, os: macos-15-intel}
+          - {target: x86_64-apple-darwin, os: macos-15, cross: true}
           - {target: x86_64-unknown-linux-gnu, os: ubuntu-24.04, image: 'quay.io/pypa/manylinux_2_28_x86_64@sha256:076b19ef6e698f28649fa817c49d14443201e01da85240e8e52f93e8daa49bff'}
           - {target: aarch64-unknown-linux-gnu, os: ubuntu-24.04-arm, image: 'quay.io/pypa/manylinux_2_28_aarch64@sha256:270a5e59af09f02dfc07fe4bb2cb2c5625c76d085cfa47f87dd93d9026eacc75'}
           - {target: x86_64-pc-windows-msvc, os: windows-2025}
@@ -250,12 +254,13 @@ jobs:
       - name: Install Rust and maturin
         if: '!matrix.image'
         run: |
-          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --target "$TARGET"
           python -m pip install "maturin==$MATURIN_VERSION"
       - name: Build the wheel
         if: '!matrix.image'
         run: python scripts/release_build.py wheel --target "$TARGET" --output dist
       - name: Install and exercise the wheel
+        if: '!matrix.cross'
         run: python scripts/release_build.py smoke-wheel dist/*.whl
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -263,6 +268,42 @@ jobs:
           path: dist/*.whl
           if-no-files-found: error
           retention-days: 14
+
+  # The x86_64 macOS archive and wheel, cross-compiled above, installed and
+  # exercised on an Intel Mac as the other platforms' are in their build
+  # jobs. Nothing is built here.
+  smoke-intel:
+    needs: [cli, wheel]
+    runs-on: macos-15-intel
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      TARGET: x86_64-apple-darwin
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.13'
+      - name: Version
+        id: version
+        run: python scripts/release_build.py version --github-output "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: dist
+          name: cli-x86_64-apple-darwin
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: dist
+          name: wheel-x86_64-apple-darwin
+      - name: Install and exercise the archive
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: python scripts/release_build.py smoke --target "$TARGET" dist/markitai-v"$VERSION"-"$TARGET".*
+      - name: Install and exercise the wheel
+        run: python scripts/release_build.py smoke-wheel dist/*.whl
 
   # The source distribution, proven by building and installing it with pip.
   sdist:
@@ -293,7 +334,7 @@ jobs:
           retention-days: 14
 
   github-release:
-    needs: [prepare, test, cli, wheel, sdist]
+    needs: [prepare, test, cli, wheel, smoke-intel, sdist]
     if: needs.prepare.outputs.publish == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20

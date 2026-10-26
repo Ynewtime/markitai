@@ -4,6 +4,7 @@ import io
 import json
 import os
 import re
+import struct
 import sys
 import tarfile
 import tempfile
@@ -12,7 +13,7 @@ import zipfile
 
 import bounded_run
 import release_build
-from release_build import (TARGETS, archive_name, check_versions, expected_assets, extract_release_archive,
+from release_build import (TARGETS, archive_name, check_build_host, check_macos_extension, check_versions, expected_assets, extract_release_archive,
                            github_anchor, glibc_requirement, python_version, release_body, release_notes,
                            server_errors, write_sums)
 
@@ -388,6 +389,37 @@ class CaptureTests(unittest.TestCase):
                          "世界")
         source = Path(release_build.__file__).read_text(encoding="utf-8")
         self.assertIn('"PYTHONIOENCODING": "utf-8"', source.split("def smoke_wheel", 1)[1].split("\ndef ", 1)[0])
+
+
+class CrossBuildTests(unittest.TestCase):
+    def test_only_the_x86_64_mac_builds_on_another_host_and_only_on_arm64_macs(self):
+        check_build_host("x86_64-apple-darwin", "x86_64-apple-darwin")
+        check_build_host("x86_64-apple-darwin", "aarch64-apple-darwin")
+        check_build_host("aarch64-unknown-linux-gnu", "aarch64-unknown-linux-gnu")
+        for target, host in [("x86_64-apple-darwin", "x86_64-unknown-linux-gnu"),
+                             ("aarch64-apple-darwin", "x86_64-apple-darwin"),
+                             ("x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc")]:
+            with self.assertRaises(SystemExit, msg=(target, host)):
+                check_build_host(target, host)
+
+    def test_a_macos_wheel_extension_names_its_target_and_minimum(self):
+        def bundle(cpu, minimum):
+            command = struct.pack("<IIIIII", 0x32, 24, 1, minimum, minimum, 0)
+            return b"\xcf\xfa\xed\xfe" + struct.pack("<IIIIII", cpu, 3, 8, 1, len(command), 0) + bytes(4) + command
+
+        with tempfile.TemporaryDirectory() as directory:
+            def wheel(name, content):
+                path = Path(directory) / name
+                with zipfile.ZipFile(path, "w") as archive:
+                    archive.writestr("markitai/__init__.py", "")
+                    archive.writestr("markitai/_native.abi3.so", content)
+                return path
+
+            check_macos_extension(wheel("good.whl", bundle(0x01000007, 0x0B0000)), "x86_64-apple-darwin", "11.0")
+            with self.assertRaises(SystemExit):
+                check_macos_extension(wheel("old.whl", bundle(0x01000007, 0x0A0C00)), "x86_64-apple-darwin", "11.0")
+            with self.assertRaises(RuntimeError):
+                check_macos_extension(wheel("arm.whl", bundle(0x0100000C, 0x0B0000)), "x86_64-apple-darwin", "11.0")
 
 
 class GlibcTests(unittest.TestCase):
