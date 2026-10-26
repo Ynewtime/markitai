@@ -169,19 +169,30 @@ class SetupShTests(unittest.TestCase):
                               stdin=subprocess.DEVNULL, timeout=120, start_new_session=True)
 
     def run_with_terminal(self, answer="", **environment):
-        """setup.sh with a terminal on stdin that has `answer` typed ahead."""
-        import pty  # Unix only (termios); the class is skipped on Windows.
+        """setup.sh with a terminal on stdin that has `answer` typed ahead; it must read all of it."""
+        import array, fcntl, pty, termios  # Unix only; the class is skipped on Windows.
 
         leader, follower = pty.openpty()
         try:
+            # Nothing reads the leader, and on macOS the follower's last close waits, without
+            # a limit, until the leader has read what the terminal echoed: no echo.
+            attributes = termios.tcgetattr(follower)
+            attributes[3] &= ~termios.ECHO
+            termios.tcsetattr(follower, termios.TCSANOW, attributes)
             os.write(leader, answer.encode())
             env = {"HOME": str(self.home), "PATH": "/usr/bin:/bin", "LANG": "C.UTF-8", "NO_COLOR": "1",
                    "MARKITAI_DOWNLOAD_URL": self.releases.base, "TMPDIR": str(self.work), **environment}
-            return subprocess.run(["sh", str(SETUP_SH)], env=env, capture_output=True, text=True,
-                                  stdin=follower, timeout=120, start_new_session=True)
+            result = subprocess.run(["sh", str(SETUP_SH)], env=env, capture_output=True, text=True,
+                                    stdin=follower, timeout=120, start_new_session=True)
+            # An answer left unread would pass for the default at end of input.
+            unread = array.array("i", [0])
+            fcntl.ioctl(follower, termios.FIONREAD, unread)
+            self.assertEqual(unread[0], 0, result.stdout + result.stderr)
+            return result
         finally:
-            os.close(follower)
+            # The leader first, so the follower's close has no one to wait for (macOS).
             os.close(leader)
+            os.close(follower)
 
     def optional_state(self):
         receipt = (self.home / ".local/share/markitai/current/receipt").read_text()
