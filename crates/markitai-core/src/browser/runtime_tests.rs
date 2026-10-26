@@ -1045,9 +1045,20 @@ mod app_bundle_diagnostic {
     use std::path::Path;
     use std::time::{Duration, Instant};
 
+    /// The script is written by `cp`, not this process: a test thread that
+    /// forks while this process holds it open for writing would make its
+    /// start fail (ETXTBSY) until that child execs, longer on a busy machine.
     fn script(dir: &Path, name: &str, body: &str) -> std::path::PathBuf {
         let path = dir.join(name);
-        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        let source = dir.join(format!("{name}.source"));
+        std::fs::write(&source, format!("#!/bin/sh\n{body}\n")).unwrap();
+        let copied = std::process::Command::new("cp")
+            .arg(&source)
+            .arg(&path)
+            .status()
+            .unwrap();
+        assert!(copied.success());
+        std::fs::remove_file(&source).unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
         path
     }
