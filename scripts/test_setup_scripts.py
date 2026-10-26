@@ -145,6 +145,22 @@ class FakeReleases:
         self.server.server_close()
 
 
+# The user's shell for run_with_terminal: runs the command, then, still in the
+# session that holds the terminal, writes what is left unread on it to argv[1]
+# (on macOS the terminal is no longer one, ENOTTY, once that session has ended).
+TERMINAL_SHELL = """import fcntl, os, subprocess, sys
+code = subprocess.call(sys.argv[2:])
+fcntl.fcntl(0, fcntl.F_SETFL, fcntl.fcntl(0, fcntl.F_GETFL) | os.O_NONBLOCK)
+try:
+    left = os.read(0, 4096)
+except BlockingIOError:
+    left = b""
+with open(sys.argv[1], "wb") as stream:
+    stream.write(left)
+sys.exit(code)
+"""
+
+
 @unittest.skipUnless(shutil.which("sh") and shell_target() and os.name != "nt", "needs a POSIX shell on macOS/Linux")
 class SetupShTests(unittest.TestCase):
     def setUp(self):
@@ -171,7 +187,7 @@ class SetupShTests(unittest.TestCase):
 
     def run_with_terminal(self, answer="", **environment):
         """setup.sh with a terminal on stdin that has `answer` typed ahead; it must read all of it."""
-        import array, fcntl, pty, termios  # Unix only; the class is skipped on Windows.
+        import pty, termios  # Unix only; the class is skipped on Windows.
 
         leader, follower = pty.openpty()
         try:
@@ -183,11 +199,11 @@ class SetupShTests(unittest.TestCase):
             os.write(leader, answer.encode())
             env = {"HOME": str(self.home), "PATH": "/usr/bin:/bin", "LANG": "C.UTF-8", "NO_COLOR": "1",
                    "MARKITAI_DOWNLOAD_URL": self.releases.base, "TMPDIR": str(self.work), **environment}
-            result = bounded_run.run(["sh", str(SETUP_SH)], env=env, text=True, stdin=follower)
+            unread = self.work / "unread"
+            result = bounded_run.run([sys.executable, "-c", TERMINAL_SHELL, str(unread), "sh", str(SETUP_SH)],
+                                     env=env, text=True, stdin=follower)
             # An answer left unread would pass for the default at end of input.
-            unread = array.array("i", [0])
-            fcntl.ioctl(follower, termios.FIONREAD, unread)
-            self.assertEqual(unread[0], 0, result.stdout + result.stderr)
+            self.assertEqual(unread.read_bytes(), b"", result.stdout + result.stderr)
             return result
         finally:
             # The leader first, so the follower's close has no one to wait for (macOS).
