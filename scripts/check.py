@@ -2,9 +2,9 @@
 
 `check.py` runs everything: formatting, the Rust tests, clippy and the helper
 tests. `check.py --quick` runs only what the files changed since the branch
-left main (committed or not) can affect: the Rust tests and clippy of the
-changed crates and of the crates that depend on them, and the helper tests
-(which take seconds). Use the full gate before a merge or a release.
+left main (committed or not) can affect: the Rust tests of the changed crates
+and of the crates that depend on them (with nextest; `cargo test` runs them
+all), clippy when any crate changed, and the helper tests (which take seconds). Use the full gate before a merge or a release.
 """
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -29,6 +29,8 @@ PROBES = {"python3": ["-c", "import sys; print(sys.executable)"], "node": ["-p",
 # The official subscription runtimes: the tests never start the developer's own
 # (hosted CI has none; the tests that need one play it with a fake runtime).
 RUNTIMES = ("copilot", "claude", "codex")
+# The workspace crates with tests.
+TESTED = {"markitai-core", "markitai-cli", "markitai-ffi"}
 # Changes here can affect every crate.
 EVERY_CRATE = ("Cargo.toml", "Cargo.lock", "vendor/", ".cargo/", "rust-toolchain", "clippy.toml", "rustfmt.toml",
                ".config/nextest.toml")
@@ -255,19 +257,20 @@ def nextest_available(environment, root):
         return False
 
 
-def package_arguments(packages):
-    """`--workspace`, or `-p NAME` for each of `packages`."""
-    return ["--workspace"] if packages is None else [argument for package in packages for argument in ("-p", package)]
-
-
 def test_command(packages, nextest, environment):
     """The Rust test command: every test binary runs even after a failure, so one run reports them all.
 
     nextest runs each test in a process of its own, all binaries at once; it
-    has no doc tests, and the workspace has none (the libraries set doctest = false).
+    has no doc tests, and the workspace has none (the libraries set doctest =
+    false). It builds the whole workspace, so dependencies keep the features
+    the full gate builds them with, and runs only the tests of `packages`
+    (all when None); `cargo test` runs them all.
     """
-    runner = ["nextest", "run"] if nextest else ["test"]
-    return ["cargo", *runner, *package_arguments(packages), "--locked", "--no-fail-fast", *test_skips(environment)]
+    if not nextest:
+        return ["cargo", "test", "--workspace", "--locked", "--no-fail-fast", *test_skips(environment)]
+    selection = [] if packages is None else ["-E", " | ".join(f"package({package})" for package in packages)]
+    return ["cargo", "nextest", "run", "--workspace", "--locked", "--no-fail-fast", *selection,
+            *test_skips(environment)]
 
 
 def merge_base(root, base):
@@ -340,24 +343,24 @@ def main(argv=None):
             return result.returncode
         return action
 
-    packages, rust = None, True
+    rust, tested = True, None
     if options.quick:
         files = changed_files(root, options.base)
         crates = workspace_crates(root)
         packages = affected_crates(files, crates)
         rust = packages is None or bool(packages)
-        tested = None if packages is None else sorted(packages & {"markitai-core", "markitai-cli", "markitai-ffi"})
         print(f"check.py --quick: {len(files)} changed files; Rust crates: "
               f"{'all' if packages is None else ', '.join(sorted(packages)) or 'none'}", flush=True)
-        packages = None if packages is None else sorted(packages)
-    else:
-        tested = None
+        # Only crates with tests narrow the run (the bindings' crates have none).
+        if packages is not None and not packages.issuperset(TESTED):
+            tested = sorted(packages & TESTED)
     nextest = rust and nextest_available(environment, root)
     foreground = []
     if rust:
         if tested is None or tested:
             foreground.append(("cargo test", command(*test_command(tested, nextest, environment)), None))
-        foreground.append(("cargo clippy", command("cargo", "clippy", *package_arguments(packages), "--all-targets", "--locked", "--",
+        # Clippy checks the workspace: crates that did not change are already checked and cost nothing.
+        foreground.append(("cargo clippy", command("cargo", "clippy", "--workspace", "--all-targets", "--locked", "--",
                                                    "-D", "warnings"), None))
     background = [("cargo fmt", command("cargo", "fmt", "--all", "--check", quiet=True), None)] if rust else []
     background += [

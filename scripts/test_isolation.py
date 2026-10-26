@@ -217,12 +217,15 @@ class CheckQuick(unittest.TestCase):
         self.assertEqual(affected_crates([web + "src/app.tsx", "scripts/check.py"], self.CRATES), set())
         self.assertEqual(affected_crates([web + "dist/app.js"], self.CRATES), {"markitai-cli", "markitai-python"})
 
-    def test_nextest_or_cargo_test_with_the_same_selection_and_skips(self):
+    def test_nextest_builds_the_workspace_and_runs_the_chosen_crates(self):
         skip = {"MARKITAI_CHECK_SKIP": "vision"}
         self.assertEqual(test_command(None, True, skip),
                          ["cargo", "nextest", "run", "--workspace", "--locked", "--no-fail-fast", "--", "--skip", "vision"])
+        self.assertEqual(test_command(["markitai-cli", "markitai-ffi"], True, {}),
+                         ["cargo", "nextest", "run", "--workspace", "--locked", "--no-fail-fast",
+                          "-E", "package(markitai-cli) | package(markitai-ffi)"])
         self.assertEqual(test_command(["markitai-cli"], False, {}),
-                         ["cargo", "test", "-p", "markitai-cli", "--locked", "--no-fail-fast"])
+                         ["cargo", "test", "--workspace", "--locked", "--no-fail-fast"])
 
 
 class CheckPath(unittest.TestCase):
