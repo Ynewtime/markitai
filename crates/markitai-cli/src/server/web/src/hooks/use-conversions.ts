@@ -91,7 +91,6 @@ export interface ConversionsApi {
   activeCount: number;
   submit(files: File[], urls: string[], options: JobOptions, hooks?: UploadHooks, label?: string | null): Promise<string | null>;
   retry(item: SessionItem, options?: JobOptions): Promise<unknown>;
-  enhance(item: SessionItem, options: JobOptions): Promise<unknown>;
   removeItem(item: SessionItem): Promise<unknown>;
   removeJob(jobId: string): Promise<unknown>;
   /** Delete whole submissions and single items at once; each one succeeds or fails on its own. */
@@ -370,11 +369,11 @@ export function useConversions(
   );
 
   const rerun = useCallback(
-    async (item: SessionItem, operation: "retry" | "enhance", options?: JobOptions) => {
+    async (item: SessionItem, options?: JobOptions) => {
       askNotifyPermission();
       try {
-        await retryItem(item.jobId, item.itemId, options, operation);
-        requeue(item, operation);
+        await retryItem(item.jobId, item.itemId, options);
+        requeue(item, "retry");
         return null;
       } catch (error) {
         return error;
@@ -602,8 +601,7 @@ export function useConversions(
     restoredQuiet: restoredQuiet.current,
     activeCount,
     submit,
-    retry: (item, options) => rerun(item, "retry", options),
-    enhance: (item, options) => rerun(item, "enhance", options),
+    retry: (item, options) => rerun(item, options),
     removeItem,
     removeJob,
     removeMany,
