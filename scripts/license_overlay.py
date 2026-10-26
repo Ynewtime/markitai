@@ -90,13 +90,43 @@ def _listing(root):
     return files
 
 
-def _read_listed(files, name, expected=None):
-    """`_read` for a file `_listing` found: bounded, then checked against `expected`."""
-    listed = files.get(str(_relative(name)))
+class Disk:
+    """Where `stage_overlay` reads evidence and package sources, and writes its copy.
+
+    Packaging always uses the disk. The tests pass an object with the same
+    methods that keeps the files in memory: on Windows every file operation
+    is slow, and hundreds of counterexamples each read the whole tree.
+    """
+
+    def exists(self, path):
+        return path.exists() or path.is_symlink()
+
+    def listing(self, root):
+        """`{relative posix path: (key, size)}`, as `_listing`."""
+        return _listing(root)
+
+    def read(self, key):
+        with key.open("rb") as stream:
+            return stream.read(MAX_FILE + 1)
+
+    def package(self, directory, name):
+        return _read(directory, name)
+
+    def write_new(self, path, raw):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("xb") as stream:
+            stream.write(raw)
+
+
+DISK = Disk()
+
+
+def _read_listed(files, listing, name, expected=None):
+    """`_read` for a file `listing` names: bounded, then checked against `expected`."""
+    listed = listing.get(str(_relative(name)))
     if listed is None or listed[1] > MAX_FILE:
         raise RuntimeError("License evidence must be a bounded regular file")
-    with listed[0].open("rb") as stream:
-        raw = stream.read(MAX_FILE + 1)
+    raw = files.read(listed[0])
     if len(raw) > MAX_FILE:
         raise RuntimeError("License evidence file exceeds its bound")
     if expected is not None:
@@ -396,30 +426,27 @@ def _manifest_provenance(entry, repo, vcs, upstream, published, sources):
     return "reviewed_publication_version_stamp"
 
 
-def stage_overlay(source, destination, packages):
+def stage_overlay(source, destination, packages, files=DISK):
     """Return matching package text records; copy the complete verified evidence.
 
     Missing optional overlays leave the original source-only collector intact.
     A present but corrupt overlay fails closed before any evidence is copied.
     """
     destination = Path(destination)
-    result, data = _verified_overlay(source, destination, packages)
+    result, data = _verified_overlay(source, destination, packages, files)
     for name, raw in sorted(data.items()):
-        target = destination / name
-        target.parent.mkdir(parents=True, exist_ok=True)
-        with target.open("xb") as stream:
-            stream.write(raw)
+        files.write_new(destination / name, raw)
     return result
 
 
-def _verified_overlay(source, destination, packages):
+def _verified_overlay(source, destination, packages, files=DISK):
     """`stage_overlay`'s records and the verified files it copies, `{relative path: bytes}`."""
     source, destination = Path(source), Path(destination)
-    if not source.exists() and not source.is_symlink():
+    if not files.exists(source):
         return {"packages": {}, "record": {"status": "absent"}}, {}
     # One walk lists the tree; no symlink or special file anywhere in it is read.
-    files = _listing(source)
-    raw_inventory = _read_listed(files, "inventory.json")
+    listing = files.listing(source)
+    raw_inventory = _read_listed(files, listing, "inventory.json")
     inventory = _json(raw_inventory)
     if inventory.get("schema") != 1 or type(inventory.get("files")) is not list or len(inventory["files"]) > MAX_FILES:
         raise RuntimeError("Invalid license evidence inventory")
@@ -428,12 +455,12 @@ def _verified_overlay(source, destination, packages):
         name = str(_relative(entry["path"]))
         if name in data or name == "inventory.json":
             raise RuntimeError("Duplicate or recursive license evidence inventory")
-        data[name] = _read_listed(files, name, entry)
+        data[name] = _read_listed(files, listing, name, entry)
         identities[name] = {"bytes": entry["bytes"], "sha256": entry["sha256"]}
         total += len(data[name])
         if total > MAX_TOTAL:
             raise RuntimeError("License evidence total exceeds its bound")
-    if set(files) != set(data) | {"inventory.json"}:
+    if set(listing) != set(data) | {"inventory.json"}:
         raise RuntimeError("License evidence inventory is not exact")
 
     def recorded(entry):
@@ -564,10 +591,10 @@ def _verified_overlay(source, destination, packages):
             raise RuntimeError("License overlay package metadata differs")
         directory = Path(package["manifest_path"]).parent
         for name in [".cargo_vcs_info.json", "Cargo.toml.orig"]:
-            if _read(directory, name) != data[original + name]:
+            if files.package(directory, name) != data[original + name]:
                 raise RuntimeError("Current package source differs from exact-commit evidence")
         for name in reviewed.get("rust", {}):
-            if _read(directory, name) != published_sources[(entry["name"], entry["version"], commit)][f"{entry['name']}-{entry['version']}/{name}"]:
+            if files.package(directory, name) != published_sources[(entry["name"], entry["version"], commit)][f"{entry['name']}-{entry['version']}/{name}"]:
                 raise RuntimeError("Current package Rust source differs from reviewed publication")
         matched[key] = {"texts": texts, "complete_text": kind == "full_license_text",
                         "content_kind": kind, "commit": commit,
@@ -615,18 +642,18 @@ def _verified_overlay(source, destination, packages):
         "scope": "Reviewed exact-version declarations and full terms, including explicitly identified historical originals; byte provenance and delivery checks only, no legal review"}}, data
 
 
-def upstream_files(root):
+def upstream_files(root, files=DISK):
     """Return validated offline evidence for CLI, wheel and npm archive payloads.
 
     The source snapshot supplies version provenance here. Static-Go packaging
     additionally passes the resolved Cargo packages to stage_overlay.
     """
     source = Path(root) / "licenses/upstream"
-    if not source.exists():
+    if not files.exists(source):
         raise RuntimeError("Required upstream attribution directory is unavailable")
     # The verified bytes stage_overlay would copy, in the order of the copied
     # tree's sorted paths; nothing is written and read back.
-    result, data = _verified_overlay(source, Path("package/licenses/upstream"), [])
+    result, data = _verified_overlay(source, Path("package/licenses/upstream"), [], files)
     if result["record"]["status"] != "verified":
         raise RuntimeError("Upstream attribution did not validate")
     return {"licenses/upstream/" + name: data[name] for name in sorted(data, key=Path)}
