@@ -3,6 +3,8 @@ mod copilot;
 #[cfg(test)]
 pub(crate) mod fake_runtime;
 mod line;
+#[cfg(test)]
+mod no_runtimes;
 mod process;
 mod supervisor;
 #[cfg(test)]

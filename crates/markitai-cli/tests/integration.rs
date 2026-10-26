@@ -10,6 +10,8 @@ mod console;
 mod fake_runtime;
 #[path = "support/interrupt.rs"]
 mod interrupt;
+#[path = "../../markitai-core/src/subscription/no_runtimes.rs"]
+mod no_runtimes;
 
 mod cache;
 mod chatgpt_auth;

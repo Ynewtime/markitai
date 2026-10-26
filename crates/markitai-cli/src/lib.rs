@@ -15,6 +15,10 @@ mod file_lock_test;
 mod history;
 mod job_settings;
 mod mcp;
+// The developer's own subscription runtimes stay off the unit tests' PATH.
+#[cfg(test)]
+#[path = "../../markitai-core/src/subscription/no_runtimes.rs"]
+mod no_runtimes;
 mod output_claims;
 mod pricing;
 mod report;
