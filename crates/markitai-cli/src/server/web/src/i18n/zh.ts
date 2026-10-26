@@ -457,7 +457,7 @@ export const zh: Dict = {
   regionElsewhereTitle: "这个密钥属于另一个地址",
   regionElsewhere: (base) => `这个密钥在 ${base} 有效。添加模型前，请把地址改为它。`,
   kimiPlatform: "Kimi 开放平台",
-  kimiBaseAuto: "按密钥自动识别",
+  baseAuto: "按密钥自动识别",
   kimiFound: (service) => (service === "kimi_code" ? "Kimi Code 会员密钥" : "Kimi 开放平台密钥"),
   kimiMemberTerms: "按 Kimi 条款仅限交互使用；批量转换请用开放平台密钥。",
   kimiRefused: "Kimi 开放平台和 Kimi Code 都不接受这个密钥。请确认它正确且仍然有效。",

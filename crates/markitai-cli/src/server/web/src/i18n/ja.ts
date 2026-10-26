@@ -470,7 +470,7 @@ export const ja: Dict = {
   regionElsewhereTitle: "このキーは別のアドレスで有効です",
   regionElsewhere: (base) => `このキーは ${base} で有効です。モデルを追加する前にアドレスを変更してください。`,
   kimiPlatform: "Kimi プラットフォーム",
-  kimiBaseAuto: "キーから自動判定",
+  baseAuto: "キーから自動判定",
   kimiFound: (service) => (service === "kimi_code" ? "Kimi Code 会員のキー" : "Kimi プラットフォームのキー"),
   kimiMemberTerms: "Kimi の規約により対話的な利用のみです。一括変換にはプラットフォームのキーを使ってください。",
   kimiRefused: "Kimi プラットフォームも Kimi Code もこのキーを受け付けませんでした。正しく、まだ有効か確認してください。",

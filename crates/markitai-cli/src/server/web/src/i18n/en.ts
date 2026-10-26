@@ -485,7 +485,7 @@ export const en = {
   regionElsewhereTitle: "This key works at another address",
   regionElsewhere: (base: string) => `This key works at ${base}. Change the address to it before adding models.`,
   kimiPlatform: "Kimi Platform",
-  kimiBaseAuto: "Found from the key",
+  baseAuto: "Found from the key",
   kimiFound: (service: string): string => (service === "kimi_code" ? "Kimi Code membership key" : "Kimi Platform key"),
   kimiMemberTerms: "Interactive use only, by Kimi's terms. Batch conversions need a platform key.",
   kimiRefused: "Neither the Kimi Platform nor Kimi Code accepted this key. Check that it is correct and still active.",
