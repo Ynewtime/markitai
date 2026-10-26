@@ -304,9 +304,8 @@ the release's names, and removes the user Path entry only when it added it. A
 run without `MARKITAI_INSTALL_DIR` reuses the last install's folder (setup.ps1
 records a custom one in `%LOCALAPPDATA%\markitai\install-location`). With a
 terminal they offer `markitai doctor --fix` (OCR models, a headless Chromium
-when no browser is found) when `doctor --json` marks a check `fixable`, and keep
-the answer in the receipt (`optional=yes|no`): a yes prepares what is missing
-on later runs without asking, a no is not asked again;
+when no browser is found) when `doctor --json` marks a check `fixable`, on
+every run (no answer is kept; components already there need no question);
 `MARKITAI_INSTALL_OPTIONAL=1` runs it without one, `0` never. `--uninstall` (setup.ps1: `-Uninstall`; both: `MARKITAI_UNINSTALL=1`)
 removes what they installed and keeps `~/.markitai`. setup.ps1 runs in a script
 block of its own, so `irm | iex` leaves the user's session as it was.

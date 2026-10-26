@@ -215,9 +215,14 @@ class SetupShTests(unittest.TestCase):
         calls = (self.home / "calls").read_text() if (self.home / "calls").exists() else ""
         return re.findall(r"^optional=(.*)$", receipt, re.M), calls.count("doctor --fix")
 
-    def test_an_update_asks_only_about_missing_components_never_declined(self):
+    def plant_answer(self, answer):
+        # What 2.3.0 wrote after the question; later versions ignore it.
+        receipt = self.home / ".local/share/markitai/current/receipt"
+        receipt.write_text(receipt.read_text() + f"optional={answer}\n")
+
+    def test_an_update_asks_about_missing_components_every_time(self):
         question = "Prepare the optional components now?"
-        # 2.1.0 and 2.2.0 wrote no answer: components already there are kept without asking.
+        # Components already there are kept without asking.
         (self.home / "doctor.json").write_text(DOCTOR_READY)
         kept = self.run_with_terminal()
         self.assertEqual(kept.returncode, 0, kept.stdout + kept.stderr)
@@ -225,30 +230,35 @@ class SetupShTests(unittest.TestCase):
         self.assertIn("Optional components are ready", kept.stdout)
         self.assertEqual(self.optional_state(), ([], 0))
 
-        # Something missing and never answered: asked; a "no" is remembered.
+        # Something missing: asked, and a "no" is not remembered.
         (self.home / "doctor.json").write_text(DOCTOR_MISSING)
         declined = self.run_with_terminal("n\n")
         self.assertIn(question, declined.stdout)
-        self.assertEqual(self.optional_state(), (["no"], 0))
-        again = self.run_with_terminal(MARKITAI_VERSION="2.0.1")
+        self.assertIn("markitai doctor --fix", declined.stdout)
+        self.assertEqual(self.optional_state(), ([], 0))
+        # A "no" 2.3.0 remembered asks again, and the rewritten receipt drops it.
+        self.plant_answer("no")
+        again = self.run_with_terminal("n\n", MARKITAI_VERSION="2.0.1")
         self.assertEqual(again.returncode, 0, again.stdout + again.stderr)
-        self.assertNotIn(question, again.stdout)
-        self.assertIn("declined before", again.stdout)
-        self.assertIn("markitai doctor --fix", again.stdout)
-        self.assertEqual(self.optional_state(), (["no"], 0))
+        self.assertIn(question, again.stdout)
+        self.assertEqual(self.optional_state(), ([], 0))
 
-        # MARKITAI_INSTALL_OPTIONAL=1 prepares them anyway and turns the answer into yes;
-        # later updates then prepare what is missing without asking, headless too.
-        forced = self.run_setup(MARKITAI_INSTALL_OPTIONAL="1")
+        # A "yes" 2.3.0 remembered prepares nothing without a terminal: skipped with the hint.
+        self.plant_answer("yes")
+        headless = self.run_setup()
+        self.assertEqual(headless.returncode, 0, headless.stdout + headless.stderr)
+        self.assertIn("MARKITAI_INSTALL_OPTIONAL=1", headless.stdout)
+        self.assertEqual(self.optional_state(), ([], 0))
+
+        # MARKITAI_INSTALL_OPTIONAL answers without asking, and is not remembered either.
+        forced = self.run_with_terminal(MARKITAI_INSTALL_OPTIONAL="1")
         self.assertEqual(forced.returncode, 0, forced.stdout + forced.stderr)
-        self.assertEqual(self.optional_state(), (["yes"], 1))
-        refreshed = self.run_setup()
-        self.assertNotIn("MARKITAI_INSTALL_OPTIONAL=1", refreshed.stdout)
-        self.assertIn("Optional components are ready", refreshed.stdout)
-        self.assertEqual(self.optional_state(), (["yes"], 2))
-        (self.home / "doctor.json").write_text(DOCTOR_READY)
-        self.assertEqual(self.run_setup().returncode, 0)
-        self.assertEqual(self.optional_state(), (["yes"], 2))
+        self.assertNotIn(question, forced.stdout)
+        self.assertEqual(self.optional_state(), ([], 1))
+        never = self.run_with_terminal(MARKITAI_INSTALL_OPTIONAL="0")
+        self.assertNotIn(question, never.stdout)
+        self.assertIn("Prepare optional components later", never.stdout)
+        self.assertEqual(self.optional_state(), ([], 1))
 
     def test_a_doctor_without_fixable_is_read_by_its_statuses(self):
         cases = {"ready": (DOCTOR_OLD_READY, False), **{name: (report, True) for name, report in DOCTOR_OLD.items()}}
@@ -261,17 +271,17 @@ class SetupShTests(unittest.TestCase):
                 self.assertEqual("MARKITAI_INSTALL_OPTIONAL=1" in result.stdout, missing, result.stdout)
                 self.assertEqual("Optional components are ready" in result.stdout, not missing)
 
-    def test_a_yes_at_the_question_is_remembered(self):
+    def test_a_yes_at_the_question_is_not_remembered(self):
         (self.home / "doctor.json").write_text(DOCTOR_MISSING)
         agreed = self.run_with_terminal("\n")
         self.assertEqual(agreed.returncode, 0, agreed.stdout + agreed.stderr)
         self.assertIn("Prepare the optional components now?", agreed.stdout)
-        self.assertEqual(self.optional_state(), (["yes"], 1))
-        # A doctor that gives no report counts as missing, and a "yes" needs no question.
+        self.assertEqual(self.optional_state(), ([], 1))
+        # A doctor that gives no report counts as missing, so the next run asks again.
         (self.home / "doctor.json").unlink()
-        updated = self.run_with_terminal(MARKITAI_VERSION="2.0.1")
-        self.assertNotIn("Prepare the optional components now?", updated.stdout)
-        self.assertEqual(self.optional_state(), (["yes"], 2))
+        updated = self.run_with_terminal("\n", MARKITAI_VERSION="2.0.1")
+        self.assertIn("Prepare the optional components now?", updated.stdout)
+        self.assertEqual(self.optional_state(), ([], 2))
 
     def test_install_update_and_uninstall(self):
         result = self.run_setup()
@@ -569,8 +579,8 @@ Assert (-not (Test-Path (Join-Path $install "licenses"))) "the previous release'
 Assert (Test-Path (Join-Path $install "user-notes.txt")) "still kept"
 Assert ((Get-Content -Raw (Join-Path $install "NOTICE")).Trim() -eq "exe 2.0.2") "the new release's names come"
 
-# The answer about the optional components stays in the receipt; components
-# already there are kept, and only a missing one never declined is asked about.
+# Components already there are kept without asking; a missing one is asked
+# about every time, and no answer is kept (an optional= line 2.3.0 wrote goes).
 $fake = if ($IsWindows) { Join-Path $Work "fake-markitai.cmd" } else { Join-Path $Work "fake-markitai" }
 $doctorJson = Join-Path $Work "doctor.json"
 function Get-Fixes { $log = Join-Path $Work "fixes"; if (Test-Path $log) { @(Get-Content $log).Count } else { 0 } }
@@ -578,28 +588,36 @@ $interactive = ${function:Test-InteractiveInput}
 function Test-InteractiveInput { $true }
 Remove-Item env:MARKITAI_INSTALL_OPTIONAL -ErrorAction SilentlyContinue
 Set-Content -LiteralPath $doctorJson -Value '{ "playwright": { "status": "ok" } }'
+Add-Content -LiteralPath (Join-Path $install "receipt") -Value "optional=no"
 $receipt = Install-Release $second $install @{ Version = "2.0.2" } "x86_64-pc-windows-msvc"
+Assert ((Get-Content -Raw (Join-Path $install "receipt")) -notmatch "optional=") "an update drops 2.3.0's answer"
 function Read-Host { throw "asked" }
 $script:Shown.Clear()
-Assert (Invoke-OptionalComponents $fake $install $receipt) "present: ready"
+Assert (Invoke-OptionalComponents $fake) "present: ready"
 Assert (($script:Shown -join "`n") -match "Optional components are ready") "present: kept without asking"
-Assert ((Read-Receipt $install).Optional -eq "" -and (Get-Fixes) -eq 0) "present: nothing recorded or run"
+Assert ((Get-Fixes) -eq 0) "present: nothing run"
 Set-Content -LiteralPath $doctorJson -Value '{ "rapidocr": { "status": "warning", "fixable": true } }'
-function Read-Host { "n" }
-Assert (Invoke-OptionalComponents $fake $install $receipt) "missing: declined"
-Assert ((Read-Receipt $install).Optional -eq "no" -and (Get-Fixes) -eq 0) "a no is remembered"
-$receipt = Install-Release $second $install @{ Version = "2.0.2" } "x86_64-pc-windows-msvc"
-Assert ($receipt.Optional -eq "no" -and (Read-Receipt $install).Optional -eq "no") "an update keeps the answer"
+$script:Asked = 0
+function Read-Host { $script:Asked++; "n" }
+Assert (Invoke-OptionalComponents $fake) "missing: declined"
+Assert (Invoke-OptionalComponents $fake) "missing: declined again"
+Assert ($script:Asked -eq 2 -and (Get-Fixes) -eq 0) "a no is not remembered"
+function Read-Host { $script:Asked++; "" }
+Assert (Invoke-OptionalComponents $fake) "missing: agreed"
+Assert ($script:Asked -eq 3 -and (Get-Fixes) -eq 1) "agreed: prepared"
+Assert ((Get-Content -Raw (Join-Path $install "receipt")) -notmatch "optional=") "no answer recorded"
 function Read-Host { throw "asked" }
-$script:Shown.Clear()
-Assert (Invoke-OptionalComponents $fake $install $receipt) "declined: not asked"
-Assert (($script:Shown -join "`n") -match "declined before") "declined: says so"
 $env:MARKITAI_INSTALL_OPTIONAL = "1"
-Assert (Invoke-OptionalComponents $fake $install $receipt) "forced"
-Assert ((Read-Receipt $install).Optional -eq "yes" -and (Get-Fixes) -eq 1) "forced: prepared, answer yes"
+Assert (Invoke-OptionalComponents $fake) "forced"
+Assert ((Get-Fixes) -eq 2) "forced: prepared without asking"
+$env:MARKITAI_INSTALL_OPTIONAL = "0"
+Assert (Invoke-OptionalComponents $fake) "never"
+Assert ((Get-Fixes) -eq 2) "never: nothing run"
 Remove-Item env:MARKITAI_INSTALL_OPTIONAL
-Assert (Invoke-OptionalComponents $fake $install $receipt) "agreed: prepared without asking"
-Assert ((Get-Fixes) -eq 2) "agreed: missing components prepared"
+Set-Item function:Test-InteractiveInput { $false }
+$script:Shown.Clear()
+Assert (Invoke-OptionalComponents $fake) "headless: skipped"
+Assert (($script:Shown -join "`n") -match "MARKITAI_INSTALL_OPTIONAL" -and (Get-Fixes) -eq 2) "headless: the variable to set"
 Remove-Item function:Read-Host
 Set-Item function:Test-InteractiveInput $interactive
 # 2.2.0 and older said no "fixable": their statuses and messages are read.

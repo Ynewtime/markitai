@@ -42,8 +42,8 @@ installs. Setup records what it installed; an update or uninstall removes
 only those files. A markitai 1.x that `uv tool` installed is removed once the
 new one is in place; `~/.markitai` (configuration, caches, history) is kept. With a terminal, setup offers
 `markitai doctor --fix` for the optional components (local OCR models, a
-headless browser); it remembers the answer, and an update asks again only when
-one is missing and was never declined. `markitai update` updates it in place (running the same
+headless browser) whenever one is missing; it keeps no answer, so
+`MARKITAI_INSTALL_OPTIONAL=1` or `0` answers without asking. `markitai update` updates it in place (running the same
 command again does too). To uninstall, which also keeps `~/.markitai`:
 
 ```sh
