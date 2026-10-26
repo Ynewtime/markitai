@@ -256,9 +256,10 @@ impl Home {
         }
     }
 
-    /// A setup.sh install whose `bin_dir/markitai` is (a link to) the test binary.
+    /// A setup.sh install of `version` whose `bin_dir/markitai` is (a link to)
+    /// the test binary.
     #[cfg(unix)]
-    fn setup_sh() -> Self {
+    fn setup_sh(version: &str) -> Self {
         let root = tempfile::tempdir().unwrap();
         let bin = root.path().join("home/.local/bin");
         let current = root.path().join("home/.local/share/markitai/current");
@@ -270,7 +271,7 @@ impl Home {
         std::fs::write(
             current.join("receipt"),
             format!(
-                "version=2.1.0\ntarget={}\nbin_dir={}\n",
+                "version={version}\ntarget={}\nbin_dir={}\n",
                 target(),
                 bin.display()
             ),
@@ -639,7 +640,7 @@ mod unix {
     fn a_setup_install_is_replaced_in_place_and_its_receipt_rewritten() {
         let releases = Releases::start("2.2.0");
         releases.publish("2.2.0", "#!/bin/sh\necho \"markitai 2.2.0\"\n", false);
-        let home = Home::setup_sh();
+        let home = Home::setup_sh("2.1.0");
         let (stdout, stderr, code) = text(&home.run(&releases, &["update", "--json"], &[]));
         assert_eq!(code, 0, "{stderr}");
         let answer: Value = serde_json::from_str(&stdout).unwrap();
@@ -683,7 +684,7 @@ mod unix {
     fn a_mismatching_archive_changes_nothing() {
         let releases = Releases::start("2.2.0");
         releases.publish("2.2.0", "#!/bin/sh\necho \"markitai 2.2.0\"\n", true);
-        let home = Home::setup_sh();
+        let home = Home::setup_sh("2.1.0");
         let (_, stderr, code) = text(&home.run(&releases, &["update"], &[("MARKITAI_LANG", "zh")]));
         assert_eq!(code, 1, "{stderr}");
         assert!(
@@ -714,7 +715,7 @@ mod unix {
     fn a_new_program_that_does_not_start_is_not_installed() {
         let releases = Releases::start("2.2.0");
         releases.publish("2.2.0", "#!/bin/sh\necho broken >&2\nexit 3\n", false);
-        let home = Home::setup_sh();
+        let home = Home::setup_sh("2.1.0");
         let (_, stderr, code) = text(&home.run(&releases, &["update"], &[]));
         assert_eq!(code, 1, "{stderr}");
         assert!(
@@ -735,7 +736,7 @@ mod unix {
     fn a_downgrade_without_a_terminal_needs_yes() {
         let releases = Releases::start("2.2.0");
         releases.publish("2.0.1", "#!/bin/sh\necho \"markitai 2.0.1\"\n", false);
-        let home = Home::setup_sh();
+        let home = Home::setup_sh("2.1.0");
         let (_, stderr, code) = text(&home.run(&releases, &["update", "--version", "2.0.1"], &[]));
         assert_eq!(code, 2, "{stderr}");
         assert!(stderr.contains("Needs confirmation"), "{stderr}");
@@ -969,7 +970,7 @@ mod unix {
     fn the_workbench_updates_a_loopback_server_which_restarts_in_place() {
         let releases = Releases::start("2.2.0");
         releases.publish("2.2.0", &posing_program(""), false);
-        let home = Home::setup_sh();
+        let home = Home::setup_sh("2.1.0");
         let server = Serve::start(&home, &releases);
         let pid = server.child.id();
         let view = server.wait("the daily check", |view| view["latest"] == "2.2.0");
@@ -1037,7 +1038,7 @@ mod unix {
             &posing_program("MARKITAI_TEST_UPDATE_FAIL_START=1"),
             false,
         );
-        let home = Home::setup_sh();
+        let home = Home::setup_sh("2.1.0");
         let server = Serve::start(&home, &releases);
         server.wait("the daily check", |view| view["latest"] == "2.2.0");
         server
@@ -1091,7 +1092,7 @@ mod restart_by_cli {
                 ""
             };
             releases.publish("2.2.0", &unix::posing_program(extra), false);
-            Home::setup_sh()
+            Home::setup_sh("2.1.1")
         }
         #[cfg(windows)]
         {
