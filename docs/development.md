@@ -107,8 +107,10 @@ and what it needs installed.
 
 `uv run scripts/workbench_upload_e2e.py` drives the workbench's folder upload
 in Chromium against a `markitai serve` debug build: no job before Convert, one
-upload, and a refused submission that says why. `--ui DIR` tests unbuilt
-sources from a `node build.mjs` output; its docstring has the other options.
+upload, and a refused submission that says why. `--nginx` also runs it through
+nginx and checks that a refused 9 MB upload reaches the page as the server's 403
+with its reason, not a 502. `--ui DIR` tests unbuilt sources from a
+`node build.mjs` output; its docstring has the other options.
 
 A ```` ```mermaid ```` block becomes SVG while the site builds
 (`website/.vitepress/mermaid.ts`, Pele); a diagram Pele cannot draw fails the

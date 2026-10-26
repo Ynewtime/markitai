@@ -19,11 +19,17 @@ in Chinese and checks:
 2. errors: a proxy's 524 (an HTML page, no reason) and a refusal in the
    service's JSON shape each end in a notice that says why, in Chinese; the 524
    offers Retry, which sends the same files once more and creates the job.
+3. refused (with ``--nginx``): the page goes through nginx, which buffers the
+   upload as Cloudflare does. A second nginx server sends the server a Host
+   without its port, so the server refuses the page's origin before reading the
+   9 MB; the server must still read it, so that nginx relays the 403 and its
+   reason instead of a 502 (closing early resets the connection). Four tries.
 
 ``--ui DIR`` serves the workbench from a ``node build.mjs`` output instead of
 the one built into the binary (for testing sources before ``dist/`` is
 rebuilt). ``--shots DIR`` saves screenshots at 1280 and 390 px wide.
-``--throttle KBPS`` limits the browser's upload rate (Chrome's network
+``--nginx [PATH]`` runs checks 1 and 2 through nginx too (on ``--port`` + 1;
+check 3 uses + 2). ``--throttle KBPS`` limits the browser's upload rate (Chrome's network
 emulation) so the progress notice can be seen. Needs Playwright's Chromium
 (``playwright install chromium``, or ``PLAYWRIGHT_BROWSERS_PATH``).
 
@@ -264,6 +270,51 @@ def check_errors(page: Page, folder: Path, shots: Path | None, tag: str) -> None
     page.wait_for_url(re.compile(r"/jobs"), timeout=10_000)
 
 
+NGINX = """daemon off; pid {dir}/nginx.pid; error_log {dir}/error.log;
+events {{}}
+http {{
+  client_body_temp_path {dir}/body; proxy_temp_path {dir}/proxy; access_log off; client_max_body_size 0;
+  server {{ listen 127.0.0.1:{via}; location / {{ proxy_pass http://127.0.0.1:{port};
+    proxy_http_version 1.1; proxy_buffering off; proxy_set_header Host $http_host; }} }}
+  server {{ listen 127.0.0.1:{refusing}; location / {{ proxy_pass http://127.0.0.1:{port};
+    proxy_http_version 1.1; proxy_buffering off; proxy_set_header Host $host; }} }}
+}}
+"""
+
+
+LOGS: Path | None = None
+
+
+def start_nginx(binary: str, scratch: Path, port: int) -> subprocess.Popen[bytes]:
+    """nginx on port + 1 (a plain proxy) and port + 2 (one whose Host drops the port)."""
+    global LOGS
+    folder = LOGS = scratch / "nginx"
+    folder.mkdir()
+    (folder / "nginx.conf").write_text(NGINX.format(dir=folder, port=port, via=port + 1, refusing=port + 2))
+    proxy = subprocess.Popen([binary, "-p", str(folder), "-c", str(folder / "nginx.conf"), "-e", str(folder / "error.log")])
+    time.sleep(1)
+    if proxy.poll() is not None:
+        sys.exit(f"nginx did not start: {(folder / 'error.log').read_text()}")
+    return proxy
+
+
+def check_refused(page: Page, folder: Path, tag: str, tries: int = 4) -> None:
+    for attempt in range(tries):
+        page.goto(page.url.split("#")[0].split("/jobs")[0].rstrip("/") + "/")
+        page.wait_for_selector("label.upload-folder input", state="attached")
+        with page.expect_file_chooser() as chooser:
+            page.locator("label.upload-folder").click()
+        chooser.value.set_files(str(folder))
+        with page.expect_response(lambda response: response.request.method == "POST" and response.url.endswith("/api/jobs"), timeout=120_000) as answer:
+            page.locator("button.tool-convert").click()
+        page.wait_for_function(f"() => (document.querySelector('.toasts')?.innerText ?? '').includes('{LEAD}')")
+        text = toast_text(page)
+        if answer.value.status != 403:
+            log = (LOGS / "error.log").read_text() if LOGS else ""
+            raise AssertionError(f"{tag} try {attempt + 1}: HTTP {answer.value.status} · {text}\n{log}")
+        assert "其他网站" in text, text
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--bin", type=Path, default=ROOT / "target/debug/markitai")
@@ -272,7 +323,8 @@ def main() -> None:
     parser.add_argument("--ui", type=Path, help="serve the workbench from this build output")
     parser.add_argument("--shots", type=Path)
     parser.add_argument("--throttle", type=int, help="upload rate in KB/s")
-    parser.add_argument("--only", choices=["folder", "errors"])
+    parser.add_argument("--nginx", nargs="?", const="nginx", help="also test through nginx (this binary)")
+    parser.add_argument("--only", choices=["folder", "errors", "refused"])
     args = parser.parse_args()
     if args.shots:
         args.shots.mkdir(parents=True, exist_ok=True)
@@ -280,23 +332,32 @@ def main() -> None:
         folder = Path(scratch) / "samples"
         size = make_folder(folder)
         server, token = start_server(args.bin.resolve(), Path(scratch) / "run", args.port)
-        origin = args.origin or f"http://127.0.0.1:{args.port}"
+        proxy = start_nginx(args.nginx, Path(scratch), args.port) if args.nginx else None
+        origin = args.origin or f"http://127.0.0.1:{args.port + 1 if proxy else args.port}"
         try:
             with sync_playwright() as playwright:
                 browser = playwright.chromium.launch()
                 for width, tag in [(1280, "desktop"), (390, "phone")]:
-                    if args.only != "errors":
+                    if args.only in (None, "folder"):
                         page = open_page(browser, origin, token, width, args.ui)
                         elapsed = check_folder(page, token, folder, size, args.shots, tag, args.throttle)
                         print(f"{tag}: folder ok · {FOLDER_FILES} files, {size / 1e6:.1f} MB in one request, Convert → 201 in {elapsed:.2f} s")
                         page.context.close()
-                    if args.only != "folder":
+                    if args.only not in ("folder", "refused"):
                         page = open_page(browser, origin, token, width, args.ui)
                         check_errors(page, folder, args.shots, tag)
                         print(f"{tag}: errors ok · 524 and 422 say why, Retry creates the job")
                         page.context.close()
+                    if proxy and args.only in (None, "refused"):
+                        page = open_page(browser, f"http://127.0.0.1:{args.port + 2}", token, width, args.ui)
+                        check_refused(page, folder, tag)
+                        print(f"{tag}: refused ok · a 9 MB upload refused before it was read gets the server's 403 and reason through nginx")
+                        page.context.close()
                 browser.close()
         finally:
+            if proxy:
+                proxy.terminate()
+                proxy.wait(timeout=30)
             server.terminate()
             server.wait(timeout=60)
 
