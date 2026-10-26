@@ -247,7 +247,7 @@ pub(super) struct Browser {
     origin_headers: serde_json::Map<String, Value>,
     origin: String,
     // Public addresses only: every request host must resolve entirely public.
-    restrict_public: bool,
+    restrict_public: crate::public_net::Level,
     // Hosts already judged, so a page's many requests resolve each name once.
     host_public: std::collections::HashMap<String, bool>,
     in_flight: HashSet<String>,
@@ -499,7 +499,7 @@ impl Browser {
         self.auth = super::auth::State::new(None);
         self.origin_headers.clear();
         self.origin.clear();
-        self.restrict_public = false;
+        self.restrict_public = crate::public_net::Level::Open;
         self.host_public.clear();
         self.blocked.clear();
         self.in_flight.clear();
@@ -553,7 +553,10 @@ impl Browser {
         if let Some(&known) = self.host_public.get(&key) {
             return known;
         }
-        let public = crate::public_net::host_all_public(url);
+        let public = crate::public_net::host_all_public(
+            url,
+            self.restrict_public == crate::public_net::Level::PublicHost,
+        );
         self.host_public.insert(key, public);
         public
     }
@@ -630,7 +633,7 @@ impl Browser {
                 // redirect or subresource to a host that resolves to any
                 // non-public address (this machine, its network, cloud metadata)
                 // is refused, each host judged once.
-                let private = self.restrict_public
+                let private = self.restrict_public != crate::public_net::Level::Open
                     && parsed.as_ref().is_some_and(|url| {
                         matches!(url.scheme(), "http" | "https") && !self.host_is_public(url)
                     });
@@ -992,7 +995,7 @@ mod tests {
                 auth: super::super::auth::State::new(None),
                 origin_headers: serde_json::Map::new(),
                 origin: String::new(),
-                restrict_public: false,
+                restrict_public: crate::public_net::Level::Open,
                 host_public: std::collections::HashMap::new(),
                 blocked: vec![regex::Regex::new(r"^https://example\.test/ads/").unwrap()],
                 in_flight: HashSet::new(),

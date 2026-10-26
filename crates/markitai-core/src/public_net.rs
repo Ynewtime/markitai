@@ -7,6 +7,15 @@
 //! Page fetches follow redirects under the same check ([`Level`]): a user
 //! token's directly, a CLI or admin fetch of a public host through the proxy,
 //! with each hop's name checked here first.
+//!
+//! Behind a TUN proxy (Clash/mihomo, Surge, sing-box) every public name
+//! resolves to a Fake-IP address in a benchmarking range
+//! ([`crate::fetch::is_proxy_dns`]), which the proxy maps back to the name.
+//! A CLI or admin fetch takes such an answer as the public host it stands
+//! for, on the static and browser routes alike: the proxy resolves the name
+//! itself, as an HTTP proxy does. An address written in a URL is still judged
+//! as written, and a user token's fetch still refuses these answers (the
+//! check cannot see where the proxy connects).
 use std::future::Future;
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::pin::Pin;
@@ -32,6 +41,12 @@ fn refused_address(ip: std::net::IpAddr) -> bool {
                 list.split(',')
                     .any(|allowed| allowed.trim().parse() == Ok(ip))
             }))
+}
+
+/// Whether `ip`, an address a name resolved to, may be connected to: a public
+/// one, or with `proxy_dns` a TUN proxy's Fake-IP answer.
+fn resolved_allowed(ip: std::net::IpAddr, proxy_dns: bool) -> bool {
+    !refused_address(ip) || (proxy_dns && crate::fetch::is_proxy_dns(ip))
 }
 
 /// Whether `url` may be requested by a public-only client: an IP address
@@ -86,12 +101,6 @@ std::thread_local! {
     static RESTRICTED: std::cell::Cell<Level> = const { std::cell::Cell::new(Level::Open) };
 }
 
-/// Whether the current fetch is restricted to public addresses (see
-/// [`restrict`]). [`crate::fetch::client`] builds a public-only client then.
-pub(crate) fn restricted() -> bool {
-    level() != Level::Open
-}
-
 /// The current fetch's restriction level (see [`restrict`]).
 pub(crate) fn level() -> Level {
     RESTRICTED.with(std::cell::Cell::get)
@@ -117,7 +126,8 @@ impl Drop for Restriction {
 /// name that resolves to at least one public address. A fetch of such a host
 /// is held to public addresses for the rest of its hops; a private or local
 /// host (a deliberate local conversion) is not. Names that do not resolve
-/// count as not public, so they impose no restriction of their own.
+/// count as not public, so they impose no restriction of their own; a TUN
+/// proxy's Fake-IP answer counts as public.
 pub(crate) fn public_host(url: &url::Url) -> bool {
     match url.host() {
         Some(url::Host::Ipv4(address)) => !refused_address(address.into()),
@@ -127,7 +137,7 @@ pub(crate) fn public_host(url: &url::Url) -> bool {
             .map(|addresses| {
                 addresses
                     .into_iter()
-                    .any(|address| !refused_address(address.ip()))
+                    .any(|address| resolved_allowed(address.ip(), true))
             })
             .unwrap_or(false),
         None => false,
@@ -137,8 +147,9 @@ pub(crate) fn public_host(url: &url::Url) -> bool {
 /// Whether `url`'s host would connect only to public addresses: a public IP
 /// literal, or a name whose every resolved address is public (none private).
 /// Chromium resolves names itself and may pick any of them, so a host with any
-/// private address is refused for a restricted browser fetch.
-pub(crate) fn host_all_public(url: &url::Url) -> bool {
+/// private address is refused for a restricted browser fetch. With
+/// `proxy_dns` (a CLI or admin fetch) a TUN proxy's Fake-IP answer is allowed.
+pub(crate) fn host_all_public(url: &url::Url, proxy_dns: bool) -> bool {
     match url.host() {
         Some(url::Host::Ipv4(address)) => !refused_address(address.into()),
         Some(url::Host::Ipv6(address)) => !refused_address(address.into()),
@@ -147,7 +158,7 @@ pub(crate) fn host_all_public(url: &url::Url) -> bool {
             .map(|addresses| {
                 let mut addresses = addresses.peekable();
                 addresses.peek().is_some()
-                    && addresses.all(|address| !refused_address(address.ip()))
+                    && addresses.all(|address| resolved_allowed(address.ip(), proxy_dns))
             })
             .unwrap_or(false),
         None => false,
@@ -178,7 +189,10 @@ pub(crate) fn following_client(
 pub(crate) fn proxied_following_client(
     builder: reqwest::blocking::ClientBuilder,
 ) -> crate::Result<reqwest::blocking::ClientBuilder> {
-    let resolver = PublicResolver::default();
+    let resolver = PublicResolver {
+        proxy_dns: true,
+        ..PublicResolver::default()
+    };
     let proxies = Arc::clone(&resolver.proxies);
     let builder = crate::proxy::http_observed(builder, move |endpoint| {
         if let Some(host) = endpoint.host_str() {
@@ -190,12 +204,14 @@ pub(crate) fn proxied_following_client(
         }
     })?;
     Ok(builder
-        .redirect(following(hop_allowed))
+        .redirect(following(|url| hop_allowed(url, true)))
         .dns_resolver(Arc::new(resolver)))
 }
 
 /// Follows up to ten redirects whose target `allowed` accepts.
-fn following(allowed: fn(&url::Url) -> bool) -> reqwest::redirect::Policy {
+fn following(
+    allowed: impl Fn(&url::Url) -> bool + Send + Sync + 'static,
+) -> reqwest::redirect::Policy {
     reqwest::redirect::Policy::custom(move |attempt| {
         if attempt.previous().len() >= 10 {
             attempt.error("too many redirects")
@@ -211,22 +227,29 @@ fn following(allowed: fn(&url::Url) -> bool) -> reqwest::redirect::Policy {
 /// target) may be requested: an IP literal must be public, and a name that
 /// resolves here must resolve to public addresses only. A name that does not
 /// resolve here is left to the connection: a direct one fails in the public
-/// resolver, and a proxy-only network resolves it at the proxy.
-pub(crate) fn hop_allowed(url: &url::Url) -> bool {
+/// resolver, and a proxy-only network resolves it at the proxy. With
+/// `proxy_dns` (a CLI or admin fetch) a TUN proxy's Fake-IP answer is allowed.
+pub(crate) fn hop_allowed(url: &url::Url, proxy_dns: bool) -> bool {
     match url.host() {
         Some(url::Host::Domain(host)) => (host, url.port_or_known_default().unwrap_or(443))
             .to_socket_addrs()
             .map_or(true, |mut addresses| {
-                addresses.all(|address| !refused_address(address.ip()))
+                addresses.all(|address| resolved_allowed(address.ip(), proxy_dns))
             }),
         _ => url_allowed(url),
     }
 }
 
-/// The public addresses among `addresses`, or an error naming none of them.
-fn public(addresses: impl Iterator<Item = SocketAddr>) -> std::io::Result<Vec<SocketAddr>> {
+/// The public addresses among `addresses` (with `proxy_dns`, Fake-IP answers
+/// too), or an error naming none of them. Their order is kept, so a name with
+/// both families connects as curl and browsers do: the connector tries the
+/// first family and starts the other 300 ms later (happy eyeballs).
+fn public(
+    addresses: impl Iterator<Item = SocketAddr>,
+    proxy_dns: bool,
+) -> std::io::Result<Vec<SocketAddr>> {
     let kept: Vec<_> = addresses
-        .filter(|address| !refused_address(address.ip()))
+        .filter(|address| resolved_allowed(address.ip(), proxy_dns))
         .collect();
     if kept.is_empty() {
         Err(std::io::Error::new(
@@ -241,9 +264,11 @@ fn public(addresses: impl Iterator<Item = SocketAddr>) -> std::io::Result<Vec<So
 /// Resolves names to their public addresses only. The proxy endpoints the
 /// client chose (named by the proxy decision before it connects) resolve
 /// unfiltered, since a proxy is commonly on this machine or its network.
+/// With `proxy_dns`, a TUN proxy's Fake-IP answers are kept.
 #[derive(Default)]
 struct PublicResolver {
     proxies: Arc<Mutex<Vec<String>>>,
+    proxy_dns: bool,
 }
 
 impl reqwest::dns::Resolve for PublicResolver {
@@ -256,6 +281,7 @@ impl reqwest::dns::Resolve for PublicResolver {
                 .unwrap_or_else(|error| error.into_inner())
                 .contains(&key)
         };
+        let proxy_dns = self.proxy_dns;
         let lookup = Lookup::default();
         let shared = lookup.state.clone();
         // The system resolver blocks; it runs beside the client's runtime.
@@ -266,7 +292,7 @@ impl reqwest::dns::Resolve for PublicResolver {
                     if proxy {
                         Ok(addresses.collect())
                     } else {
-                        public(addresses)
+                        public(addresses, proxy_dns)
                     }
                 });
                 let mut state = shared.lock().unwrap_or_else(|error| error.into_inner());
@@ -323,11 +349,17 @@ mod tests {
                 address("93.184.216.34:443"),
                 address("[::1]:443"),
                 address("10.0.0.7:443"),
+                address("198.18.0.34:443"),
             ]
             .into_iter(),
+            false,
         )
         .unwrap();
         assert_eq!(kept, [address("93.184.216.34:443")]);
+        // A TUN proxy's Fake-IP answers, both families, in their order.
+        let fake = [address("198.18.0.34:443"), address("[2001:2::22]:443")];
+        assert_eq!(public(fake.into_iter(), true).unwrap(), fake);
+        assert!(public(fake.into_iter(), false).is_err());
         for refused in [
             "127.0.0.1:80",
             "169.254.169.254:80",
@@ -335,7 +367,7 @@ mod tests {
             "[::ffff:127.0.0.1]:80",
             "[fd00::1]:80",
         ] {
-            let error = public(std::iter::once(address(refused))).unwrap_err();
+            let error = public(std::iter::once(address(refused)), true).unwrap_err();
             assert_eq!(error.to_string(), REFUSED, "{refused}");
         }
         for (url, allowed) in [
@@ -344,6 +376,8 @@ mod tests {
             ("http://10.1.2.3:8000/v1", false),
             ("https://api.example.com/v1", true),
             ("https://93.184.216.34/v1", true),
+            // A Fake-IP address written as such is not a public host.
+            ("https://198.18.0.34/", false),
         ] {
             assert_eq!(
                 url_allowed(&url::Url::parse(url).unwrap()),
@@ -378,7 +412,8 @@ mod tests {
             &url::Url::parse("http://127.0.0.1./v1").unwrap()
         ));
         assert!(!host_all_public(
-            &url::Url::parse(&format!("http://localhost.:{port}/")).unwrap()
+            &url::Url::parse(&format!("http://localhost.:{port}/")).unwrap(),
+            true
         ));
     }
 }

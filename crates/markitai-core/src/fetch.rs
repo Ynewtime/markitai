@@ -76,6 +76,17 @@ pub(crate) fn request_error(error: reqwest::Error) -> Error {
     if public_net::refused(&error) {
         return Error::Fetch(public_net::PAGE_REFUSED.into());
     }
+    // A public site that could not be reached in time is often one this
+    // network reaches only through a proxy: say which route was taken.
+    let route = (error.is_connect()
+        && error.is_timeout()
+        && public_net::level() != public_net::Level::Open)
+        .then(|| {
+            error
+                .url()
+                .map(|url| route_hint(crate::proxy::describe(url.as_str())))
+        })
+        .flatten();
     let error = error.without_url();
     let mut message = error.to_string();
     let mut source = std::error::Error::source(&error);
@@ -87,7 +98,20 @@ pub(crate) fn request_error(error: reqwest::Error) -> Error {
         }
         source = cause.source();
     }
+    if let Some(route) = route {
+        message.push_str("; ");
+        message.push_str(&route);
+    }
     Error::Fetch(message)
+}
+
+/// What a connect timeout says about its route: the proxy that carried it
+/// (from [`crate::proxy::describe`]), or that it went direct and how to set one.
+fn route_hint(proxy: Option<String>) -> String {
+    match proxy {
+        Some(proxy) => format!("it went through the proxy {proxy}"),
+        None => "it went direct: if this network needs a proxy, set HTTPS_PROXY or turn on the system proxy".into(),
+    }
 }
 
 /// What a cause of a failed request says. An operating-system error carries
@@ -400,13 +424,31 @@ pub(crate) fn is_private(ip: IpAddr) -> bool {
                 || v.is_unique_local()
                 || v.is_unicast_link_local()
                 || v.is_multicast()
-                // Site-local fec0::/10, documentation 2001:db8::/32 and
-                // local-use NAT64 64:ff9b:1::/48.
+                // Site-local fec0::/10, documentation 2001:db8::/32,
+                // benchmarking 2001:2::/48 and local-use NAT64 64:ff9b:1::/48.
                 || first & 0xffc0 == 0xfec0
                 || (first == 0x2001 && second == 0xdb8)
+                || (first == 0x2001 && second == 2 && third == 0)
                 || (first == 0x64 && second == 0xff9b && third == 1)
                 || embedded_ipv4(v).is_some_and(|v| is_private(IpAddr::V4(v)))
         }
+    }
+}
+
+/// Whether an address is in a benchmarking range (198.18.0.0/15,
+/// 2001:2::/48), which TUN proxies (Clash/mihomo, Surge, sing-box) hand out
+/// as Fake-IP answers for every public name they carry. Never a LAN, but a
+/// name answered with one says nothing about where the proxy will connect.
+pub(crate) fn is_proxy_dns(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v) => {
+            let [a, b, ..] = v.octets();
+            a == 198 && b & 0xfe == 18
+        }
+        IpAddr::V6(v) => match v.to_ipv4_mapped() {
+            Some(v) => is_proxy_dns(IpAddr::V4(v)),
+            None => matches!(v.segments(), [0x2001, 2, 0, ..]),
+        },
     }
 }
 
@@ -424,8 +466,11 @@ fn embedded_ipv4(v: Ipv6Addr) -> Option<Ipv4Addr> {
 
 /// Whether a URL may be sent to a remote extraction service at all: no
 /// credential material, no local or private host name, and a host that
-/// resolves only to public addresses.
-fn remote_target(url: &Url, services: &Services<'_>) -> Result<()> {
+/// resolves only to public addresses. `Ok(true)`: the name resolved to a TUN
+/// proxy's Fake-IP addresses, which say nothing about the host, so
+/// [`Services::public_dns`] must confirm it after consent (it sends the name
+/// to a public resolver).
+fn remote_target(url: &Url, services: &Services<'_>) -> Result<bool> {
     if policy::credential_material(url) {
         return Err(Error::Fetch(
             "Credentialed URLs cannot be sent to remote extraction services".into(),
@@ -439,8 +484,12 @@ fn remote_target(url: &Url, services: &Services<'_>) -> Result<()> {
     (services.public_addresses)(url)
 }
 
-/// The host's addresses are all public.
-fn public_addresses(url: &Url) -> Result<()> {
+const PRIVATE_FOR_REMOTE: &str = "Private URLs cannot be sent to remote extraction services";
+
+/// The host's addresses are all public (`Ok(false)`), or public and TUN
+/// Fake-IP answers, at least one of them (`Ok(true)`, see [`remote_target`]).
+/// An address written in the URL is judged as written.
+fn public_addresses(url: &Url) -> Result<bool> {
     let host = url
         .host_str()
         .ok_or_else(|| Error::Fetch("URL has no hostname".into()))?;
@@ -451,13 +500,93 @@ fn public_addresses(url: &Url) -> Result<()> {
     let addresses: Vec<_> = (host, url.port_or_known_default().unwrap_or(443))
         .to_socket_addrs()
         .map_err(|_| Error::Fetch("Cannot resolve URL hostname for remote policy check".into()))?
+        .map(|address| address.ip())
         .collect();
-    if addresses.is_empty() || addresses.iter().any(|a| is_private(a.ip())) {
-        return Err(Error::Fetch(
-            "Private URLs cannot be sent to remote extraction services".into(),
-        ));
+    let named = host.parse::<IpAddr>().is_err();
+    let proxy_dns = named && addresses.iter().any(|address| is_proxy_dns(*address));
+    if addresses.is_empty()
+        || addresses
+            .iter()
+            .any(|address| is_private(*address) && !(named && is_proxy_dns(*address)))
+    {
+        return Err(Error::Fetch(PRIVATE_FOR_REMOTE.into()));
+    }
+    Ok(proxy_dns)
+}
+
+/// The public resolver a TUN proxy's Fake-IP answer is checked with
+/// (DNS over HTTPS, JSON form), as the reference does.
+const PUBLIC_DNS: &str = "https://cloudflare-dns.com/dns-query";
+
+/// [`public_dns_at`] with the public resolver.
+fn public_dns(url: &Url) -> Result<()> {
+    public_dns_at(url, PUBLIC_DNS)
+}
+
+/// Whether `url`'s host, which resolved here to Fake-IP addresses, resolves
+/// to public addresses only at `resolver`: its A and AAAA records, two
+/// requests of five seconds at most, through the shared proxy decision and
+/// without redirects. Only the host name is sent.
+fn public_dns_at(url: &Url, resolver: &str) -> Result<()> {
+    let unverified = || Error::Fetch("Cannot verify the URL's host through public DNS".into());
+    let host = url.host_str().ok_or_else(unverified)?;
+    let client = crate::proxy::http(
+        crate::trust::client_builder()
+            .timeout(Duration::from_secs(5))
+            .redirect(reqwest::redirect::Policy::none())
+            .user_agent(USER_AGENT),
+    )?
+    .build()
+    .map_err(|_| unverified())?;
+    let mut addresses = Vec::new();
+    for record in [1, 28] {
+        let mut query = Url::parse(resolver).map_err(|_| unverified())?;
+        query
+            .query_pairs_mut()
+            .append_pair("name", host)
+            .append_pair("type", &record.to_string());
+        let response = client
+            .get(query)
+            .header(reqwest::header::ACCEPT, "application/dns-json")
+            .send()
+            .ok()
+            .filter(|response| response.status().is_success())
+            .ok_or_else(unverified)?;
+        let mut body = String::new();
+        response
+            .take(64 * 1024)
+            .read_to_string(&mut body)
+            .map_err(|_| unverified())?;
+        addresses.extend(dns_answers(&body, record).ok_or_else(unverified)?);
+    }
+    if addresses.is_empty() || addresses.iter().any(|address| is_private(*address)) {
+        return Err(Error::Fetch(PRIVATE_FOR_REMOTE.into()));
     }
     Ok(())
+}
+
+/// The addresses of `record` type (1 = A, 28 = AAAA) in a DNS JSON answer,
+/// or `None` for a failed query or a malformed answer.
+fn dns_answers(body: &str, record: u64) -> Option<Vec<IpAddr>> {
+    let answer: Value = serde_json::from_str(body).ok()?;
+    if answer.get("Status")?.as_u64()? != 0 {
+        return None;
+    }
+    let Some(records) = answer.get("Answer") else {
+        return Some(Vec::new());
+    };
+    let mut addresses = Vec::new();
+    for entry in records.as_array()? {
+        if entry.get("type")?.as_u64()? != record {
+            continue;
+        }
+        let address: IpAddr = entry.get("data")?.as_str()?.parse().ok()?;
+        if address.is_ipv4() != (record == 1) {
+            return None;
+        }
+        addresses.push(address);
+    }
+    Some(addresses)
 }
 
 /// A remote service's failure because the site turned it away, followed by
@@ -861,7 +990,9 @@ fn fetch_strategies(
                         service.name()
                     )));
                 }
-                remote_target(&url, services)?;
+                if remote_target(&url, services)? {
+                    (services.public_dns)(&url)?;
+                }
                 services.gate.strategy(service.name());
                 let document = remote::fetch(service, source, &url, cfg, services)
                     .map_err(|error| with_what_works(error, &url))?;
@@ -1091,7 +1222,8 @@ fn chain_after(
                     return chain::Readiness::SkipService;
                 }
                 let settled = settled.get_or_insert_with(|| {
-                    remote_target(url, services).map_err(|error| Some(error.to_string()))?;
+                    let proxy_dns =
+                        remote_target(url, services).map_err(|error| Some(error.to_string()))?;
                     let available: Vec<Service> = remote
                         .iter()
                         .copied()
@@ -1104,6 +1236,11 @@ fn chain_after(
                         .gate
                         .fallback(cfg, &services.vars, || consent_request(url, &available))
                     {
+                        // Only after consent: the check sends the host name
+                        // to a public resolver.
+                        if proxy_dns {
+                            (services.public_dns)(url).map_err(|error| Some(error.to_string()))?;
+                        }
                         Ok(())
                     } else {
                         Err(None)
@@ -1434,7 +1571,10 @@ fn follow_meta_refresh(client: &Client, page: &mut StaticPage, defer_pdf: bool) 
                 "Too many <meta> refresh redirects (more than {MAX_REFRESHES})"
             )));
         }
-        if public_net::restricted() && !public_net::hop_allowed(&target) {
+        let level = public_net::level();
+        if level != public_net::Level::Open
+            && !public_net::hop_allowed(&target, level == public_net::Level::PublicHost)
+        {
             return Err(Error::Fetch(public_net::PAGE_REFUSED.into()));
         }
         *page = decode_static(
@@ -2186,6 +2326,145 @@ impl FetchOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_connect_timeout_names_its_route() {
+        assert_eq!(
+            route_hint(Some("127.0.0.1:7897 (HTTPS_PROXY)".into())),
+            "it went through the proxy 127.0.0.1:7897 (HTTPS_PROXY)"
+        );
+        assert!(route_hint(None).contains("set HTTPS_PROXY or turn on the system proxy"));
+        // A hint ends a failure after "; " and holds none itself, so the
+        // terminal can translate each one.
+        assert!(!route_hint(None).contains("; "));
+    }
+
+    #[test]
+    fn public_dns_answers_are_read_by_record_type() {
+        let answer = r#"{"Status":0,"Answer":[{"type":5,"data":"x.example."},{"type":1,"data":"104.244.42.1"},{"type":1,"data":"104.244.42.65"}]}"#;
+        assert_eq!(
+            dns_answers(answer, 1).unwrap(),
+            [
+                "104.244.42.1".parse::<IpAddr>().unwrap(),
+                "104.244.42.65".parse().unwrap()
+            ]
+        );
+        assert_eq!(
+            dns_answers(r#"{"Status":0}"#, 28).unwrap(),
+            Vec::<IpAddr>::new()
+        );
+        for malformed in [
+            r#"{"Status":3}"#,
+            r#"{"Status":0,"Answer":[{"type":1,"data":"::1"}]}"#,
+            r#"{"Status":0,"Answer":[{"type":1}]}"#,
+            "<html>",
+        ] {
+            assert!(dns_answers(malformed, 1).is_none(), "{malformed}");
+        }
+    }
+
+    #[test]
+    fn a_fake_ip_host_is_confirmed_by_public_dns_with_its_name_only() {
+        use super::cache_tests::{Reply, Server};
+        let json = |body: &str| Reply::bytes("application/dns-json", body.as_bytes());
+        let url = Url::parse("https://x.example/status/1?secret=a").unwrap();
+        let resolver = Server::new(vec![
+            json(r#"{"Status":0,"Answer":[{"type":1,"data":"104.244.42.1"}]}"#),
+            json(r#"{"Status":0,"Answer":[{"type":28,"data":"2606:4700::1"}]}"#),
+        ]);
+        public_dns_at(&url, &resolver.url("/dns-query")).unwrap();
+        let requests = resolver.requests();
+        assert_eq!(requests.len(), 2, "{requests:?}");
+        assert!(
+            requests[0].contains("/dns-query?name=x.example&type=1"),
+            "{requests:?}"
+        );
+        assert!(
+            requests[1].contains("/dns-query?name=x.example&type=28"),
+            "{requests:?}"
+        );
+        assert!(requests.iter().all(|request| !request.contains("secret")));
+
+        // A private address in the public answer, or no answer, refuses it.
+        let resolver = Server::new(vec![
+            json(r#"{"Status":0,"Answer":[{"type":1,"data":"10.0.0.8"}]}"#),
+            json(r#"{"Status":0}"#),
+        ]);
+        let error = public_dns_at(&url, &resolver.url("/dns-query")).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            Error::Fetch(PRIVATE_FOR_REMOTE.into()).to_string()
+        );
+        let resolver = Server::new(vec![json(r#"{"Status":2}"#)]);
+        let error = public_dns_at(&url, &resolver.url("/dns-query")).unwrap_err();
+        assert!(error.to_string().contains("Cannot verify"), "{error}");
+        // An address written in the URL is judged as written.
+        assert!(public_addresses(&Url::parse("https://198.18.0.34/").unwrap()).is_err());
+    }
+
+    /// A connection to a dead address family (a TUN proxy's IPv4 route that
+    /// never answers) does not hold up the other: as in curl and browsers,
+    /// the second family starts 300 ms later and wins.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_dead_address_family_falls_back_to_the_other_in_time() {
+        use std::os::fd::AsRawFd;
+        // The live server on IPv6 loopback, when this machine has one.
+        let Ok(live) = std::net::TcpListener::bind("[::1]:0") else {
+            return;
+        };
+        let port = live.local_addr().unwrap().port();
+        // On IPv4 loopback at the same port, a listener whose accept queue
+        // is full: Linux drops further connection attempts, so they hang.
+        let Ok(dead) = std::net::TcpListener::bind(("127.0.0.1", port)) else {
+            return;
+        };
+        assert_eq!(unsafe { libc::listen(dead.as_raw_fd(), 0) }, 0);
+        let mut queued = Vec::new();
+        while let Ok(stream) = std::net::TcpStream::connect_timeout(
+            &(std::net::Ipv4Addr::LOCALHOST, port).into(),
+            Duration::from_millis(300),
+        ) {
+            queued.push(stream);
+            assert!(queued.len() < 8, "the accept queue never filled");
+        }
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = live.accept().unwrap();
+            let mut request = [0; 4096];
+            let _ = stream.read(&mut request);
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+                .unwrap();
+        });
+        let client = crate::trust::client_builder()
+            .connect_timeout(Duration::from_secs(15))
+            .no_proxy()
+            .resolve_to_addrs(
+                "dual.test",
+                &[
+                    (std::net::Ipv4Addr::LOCALHOST, port).into(),
+                    (std::net::Ipv6Addr::LOCALHOST, port).into(),
+                ],
+            )
+            .build()
+            .unwrap();
+        let started = std::time::Instant::now();
+        let body = client
+            .get(format!("http://dual.test:{port}/"))
+            .send()
+            .unwrap()
+            .text()
+            .unwrap();
+        assert_eq!(body, "ok");
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "{:?}",
+            started.elapsed()
+        );
+        server.join().unwrap();
+        drop((queued, dead));
+    }
+
     #[test]
     fn a_failed_request_says_why_without_its_url() {
         // A port nothing listens on: the summary alone would only say that
@@ -2228,13 +2507,31 @@ mod tests {
             "::a00:1",
             "fec0::1",
             "2001:db8::1",
+            "2001:2::22",
         ] {
             assert!(is_private(address.parse().unwrap()), "{address}");
+        }
+        for (address, proxy_dns) in [
+            ("198.18.0.34", true),
+            ("198.19.255.254", true),
+            ("::ffff:198.18.0.1", true),
+            ("2001:2::22", true),
+            ("2001:2:0:ffff::1", true),
+            ("198.20.0.1", false),
+            ("2001:2:1::1", false),
+            ("10.0.0.1", false),
+        ] {
+            assert_eq!(
+                is_proxy_dns(address.parse().unwrap()),
+                proxy_dns,
+                "{address}"
+            );
         }
         for address in [
             "8.8.8.8",
             "198.20.0.1",
             "192.0.1.1",
+            "2001:2:1::1",
             "2606:4700:4700::1111",
             "64:ff9b::808:808",
             "2002:808:808::1",

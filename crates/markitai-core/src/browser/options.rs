@@ -22,10 +22,12 @@ pub(super) struct Options {
     pub headers: Map<String, Value>,
     /// The initial URL's origin, ASCII-serialized, for [`headers`](Self::headers).
     pub origin: String,
-    /// Whether this fetch may reach public addresses only: every navigation,
-    /// redirect and subresource host is refused unless it resolves entirely to
-    /// public addresses. Set from the fetch-wide restriction.
-    pub restrict_public: bool,
+    /// Whether this fetch may reach public addresses only: unless `Open`,
+    /// every navigation, redirect and subresource host is refused unless it
+    /// resolves entirely to public addresses (for a CLI or admin fetch, a TUN
+    /// proxy's Fake-IP answers count as public). Set from the fetch-wide
+    /// restriction.
+    pub restrict_public: crate::public_net::Level,
     pub user_agent: Option<String>,
     /// The site turns away a browser that names itself `HeadlessChrome`: the
     /// browser's own user agent is used without that word (a configured
@@ -192,7 +194,7 @@ impl Options {
             cookies: Vec::new(),
             headers: Map::new(),
             origin: String::new(),
-            restrict_public: false,
+            restrict_public: crate::public_net::Level::Open,
             user_agent: None,
             regular_user_agent: false,
             english: false,
@@ -323,7 +325,7 @@ impl Options {
             cookies: cookies(settings.get("cookies").unwrap_or(&Value::Null), url)?,
             headers,
             origin: url.origin().ascii_serialization(),
-            restrict_public: crate::public_net::restricted(),
+            restrict_public: crate::public_net::level(),
             user_agent: settings
                 .get("user_agent")
                 .and_then(Value::as_str)

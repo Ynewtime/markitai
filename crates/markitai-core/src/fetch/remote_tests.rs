@@ -804,6 +804,62 @@ fn a_missing_page_local_only_patterns_and_private_names_never_reach_a_service() 
 }
 
 #[test]
+fn a_fake_ip_host_reaches_a_service_only_once_public_dns_confirms_it_after_consent() {
+    // Behind a TUN proxy the host resolved to Fake-IP addresses: the public
+    // resolver decides, and it is asked only once the user has consented.
+    let terminal = Arc::new(Terminal::default());
+    let (_directory, mut cfg) = auto_settings();
+    fn fake_ip(services: Services<'_>) -> Services<'_> {
+        Services {
+            public_addresses: |_| Ok(true),
+            ..services
+        }
+    }
+
+    // Asked and declined: the host name is never sent to the resolver.
+    cfg["fetch"]["remote_consent"] = json!("ask");
+    let fixture = Fixture::new(gate(&terminal, false, Some(false), None));
+    let service = Mock::new(Vec::new());
+    let services = Services {
+        public_dns: |_| panic!("public DNS asked without consent"),
+        ..fake_ip(fixture.services(&service.origin))
+    };
+    let page = PageServer::new(vec![Reply::text("no").status(403); 2]);
+    assert!(
+        fetch_with_services(&page.url("/a"), &cfg, None, true, None, false, &services).is_err()
+    );
+    assert_eq!(terminal.asked.load(Ordering::SeqCst), 1);
+
+    // Allowed, and the public resolver names a private address: refused.
+    cfg["fetch"]["remote_consent"] = json!("always");
+    let fixture = Fixture::new(gate(&terminal, true, None, None));
+    let services = Services {
+        public_dns: |_| {
+            Err(Error::Fetch(
+                "Private URLs cannot be sent to remote extraction services".into(),
+            ))
+        },
+        ..fake_ip(fixture.services(&service.origin))
+    };
+    let page = PageServer::new(vec![Reply::text("no").status(403); 2]);
+    let Err(Error::Fetch(message)) =
+        fetch_with_services(&page.url("/a"), &cfg, None, true, None, false, &services)
+    else {
+        panic!("a private host behind Fake-IP fails");
+    };
+    assert!(message.ends_with("remote services failed as well (Private URLs cannot be sent to remote extraction services)"), "{message}");
+    assert!(service.requests().is_empty());
+
+    // Allowed and confirmed public: the service reads the page.
+    let service = Mock::new(vec![jina_page("# Remote\n\nRead behind Fake-IP.")]);
+    let services = fake_ip(fixture.services(&service.origin));
+    let page = PageServer::new(vec![Reply::text("no").status(403); 2]);
+    let outcome =
+        fetch_with_services(&page.url("/a"), &cfg, None, true, None, false, &services).unwrap();
+    assert!(markdown(&outcome).contains("Read behind Fake-IP."));
+}
+
+#[test]
 fn priorities_and_hops_decide_which_strategies_run() {
     let terminal = Arc::new(Terminal::default());
     let fixture = Fixture::new(gate(&terminal, true, None, None));

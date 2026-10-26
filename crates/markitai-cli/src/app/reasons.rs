@@ -778,10 +778,52 @@ fn known(text: &str) -> Option<String> {
         .or_else(|| config_reason(text))
 }
 
+/// What a fetch failure may end with, each after "; " (what route it took,
+/// what could read the page instead), and their Chinese. A hint may carry one
+/// `{}` and contains no "; " of its own.
+const HINTS: &[(&str, &str)] = &[
+    ("it went through the proxy {}", "这次经过代理 {}"),
+    (
+        "it went direct: if this network needs a proxy, set HTTPS_PROXY or turn on the system proxy",
+        "这次是直接连接：如果这个网络要经代理上网，请设置 HTTPS_PROXY 或打开系统代理",
+    ),
+    (
+        "a remote reader (defuddle.md, Jina Reader) may read it if you allow one: set fetch.remote_consent: always (markitai config set fetch.remote_consent always), or choose the defuddle or jina strategy for this conversion",
+        "远程读取服务（defuddle.md、Jina Reader）在你允许后也许能读取它：设置 fetch.remote_consent: always（markitai config set fetch.remote_consent always），或为这次转换选择 defuddle 或 jina 策略",
+    ),
+];
+
+/// `text` without the [`HINTS`] it ends with, and their Chinese in order.
+fn hints(text: &str) -> (&str, Vec<String>) {
+    let mut body = text;
+    let mut found = Vec::new();
+    while let Some(at) = body.rfind("; ") {
+        let Some(chinese) = HINTS.iter().find_map(|(english, chinese)| {
+            captures(english, &body[at + 2..]).map(|parts| fill(chinese, &parts))
+        }) else {
+            break;
+        };
+        found.insert(0, chinese);
+        body = &body[..at];
+    }
+    (body, found)
+}
+
 /// The Chinese for a diagnostic's text (without its `Error:`/`Warning:`
 /// label), or the text itself when it is not a known message. An item's line
-/// is `name: reason`; the reason is translated and the name kept.
+/// is `name: reason`; the reason is translated and the name kept. Known
+/// [`HINTS`] at its end are translated on their own.
 pub(super) fn localize(text: &str) -> String {
+    let (body, hints) = hints(text);
+    let mut out = localize_body(body);
+    for hint in hints {
+        out.push('；');
+        out.push_str(&hint);
+    }
+    out
+}
+
+fn localize_body(text: &str) -> String {
     if let Some(chinese) = known(text) {
         return chinese;
     }
@@ -824,6 +866,25 @@ mod tests {
             ),
             "notes.pdf: 模型有一次回答无法使用，已重新请求，并采用了之后的回答"
         );
+    }
+
+    #[test]
+    fn a_fetch_failure_translates_its_route_and_remote_hints() {
+        let readers = "a remote reader (defuddle.md, Jina Reader) may read it if you allow one: set fetch.remote_consent: always (markitai config set fetch.remote_consent always), or choose the defuddle or jina strategy for this conversion";
+        assert_eq!(
+            localize(&format!(
+                "error sending request: client error (Connect): operation timed out; it went direct: if this network needs a proxy, set HTTPS_PROXY or turn on the system proxy; {readers}"
+            )),
+            "请求失败（error sending request: client error (Connect): operation timed out）；这次是直接连接：如果这个网络要经代理上网，请设置 HTTPS_PROXY 或打开系统代理；远程读取服务（defuddle.md、Jina Reader）在你允许后也许能读取它：设置 fetch.remote_consent: always（markitai config set fetch.remote_consent always），或为这次转换选择 defuddle 或 jina 策略"
+        );
+        assert_eq!(
+            localize(
+                "https://example.com/a: error sending request: client error (Connect): operation timed out; it went through the proxy 127.0.0.1:7897 (HTTPS_PROXY)"
+            ),
+            "https://example.com/a: 请求失败（error sending request: client error (Connect): operation timed out）；这次经过代理 127.0.0.1:7897 (HTTPS_PROXY)"
+        );
+        // A "; " that ends no known hint stays part of the message.
+        assert_eq!(localize("Input does not exist: a; b"), "输入不存在：a; b");
     }
 
     #[test]

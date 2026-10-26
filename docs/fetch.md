@@ -259,7 +259,9 @@ its first host too, and connects directly, without a proxy (see
 [serve](serve.md)). A refused address fails with `Fetch target refused: a
 private or local address (this fetch may reach public addresses only)`, on the
 static route and in the local browser alike (where Chromium itself would say
-only `net::ERR_BLOCKED_BY_CLIENT`).
+only `net::ERR_BLOCKED_BY_CLIENT`). A TUN proxy's Fake-IP answers count as
+public for these checks, except for a user token's job (see
+[behind a proxy](#behind-a-tun-proxy-or-vpn)).
 
 ## Pages that need JavaScript
 
@@ -927,3 +929,17 @@ Provider Batch clients keep their provider environment
 handling. The Windows registry reader is compiled in native Windows
 builds. That and parser tests do not establish every actual registry/proxy
 configuration; verify proxy behavior in the deployment environment.
+
+### Behind a TUN proxy or VPN
+
+TUN-mode proxies (Clash/mihomo, Surge, sing-box) answer every public name with
+a Fake-IP address (`198.18.0.0/15`, `2001:2::/48`). A CLI or admin fetch takes
+those as the public host they stand for, on the static route and in the
+browser; an address written in the URL is still refused, and a user token's
+`serve` job refuses them (the proxy decides where they lead). A name with both
+IPv4 and IPv6 addresses connects as curl and browsers do: the second family
+starts 300 ms after the first. Remote readers get such a URL only after
+consent and a check of the name through public DNS (`cloudflare-dns.com`, the
+name only). If the direct route still times out, set `HTTPS_PROXY` to the
+proxy's local port (for example `http://127.0.0.1:7890`) or turn on its system
+proxy; a connect timeout says which route it took.

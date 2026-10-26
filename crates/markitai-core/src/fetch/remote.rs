@@ -60,8 +60,12 @@ pub(crate) struct Services<'a> {
     pub vars: HashMap<String, String>,
     /// Whether a host name is local or private without resolving it.
     pub private_name: fn(&Url) -> bool,
-    /// Resolves the host and refuses non-public addresses.
-    pub public_addresses: fn(&Url) -> Result<()>,
+    /// Resolves the host and refuses non-public addresses; `true` when the
+    /// answer was a TUN proxy's Fake-IP addresses, for `public_dns` to check.
+    pub public_addresses: fn(&Url) -> Result<bool>,
+    /// Confirms through a public resolver, after consent, that a host
+    /// answered with Fake-IP addresses is public.
+    pub public_dns: fn(&Url) -> Result<()>,
     pub browser_ready: fn() -> bool,
     pub limits: &'a Limits,
     pub slots: &'a Slots,
@@ -94,6 +98,7 @@ impl Services<'static> {
             vars: config::environment(),
             private_name: super::policy::private_name,
             public_addresses: super::public_addresses,
+            public_dns: super::public_dns,
             browser_ready: crate::browser::available,
             limits: &LIMITS,
             slots: &SLOTS,
@@ -133,7 +138,8 @@ impl Fixture {
             cloudflare: format!("{origin}/cloudflare"),
             vars: HashMap::new(),
             private_name: |_| false,
-            public_addresses: |_| Ok(()),
+            public_addresses: |_| Ok(false),
+            public_dns: |_| Ok(()),
             browser_ready: || false,
             limits: &self.limits,
             slots: &self.slots,
