@@ -360,8 +360,9 @@ after a `---` rule, when they read as parts of a thread: opening with a part num
 `(2/5)`), after a post that opens one (`🧵`, `thread:`), or picking up text
 that breaks off (`,` `:` `…`, or a reply starting in lowercase); X's markup
 does not mark a self-thread. Any other reply ends the thread. It and the
-replies after it follow under `## Comments` in the order they were posted
-(by post id): each a block quote headed `**Name @handle** · [date](permalink)`
+replies after it follow under `## Comments` in the page's order, as x.com
+shows them (the author's own replies first, the others as X ranks them, an
+answer under the reply it answers): each a block quote headed `**Name @handle** · [date](permalink)`
 (`(author)` after the author's own) with its text, media and quoted post, up
 to the first heading outside a post (X's "Discover more"), also in a timeline
 whose labels are in another language. A static fetch gets only the replies X

@@ -999,7 +999,8 @@ fn conversation(scope: ElementRef<'_>, main: ElementRef<'_>) -> HashSet<usize> {
 /// after a rule. Replies from other accounts, and the author's own replies
 /// that do not continue it or come after the first comment, are the
 /// discussion around the post: they follow under `## Comments` in the order
-/// they were posted, as the reference writes them.
+/// the page lists them, as x.com shows them: X puts the author's own replies
+/// first and ranks the others itself, and an answer to a reply follows it.
 pub(super) fn post(
     document: &Html,
     page: &Landmarks<'_>,
@@ -1062,7 +1063,7 @@ pub(super) fn post(
     // page can repeat the main post, which is not a continuation of itself.
     let mut seen = vec![main_id.clone()];
     let in_conversation = conversation(scope, main.element);
-    let mut comments: Vec<(Option<u64>, Vec<String>)> = Vec::new();
+    let mut comments: Vec<Vec<String>> = Vec::new();
     let mut thread_ended = false;
     let plain_text = |post: &Post<'_>| {
         text_element(post.element, post.quote)
@@ -1079,7 +1080,6 @@ pub(super) fn post(
         if !in_conversation.contains(&super::element_key(*article)) {
             break;
         }
-        let number = id.as_deref().and_then(|id| id.parse::<u64>().ok());
         seen.push(id);
         let reply = Post::read(*article);
         let by_author = reply.same_author(&main);
@@ -1090,7 +1090,7 @@ pub(super) fn post(
         }
         if thread_ended {
             if let Some(lines) = comment(&reply, by_author, base, &files)? {
-                comments.push((number, lines));
+                comments.push(lines);
             }
             continue;
         }
@@ -1121,11 +1121,6 @@ pub(super) fn post(
     }
     // The body is already the post; a language model keeps it as it is.
     metadata.insert("content_profile".into(), "social_post".into());
-    // Post ids grow with time: replies read in the order they were posted.
-    if comments.iter().all(|(number, _)| number.is_some()) {
-        comments.sort_by_key(|(number, _)| *number);
-    }
-    let comments: Vec<Vec<String>> = comments.into_iter().map(|(_, lines)| lines).collect();
     let mut markdown = sections.join("\n\n---\n\n");
     if !comments.is_empty() {
         markdown.push_str("\n\n---\n\n## Comments\n\n");
@@ -1396,7 +1391,8 @@ Second line with </span><a href="https://example.com/tool">example.com/tool</a><
         let html = page(&main, &replies).replace("<main>", &format!("<main><ul>{earlier}</ul>"));
         let doc = extract_html(&html, Some(STATUS)).unwrap();
         // The first reply from another account ends the thread: it and every
-        // reply after it, the author's own included, are comments.
+        // reply after it, the author's own included, are comments, in the
+        // page's order: the author's answer stays under the reply it answers.
         assert_eq!(
             doc.markdown,
             "1/3 Part one\n\n---\n\n2/3 Part two\n\n---\n\n3/3 Part three\n\n---\n\n## Comments\n\n\
@@ -1408,11 +1404,56 @@ Second line with </span><a href="https://example.com/tool">example.com/tool</a><
         assert_eq!(doc.metadata["published"], "2025-02-25");
     }
 
+    #[test]
+    fn comments_keep_the_order_x_ranks_them_in_not_their_post_ids() {
+        let main = article("ada", "Ada", ID, "3:04 AM · Feb 25, 2025", "Big news.", "");
+        // X lists the author's reply first and ranks a later reply above an
+        // earlier one; the author's answer to Grace follows her reply.
+        let replies = format!(
+            "{}{}{}{}",
+            card(
+                "ada",
+                "Ada",
+                "1894221971766084062",
+                "Tag Grace with feedback."
+            ),
+            card("linus", "Linus", "1894221971766084060", "Most relevant"),
+            card(
+                "grace",
+                "Grace",
+                "1894221971766084052",
+                "Earlier, less relevant"
+            ),
+            card("ada", "Ada", "1894221971766084061", "Answer to Grace"),
+        );
+        let doc = extract_html(&page(&main, &replies), Some(STATUS)).unwrap();
+        let order: Vec<&str> = doc
+            .markdown
+            .lines()
+            .filter_map(|line| {
+                line.strip_prefix("> ")
+                    .filter(|text| !text.starts_with("**"))
+            })
+            .collect();
+        assert_eq!(
+            order,
+            [
+                "Tag Grace with feedback.",
+                "Most relevant",
+                "Earlier, less relevant",
+                "Answer to Grace"
+            ],
+            "{}",
+            doc.markdown
+        );
+    }
+
     /// A static fetch of a 2026 post (fixtures/x-author-reply.html, saved as
     /// fetched): the author's "tag them with feedback" reply is neither
     /// numbered nor continues the post, so it is a comment, marked as the
-    /// author's and listed after the reply posted before it. The page holds
-    /// only these two replies.
+    /// author's and listed first, as the page (and x.com) lists it, though
+    /// the other reply was posted before it. The page holds only these two
+    /// replies.
     #[test]
     fn an_authors_reply_that_does_not_continue_the_post_is_a_comment() {
         let html = include_str!("fixtures/x-author-reply.html");
@@ -1433,9 +1474,9 @@ Second line with </span><a href="https://example.com/tool">example.com/tool</a><
         assert!(!body.contains("---") && !body.contains("Tag "), "{body}");
         assert_eq!(
             comments,
-            "> **Thariq @trq212** · [2026-10-24](https://x.com/trq212/status/2114001556895072741)\n>\n> \u{1F410}\n\n\
-             > **Anthony Morris ツ @amorriscode** (author) · [2026-10-24](https://x.com/amorriscode/status/2114004396518650193)\n>\n\
-             > Tag [@alicelovescake1](https://x.com/alicelovescake1) and [@BenjaminPasero](https://x.com/BenjaminPasero) with any CCD feedback going forward. They're the best!"
+            "> **Anthony Morris ツ @amorriscode** (author) · [2026-10-24](https://x.com/amorriscode/status/2114004396518650193)\n>\n\
+             > Tag [@alicelovescake1](https://x.com/alicelovescake1) and [@BenjaminPasero](https://x.com/BenjaminPasero) with any CCD feedback going forward. They're the best!\n\n\
+             > **Thariq @trq212** · [2026-10-24](https://x.com/trq212/status/2114001556895072741)\n>\n> \u{1F410}"
         );
     }
 
