@@ -176,6 +176,7 @@ function Msg {
             "optional_failed" { '\u53ef\u9009\u7ec4\u4ef6\u672a\u80fd\u5168\u90e8\u51c6\u5907\u597d\uff1b\u7a0d\u540e\u53ef\u518d\u8fd0\u884c' }
             "optional_headless" { '\u6ca1\u6709\u7ec8\u7aef\uff0c\u53ef\u9009\u7ec4\u4ef6\u5df2\u8df3\u8fc7\uff1b\u8981\u4e00\u5e76\u51c6\u5907\uff0c\u8bbe\u7f6e\u6b64\u53d8\u91cf\u540e\u91cd\u65b0\u8fd0\u884c\u5b89\u88c5\u811a\u672c' }
             "optional_later" { '\u7a0d\u540e\u51c6\u5907\u53ef\u9009\u7ec4\u4ef6' }
+            "optional_declined" { '\u4e4b\u524d\u9009\u62e9\u4e86\u6682\u4e0d\u51c6\u5907\u53ef\u9009\u7ec4\u4ef6\uff1b\u9700\u8981\u65f6\u8fd0\u884c' }
             "optional_ready" { '\u53ef\u9009\u7ec4\u4ef6\u5df2\u5c31\u7eea' }
             "path_added" { '\u5df2\u52a0\u5165\u7528\u6237 Path\uff1b\u65b0\u7ec8\u7aef\u53ef\u76f4\u63a5\u8fd0\u884c markitai' }
             "path_kept" { '\u8be5\u76ee\u5f55\u4ecd\u5728\u7528\u6237 Path \u4e2d\uff1b\u5b83\u4e0d\u662f\u5b89\u88c5\u811a\u672c\u6dfb\u52a0\u7684' }
@@ -223,6 +224,7 @@ function Msg {
         "optional_failed" { "Not every optional component could be prepared; run this again later" }
         "optional_headless" { "No terminal to ask, so optional components were skipped; to prepare them too, set this and run setup again" }
         "optional_later" { "Prepare optional components later" }
+        "optional_declined" { "Optional components were declined before; to prepare them, run" }
         "path_added" { "Added to the user Path; new terminals find markitai" }
         "path_removed" { "Removed from the user Path" }
         "path_kept" { "The folder stays on the user Path; setup did not add it" }
@@ -483,8 +485,9 @@ function Remove-PythonMarkitai {
 # whether setup added the folder to the user Path (path_added=1; uninstall
 # leaves an entry the user made alone) and the folder's top-level names
 # (file=...). Only those are ever replaced or removed, so a
-# MARKITAI_INSTALL_DIR shared with other files keeps them. $null when the
-# folder holds no receipt of this script's.
+# MARKITAI_INSTALL_DIR shared with other files keeps them. optional=yes|no
+# keeps the answer about the optional components, so an update does not ask
+# again. $null when the folder holds no receipt of this script's.
 function Read-Receipt {
     param([string]$Directory)
     $path = [IO.Path]::Combine($Directory, "receipt")
@@ -493,7 +496,9 @@ function Read-Receipt {
     if (-not @($lines | Where-Object { $_ -like "version=*" })) { return $null }
     $names = @($lines | Where-Object { $_ -like "file=*" } | ForEach-Object { $_.Substring(5) } |
         Where-Object { $_ -and $_ -notmatch '[\\/:]' -and $_ -ne ".." -and $_ -ne "." -and $_ -ne "receipt" })
-    return @{ Names = $names; PathAdded = ($lines -contains "path_added=1") }
+    $optional = @($lines | Where-Object { $_ -eq "optional=yes" -or $_ -eq "optional=no" } | ForEach-Object { $_.Substring(9) })
+    $answer = if ($optional.Count) { $optional[-1] } else { "" }
+    return @{ Names = $names; PathAdded = ($lines -contains "path_added=1"); Optional = $answer }
 }
 
 function Write-Receipt {
@@ -504,6 +509,7 @@ function Write-Receipt {
     # install in place from the same releases.
     $lines = @("version=$($Receipt.Version)", "target=$($Receipt.Target)", "path_added=$pathAdded",
         "base=$($Receipt.Base)", "format=1") + @($Receipt.Names | ForEach-Object { "file=$_" })
+    if ($Receipt.Optional) { $lines += "optional=$($Receipt.Optional)" }
     [IO.File]::WriteAllText([IO.Path]::Combine($Directory, "receipt"), (($lines -join "`n") + "`n"))
 }
 
@@ -598,7 +604,8 @@ function New-Staging {
     if ($foreign.Count) { Stop-Setup (Msg "error_shared_folder") "${Directory}: $($foreign -join ', ')" }
     $created = -not (Test-Path -LiteralPath $Directory)
     $stage = [IO.Path]::Combine($Directory, ".markitai-new-" + [Guid]::NewGuid().ToString("N"))
-    $receipt = @{ Version = $Release.Version; Target = $Target; Base = $Release.Base; Names = $names; PathAdded = [bool]($Previous -and $Previous.PathAdded) }
+    $receipt = @{ Version = $Release.Version; Target = $Target; Base = $Release.Base; Names = $names; PathAdded = [bool]($Previous -and $Previous.PathAdded)
+        Optional = $(if ($Previous) { $Previous.Optional } else { "" }) }
     try {
         New-Item -ItemType Directory -Force -Path $stage | Out-Null
         foreach ($name in $names) {
@@ -817,8 +824,33 @@ function Get-StateDirectory {
     return (Join-Path $HOME ".markitai")
 }
 
-function Invoke-OptionalComponents {
+# Whether `doctor --fix` has something to install or repair: doctor --json
+# says "fixable" on the checks it handles. Up to 2.2.0 it did not, so a
+# missing browser or OCR models not installed or damaged count instead. A
+# doctor that gives no report counts as missing.
+function Test-OptionalMissing {
     param([string]$Markitai)
+    $oldPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $report = (& $Markitai doctor --json 2> $null | Out-String)
+    } catch {
+        $report = ""
+    } finally {
+        $ErrorActionPreference = $oldPreference
+    }
+    try { $checks = $report | ConvertFrom-Json } catch { return $true }
+    if (-not $checks -or $report -notmatch '"status"') { return $true }
+    $handled = @($checks.PSObject.Properties | Where-Object { $_.Value.PSObject.Properties.Name -contains "fixable" })
+    if ($handled.Count) { return [bool]@($handled | Where-Object { $_.Value.fixable -eq $true }).Count }
+    return ($checks.playwright.status -eq "missing") -or ("$($checks.rapidocr.message)" -match 'are not installed|damaged model')
+}
+
+# Components already there are kept without asking. A missing one is
+# prepared when the user agreed before (the receipt's optional=yes), and
+# asked about only if they never declined; the answer goes to the receipt.
+function Invoke-OptionalComponents {
+    param([string]$Markitai, [string]$Directory, [hashtable]$Receipt)
     Write-Section (Msg "section_optional")
     $requested = "$env:MARKITAI_INSTALL_OPTIONAL"
     if (Test-Falsy $requested) {
@@ -826,16 +858,28 @@ function Invoke-OptionalComponents {
         return $true
     }
     if (-not (Test-Truthy $requested)) {
-        if (-not (Test-InteractiveInput)) {
-            Write-Skip (Msg "optional_headless")
-            Write-Command '$env:MARKITAI_INSTALL_OPTIONAL = "1"'
+        if (-not (Test-OptionalMissing $Markitai)) {
+            Write-Ok (Msg "optional_ready")
             return $true
         }
-        if (-not (Read-Confirm (Msg "confirm_optional") $true)) {
-            Write-Hint (Msg "optional_later") "markitai doctor --fix"
+        if ($Receipt.Optional -eq "no") {
+            Write-Hint (Msg "optional_declined") "markitai doctor --fix"
             return $true
+        }
+        if ($Receipt.Optional -ne "yes") {
+            if (-not (Test-InteractiveInput)) {
+                Write-Skip (Msg "optional_headless")
+                Write-Command '$env:MARKITAI_INSTALL_OPTIONAL = "1"'
+                return $true
+            }
+            if (-not (Read-Confirm (Msg "confirm_optional") $true)) {
+                Save-OptionalAnswer $Directory $Receipt "no"
+                Write-Hint (Msg "optional_later") "markitai doctor --fix"
+                return $true
+            }
         }
     }
+    Save-OptionalAnswer $Directory $Receipt "yes"
     Write-Step "markitai doctor --fix"
     $oldPreference = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
@@ -852,6 +896,12 @@ function Invoke-OptionalComponents {
     Write-Warn (Msg "optional_failed")
     Write-Command "markitai doctor --fix"
     return $false
+}
+
+function Save-OptionalAnswer {
+    param([string]$Directory, [hashtable]$Receipt, [string]$Answer)
+    $Receipt.Optional = $Answer
+    try { Write-Receipt $Directory $Receipt } catch {}
 }
 
 function Write-GettingStarted {
@@ -948,7 +998,7 @@ function Invoke-Install {
             $ErrorActionPreference = "Continue"
             try { & $markitai init --yes *> $null } catch {} finally { $ErrorActionPreference = $oldPreference }
         }
-        $optionalOk = Invoke-OptionalComponents $markitai
+        $optionalOk = Invoke-OptionalComponents $markitai $directory $receipt
         Write-GettingStarted $directory
         if ($optionalOk) { Write-Outro "DarkGreen" (Msg "ready") } else { Write-Outro "DarkYellow" (Msg "done_warnings") }
     } catch {

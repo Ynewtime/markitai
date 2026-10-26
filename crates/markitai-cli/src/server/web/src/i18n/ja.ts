@@ -1,5 +1,6 @@
 // Japanese interface copy. Short noun/verb labels, polite です/ます sentences, full-width 、。（）「」, half-width spaces around Latin words and numbers, "·" between facts.
 import type { Dict } from "./en.ts";
+import { codeTitle } from "./notice-codes.ts";
 
 /** A refused Moonshot model's key may be from the other region: the address each region's keys use. */
 const kimiKeyHint = (provider: string): string =>
@@ -693,7 +694,7 @@ export const ja: Dict = {
         if (count === 1 && pages) return `${pages.ranges} ページ${pages.total ? `（全 ${pages.total} ページ中 ${pages.count} ページ）` : ""}に読み取れる文字がありません。OCR をオンにして変換し直すと読み取れます`;
         return `${count} 件の PDF に読み取れる文字のないページがあります。OCR をオンにして変換し直してください`;
       default:
-        return sample;
+        return (kind.startsWith("code:") ? codeTitle("ja", kind.slice(5), count) : null) ?? sample;
     }
   },
   noticeIn: "対象：",

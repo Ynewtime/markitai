@@ -1,5 +1,5 @@
-"""Exact, offline attribution for the portable PDF and OCR engines and the
-statically built libwebp encoder."""
+"""Exact, offline attribution for the portable PDF and OCR engines, the
+statically built libwebp encoder and the rav1d AV1 decoder."""
 from pathlib import Path
 import hashlib
 import json
@@ -9,6 +9,7 @@ HAYRO_NAMES = ("LICENSE_FOXIT", "CGATS_LICENSE.txt", "CMAP_LICENSE.txt",
                "hayro-interpret-assets-README.md", "README.md")
 PADDLE_NAMES = ("PaddleOCR-LICENSE", "RapidOCR-LICENSE", "README.md", "provenance.json")
 LIBWEBP_NAMES = ("COPYING", "PATENTS", "README.md")
+RAV1D_NAMES = ("COPYING", "LICENSE-dav1d-rs", "README.md")
 MAX_FILE = 1024 * 1024
 
 
@@ -16,7 +17,8 @@ def portable_files(root):
     """Read only fixed, bounded regular notice files; models are not redistributed."""
     root = Path(root)
     files = {}
-    for category, names in [("hayro", HAYRO_NAMES), ("paddleocr", PADDLE_NAMES), ("libwebp", LIBWEBP_NAMES)]:
+    for category, names in [("hayro", HAYRO_NAMES), ("paddleocr", PADDLE_NAMES), ("libwebp", LIBWEBP_NAMES),
+                            ("rav1d", RAV1D_NAMES)]:
         directory = root / "licenses" / category
         for parent in [directory.parent, directory]:
             if (not stat.S_ISDIR(parent.lstat().st_mode)

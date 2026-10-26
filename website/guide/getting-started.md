@@ -14,7 +14,7 @@ The script downloads the release archive for your machine, checks it against the
 | Licence notices, offline guides | `~/.local/share/markitai/current`; on Windows beside the commands |
 | Your settings and caches | `~/.markitai` (`%USERPROFILE%\.markitai`) |
 
-With a terminal it then offers the optional parts, `markitai doctor --fix`: local OCR models (about 45 MB) and, when no Chrome or Chromium is found, Chrome's headless shell (about 280 MB). A first install also runs `markitai init --yes`, which saves the models of the API keys and subscriptions it finds (never a key; LLM stays off). Coming from markitai 1.x? It replaces a uv-installed 1.x: see [Upgrading from 1.x](/guide/upgrading).
+With a terminal it then offers the optional parts, `markitai doctor --fix`: local OCR models (about 45 MB) and, when no Chrome or Chromium is found, Chrome's headless shell (about 280 MB). It remembers your answer: running it again to update asks only if a part is missing and you never said no. A first install also runs `markitai init --yes`, which saves the models of the API keys and subscriptions it finds (never a key; LLM stays off). Coming from markitai 1.x? It replaces a uv-installed 1.x: see [Upgrading from 1.x](/guide/upgrading).
 
 | Variable | Effect |
 |----------|--------|

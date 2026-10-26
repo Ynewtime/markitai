@@ -430,6 +430,12 @@ mod tests {
         let mut full = minimal.clone();
         full.error = Some("failed".into());
         full.error_code = Some("conversion_error".into());
+        full.set_warnings(vec!["Hidden worksheet \"Notes\" is omitted.".into()]);
+        agree(
+            "ItemNotice",
+            &json!(full.notices[0]),
+            &json!({"code": "other"}),
+        );
         let usage = markitai_core::ConversionUsage {
             requests: 1,
             cost_usd: 0.5,

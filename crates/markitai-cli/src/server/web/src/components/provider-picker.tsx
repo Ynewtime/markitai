@@ -6,6 +6,7 @@
 // connection) and is marked as added below; selecting it opens that row.
 import { useState } from "preact/hooks";
 import type { ProviderCard } from "../api/types.ts";
+import { NARROW, useMedia } from "../hooks/use-media.ts";
 import type { Dict } from "../i18n/index.ts";
 import { mergeKimi } from "../lib/kimi.ts";
 import { arrangeProviders, atOwnEndpoint, iconKey, providerLabel, savedAuth, type ProviderFilter } from "../lib/provider-catalog.ts";
@@ -38,6 +39,10 @@ export function ProviderPicker({
   const label = (card: ProviderCard) => providerLabel(t, card);
   const view = arrangeProviders(mergeKimi(providers), { query, filter, label });
   const shown = view.filters.includes(filter) ? filter : "all";
+  // A row of chips picks a type in one click; a phone, too narrow for the
+  // row, keeps the menu button when there are more than three types.
+  const narrow = useMedia(NARROW);
+  const menu = narrow && view.filters.length > SEGMENTS_MAX;
   const searching = query.trim() !== "";
   const found = view.saved.length + view.common.length + view.all.length;
   /** How the row connects, and where when it is not the provider's own endpoint. */
@@ -141,8 +146,8 @@ export function ProviderPicker({
           {t.providersAll(view.all.length)}
         </h2>
         {view.filters.length > 1 && (
-          <div class={view.filters.length > SEGMENTS_MAX ? "provider-filter is-menu" : "provider-filter"}>
-            {view.filters.length > SEGMENTS_MAX ? (
+          <div class={menu ? "provider-filter is-menu" : "provider-filter"}>
+            {menu ? (
               <ChoiceMenu name={t.providerFilterAria} value={shown} choices={view.filters} label={(value) => t.providerFilter(value)} onPick={setFilter} />
             ) : (
               <div class="chips" role="group" aria-label={t.providerFilterAria}>

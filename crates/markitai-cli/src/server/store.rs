@@ -469,6 +469,10 @@ fn load(folder: &Path, id: &str) -> std::io::Result<Option<JobData>> {
             eprintln!("Warning: Serve: ignored invalid stored rerun failure");
         }
         if let Ok(mut item) = serde_json::from_value::<Item>(object) {
+            // Codes follow the core's current families, also for an item
+            // saved before v1.26 or by the CLI.
+            let warnings = std::mem::take(&mut item.warnings);
+            item.set_warnings(warnings);
             // A history saved before URL names were redacted shows none of
             // their credentials either, and saves them no more.
             item.withhold_address();

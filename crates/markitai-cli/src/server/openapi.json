@@ -1346,9 +1346,20 @@
           "skip_reason": { "type": ["string", "null"] },
           "retryable": { "type": "boolean" },
           "warnings": { "type": "array", "items": { "type": "string" } },
+          "notices": { "type": "array", "items": { "$ref": "#/components/schemas/ItemNotice" }, "description": "v1.26. Each warning's stable code and the subjects it names, in the order of warnings; absent when there are none and from servers before v1.26 (read warnings then)" },
           "models": { "type": "array", "items": { "type": "string" }, "description": "The models whose requests produced the retained result, in name order; absent when none did" },
           "source_size": { "type": ["integer", "null"], "description": "Bytes of the uploaded original; absent for URLs and CLI records" },
           "page_sources": { "type": "array", "items": { "$ref": "#/components/schemas/PageSource" }, "description": "A PDF's pages, each with where its text came from; empty for other items and for earlier records" }
+        }
+      },
+      "ItemNotice": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "v1.26. A warning's stable code (the document JSON's notice codes; other for a sentence no family claims) and the pages, images or sheets it names. Clients word a known code themselves and show the warning's text for the rest",
+        "required": ["code"],
+        "properties": {
+          "code": { "type": "string" },
+          "items": { "type": "array", "items": { "type": "string" } }
         }
       },
       "PageSource": {

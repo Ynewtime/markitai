@@ -14,7 +14,7 @@
 | 许可声明、离线指南 | `~/.local/share/markitai/current`；Windows 上与命令同一个文件夹 |
 | 你的设置和缓存 | `~/.markitai`（`%USERPROFILE%\.markitai`） |
 
-有交互终端时，它接着询问是否准备可选组件（即 `markitai doctor --fix`）：本地 OCR 模型（约 45 MB），以及在找不到 Chrome 或 Chromium 时的 Chrome headless shell（约 280 MB）。首次安装还会运行 `markitai init --yes`，保存它找到的 API key 和订阅对应的模型（从不保存 key 本身；LLM 保持关闭）。从 markitai 1.x 过来？它会替换用 uv 安装的 1.x，见[从 1.x 升级](/zh/guide/upgrading)。
+有交互终端时，它接着询问是否准备可选组件（即 `markitai doctor --fix`）：本地 OCR 模型（约 45 MB），以及在找不到 Chrome 或 Chromium 时的 Chrome headless shell（约 280 MB）。它会记住你的回答：再次运行来更新时，只有某个组件缺失且你从未拒绝过才会再问。首次安装还会运行 `markitai init --yes`，保存它找到的 API key 和订阅对应的模型（从不保存 key 本身；LLM 保持关闭）。从 markitai 1.x 过来？它会替换用 uv 安装的 1.x，见[从 1.x 升级](/zh/guide/upgrading)。
 
 | 变量 | 作用 |
 |------|------|

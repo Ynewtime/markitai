@@ -485,6 +485,25 @@ impl RerunFailure {
     }
 }
 
+/// A warning's stable code (`markitai_core::notices`, `other` for a sentence
+/// no family claims) and the pages, images or sheets it names.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub(super) struct ItemNotice {
+    pub code: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub items: Vec<String>,
+}
+
+impl ItemNotice {
+    fn of(message: &str) -> Self {
+        let found = markitai_core::notices::classify(message);
+        Self {
+            code: found.code.to_owned(),
+            items: found.items,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(super) struct Item {
     pub item_id: String,
@@ -527,6 +546,11 @@ pub(super) struct Item {
     pub retryable: bool,
     #[serde(default)]
     pub warnings: Vec<String>,
+    /// v1.26: each warning's stable code and the subjects it names, in the
+    /// order of `warnings`, so the workbench words it in the interface
+    /// language. Derived from `warnings` (see [`Item::set_warnings`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notices: Vec<ItemNotice>,
     /// The models whose requests produced the retained result, by name.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub models: Vec<String>,
@@ -560,6 +584,15 @@ fn yes() -> bool {
     true
 }
 impl Item {
+    /// The item's warnings, with their codes in `notices`.
+    pub(super) fn set_warnings(&mut self, warnings: Vec<String>) {
+        self.notices = warnings
+            .iter()
+            .map(|message| ItemNotice::of(message))
+            .collect();
+        self.warnings = warnings;
+    }
+
     pub fn new(index: usize, name: String, kind: &str, output_name: Option<String>) -> Self {
         Self {
             item_id: format!("i{index}"),
@@ -583,6 +616,7 @@ impl Item {
             skip_reason: None,
             retryable: true,
             warnings: Vec::new(),
+            notices: Vec::new(),
             models: Vec::new(),
             source_size: None,
             page_sources: Vec::new(),
@@ -930,6 +964,34 @@ mod error_tests {
         for refused in ["a\nb", "a\u{7}b", "a\tb"] {
             assert_eq!(label(refused), None, "{refused:?}");
         }
+    }
+
+    #[test]
+    fn warnings_carry_their_codes_in_order() {
+        let mut item = Item::new(1, "a.pdf".into(), "file", None);
+        assert!(
+            serde_json::to_value(&item)
+                .unwrap()
+                .get("notices")
+                .is_none()
+        );
+        item.set_warnings(vec![
+            "PDF layout refinement was skipped (timeout); the original page reader's output is retained.".into(),
+            "Hidden worksheet \"Notes\" is omitted by the native spreadsheet reader.".into(),
+            "Something new happened.".into(),
+        ]);
+        let value = serde_json::to_value(&item).unwrap();
+        assert_eq!(
+            value["notices"],
+            json!([
+                {"code": "pdf.layout"},
+                {"code": "spreadsheet.hidden_sheet", "items": ["Notes"]},
+                {"code": "other"}
+            ])
+        );
+        assert_eq!(value["warnings"].as_array().unwrap().len(), 3);
+        item.set_warnings(Vec::new());
+        assert!(item.notices.is_empty());
     }
 
     #[test]

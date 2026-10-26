@@ -20,7 +20,7 @@ import { loadArtifactImages, renderMarkdown, splitFrontmatter, type ImageLoads }
 import { docsPage } from "../lib/docs.ts";
 import { drawDiagrams } from "../lib/diagram.ts";
 import { typeset } from "../lib/math.ts";
-import { groupNotices, type NoticeGroup } from "../lib/notices.ts";
+import { groupNotices, type NoticeGroup, noticeEntries } from "../lib/notices.ts";
 import { copyText } from "../lib/clipboard.ts";
 import type { PresetTable } from "../lib/options.ts";
 import { openPreviewAs, readRequestOpen, storeRequestOpen } from "../lib/peek-pref.ts";
@@ -660,7 +660,7 @@ export function ItemInspector({
   const base = item.llmEnhanced ? artifacts.find((artifact) => artifact.relpath.endsWith(".md") && !artifact.relpath.endsWith(".llm.md")) : undefined;
   const failed = isFailed(item);
   const problem = failed || item.rerunFailure ? itemErrorText(locale, { error: item.rerunFailure?.error ?? item.error, error_code: item.rerunFailure?.error_code ?? item.errorCode, kind: item.kind }) : null;
-  const notices = useMemo(() => groupNotices(item.warnings.map((text) => ({ itemKey: item.key, itemName: item.name, text }))), [item.warnings, item.key, item.name]);
+  const notices = useMemo(() => groupNotices(noticeEntries(item)), [item.warnings, item.key, item.name]);
   const cost = itemCost(item);
   const kept = keptUntil(ctx, item.finishedAt);
   const also = [
@@ -831,7 +831,7 @@ export function JobInspector({
   const { t, locale } = ctx;
   const tally = counts(items);
   const label = submissionLabel(job, items, ctx.labelWords);
-  const notices = useMemo(() => groupNotices(items.flatMap((item) => item.warnings.map((text) => ({ itemKey: item.key, itemName: item.name, text })))), [items]);
+  const notices = useMemo(() => groupNotices(items.flatMap((item) => noticeEntries(item))), [items]);
   const cost = totalCost(items);
   const running = job.status === "running";
   const kept = keptUntil(ctx, job.finishedAt);
@@ -967,7 +967,7 @@ export function jobActs(ctx: InspectorContext, job: ConvJob, items: SessionItem[
 export function Overview({ ctx, items, peek = false, onShowItems }: { ctx: InspectorContext; items: SessionItem[]; peek?: boolean; onShowItems: (keys: string[]) => void }) {
   const { t } = ctx;
   const tally = counts(items);
-  const notices = useMemo(() => groupNotices(items.flatMap((item) => item.warnings.map((text) => ({ itemKey: item.key, itemName: item.name, text })))), [items]);
+  const notices = useMemo(() => groupNotices(items.flatMap((item) => noticeEntries(item))), [items]);
   const cost = totalCost(items);
   if (!items.length) return <div class="insp is-empty"><p>{t.overviewEmpty}</p></div>;
   return (

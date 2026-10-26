@@ -129,6 +129,8 @@ export interface ItemPayload {
   skip_reason: string | null;
   retryable: boolean;
   warnings: string[];
+  /** v1.26: each warning's stable code and the subjects it names, in the order of `warnings`. */
+  notices?: ItemNotice[];
   /** Model names that produced the retained result. */
   models?: string[];
   /** Bytes of the uploaded original; null for URLs or when unknown. */
@@ -684,4 +686,10 @@ export interface ConvertDefaultsView {
   scope: "server" | "user";
   can_save: boolean;
   revision: string;
+}
+
+/** v1.26: a warning's stable code (`other` when no family claims it) and the pages, images or sheets it names. */
+export interface ItemNotice {
+  code: string;
+  items?: string[];
 }

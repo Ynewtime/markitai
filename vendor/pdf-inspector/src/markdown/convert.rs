@@ -1165,6 +1165,7 @@ pub(super) fn to_markdown_from_lines_with_tables_and_images(
     let mut in_list = false;
     let mut in_paragraph = false;
     let mut last_list_x: Option<f32> = None;
+    let mut last_list_text_x: Option<f32> = None;
     // Code lines accumulate here and the fence is emitted only when the
     // block flushes with content — an empty ``` ``` pair can never appear.
     fn flush_code_block(output: &mut String, pending_code: &mut Vec<CodeLine>) {
@@ -1628,6 +1629,7 @@ pub(super) fn to_markdown_from_lines_with_tables_and_images(
             output.push('\n');
             in_list = true;
             last_list_x = line.items.first().map(|i| i.x);
+            last_list_text_x = hanging_text_x(line);
             continue;
         }
 
@@ -1643,6 +1645,7 @@ pub(super) fn to_markdown_from_lines_with_tables_and_images(
             output.push('\n');
             in_list = true;
             last_list_x = line.items.first().map(|i| i.x);
+            last_list_text_x = hanging_text_x(line);
             continue;
         } else if in_list {
             // Check if this line is a continuation of the previous list item
@@ -1657,6 +1660,7 @@ pub(super) fn to_markdown_from_lines_with_tables_and_images(
                 let y_ok = y_gap < base_size * 7.0;
                 (x_ok || cjk_wraps.contains(&line_idx))
                     && y_ok
+                    && !outdented_after_gap(last_list_text_x, curr_x, y_gap, base_size)
                     && !set_apart
                     && !is_list_item(plain_trimmed)
                     && !has_dot_leaders(plain_trimmed)
@@ -1678,6 +1682,7 @@ pub(super) fn to_markdown_from_lines_with_tables_and_images(
             } else {
                 in_list = false;
                 last_list_x = None;
+                last_list_text_x = None;
                 // A blank line ends the list: text right after an item's
                 // line would read as its lazy continuation.
                 if !output.ends_with("\n\n") {
@@ -1799,6 +1804,27 @@ const MARKUP_TOKENS: [&str; 10] = [
 const CODE_BLOCK_SET_OFF: f32 = 1.7;
 
 /// The largest font size on a line.
+/// markitai: where a list item's text starts when its bullet is a run of
+/// its own set apart from it (a hanging indent, as ReportLab and Word lay a
+/// list out); `None` for an item whose marker and text share a run.
+fn hanging_text_x(line: &TextLine) -> Option<f32> {
+    let marker = line.items.first()?;
+    if !matches!(marker.text.trim(), "•" | "●" | "○" | "◦") {
+        return None;
+    }
+    let text = line.items.iter().skip(1).find(|item| !item.text.trim().is_empty())?;
+    (text.x > marker.x + marker.width).then_some(text.x)
+}
+
+/// markitai: a line back at the bullet's column, left of the text that
+/// hangs to the right of it, set lower than a wrapped line (more than 1.5
+/// em) is the paragraph after the list, not a wrapped line of its last item.
+/// The paragraph threshold can't tell: on a page with one paragraph gap it
+/// falls back to a measure above ReportLab's spacing.
+fn outdented_after_gap(text_x: Option<f32>, curr_x: f32, y_gap: f32, base_size: f32) -> bool {
+    text_x.is_some_and(|text_x| curr_x < text_x - base_size * 0.5) && y_gap > base_size * 1.5
+}
+
 fn line_font_size(line: &TextLine) -> f32 {
     line.items
         .iter()
@@ -1995,6 +2021,7 @@ pub fn to_markdown_from_lines(lines: Vec<TextLine>, options: MarkdownOptions) ->
     let mut in_list = false;
     let mut in_paragraph = false;
     let mut last_list_x: Option<f32> = None;
+    let mut last_list_text_x: Option<f32> = None;
     let mut prev_had_dot_leaders = false;
     let mut paragraph_in_wrapped_bold_run = false;
     let mut toc_suppress_page: Option<u32> = None;
@@ -2013,6 +2040,7 @@ pub fn to_markdown_from_lines(lines: Vec<TextLine>, options: MarkdownOptions) ->
             prev_y = f32::MAX;
             in_list = false;
             last_list_x = None;
+            last_list_text_x = None;
             prev_had_dot_leaders = false;
             paragraph_in_wrapped_bold_run = false;
 
@@ -2189,6 +2217,7 @@ pub fn to_markdown_from_lines(lines: Vec<TextLine>, options: MarkdownOptions) ->
             output.push('\n');
             in_list = true;
             last_list_x = line.items.first().map(|i| i.x);
+            last_list_text_x = hanging_text_x(line);
             continue;
         } else if in_list {
             // Check if this line is a continuation of the previous list item
@@ -2202,6 +2231,7 @@ pub fn to_markdown_from_lines(lines: Vec<TextLine>, options: MarkdownOptions) ->
                 let y_ok = y_gap < base_size * 7.0;
                 (x_ok || cjk_wraps.contains(&line_idx))
                     && y_ok
+                    && !outdented_after_gap(last_list_text_x, curr_x, y_gap, base_size)
                     && !set_apart
                     && !is_list_item(plain_trimmed)
                     && !has_dot_leaders(plain_trimmed)
@@ -2223,6 +2253,7 @@ pub fn to_markdown_from_lines(lines: Vec<TextLine>, options: MarkdownOptions) ->
             } else {
                 in_list = false;
                 last_list_x = None;
+                last_list_text_x = None;
                 // A blank line ends the list (see the positioned path).
                 if !output.ends_with("\n\n") {
                     output.push('\n');

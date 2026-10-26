@@ -868,9 +868,11 @@ fn long_article(document: &Html, base: Option<&Url>) -> Result<Option<Announceme
 }
 
 /// A reply under `## Comments`, as the reference writes it: `**Name @handle**
-/// · [date](permalink)`, then the reply's text, media and quoted post.
+/// · [date](permalink)`, then the reply's text, media and quoted post. The
+/// post's author's own reply says `(author)` after the name.
 fn comment(
     reply: &Post<'_>,
+    by_author: bool,
     base: Option<&Url>,
     files: &HashMap<String, String>,
 ) -> Result<Option<Vec<String>>> {
@@ -881,7 +883,8 @@ fn comment(
         (None, None) => String::new(),
     };
     if !who.is_empty() {
-        header.push(format!("**{}**", escaped(&who)));
+        let mark = if by_author { " (author)" } else { "" };
+        header.push(format!("**{}**{mark}", escaped(&who)));
     }
     let (iso, shown) = shown_date(reply.element, reply.quote);
     let id = own_id(reply.element);
@@ -913,6 +916,56 @@ fn comment(
     Ok(Some(lines))
 }
 
+/// A thread part's number opening a post: `2/`, `2/n`, `2/5` or `(2/5)`.
+static THREAD_NUMBER: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^\s*\(?(\d{1,2})\s*/\s*(\d{1,2}|n)?\)?(?:\s|$)").expect("thread number pattern")
+});
+
+/// Whether `text` opens with a thread part's number: a small `n` (1 to 50),
+/// and in `n/m` no more than `m`. A date such as `10/24` at the end, or
+/// `13/5` at the start, is no part number.
+fn thread_number(text: &str) -> bool {
+    THREAD_NUMBER.captures(text).is_some_and(|found| {
+        let part: u32 = found[1].parse().unwrap_or(0);
+        let total = found
+            .get(2)
+            .and_then(|total| total.as_str().parse::<u32>().ok());
+        (1..=50).contains(&part) && total.is_none_or(|total| part <= total)
+    })
+}
+
+/// Whether the author's reply `next`, after their post or part `previous`,
+/// continues the thread rather than answering under it: either opens with a
+/// part number (`2/`, `(2/5)`), the post opens a thread (`🧵`, `thread:`, `thread 👇`), the
+/// earlier text breaks off (`,` `:` `;` `…` or a dash), or the reply picks
+/// up mid-sentence (a lowercase letter or `…`). X's markup does not say
+/// which replies are the self-thread, so a reply without these is a
+/// comment, like a "tag them with feedback" note.
+fn continues_thread(main: &str, previous: &str, next: &str) -> bool {
+    let opens = |text: &str| {
+        let lower = text.to_lowercase();
+        text.contains('\u{1F9F5}')
+            || [
+                "thread:",
+                "thread\u{1F447}",
+                "thread \u{1F447}",
+                "thread below",
+            ]
+            .iter()
+            .any(|cue| lower.contains(cue))
+    };
+    let previous = previous.trim_end();
+    let next = next.trim_start();
+    thread_number(next)
+        || thread_number(main)
+        || opens(main)
+        || previous.ends_with([',', ':', ';', '…', '-', '–', '—'])
+        || previous.ends_with("...")
+        || next.starts_with('…')
+        || next.starts_with("...")
+        || next.chars().next().is_some_and(char::is_lowercase)
+}
+
 /// The posts that follow `main` in the conversation: those before the first
 /// heading outside a post after it, where X starts "Discover more" and other
 /// timelines, as the reference stops there.
@@ -942,10 +995,11 @@ fn conversation(scope: ElementRef<'_>, main: ElementRef<'_>) -> HashSet<usize> {
 }
 
 /// The post of an X status page as Markdown with its metadata: the post, then
-/// the posts the author continued it with, each after a rule. Replies from
-/// other accounts, and the author's own replies after the first of them, are
-/// the discussion around the post: they follow under `## Comments`, as the
-/// reference writes them.
+/// the posts the author continued it with (see [`continues_thread`]), each
+/// after a rule. Replies from other accounts, and the author's own replies
+/// that do not continue it or come after the first comment, are the
+/// discussion around the post: they follow under `## Comments` in the order
+/// they were posted, as the reference writes them.
 pub(super) fn post(
     document: &Html,
     page: &Landmarks<'_>,
@@ -1003,13 +1057,20 @@ pub(super) fn post(
     }
     let main_id = own_id(main.element);
     let mut sections = vec![lead.join("\n\n")];
-    // Consecutive posts of the author right after the main one continue it;
-    // the first post of anyone else ends the thread. A page can repeat the
-    // main post, which is not a continuation of itself.
+    // Consecutive posts of the author right after the main one continue it
+    // when they read as its parts; the first other post ends the thread. A
+    // page can repeat the main post, which is not a continuation of itself.
     let mut seen = vec![main_id.clone()];
     let in_conversation = conversation(scope, main.element);
-    let mut comments: Vec<Vec<String>> = Vec::new();
+    let mut comments: Vec<(Option<u64>, Vec<String>)> = Vec::new();
     let mut thread_ended = false;
+    let plain_text = |post: &Post<'_>| {
+        text_element(post.element, post.quote)
+            .map(text_of)
+            .unwrap_or_default()
+    };
+    let main_text = plain_text(&main);
+    let mut previous_text = main_text.clone();
     for article in &timeline[position + 1..] {
         let id = own_id(*article);
         if id.is_some() && seen.contains(&id) {
@@ -1018,11 +1079,19 @@ pub(super) fn post(
         if !in_conversation.contains(&super::element_key(*article)) {
             break;
         }
+        let number = id.as_deref().and_then(|id| id.parse::<u64>().ok());
         seen.push(id);
         let reply = Post::read(*article);
-        thread_ended |= !reply.same_author(&main);
+        let by_author = reply.same_author(&main);
+        if !thread_ended {
+            let text = plain_text(&reply);
+            thread_ended = !by_author || !continues_thread(&main_text, &previous_text, &text);
+            previous_text = text;
+        }
         if thread_ended {
-            comments.extend(comment(&reply, base, &files)?);
+            if let Some(lines) = comment(&reply, by_author, base, &files)? {
+                comments.push((number, lines));
+            }
             continue;
         }
         let blocks = reply.blocks(base, &files)?;
@@ -1044,9 +1113,7 @@ pub(super) fn post(
     if let Some(date) = published(iso.as_deref(), main_id.as_deref(), shown.as_deref()) {
         metadata.insert("published".into(), date.into());
     }
-    let plain = text_element(main.element, main.quote)
-        .map(text_of)
-        .unwrap_or_default();
+    let plain = main_text;
     if !plain.is_empty() {
         let mut description: String = plain.chars().take(200).collect();
         description.truncate(description.trim_end().len());
@@ -1054,6 +1121,11 @@ pub(super) fn post(
     }
     // The body is already the post; a language model keeps it as it is.
     metadata.insert("content_profile".into(), "social_post".into());
+    // Post ids grow with time: replies read in the order they were posted.
+    if comments.iter().all(|(number, _)| number.is_some()) {
+        comments.sort_by_key(|(number, _)| *number);
+    }
+    let comments: Vec<Vec<String>> = comments.into_iter().map(|(_, lines)| lines).collect();
     let mut markdown = sections.join("\n\n---\n\n");
     if !comments.is_empty() {
         markdown.push_str("\n\n---\n\n## Comments\n\n");
@@ -1081,7 +1153,9 @@ pub(super) fn post(
 #[cfg(test)]
 mod tests {
     use super::super::extract_html;
-    use super::{canonical_status_url, id_date, image_markdown, original_image, published};
+    use super::{
+        canonical_status_url, continues_thread, id_date, image_markdown, original_image, published,
+    };
     use url::Url;
 
     #[test]
@@ -1300,11 +1374,18 @@ Second line with </span><a href="https://example.com/tool">example.com/tool</a><
 
     #[test]
     fn the_authors_own_replies_continue_the_post_and_the_rest_are_comments() {
-        let main = article("ada", "Ada", ID, "3:04 AM · Feb 25, 2025", "Part one", "");
+        let main = article(
+            "ada",
+            "Ada",
+            ID,
+            "3:04 AM · Feb 25, 2025",
+            "1/3 Part one",
+            "",
+        );
         let replies = format!(
             "{}{}{}{}{}",
-            card("ada", "Ada", "1894221971766084050", "Part two"),
-            card("ada", "Ada", "1894221971766084051", "Part three"),
+            card("ada", "Ada", "1894221971766084050", "2/3 Part two"),
+            card("ada", "Ada", "1894221971766084051", "3/3 Part three"),
             card("grace", "Grace", "1894221971766084052", "A comment"),
             card("ada", "Ada", "1894221971766084053", "Thanks Grace"),
             card("linus", "Linus", "1894221971766084054", "Another comment"),
@@ -1318,13 +1399,69 @@ Second line with </span><a href="https://example.com/tool">example.com/tool</a><
         // reply after it, the author's own included, are comments.
         assert_eq!(
             doc.markdown,
-            "Part one\n\n---\n\nPart two\n\n---\n\nPart three\n\n---\n\n## Comments\n\n\
+            "1/3 Part one\n\n---\n\n2/3 Part two\n\n---\n\n3/3 Part three\n\n---\n\n## Comments\n\n\
              > **Grace @grace** · [2025-02-25](https://x.com/grace/status/1894221971766084052)\n>\n> A comment\n\n\
-             > **Ada @ada** · [2025-02-25](https://x.com/ada/status/1894221971766084053)\n>\n> Thanks Grace\n\n\
+             > **Ada @ada** (author) · [2025-02-25](https://x.com/ada/status/1894221971766084053)\n>\n> Thanks Grace\n\n\
              > **Linus @linus** · [2025-02-25](https://x.com/linus/status/1894221971766084054)\n>\n> Another comment"
         );
-        assert_eq!(doc.metadata["description"], "Part one");
+        assert_eq!(doc.metadata["description"], "1/3 Part one");
         assert_eq!(doc.metadata["published"], "2025-02-25");
+    }
+
+    /// A static fetch of a 2026 post (fixtures/x-author-reply.html, saved as
+    /// fetched): the author's "tag them with feedback" reply is neither
+    /// numbered nor continues the post, so it is a comment, marked as the
+    /// author's and listed after the reply posted before it. The page holds
+    /// only these two replies.
+    #[test]
+    fn an_authors_reply_that_does_not_continue_the_post_is_a_comment() {
+        let html = include_str!("fixtures/x-author-reply.html");
+        let doc = extract_html(
+            html,
+            Some("https://x.com/amorriscode/status/2113972174524674247"),
+        )
+        .unwrap();
+        let (body, comments) = doc
+            .markdown
+            .split_once("\n\n---\n\n## Comments\n\n")
+            .unwrap();
+        assert!(
+            body.starts_with("Yesterday was my last day at Anthropic."),
+            "{body}"
+        );
+        assert!(body.ends_with("I'll share what's next soon!"), "{body}");
+        assert!(!body.contains("---") && !body.contains("Tag "), "{body}");
+        assert_eq!(
+            comments,
+            "> **Thariq @trq212** · [2026-10-24](https://x.com/trq212/status/2114001556895072741)\n>\n> \u{1F410}\n\n\
+             > **Anthony Morris ツ @amorriscode** (author) · [2026-10-24](https://x.com/amorriscode/status/2114004396518650193)\n>\n\
+             > Tag [@alicelovescake1](https://x.com/alicelovescake1) and [@BenjaminPasero](https://x.com/BenjaminPasero) with any CCD feedback going forward. They're the best!"
+        );
+    }
+
+    #[test]
+    fn numbered_or_broken_off_replies_continue_the_thread() {
+        for (main, reply, continues) in [
+            ("Shipping today 🧵", "The details.", true),
+            ("Here is how it works:", "First, the parser.", true),
+            ("It started small", "and then it grew.", true),
+            ("A long story…", "…that ends here.", true),
+            ("Big news.", "(2/4) More news.", true),
+            ("1/ Big news.", "More news.", true),
+            ("Big news.", "2/n More news.", true),
+            ("See you on 10/24", "Doors open at six.", false),
+            ("Big news.", "Moved to 10/24.", false),
+            ("Big news.", "13/5 is the score.", false),
+            ("Big news.", "2. More news.", false),
+            ("Big news.", "Tag Grace with feedback.", false),
+            ("Big news!", "Thanks, everyone.", false),
+        ] {
+            assert_eq!(
+                continues_thread(main, main, reply),
+                continues,
+                "{main} / {reply}"
+            );
+        }
     }
 
     #[test]
@@ -1337,15 +1474,15 @@ Second line with </span><a href="https://example.com/tool">example.com/tool</a><
         };
         let html = format!(
             r#"<html><body><div data-testid="primaryColumn">{}<section>{}{}{}</section></div></body></html>"#,
-            post("Ada", "ada", "Opening"),
-            post("Ada", "ada", "Continued"),
+            post("Ada", "ada", "Opening, and"),
+            post("Ada", "ada", "continued"),
             post("Grace", "grace", "Question"),
             post("Ada", "ada", "Answer")
         );
         let doc = extract_html(&html, Some("https://twitter.com/ada/status/7")).unwrap();
         assert_eq!(
             doc.markdown,
-            "Opening\n\n---\n\nContinued\n\n---\n\n## Comments\n\n> **Grace @grace**\n>\n> Question\n\n> **Ada @ada**\n>\n> Answer"
+            "Opening, and\n\n---\n\ncontinued\n\n---\n\n## Comments\n\n> **Grace @grace**\n>\n> Question\n\n> **Ada @ada** (author)\n>\n> Answer"
         );
         assert_eq!(doc.metadata["content_profile"], "social_post");
     }

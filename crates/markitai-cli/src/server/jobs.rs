@@ -423,8 +423,9 @@ async fn convert_one(
             item.pricing = crate::pricing::Pricing::from_usage(&result.usage);
             item.models = super::types::models(item.llm_enhanced, &result.usage);
             item.diagnostics = AttemptDiagnostics::completed(Operation::Convert, result.usage);
-            item.warnings = result.warnings;
-            item.warnings.extend(unwritten);
+            let mut warnings = result.warnings;
+            warnings.extend(unwritten);
+            item.set_warnings(warnings);
             item.page_sources = result.page_sources;
             item.output = result
                 .llm_output_path

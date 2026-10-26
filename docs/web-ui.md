@@ -233,7 +233,10 @@ files wait on Convert); typing URLs is Convert's job.
   analysis failed" warnings of one document read once as "31 images kept their
   original alt text", an incomplete cost names the models without a reviewed
   price and links to how to add one, and other warnings group by their wording
-  with a count. Page numbers read as ranges everywhere (`pages 1–12, 15, 20–31`,
+  with a count. A warning whose wording the workbench does not know is titled
+  by its stable code (contract v1.26 `notices[].code`, the document JSON's
+  codes) in the interface language, its own words behind Details; without a
+  code, or with a code it has no title for, it shows the server's words. Page numbers read as ranges everywhere (`pages 1–12, 15, 20–31`,
   one warning per page with the same words as one); a PDF whose pages (nearly all,
   90 % or more) have no readable text says "This PDF is scanned: turn on OCR and
   convert again", and one with some such pages names them with the same action. A
@@ -822,7 +825,8 @@ keys as saved defaults; contract v1.22 adds `settings`, read when present, to jo
 and items, and v1.23 `markdown_lines` to a result, so the Details count the lines of
 an output whose start is an excerpt; v1.24 `Capabilities.update` and `/api/update`
 on a loopback server, see [service](serve.md#updates); v1.25 `regions` on a provider
-card); a missing feature hides its control instead of failing (no Stop
+card; v1.26 `notices`, each warning's code and subjects in the order of `warnings`); a
+missing feature hides its control instead of failing (no Stop
 remaining, no Compare, archives saved through the page, history read job by job,
 images read from the file route).
 `docs_url` points the Docs link at the backend's own documentation (both servers name

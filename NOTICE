@@ -38,8 +38,8 @@ Windows and Linux builds decode AVIF with rav1d (BSD-2-Clause; VideoLAN, the
 dav1d authors and the Internet Security Research Group), vendored from upstream
 commit d3d1cd67 in vendor/rav1d with the changes listed in
 vendor/rav1d/MARKITAI-PATCH.md. Its Rust API derives from dav1d-rs (MIT,
-Luca Barbato); both notices are in vendor/rav1d/COPYING and
-vendor/rav1d/LICENSE-dav1d-rs.
+Luca Barbato); both notices are in licenses/rav1d/COPYING and
+licenses/rav1d/LICENSE-dav1d-rs.
 
 `image.format: webp` is encoded with the lossy encoder of libwebp 1.6.0
 (BSD-3-Clause, Google Inc.), built statically from the unchanged release

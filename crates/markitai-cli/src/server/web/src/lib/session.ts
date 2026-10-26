@@ -16,6 +16,7 @@ import type {
 import { publicOptions } from "./options.ts";
 import { publicSettings } from "./request.ts";
 import { isUnsupported } from "../i18n/errors.ts";
+import { noticeCodes } from "./notices.ts";
 
 /** A terminal fetch can outlive its stream or a user's next attempt. */
 export async function settleCurrentJobSnapshot(
@@ -53,6 +54,8 @@ export interface SessionItem {
   skipReason: string | null;
   retryable: boolean;
   warnings: string[];
+  /** v1.26: the code of each warning, by index; empty from older servers and Python. */
+  noticeCodes?: { code: string; items: string[] }[];
   remoteProcessing?: RemoteProcessing | null;
   options?: JobOptions;
   /** v1.22: what the latest run converted with, when the backend recorded it. */
@@ -105,6 +108,7 @@ export function seedItem(jobId: string, seed: Seed): SessionItem {
     skipReason: null,
     retryable: true,
     warnings: [],
+    noticeCodes: [],
     models: [],
     sizeBytes: seed.sizeBytes,
     startedAt: null,
@@ -142,6 +146,7 @@ export function mergeItem(previous: SessionItem, payload: ItemPayload, now: numb
     skipReason: stopped ? "user_stopped" : payload.skip_reason,
     retryable: payload.retryable,
     warnings: payload.warnings ?? [],
+    noticeCodes: noticeCodes(payload.notices, payload.warnings ?? []),
     models: Array.isArray(payload.models) ? payload.models.filter((model) => typeof model === "string") : previous.models,
     sizeBytes: typeof payload.source_size === "number" ? payload.source_size : previous.sizeBytes,
     startedAt,
@@ -171,6 +176,7 @@ export function requeued(item: SessionItem, operation: "retry" | "enhance"): Ses
     skipped: false,
     skipReason: null,
     warnings: [],
+    noticeCodes: [],
     models: [],
     startedAt: null,
   };

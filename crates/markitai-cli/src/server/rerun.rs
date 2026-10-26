@@ -179,7 +179,7 @@ pub(super) async fn retry(
         }
         data.bases.insert(item_id.clone(),base.clone());
         let job_id=data.id.clone();
-        let item=&mut data.items[index];item.status="queued".into();item.error=None;item.error_code=None;item.output=None;item.duration_ms=None;item.finished_at=None;item.cost_usd=None;item.pricing=None;item.diagnostics=None;item.rerun_failure=None;item.llm_enhanced=false;item.operation=body.operation.name().into();item.skipped=false;item.skip_reason=None;item.warnings.clear();item.models.clear();item.page_sources.clear();
+        let item=&mut data.items[index];item.status="queued".into();item.error=None;item.error_code=None;item.output=None;item.duration_ms=None;item.finished_at=None;item.cost_usd=None;item.pricing=None;item.diagnostics=None;item.rerun_failure=None;item.llm_enhanced=false;item.operation=body.operation.name().into();item.skipped=false;item.skip_reason=None;item.set_warnings(Vec::new());item.models.clear();item.page_sources.clear();
         item.remote_processing=opts.remote_disclosure().or_else(||prior.remote_processing.clone());
         let created=json!({"job_id":job_id,"items":[item.created()]});
         let payload=json!(item);
@@ -542,8 +542,9 @@ async fn run(state: Arc<State>, job: Arc<Job>, work: Work) {
             item.error = item.skip_reason.as_ref().map(|v| format!("skipped ({v})"));
             item.error_code = None;
             item.rerun_failure = None;
-            item.warnings = converted.warnings;
-            item.warnings.extend(unwritten);
+            let mut warnings = converted.warnings;
+            warnings.extend(unwritten);
+            item.set_warnings(warnings);
             item.page_sources = converted.page_sources;
             worker
                 .retry_pending

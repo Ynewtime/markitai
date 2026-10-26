@@ -145,7 +145,7 @@ redirected entries and run the installed aliases. Report complete archive size
 separately from a single executable.
 
 CLI, FFI and language packages carry project and upstream attribution,
-including `licenses/hayro/`, `licenses/paddleocr/`, `licenses/libwebp/`, pricing and
+including `licenses/hayro/`, `licenses/paddleocr/`, `licenses/libwebp/`, `licenses/rav1d/`, pricing and
 Tailwind palette (`licenses/tailwind/`) notices. CLI archives also include `vendor/web/` attribution and the explicit
 public Markdown whitelist in `scripts/cli_documentation.py`; release wheels, which serve the same workbench,
 carry the same `vendor/web/` attribution under `.dist-info/licenses/` (`release_build.py licenses` compares the
@@ -287,8 +287,10 @@ the release's names, and removes the user Path entry only when it added it. A
 run without `MARKITAI_INSTALL_DIR` reuses the last install's folder (setup.ps1
 records a custom one in `%LOCALAPPDATA%\markitai\install-location`). With a
 terminal they offer `markitai doctor --fix` (OCR models, a headless Chromium
-when no browser is found); `MARKITAI_INSTALL_OPTIONAL=1` runs it without one,
-`0` never. `--uninstall` (setup.ps1: `-Uninstall`; both: `MARKITAI_UNINSTALL=1`)
+when no browser is found) when `doctor --json` marks a check `fixable`, and keep
+the answer in the receipt (`optional=yes|no`): a yes prepares what is missing
+on later runs without asking, a no is not asked again;
+`MARKITAI_INSTALL_OPTIONAL=1` runs it without one, `0` never. `--uninstall` (setup.ps1: `-Uninstall`; both: `MARKITAI_UNINSTALL=1`)
 removes what they installed and keeps `~/.markitai`. setup.ps1 runs in a script
 block of its own, so `irm | iex` leaves the user's session as it was.
 `MARKITAI_DOWNLOAD_URL` points them at another releases base, which

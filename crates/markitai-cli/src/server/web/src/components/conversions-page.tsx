@@ -7,7 +7,7 @@
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { Dict, Locale } from "../i18n/index.ts";
 import { checkable, checkState, counts, deletable, FILTERS, isJobKey, itemOrder, submissionLabel, submissions, toggleAll, type ConvJob, type Filter, type LabelWords } from "../lib/conversions.ts";
-import { groupNotices } from "../lib/notices.ts";
+import { groupNotices, noticeEntries } from "../lib/notices.ts";
 import { listEntry, SUMMARY_ENTRY, type PaneMode } from "../lib/route.ts";
 import { waitingJobs, type SessionItem } from "../lib/session.ts";
 import { ActionMenu } from "./action-menu.tsx";
@@ -90,7 +90,7 @@ export function ConversionsPage(props: ConversionsPageProps) {
   const list = useMemo(() => submissions(jobs, items, filter, query, onlySet), [jobs, items, filter, query, onlySet]);
   const order = useMemo(() => itemOrder(list), [list]);
   const tally = useMemo(() => counts(items), [items]);
-  const kinds = useMemo(() => groupNotices(items.flatMap((item) => item.warnings.map((text) => ({ itemKey: item.key, itemName: item.name, text })))).length, [items]);
+  const kinds = useMemo(() => groupNotices(items.flatMap((item) => noticeEntries(item))).length, [items]);
   const selectedItem = selected !== null && !isJobKey(selected) ? (items.find((item) => item.key === selected) ?? null) : null;
   const selectedJobId = selected !== null && isJobKey(selected) ? selected.slice(4) : null;
   const selectedJob = selectedJobId !== null ? (jobs[selectedJobId] ?? null) : null;

@@ -45,7 +45,7 @@ import {
 } from "../lib/markdown.ts";
 import { drawDiagrams } from "../lib/diagram.ts";
 import { typeset } from "../lib/math.ts";
-import { groupNotices } from "../lib/notices.ts";
+import { groupNotices, noticeEntries } from "../lib/notices.ts";
 import { cachedExcerpt, resultKey } from "../lib/results.ts";
 import type { SessionItem } from "../lib/session.ts";
 import { capTables, repairTables, freezeColumns, markNumericColumns, MARKER, ROW_CHUNK, ROW_LIMIT, tableSlice, type CappedTable } from "../lib/tables.ts";
@@ -223,7 +223,7 @@ export function MarkdownView({
   const split = useMemo(() => (markdown === null ? null : splitFrontmatter(markdown)), [markdown]);
   // The card leaves out a title the document repeats as its first heading.
   const front = useMemo(() => cardFacts(parseFrontMatter(split?.frontmatter ?? null), split?.body ?? ""), [split]);
-  const notices = useMemo(() => (compact ? [] : groupNotices(item.warnings.map((text) => ({ itemKey: item.key, itemName: item.name, text })))), [compact, item.warnings, item.key, item.name]);
+  const notices = useMemo(() => (compact ? [] : groupNotices(noticeEntries(item))), [compact, item.warnings, item.key, item.name]);
 
   // ---- Rendered: the first chunk at once, the rest a few per frame
   useEffect(() => {
