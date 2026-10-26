@@ -252,7 +252,8 @@ class LicenseSetTests(unittest.TestCase):
     def test_wheels_carry_the_web_licenses(self):
         expected = release_build.release_attribution(ROOT)
         for name in ["LICENSE", "NOTICE", "vendor/web/Inter-OFL.txt", "vendor/web/KaTeX-LICENSE",
-                     "vendor/web/marked-LICENSE", "vendor/web/provenance.json"]:
+                     "vendor/web/marked-LICENSE", "vendor/web/provenance.json",
+                     "licenses/libwebp/COPYING", "licenses/rav1d/COPYING", "licenses/rav1d/LICENSE-dav1d-rs"]:
             self.assertIn(name, expected)
         source = Path(release_build.__file__).read_text(encoding="utf-8")
         for function in ["build_cli", "build_wheel"]:

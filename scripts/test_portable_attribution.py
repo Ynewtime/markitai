@@ -7,7 +7,7 @@ import shutil
 import tempfile
 import unittest
 
-from portable_attribution import HAYRO_NAMES, LIBWEBP_NAMES, PADDLE_NAMES, MAX_FILE, portable_files, stage_portable_files
+from portable_attribution import HAYRO_NAMES, LIBWEBP_NAMES, PADDLE_NAMES, RAV1D_NAMES, MAX_FILE, portable_files, stage_portable_files
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -17,15 +17,16 @@ class PortableAttributionTests(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
-        for name in ["hayro", "paddleocr", "libwebp"]:
+        for name in ["hayro", "paddleocr", "libwebp", "rav1d"]:
             shutil.copytree(ROOT / "licenses" / name, self.root / "source/licenses" / name)
         self.source = self.root / "source"
 
-    def test_all_twelve_real_notices_keep_their_original_bytes(self):
+    def test_all_fifteen_real_notices_keep_their_original_bytes(self):
         files = portable_files(self.source)
         expected = ({"licenses/hayro/" + name for name in HAYRO_NAMES} | {"licenses/paddleocr/" + name for name in PADDLE_NAMES}
-                    | {"licenses/libwebp/" + name for name in LIBWEBP_NAMES})
-        self.assertEqual(len(expected), 12)
+                    | {"licenses/libwebp/" + name for name in LIBWEBP_NAMES}
+                    | {"licenses/rav1d/" + name for name in RAV1D_NAMES})
+        self.assertEqual(len(expected), 15)
         self.assertEqual(set(files), expected)
         record = stage_portable_files(self.source, self.root / "package")
         self.assertEqual(set(record), expected)
@@ -44,6 +45,15 @@ class PortableAttributionTests(unittest.TestCase):
             content = (ROOT / "licenses/libwebp" / name).read_bytes()
             self.assertEqual(content, (ROOT / "vendor/libwebp" / name).read_bytes())
             self.assertEqual(hashlib.sha256(content).hexdigest(), recorded[name])
+
+    def test_rav1d_notices_are_the_vendored_files(self):
+        upstream = json.loads((ROOT / "vendor/rav1d/UPSTREAM.json").read_text())
+        recorded = {item["path"]: item["upstream_sha256"] for item in upstream["copied_files"]}
+        for name in ["COPYING", "LICENSE-dav1d-rs"]:
+            content = (ROOT / "licenses/rav1d" / name).read_bytes()
+            self.assertEqual(content, (ROOT / "vendor/rav1d" / name).read_bytes())
+        copying = (ROOT / "licenses/rav1d/COPYING").read_bytes()
+        self.assertEqual(hashlib.sha256(copying).hexdigest(), recorded["COPYING"])
 
     def test_each_missing_notice_is_rejected(self):
         for relative in portable_files(self.source):

@@ -341,7 +341,7 @@ class StaticGoPackageTests(unittest.TestCase):
         for name, original in portable_files(ROOT).items():
             self.assertEqual((installed / name).read_bytes(), original)
             self.assertEqual(expected[name], record[name])
-        self.assertEqual(len(record), 12)
+        self.assertEqual(len(record), 15)
 
     def test_archive_is_relocatable_exact_and_rejects_missing_or_changed_members(self):
         module = self.root / "module"
