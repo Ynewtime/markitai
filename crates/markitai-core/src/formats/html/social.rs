@@ -916,18 +916,27 @@ fn comment(
     Ok(Some(lines))
 }
 
-/// A post numbered as a part of a thread: `2/`, `(2/5)`, `2/n` at its start
-/// or end, or `2.` / `2)` opening it.
+/// A thread part's number opening a post: `2/`, `2/n`, `2/5` or `(2/5)`.
 static THREAD_NUMBER: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
-        r"(?x)^\s*\(?\d{1,3}\s*/\s*(?:\d{1,3}|n)?\)?(?:\s|$) | \(?\d{1,3}\s*/\s*(?:\d{1,3}|n)\)?\s*$ | ^\s*\d{1,3}[.)]\s",
-    )
-    .expect("thread number pattern")
+    Regex::new(r"^\s*\(?(\d{1,2})\s*/\s*(\d{1,2}|n)?\)?(?:\s|$)").expect("thread number pattern")
 });
 
+/// Whether `text` opens with a thread part's number: a small `n` (1 to 50),
+/// and in `n/m` no more than `m`. A date such as `10/24` at the end, or
+/// `13/5` at the start, is no part number.
+fn thread_number(text: &str) -> bool {
+    THREAD_NUMBER.captures(text).is_some_and(|found| {
+        let part: u32 = found[1].parse().unwrap_or(0);
+        let total = found
+            .get(2)
+            .and_then(|total| total.as_str().parse::<u32>().ok());
+        (1..=50).contains(&part) && total.is_none_or(|total| part <= total)
+    })
+}
+
 /// Whether the author's reply `next`, after their post or part `previous`,
-/// continues the thread rather than answering under it: either is numbered
-/// as a part, the post opens a thread (`🧵`, `thread:`, `thread 👇`), the
+/// continues the thread rather than answering under it: either opens with a
+/// part number (`2/`, `(2/5)`), the post opens a thread (`🧵`, `thread:`, `thread 👇`), the
 /// earlier text breaks off (`,` `:` `;` `…` or a dash), or the reply picks
 /// up mid-sentence (a lowercase letter or `…`). X's markup does not say
 /// which replies are the self-thread, so a reply without these is a
@@ -947,8 +956,8 @@ fn continues_thread(main: &str, previous: &str, next: &str) -> bool {
     };
     let previous = previous.trim_end();
     let next = next.trim_start();
-    THREAD_NUMBER.is_match(next)
-        || THREAD_NUMBER.is_match(main)
+    thread_number(next)
+        || thread_number(main)
         || opens(main)
         || previous.ends_with([',', ':', ';', '…', '-', '–', '—'])
         || previous.ends_with("...")
@@ -1438,6 +1447,12 @@ Second line with </span><a href="https://example.com/tool">example.com/tool</a><
             ("It started small", "and then it grew.", true),
             ("A long story…", "…that ends here.", true),
             ("Big news.", "(2/4) More news.", true),
+            ("1/ Big news.", "More news.", true),
+            ("Big news.", "2/n More news.", true),
+            ("See you on 10/24", "Doors open at six.", false),
+            ("Big news.", "Moved to 10/24.", false),
+            ("Big news.", "13/5 is the score.", false),
+            ("Big news.", "2. More news.", false),
             ("Big news.", "Tag Grace with feedback.", false),
             ("Big news!", "Thanks, everyone.", false),
         ] {

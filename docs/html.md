@@ -356,7 +356,7 @@ of late 2026 that has neither (an `article` holding `[data-engagement-action]`
 buttons, text in `div[dir=auto]`, the date as the text of its `/status/<id>`
 link, a quoted post as a nested `article` in `div[role=link][data-href]`).
 The author's own consecutive posts right after the main one continue it, each
-after a `---` rule, when they read as parts of a thread: numbered (`2/`,
+after a `---` rule, when they read as parts of a thread: opening with a part number (`2/`,
 `(2/5)`), after a post that opens one (`🧵`, `thread:`), or picking up text
 that breaks off (`,` `:` `…`, or a reply starting in lowercase); X's markup
 does not mark a self-thread. Any other reply ends the thread. It and the
