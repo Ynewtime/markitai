@@ -185,6 +185,27 @@ def run_lanes(foreground, background):
 SPLIT_AT, PART = 16, 8
 
 
+def _parts(names):
+    """Test IDs in parts of at most PART: a class that fits stays whole (its tests may
+    rely on running one after another), a larger one is dealt in turn across parts
+    so slow neighbours spread, and small classes share parts."""
+    classes = {}
+    for name in names:
+        classes.setdefault(name.rsplit(".", 1)[0], []).append(name)
+    units = []
+    for members in classes.values():
+        count = -(-len(members) // PART)
+        units += [members[index::count] for index in range(count)]
+    parts = []
+    for unit in sorted(units, key=len, reverse=True):
+        part = next((part for part in parts if len(part) + len(unit) <= PART), None)
+        if part is None:
+            parts.append(list(unit))
+        else:
+            part.extend(unit)
+    return parts
+
+
 def helper_parts(root, environment, files):
     """`(file, -k patterns or None)` work items, the parts of large files first.
 
@@ -211,9 +232,7 @@ def helper_parts(root, environment, files):
         for path, names in pool.map(listed, large):
             if names is None:
                 continue
-            count = -(-len(names) // PART)
-            for index in range(count):
-                part = names[index::count]  # dealt in turn, so slow neighbours spread
+            for part in _parts(names):
                 items.append((path, ["*." + name.split(".", 1)[1] for name in part]))
     split = {path for path, _ in items}
     return items + [(path, None) for path in files if path not in split]

@@ -237,18 +237,23 @@ class CheckHelperParts(unittest.TestCase):
             tests = "".join(f"    def test_{index:02}(self):\n        pass\n" for index in range(SPLIT_AT + 1))
             (root / "scripts/test_large.py").write_text(
                 "import unittest\n\n\nclass Base(unittest.TestCase):\n" + tests
-                + "\n\nclass Child(Base):\n    pass\n", encoding="utf-8")
+                + "\n\nclass Child(Base):\n    pass\n"
+                + "\n\nclass Pair(unittest.TestCase):\n    def test_a(self):\n        pass\n\n"
+                + "    def test_b(self):\n        pass\n", encoding="utf-8")
             (root / "scripts/test_small.py").write_text(
                 "import unittest\n\n\nclass Small(unittest.TestCase):\n    def test_one(self):\n        pass\n",
                 encoding="utf-8")
             files = sorted((root / "scripts").glob("test_*.py"))
             items = helper_parts(root, dict(os.environ), files)
             parts = [patterns for path, patterns in items if path.name == "test_large.py"]
-            expected = 2 * (SPLIT_AT + 1)
-            self.assertEqual(len(parts), -(-expected // PART))
+            expected = 2 * (SPLIT_AT + 1) + 2
             self.assertEqual(sorted(p for part in parts for p in part),
-                             sorted(f"*.{cls}.test_{index:02}" for cls in ["Base", "Child"]
-                                    for index in range(SPLIT_AT + 1)))
+                             sorted([f"*.{cls}.test_{index:02}" for cls in ["Base", "Child"]
+                                     for index in range(SPLIT_AT + 1)] + ["*.Pair.test_a", "*.Pair.test_b"]))
+            self.assertTrue(all(len(part) <= PART for part in parts))
+            # A class that fits in a part stays in one; a larger one is spread.
+            self.assertEqual(sum("*.Pair.test_a" in part and "*.Pair.test_b" in part for part in parts), 1)
+            self.assertGreater(sum(any(".Base." in p for p in part) for part in parts), 1)
             self.assertEqual(items[-1], (root / "scripts/test_small.py", None))
             with patch("sys.stdout", new_callable=io.StringIO) as stdout:
                 self.assertEqual(helper_tests(root, dict(os.environ)), 0)
