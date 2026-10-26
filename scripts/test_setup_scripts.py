@@ -817,7 +817,12 @@ class SetupPs1Tests(unittest.TestCase):
                 newline="")
             home = work / "home"
             home.mkdir()
-            env = {**os.environ, "HOME": str(home), "USERPROFILE": str(home), "TMPDIR": str(work / "scratch")}
+            # Windows' temp folder is TMP/TEMP: setup.ps1's work folders, which the
+            # harness checks are gone, must not mix with other tests' running at once.
+            temp = work / "temp"
+            temp.mkdir()
+            env = {**os.environ, "HOME": str(home), "USERPROFILE": str(home), "TMPDIR": str(work / "scratch"),
+                   "TMP": str(temp), "TEMP": str(temp)}
             for name in ["MARKITAI_VERSION", "MARKITAI_INSTALL_DIR", "MARKITAI_UNINSTALL"]:
                 env.pop(name, None)
             result = bounded_run.run(["pwsh", "-NoLogo", "-NoProfile", "-NonInteractive", "-File", str(harness),
@@ -852,6 +857,7 @@ class SetupPs1Tests(unittest.TestCase):
             (shared / "LICENSE").write_text("mine", encoding="utf-8")
             (work / "home").mkdir()
             env = {**os.environ, "HOME": str(work / "home"), "USERPROFILE": str(work / "home"), "TMPDIR": str(work),
+                   "TMP": str(work), "TEMP": str(work),
                    "LOCALAPPDATA": str(work / "LocalAppData"), "MARKITAI_HOME": str(work / "state"),
                    "MARKITAI_DOWNLOAD_URL": releases.base, "MARKITAI_INSTALL_DIR": str(shared),
                    "MARKITAI_INSTALL_OPTIONAL": "0", "NO_COLOR": "1", "LANG": "C.UTF-8"}
@@ -898,6 +904,7 @@ class SetupPs1Tests(unittest.TestCase):
             harness.write_text(PS_SESSION, encoding="utf-8")
             (work / "home").mkdir()
             env = {**os.environ, "HOME": str(work / "home"), "USERPROFILE": str(work / "home"), "TMPDIR": str(work),
+                   "TMP": str(work), "TEMP": str(work),
                    "LOCALAPPDATA": str(work / "LocalAppData"), "MARKITAI_HOME": str(work / "state")}
             for name in ["MARKITAI_VERSION", "MARKITAI_INSTALL_DIR", "MARKITAI_UNINSTALL"]:
                 env.pop(name, None)
