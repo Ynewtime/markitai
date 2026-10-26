@@ -48,7 +48,7 @@ pub(crate) fn block(lang: Lang) -> String {
             fields.0, fields.1, fields.2, fields.3, fields.4,
         ),
         Lang::Zh => format!(
-            "构建信息:\n  版本  {}\n  提交  {}\n  目标  {}, {}\n  构建  {}",
+            "构建信息：\n  版本  {}\n  提交  {}\n  目标  {}, {}\n  构建  {}",
             fields.0, fields.1, fields.2, fields.3, fields.4,
         ),
     }

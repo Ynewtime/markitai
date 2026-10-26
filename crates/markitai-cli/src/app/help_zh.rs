@@ -125,6 +125,44 @@ fn rewrite(
     command
 }
 
+/// Clap writes each section heading as `name:` on a line of its own (styled
+/// or not), always with an ASCII colon. Chinese help gives a heading that
+/// holds Chinese the full-width one; English text passes through unchanged.
+pub(super) fn full_width_headings(help: &str) -> String {
+    help.split_inclusive('\n')
+        .map(|line| {
+            let body = line.trim_end_matches('\n');
+            let visible = without_styles(body);
+            let heading = !visible.starts_with(char::is_whitespace)
+                && visible.ends_with(':')
+                && !visible.is_ascii();
+            // Styles are `ESC [ … m` and hold no colon: the last one is the heading's.
+            match body.rfind(':').filter(|_| heading) {
+                Some(at) => format!("{}：{}", &line[..at], &line[at + 1..]),
+                None => line.to_owned(),
+            }
+        })
+        .collect()
+}
+
+/// `text` without its ANSI style sequences.
+fn without_styles(text: &str) -> String {
+    let mut plain = String::with_capacity(text.len());
+    let mut chars = text.chars();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' {
+            for c in chars.by_ref() {
+                if c.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+        } else {
+            plain.push(c);
+        }
+    }
+    plain
+}
+
 /// `-V, --version`, replacing clap's own flag.
 pub(super) fn version_flag() -> Arg {
     Arg::new("version")
@@ -910,6 +948,31 @@ mod tests {
                 assert!(help.contains("用法："), "{path}");
             }
         }
+    }
+
+    #[test]
+    fn clap_headings_in_chinese_take_full_width_colons() {
+        let help = "关于\n\n\u{1b}[1m\u{1b}[4m命令:\u{1b}[0m\n  init  创建: 配置\n\nLLM、OCR 与截图:\nOptions:\n";
+        assert_eq!(
+            full_width_headings(help),
+            "关于\n\n\u{1b}[1m\u{1b}[4m命令：\u{1b}[0m\n  init  创建: 配置\n\nLLM、OCR 与截图：\nOptions:\n"
+        );
+        // A rendered command: every heading clap wrote is full-width.
+        let rendered = localize_at_width(super::super::english_command, 78)
+            .color(clap::ColorChoice::Never)
+            .render_help()
+            .to_string();
+        let shown = full_width_headings(&rendered);
+        assert!(
+            shown.contains("\n命令：\n") && shown.contains("\n选项：\n"),
+            "{shown}"
+        );
+        assert!(
+            shown
+                .lines()
+                .all(|line| line.starts_with(' ') || line.is_ascii() || !line.ends_with(':')),
+            "{shown}"
+        );
     }
 
     #[test]

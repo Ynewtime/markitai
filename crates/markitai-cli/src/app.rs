@@ -678,6 +678,9 @@ pub fn run(mut arguments: Vec<std::ffi::OsString>) -> i32 {
             if error.use_stderr() && print_usage_error_zh(&error) {
                 std::process::exit(error.exit_code());
             }
+            if print_help_zh(&error, stream) {
+                std::process::exit(settle_stdout(error.exit_code()));
+            }
             error.exit()
         });
     // Serve and MCP drain active work on the signals their asynchronous
@@ -808,10 +811,53 @@ fn stdout_line(arguments: std::fmt::Arguments<'_>) {
 
 /// The root help on standard output, followed by an empty line.
 fn print_root_help() {
+    let mut command = for_stream(cli_command(), Stream::Stdout);
+    if i18n::lang() == i18n::Lang::Zh {
+        let help = help_zh::full_width_headings(&styled(command.render_help(), Stream::Stdout));
+        with_stdout(|stdout| {
+            stdout.write_all(help.as_bytes())?;
+            stdout.write_all(b"\n")
+        });
+        return;
+    }
     with_stdout(|stdout| {
-        for_stream(cli_command(), Stream::Stdout).print_help()?;
+        command.print_help()?;
         stdout.write_all(b"\n")
     });
+}
+
+/// Clap's text as `stream` takes it: with its styles when that stream is coloured.
+fn styled(text: clap::builder::StyledStr, stream: Stream) -> String {
+    if Style::of(stream).clap_color() == clap::ColorChoice::Always {
+        text.ansi().to_string()
+    } else {
+        text.to_string()
+    }
+}
+
+/// Help clap would print, in Chinese with full-width heading colons; whether
+/// it was printed (`stream` is where clap would have put it).
+fn print_help_zh(error: &clap::Error, stream: Stream) -> bool {
+    use clap::error::ErrorKind;
+    if i18n::lang() != i18n::Lang::Zh
+        || !matches!(
+            error.kind(),
+            ErrorKind::DisplayHelp | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+        )
+    {
+        return false;
+    }
+    let help = help_zh::full_width_headings(&styled(error.render(), stream));
+    match stream {
+        Stream::Stdout => with_stdout(|stdout| stdout.write_all(help.as_bytes())),
+        Stream::Stderr => {
+            progress::clear();
+            let mut stderr = io::stderr().lock();
+            let _ = stderr.write_all(help.as_bytes());
+            let _ = stderr.flush();
+        }
+    }
+    true
 }
 
 /// The exit status and the message after standard output failed. A reader that

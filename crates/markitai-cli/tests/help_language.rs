@@ -44,7 +44,7 @@ fn stdout(output: &Output) -> String {
 /// the snapshot pins where it sits and not what it says; the content is checked
 /// by `help_ends_with_the_build_identity`.
 fn without_build_identity(help: &str) -> String {
-    for marker in ["\nBuild:\n", "\n构建信息:\n"] {
+    for marker in ["\nBuild:\n", "\n构建信息：\n"] {
         if let Some(at) = help.find(marker) {
             return format!(
                 "{}Build identity: <commit, target, time>\n",
@@ -199,7 +199,7 @@ fn chinese_help_offers_the_same_commands_and_options_inside_80_columns() {
     let root = tempfile::tempdir().unwrap();
     let zh = [("MARKITAI_LANG", "zh")];
     let english_paths = command_paths(root.path(), &[], "Commands:");
-    let chinese_paths = command_paths(root.path(), &zh, "命令:");
+    let chinese_paths = command_paths(root.path(), &zh, "命令：");
     assert_eq!(english_paths, chinese_paths);
     assert_eq!(chinese_paths.len(), 27);
     for path in &chinese_paths {
@@ -231,6 +231,11 @@ fn chinese_help_offers_the_same_commands_and_options_inside_80_columns() {
             }
             for line in chinese.lines() {
                 assert!(width(line) <= 80, "{args:?} line is too wide: {line}");
+                // Every heading takes the full-width colon, clap's own too.
+                assert!(
+                    line.starts_with(' ') || line.is_ascii() || !line.ends_with(':'),
+                    "{args:?}: {line}"
+                );
             }
         }
     }
@@ -238,16 +243,16 @@ fn chinese_help_offers_the_same_commands_and_options_inside_80_columns() {
     let help = stdout(&run(root.path(), &zh, &["--help"]));
     let mut last = 0;
     for heading in [
-        "\n命令:\n",
-        "\n参数:\n",
-        "\n选项:\n",
-        "\n输出:\n",
-        "\n配置:\n",
-        "\nLLM、OCR 与截图:\n",
-        "\nURL 抓取与后端:\n",
-        "\n批量处理:\n",
-        "\n缓存与图片:\n",
-        "\n消息与日志:\n",
+        "\n命令：\n",
+        "\n参数：\n",
+        "\n选项：\n",
+        "\n输出：\n",
+        "\n配置：\n",
+        "\nLLM、OCR 与截图：\n",
+        "\nURL 抓取与后端：\n",
+        "\n批量处理：\n",
+        "\n缓存与图片：\n",
+        "\n消息与日志：\n",
         "\n-p 预设：\n",
         "\n示例：\n",
     ] {
@@ -384,7 +389,7 @@ fn help_ends_with_the_build_identity() {
         ),
         (
             vec![("MARKITAI_LANG", "zh")],
-            "构建信息:",
+            "构建信息：",
             ["版本", "提交", "目标", "构建"].as_slice(),
         ),
     ] {
