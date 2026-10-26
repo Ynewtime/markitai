@@ -974,7 +974,7 @@ fn the_catalog_offers_every_routed_prefix_once_in_picker_groups() {
         assert!(!entry.key_variables.is_empty(), "{entry:?}");
         assert_eq!(
             entry.discovery,
-            !["perplexity", "zai", "fireworks_ai", "bedrock"].contains(&entry.provider),
+            entry.provider != "bedrock" && !MANUAL_MODELS.contains(&entry.provider),
             "{entry:?}"
         );
     }
@@ -1077,15 +1077,15 @@ fn compatible_prefixes_discover_through_models_or_ask_for_manual_ids() {
             .unwrap();
     assert_eq!(refused["status"], "unavailable");
     assert!(refused["models"].as_array().unwrap().is_empty());
-    // No model list is documented: no request, an explicit manual-entry answer.
-    for provider in ["perplexity", "zai", "fireworks_ai", "bedrock", "vertex_ai"] {
+    // No model list is read: no request, an explicit manual-entry answer.
+    for provider in ["bedrock", "vertex_ai"] {
         let result = discover(&json!({"provider":provider,"api_key":"private-test-key"})).unwrap();
         assert_eq!(result["status"], "unavailable");
         assert_eq!(result["source"], "manual");
         assert!(result["models"].as_array().unwrap().is_empty());
         assert!(!result.to_string().contains("private-test-key"));
     }
-    assert!(discover(&json!({"provider":"zai","api_base":"file:///x"})).is_err());
+    assert!(discover(&json!({"provider":"bedrock","api_base":"file:///x"})).is_err());
     // vLLM has no default address.
     assert_eq!(
         discover(&json!({"provider":"hosted_vllm"})).unwrap()["detail"],
@@ -1287,7 +1287,7 @@ fn every_regional_provider_tries_a_refused_key_at_its_regions_in_order() {
         )
     };
     let listed = || reply(200, r#"{"object":"list","data":[{"id":"fixture-model"}]}"#);
-    for provider in ["moonshot", "kimi_code", "minimax", "dashscope"] {
+    for provider in ["moonshot", "kimi_code", "minimax", "zai", "dashscope"] {
         let bases = provider_regions(provider);
         assert!(bases.len() >= 2, "{provider}");
         assert_eq!(
@@ -1341,8 +1341,7 @@ fn every_regional_provider_tries_a_refused_key_at_its_regions_in_order() {
         assert!(none.get("api_base").is_none(), "{provider}");
     }
     assert!(provider_regions("openai").is_empty());
-    // Z.ai lists no models, so nothing is tried; its regions still name the
-    // other platform and let the server's key be saved there.
+    // A Z.ai key refused at api.z.ai is a bigmodel.cn one, and the reverse.
     assert_eq!(
         provider_regions("zai"),
         [
@@ -1350,11 +1349,50 @@ fn every_regional_provider_tries_a_refused_key_at_its_regions_in_order() {
             "https://open.bigmodel.cn/api/paas/v4"
         ]
     );
-    assert_eq!(
-        provider_default_base("zai"),
-        Some(provider_regions("zai")[0])
-    );
-    assert!(!provider_entry("zai").unwrap().discovery);
+}
+
+#[test]
+fn perplexity_zai_and_fireworks_list_models_at_their_inference_paths() {
+    let body = r#"{"object":"list","data":[{"id":"fixture-model","object":"model","owned_by":"fixture"}]}"#;
+    for (provider, path) in [
+        ("perplexity", "/router/v1"),
+        ("zai", "/api/paas/v4"),
+        ("zai", "/api/coding/paas/v4"),
+        ("fireworks_ai", "/inference/v1"),
+    ] {
+        assert!(provider_entry(provider).unwrap().discovery, "{provider}");
+        let server = Mock::new(move |_| reply(200, body));
+        let base = format!("{}{path}", server.base);
+        let result = discover_explicit(
+            &json!({"provider":provider,"api_key":"private-test-key","api_base":base,"refresh":true}),
+        )
+        .unwrap();
+        assert_eq!(result["status"], "ok", "{provider}: {result}");
+        assert_eq!(result["source"], "live_api", "{provider}");
+        assert_eq!(
+            result["models"][0]["model"],
+            format!("{provider}/fixture-model")
+        );
+        let requests = server.requests();
+        assert_eq!(requests.len(), 1, "{provider}");
+        assert!(
+            requests[0].starts_with(&format!("GET {path}/models HTTP/1.1")),
+            "{}",
+            requests[0]
+        );
+        assert!(requests[0].contains("authorization: Bearer private-test-key"));
+    }
+    // An answer of another shape is a list that could not be read: it says
+    // so, and model IDs can still be entered by hand.
+    let server = Mock::new(|_| reply(200, r#"{"code":200,"msg":"ok","models":["glm-x"]}"#));
+    let result = discover_explicit(
+        &json!({"provider":"zai","api_key":"private-test-key","api_base":format!("{}/api/paas/v4",server.base),"refresh":true}),
+    )
+    .unwrap();
+    assert_eq!(result["status"], "unavailable");
+    assert_eq!(result["reason"], "provider_error");
+    assert_eq!(result["detail"], "Model discovery response has no model list");
+    assert!(result["models"].as_array().unwrap().is_empty());
 }
 
 #[test]

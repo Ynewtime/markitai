@@ -54,9 +54,9 @@ const REFERENCE: [&str; 8] = [
     "azure",
     "custom",
 ];
-/// OpenAI-compatible prefixes whose documentation names no model list
-/// endpoint (checked 2026-10-02): their model IDs are entered by hand.
-const MANUAL_MODELS: [&str; 3] = ["perplexity", "zai", "fireworks_ai"];
+/// OpenAI-compatible prefixes with no model list endpoint (checked
+/// 2026-10-26): their model IDs are entered by hand.
+const MANUAL_MODELS: [&str; 0] = [];
 
 /// The groups of the provider picker, in its order: the providers most
 /// people start with, then subscription runtimes, model makers' own APIs,

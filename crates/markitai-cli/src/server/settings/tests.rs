@@ -562,8 +562,15 @@ fn every_routed_provider_is_offered_with_its_group_mark_endpoint_key_and_discove
         (json!(true), json!(false))
     );
     for name in ["perplexity", "zai", "fireworks_ai"] {
-        assert_eq!(card(name)["supports_discovery"], false, "{name}");
+        assert_eq!(card(name)["supports_discovery"], true, "{name}");
     }
+    assert_eq!(
+        card("zai")["regions"],
+        json!([
+            "https://api.z.ai/api/paas/v4",
+            "https://open.bigmodel.cn/api/paas/v4"
+        ])
+    );
     let studio = card("lm_studio");
     assert_eq!(
         (studio["status"].clone(), studio["key_optional"].clone()),
