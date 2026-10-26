@@ -1,6 +1,4 @@
 """bounded_run: the helper tests' children can't hold a test past their timeout."""
-import os
-import signal
 from pathlib import Path
 import subprocess
 import sys
@@ -15,11 +13,10 @@ import bounded_run
 PARENT = """import os, subprocess, sys, time
 beat = "import sys, time\\nwith open(sys.argv[1], 'ab', buffering=0) as s:\\n    for _ in range(400): s.write(b'.'); time.sleep(0.05)"
 child = subprocess.Popen([sys.executable, "-c", beat, sys.argv[1]])
-open(sys.argv[2], "w").write(str(child.pid))
 while not (os.path.exists(sys.argv[1]) and os.path.getsize(sys.argv[1])):
     time.sleep(0.01)
 print("started", flush=True)
-time.sleep(float(sys.argv[3]))
+time.sleep(float(sys.argv[2]))
 """
 
 
@@ -29,10 +26,10 @@ class BoundedRunTests(unittest.TestCase):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         self.root = Path(directory.name)
-        self.beats, self.pid = self.root / "beats", self.root / "pid"
+        self.beats = self.root / "beats"
 
     def parent(self, seconds, timeout):
-        return bounded_run.run([sys.executable, "-c", PARENT, str(self.beats), str(self.pid), str(seconds)],
+        return bounded_run.run([sys.executable, "-c", PARENT, str(self.beats), str(seconds)],
                                text=True, timeout=timeout)
 
     def assert_beat_stops(self):
@@ -50,10 +47,7 @@ class BoundedRunTests(unittest.TestCase):
         result = self.parent(0, timeout=15)
         self.assertLess(time.monotonic() - started, 10)
         self.assertEqual((result.returncode, result.stdout), (0, "started\n"))
-        if os.name == "nt":  # No session to clear once the child is gone: the test stops it.
-            os.kill(int(self.pid.read_text()), signal.SIGTERM)
-        else:
-            self.assert_beat_stops()
+        self.assert_beat_stops()
 
     def test_a_timeout_stops_the_child_and_what_it_started(self):
         started = time.monotonic()

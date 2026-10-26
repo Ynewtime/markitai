@@ -14,13 +14,17 @@ class _WindowsJob:
     Walking parent IDs or `taskkill /T` misses a grandchild whose parent has
     exited, and taskkill is slow enough on a loaded host for a child to keep
     working meanwhile; terminating the job reaches every member at once.
+    With `kill_on_close`, closing the job's last handle (or the end of the
+    process holding it) terminates its members as well.
     """
 
     CREATE_SUSPENDED = 0x00000004
     PROCESS_TERMINATE, PROCESS_SET_QUOTA, PROCESS_SUSPEND_RESUME = 0x0001, 0x0100, 0x0800
     BASIC_ACCOUNTING = 1  # JobObjectBasicAccountingInformation
+    EXTENDED_LIMITS = 9  # JobObjectExtendedLimitInformation
+    KILL_ON_JOB_CLOSE = 0x00002000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
 
-    def __init__(self):
+    def __init__(self, kill_on_close=False):
         import ctypes
         from ctypes import wintypes
 
@@ -30,6 +34,20 @@ class _WindowsJob:
                         ("TotalPageFaultCount", wintypes.DWORD), ("TotalProcesses", wintypes.DWORD),
                         ("ActiveProcesses", wintypes.DWORD), ("TotalTerminatedProcesses", wintypes.DWORD)]
 
+        # JOBOBJECT_BASIC_LIMIT_INFORMATION and JOBOBJECT_EXTENDED_LIMIT_INFORMATION
+        # (IoInfo is IO_COUNTERS, six ULONGLONGs); 144 bytes on 64-bit Windows.
+        class BasicLimits(ctypes.Structure):
+            _fields_ = [("PerProcessUserTimeLimit", ctypes.c_int64), ("PerJobUserTimeLimit", ctypes.c_int64),
+                        ("LimitFlags", wintypes.DWORD), ("MinimumWorkingSetSize", ctypes.c_size_t),
+                        ("MaximumWorkingSetSize", ctypes.c_size_t), ("ActiveProcessLimit", wintypes.DWORD),
+                        ("Affinity", ctypes.c_size_t), ("PriorityClass", wintypes.DWORD),
+                        ("SchedulingClass", wintypes.DWORD)]
+
+        class ExtendedLimits(ctypes.Structure):
+            _fields_ = [("BasicLimitInformation", BasicLimits), ("IoInfo", ctypes.c_uint64 * 6),
+                        ("ProcessMemoryLimit", ctypes.c_size_t), ("JobMemoryLimit", ctypes.c_size_t),
+                        ("PeakProcessMemoryUsed", ctypes.c_size_t), ("PeakJobMemoryUsed", ctypes.c_size_t)]
+
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
         ntdll = ctypes.WinDLL("ntdll")
         signatures = [
@@ -38,6 +56,8 @@ class _WindowsJob:
             (kernel32.TerminateJobObject, wintypes.BOOL, [wintypes.HANDLE, wintypes.UINT]),
             (kernel32.QueryInformationJobObject, wintypes.BOOL,
              [wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD, wintypes.LPDWORD]),
+            (kernel32.SetInformationJobObject, wintypes.BOOL,
+             [wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD]),
             (kernel32.OpenProcess, wintypes.HANDLE, [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]),
             (kernel32.CloseHandle, wintypes.BOOL, [wintypes.HANDLE]),
             # Resumes a process created suspended (all its threads), as psutil does.
@@ -49,6 +69,14 @@ class _WindowsJob:
         self._handle = kernel32.CreateJobObjectW(None, None)
         if not self._handle:
             raise ctypes.WinError(ctypes.get_last_error())
+        if kill_on_close:
+            limits = ExtendedLimits()
+            limits.BasicLimitInformation.LimitFlags = self.KILL_ON_JOB_CLOSE
+            if not kernel32.SetInformationJobObject(self._handle, self.EXTENDED_LIMITS, ctypes.byref(limits),
+                                                    ctypes.sizeof(limits)):
+                error = self._error()
+                self.close()
+                raise error
 
     def _error(self):
         return self._ctypes.WinError(self._ctypes.get_last_error())
@@ -136,10 +164,10 @@ def _stop_tree(process, job=None):
     return cleanup
 
 
-def _windows_job():
+def _windows_job(kill_on_close=False):
     """A new job for a stage, or None where Windows cannot make one."""
     try:
-        return _WindowsJob()
+        return _WindowsJob(kill_on_close)
     except (OSError, AttributeError):
         return None
 
