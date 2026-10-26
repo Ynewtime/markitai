@@ -1341,7 +1341,20 @@ fn every_regional_provider_tries_a_refused_key_at_its_regions_in_order() {
         assert!(none.get("api_base").is_none(), "{provider}");
     }
     assert!(provider_regions("openai").is_empty());
-    assert!(other_regions("zai", "https://api.z.ai/api/paas/v4").is_empty());
+    // Z.ai lists no models, so nothing is tried; its regions still name the
+    // other platform and let the server's key be saved there.
+    assert_eq!(
+        provider_regions("zai"),
+        [
+            "https://api.z.ai/api/paas/v4",
+            "https://open.bigmodel.cn/api/paas/v4"
+        ]
+    );
+    assert_eq!(
+        provider_default_base("zai"),
+        Some(provider_regions("zai")[0])
+    );
+    assert!(!provider_entry("zai").unwrap().discovery);
 }
 
 #[test]

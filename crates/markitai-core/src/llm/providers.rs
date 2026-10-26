@@ -824,7 +824,10 @@ const fn region(base: &'static str, console: &'static str) -> Region {
 /// `docs/llm.md`). Moonshot's open platform issues keys on platform.kimi.ai
 /// (once platform.moonshot.ai) and platform.kimi.com (once
 /// platform.moonshot.cn); Kimi Code's membership has a kimi.com and a kimi.ai
-/// endpoint. MiniMax keys are Global or Mainland China ones. Model Studio
+/// endpoint. MiniMax keys are Global or Mainland China ones. Z.ai and
+/// Zhipu's open platform (bigmodel.cn) are separate platforms with separate
+/// accounts; their Coding Plan endpoints take the same keys (the key decides
+/// the billing), so they are no region. Model Studio
 /// keys belong to a region; its Coding Plan keys (`sk-sp-`) work only at the
 /// plan's own endpoints, which list models without checking the key, so they
 /// are named, not tried.
@@ -850,6 +853,14 @@ const REGIONAL: &[Regional] = &[
         regions: &[
             region("https://api.minimax.io/v1", "platform.minimax.io"),
             region("https://api.minimax.cn/v1", "platform.minimax.cn"),
+        ],
+        sibling: None,
+    },
+    Regional {
+        prefix: "zai",
+        regions: &[
+            region("https://api.z.ai/api/paas/v4", "z.ai"),
+            region("https://open.bigmodel.cn/api/paas/v4", "bigmodel.cn"),
         ],
         sibling: None,
     },

@@ -131,7 +131,7 @@ fn a_key_refused_at_one_region_names_the_other_regions_and_the_sibling_service()
 }
 
 #[test]
-fn a_key_refused_at_a_minimax_or_model_studio_region_names_the_others() {
+fn a_key_refused_at_a_minimax_zai_or_model_studio_region_names_the_others() {
     let hint = |params: Value, env: &[(&str, &str)]| {
         crate::llm::keys::refused_hint(&resolved(params, env))
     };
@@ -165,7 +165,24 @@ fn a_key_refused_at_a_minimax_or_model_studio_region_names_the_others() {
         .starts_with("dashscope-intl.aliyuncs.com accepts keys from Model Studio's Singapore region only: a key from Model Studio's Beijing region needs api_base https://dashscope.aliyuncs.com/compatible-mode/v1, ")
     );
     // Providers whose documentation names no per-region keys say nothing of regions.
-    for model in ["zai/glm-5", "qwencloud/qwen-plus", "openai/gpt-5"] {
+    let zhipu = hint(
+        json!({"model":"zai/glm-5","api_key":"fake-zai-key","api_base":"https://open.bigmodel.cn/api/paas/v4"}),
+        &[],
+    );
+    assert!(
+        zhipu.ends_with(". open.bigmodel.cn accepts keys from bigmodel.cn only: a key from z.ai needs api_base https://api.z.ai/api/paas/v4"),
+        "{zhipu}"
+    );
+    // A Coding Plan endpoint is no region: it takes either kind of key.
+    assert!(
+        crate::llm::providers::region_hint(
+            "zai",
+            "https://api.z.ai/api/coding/paas/v4/chat/completions"
+        )
+        .unwrap()
+        .starts_with("api.z.ai accepts keys from z.ai only: ")
+    );
+    for model in ["qwencloud/qwen-plus", "openai/gpt-5"] {
         let other = hint(json!({"model":model,"api_key":"fake-key"}), &[]);
         assert!(!other.contains("accepts keys"), "{other}");
     }

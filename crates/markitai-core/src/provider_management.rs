@@ -293,7 +293,7 @@ fn lookup(provider: &str) -> Option<&'static ProviderEntry> {
 /// The other OpenAI-compatible prefixes list `/models` beside their inference
 /// endpoint.
 /// The endpoints of a provider that issues keys per region (Moonshot AI,
-/// Kimi Code, MiniMax, Model Studio), the default first: discovery sends a
+/// Kimi Code, MiniMax, Z.ai, Model Studio), the default first: discovery sends a
 /// key that the default endpoint refuses to the others in turn, and names the
 /// one that lists its models. Empty for any other provider.
 pub fn provider_regions(provider: &str) -> Vec<&'static str> {
