@@ -1099,7 +1099,9 @@ mod unix {
             std::fs::read_to_string(home.path("home/.local/share/markitai/current/receipt"))
                 .unwrap();
         assert!(receipt.starts_with("version=2.1.0\n"), "{receipt}");
-        let log = server.log.lock().unwrap().clone();
+        // The old version says why on its own console; its line may still be
+        // on its way through the pipe.
+        let log = server.log_with("! The update to 2.2.0 failed; still 2.1.0");
         for line in [
             "✗ 2.2.0 didn't start:",
             "→ Back on 2.1.0",
