@@ -39,7 +39,7 @@ class PortableAttributionTests(unittest.TestCase):
             stage_portable_files(self.source, self.root / "package")
 
     def test_libwebp_notices_are_the_vendored_release_files(self):
-        upstream = json.loads((ROOT / "vendor/libwebp/UPSTREAM.json").read_text())
+        upstream = json.loads((ROOT / "vendor/libwebp/UPSTREAM.json").read_text(encoding="utf-8"))
         recorded = {item["path"]: item["sha256"] for item in upstream["copied_files"]}
         for name in ["COPYING", "PATENTS"]:
             content = (ROOT / "licenses/libwebp" / name).read_bytes()
@@ -47,7 +47,7 @@ class PortableAttributionTests(unittest.TestCase):
             self.assertEqual(hashlib.sha256(content).hexdigest(), recorded[name])
 
     def test_rav1d_notices_are_the_vendored_files(self):
-        upstream = json.loads((ROOT / "vendor/rav1d/UPSTREAM.json").read_text())
+        upstream = json.loads((ROOT / "vendor/rav1d/UPSTREAM.json").read_text(encoding="utf-8"))
         recorded = {item["path"]: item["upstream_sha256"] for item in upstream["copied_files"]}
         for name in ["COPYING", "LICENSE-dav1d-rs"]:
             content = (ROOT / "licenses/rav1d" / name).read_bytes()
