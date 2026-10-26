@@ -20,6 +20,16 @@ use crate::signals::STATUS_LINE as SHOWN;
 /// Nothing is drawn before this much time has passed, so a run that finishes
 /// at once leaves no flicker behind it.
 const QUIET_PERIOD: Duration = Duration::from_millis(500);
+
+/// The quiet period; debug builds skip it under MARKITAI_TEST_STATUS_AT_ONCE,
+/// so a test sees the status line however fast its batch finishes.
+fn quiet_period() -> Duration {
+    if cfg!(debug_assertions) && std::env::var_os("MARKITAI_TEST_STATUS_AT_ONCE").is_some() {
+        Duration::ZERO
+    } else {
+        QUIET_PERIOD
+    }
+}
 /// Redrawing faster than this only costs terminal traffic.
 const REDRAW: Duration = Duration::from_millis(100);
 /// A single conversion shows its spinner only after it has taken this long.
@@ -208,7 +218,7 @@ impl Progress {
 
     /// Show `done` items finished and `current` as the latest one started.
     pub(super) fn update(&mut self, done: usize, current: &str) {
-        if !self.enabled || self.started.elapsed() < QUIET_PERIOD {
+        if !self.enabled || self.started.elapsed() < quiet_period() {
             return;
         }
         if self.drawn.is_some_and(|at| at.elapsed() < REDRAW) {

@@ -5,8 +5,7 @@ use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-#[path = "support/console.rs"]
-mod console;
+use crate::console;
 
 /// A valid 1x1 RGBA PNG (every chunk checksum correct).
 const TINY_PNG: &[u8] = &[
@@ -300,7 +299,10 @@ mod terminal {
             )
         };
         let mut command = setup.command(extra);
+        // Draw from the first item: a fast machine finishes the batch inside
+        // the quiet period, which would leave nothing to check either way.
         command
+            .env("MARKITAI_TEST_STATUS_AT_ONCE", "1")
             .args(args)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -328,7 +330,7 @@ mod terminal {
         )
     }
 
-    /// Enough files that a one-at-a-time batch takes a while, and some that
+    /// Enough files that a one-at-a-time batch redraws its status, and some that
     /// warn, so there is something to print before the summary.
     fn long_batch(setup: &Setup) {
         for index in 0..800 {
