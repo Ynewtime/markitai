@@ -940,3 +940,19 @@ failed by name as the 1.25.1 copy (1,727 passed).
 
   Run in the isolated copy (as above), the crate's unit tests give 1,745
   passed (2 added, 2 folded) and the same 21 failed by name.
+- `src/types.rs` (`needs_space_between`, `list_marker_run`): a list marker
+  run opening its line (a bullet, or a number of up to three digits with an
+  optional `.` or `)`) gets a space before the text when a gap of 0.12 em or
+  more follows it. ReportLab's ListFlowable draws its markers at 12 pt beside
+  10 pt text and a little lower, so the text read as a subscript of the
+  marker: `•Item` (then a `## •Item` heading) and `1.Item`.
+- `src/markdown/convert.rs` (`hanging_text_x`, `outdented_after_gap`, both
+  renderers): after a list item whose bullet is a run of its own with the
+  text hanging to its right, a line back at the bullet's column (left of the
+  text by more than half an em) and more than 1.5 em below the line above
+  ends the list instead of joining the last item. The paragraph threshold
+  can't decide it: on a page with one paragraph gap it falls back to a
+  measure above ReportLab's spacing.
+
+  Run in the isolated copy (as above), the crate's unit tests give 1,745
+  passed and the same 21 failed by name.

@@ -41,6 +41,9 @@ mod radicals;
 #[cfg(test)]
 #[path = "pdf/raised_marks_tests.rs"]
 mod raised_marks_tests;
+#[cfg(test)]
+#[path = "pdf/reportlab_lists_tests.rs"]
+mod reportlab_lists_tests;
 #[path = "pdf/running.rs"]
 mod running;
 #[path = "pdf/sanitize.rs"]

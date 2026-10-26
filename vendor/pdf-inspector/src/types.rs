@@ -721,6 +721,17 @@ pub struct TextLine {
 /// ~0 gap (kerned ones slightly negative); a word space is ≥ 0.2 em.
 const SCRIPT_WORD_GAP: f32 = 0.12;
 
+/// markitai: a run that is only a list marker: a bullet, or a number of up
+/// to three digits with an optional `.` or `)`.
+fn list_marker_run(text: &str) -> bool {
+    let digits = text.trim_end_matches(['.', ')']);
+    matches!(text, "•" | "●" | "○" | "◦")
+        || (!digits.is_empty()
+            && digits.len() <= 3
+            && text.len() - digits.len() <= 1
+            && digits.bytes().all(|b| b.is_ascii_digit()))
+}
+
 /// markitai: whether `text` can be a footnote's mark: up to three digits,
 /// one or two of `*†‡§¶#`, or one lower-case letter.
 fn footnote_mark(text: &str) -> bool {
@@ -1154,6 +1165,20 @@ impl TextLine {
 
         let is_sub_super = font_ratio < 0.85 && y_diff > 1.0;
         let was_sub_super = reverse_font_ratio < 0.85 && y_diff > 1.0;
+
+        // markitai: a list marker opening its line (a bullet, or a number
+        // such as `1.`) is set apart from the item's text when a gap follows
+        // it. ReportLab draws its list markers larger than the text and a
+        // little lower, which otherwise reads the text as a subscript of the
+        // marker ("•Item", not "• Item").
+        if !space_already_exists
+            && std::ptr::eq(prev_item, &self.items[0])
+            && list_marker_run(prev_item.text.trim())
+            && item.x - (prev_item.x + prev_item.width)
+                >= prev_item.font_size.min(item.font_size) * SCRIPT_WORD_GAP
+        {
+            return true;
+        }
 
         // markitai: a footnote's own number opening its line, smaller and
         // raised, is set apart from the note's text, which starts after a

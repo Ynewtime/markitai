@@ -1,0 +1,11 @@
+[
+  {
+    "file": "reportlab-lists.pdf",
+    "bytes": 2245,
+    "sha256": "5ad3305d56c32c6270367165ab10b6b2eceba105458f4cb3fcd1374c40afce49",
+    "content": "invented walking club notes, no real data",
+    "authored": "written for these tests in markitai-rust",
+    "generator": "make.py: ReportLab 5.1.0, Heading1/Heading2 and BodyText paragraphs, a ListFlowable of bullets and one numbered `%s.`; its markers are 12 pt runs of their own beside 10 pt text, set a little lower",
+    "purpose": "bullets and numbers become Markdown list items (not `## •Item` headings or `1Item` paragraphs), the paragraph after each list stays out of its last item, and the real headings stay headings"
+  }
+]
