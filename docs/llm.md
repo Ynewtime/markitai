@@ -290,8 +290,10 @@ Kimi Code takes `KIMI_API_KEY`, its address `KIMI_CODE_API_BASE` or
 `kimi-for-coding`; the workbench lists the ones the key may use). Z.ai's and
 Zhipu's Coding Plan endpoints (`…/api/coding/paas/v4`) take either kind of
 key, as MiniMax's addresses take its M Plan keys (`sk-cp-…`). Model Studio's
-Coding Plan keys (`sk-sp-…`) work only at the plan's own endpoints, for coding
-tools, and are not tried there; a workspace-dedicated Model Studio host
+Coding Plan keys (`sk-sp-…`) work only at the plan's own endpoints
+(`https://coding.dashscope.aliyuncs.com/v1`), for coding tools, and are not tried
+there (the workbench's API address lists every address above and these Coding
+Plan endpoints, with that note); a workspace-dedicated Model Studio host
 (`<workspace>.<region>.maas.aliyuncs.com`) is set as `api_base` and tried alone.
 
 Kimi Code is reached at its Anthropic-compatible Messages endpoint

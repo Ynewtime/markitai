@@ -551,12 +551,21 @@ model test's toast follows the same rule. A rejected key names the hosts that
 refused it (contract v1.21 `endpoints`, else the address the page asked). For a
 provider whose keys belong to a region (the card's `regions`, contract v1.25: Moonshot
 AI, Kimi Code, MiniMax, Model Studio; see [LLM](llm.md#keys-that-belong-to-a-region))
-API address shows `Found from the key`: when the default endpoint refuses a new
+API address shows `Found from the key` while it is empty: when the default endpoint refuses a new
 connection's key and another region lists its models (`api_base`, contract v1.21),
 the page fills that address in and says so, and the models are saved with it, also
 for a key the server reads from its environment (a saved connection is told to
 change its address instead). A key that neither Kimi service takes gets one
 sentence saying so.
+The API address field (a new connection, and Change address on a saved one) is also a list:
+focused or clicked, it opens the provider's known addresses under it, each named (International,
+Mainland China, a Model Studio region, a Kimi site, `· Coding Plan`; the card's `endpoints`, contract
+v1.27, else its `regions`, else its one default address as Default). The arrow keys walk the list,
+Enter or a tap fills the field, Escape and a tap elsewhere close it; anything typed stays as typed,
+and the list keeps every address. An empty field still means the default. A Coding Plan address
+adds one line on the plan's terms (supported coding tools only). It is the page's own listbox, not a
+`<datalist>`, so Safari on macOS and iOS shows the same list; on a phone its entries have 11 px
+text in 28 px rows.
 
 ## Updating the server
 
@@ -835,7 +844,8 @@ keys as saved defaults; contract v1.22 adds `settings`, read when present, to jo
 and items, and v1.23 `markdown_lines` to a result, so the Details count the lines of
 an output whose start is an excerpt; v1.24 `Capabilities.update` and `/api/update`
 on a loopback server, see [service](serve.md#updates); v1.25 `regions` on a provider
-card; v1.26 `notices`, each warning's code and subjects in the order of `warnings`); a
+card; v1.26 `notices`, each warning's code and subjects in the order of `warnings`;
+v1.27 `endpoints` on a provider card, its documented addresses with their area and plan); a
 missing feature hides its control instead of failing (no Stop
 remaining, no Compare, archives saved through the page, history read job by job,
 images read from the file route).

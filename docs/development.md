@@ -112,6 +112,11 @@ nginx and checks that a refused 9 MB upload reaches the page as the server's 403
 with its reason, not a 502. `--ui DIR` tests unbuilt sources from a
 `node build.mjs` output; its docstring has the other options.
 
+`uv run scripts/workbench_address_e2e.py` checks the provider form's API address
+list (Z.ai, MiniMax, OpenAI at 1280 and 390 px: the entries, arrows, Enter,
+Escape, typed text, taps) the same way; `--browser webkit` runs it in Safari's
+engine and `--shots DIR` saves the open lists.
+
 A ```` ```mermaid ```` block becomes SVG while the site builds
 (`website/.vitepress/mermaid.ts`, Pele); a diagram Pele cannot draw fails the
 build. `website/NOTICE` credits the site's build dependencies, separately from

@@ -82,7 +82,11 @@ Some providers issue keys per region, and each endpoint refuses another
 region's key with HTTP 401: Moonshot AI, Kimi Code, MiniMax, Z.ai and Model
 Studio (`dashscope`); their regions are listed under
 [LLM](llm.md#keys-that-belong-to-a-region) and on the provider's card as
-`regions` (contract v1.25, the default first). A discovery for one of them with
+`regions` (contract v1.25, the default first). Their cards also carry
+`endpoints` (contract v1.27): each region as `{base, region}`, with an area code
+(`global`, `china`, `beijing`, `singapore`, `us_virginia`, `hong_kong`) or a site
+(`kimi.com`), then the Coding Plan endpoints of Z.ai, Zhipu and Model Studio with
+`plan: "coding"`, offered for the address but never tried with a key. A discovery for one of them with
 a key but no address (no `api_base`, no base variable) that the default endpoint
 refuses tries the other regions in that order; when one lists the models, the
 answer carries its address as `api_base` (contract v1.21), which the workbench
