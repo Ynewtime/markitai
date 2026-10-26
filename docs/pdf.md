@@ -700,7 +700,8 @@ driver's `Microsoft Word - …`; a single lower-case slug, `code`,
 application gives a document nobody named, in any case and with a number or
 separators after it (`Untitled`, `Untitled Document`, `Untitled-2`,
 `PowerPoint Presentation`, `Title`, `Sans titre`, `无标题`, and, numbered,
-`Document1`, `Presentation1`, `Book1`, `文档1`), or a number or an id
+`Document1`, `Presentation1`, `Book1`, `文档1`; also in parentheses, and
+ReportLab's `(anonymous)`), or a number or an id
 (`20240315000127`). `Untitled Love Song`, `Document Management Policy` and a bare
 `Book` are kept.
 

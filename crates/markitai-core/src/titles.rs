@@ -167,8 +167,15 @@ pub(crate) fn placeholder_title(title: &str) -> bool {
 /// `Untitled Document`, `Untitled-2`, `PowerPoint Presentation`, `Title`, and
 /// in a few languages (`Sans titre`, `无标题`); or, numbered only, Word's
 /// `Document1`, PowerPoint's `Presentation1`, Excel's `Book1` and their
-/// Chinese names (`文档1`, `演示文稿1`, `工作簿1`).
+/// Chinese names (`文档1`, `演示文稿1`, `工作簿1`). In parentheses too, and
+/// ReportLab's `(anonymous)`, which it writes when a document has no title.
 fn default_name(lower: &str) -> bool {
+    if let Some(inner) = lower
+        .strip_prefix('(')
+        .and_then(|rest| rest.strip_suffix(')'))
+    {
+        return inner == "anonymous" || default_name(inner.trim());
+    }
     const NAMES: &[&str] = &[
         "untitled",
         "untitled document",
@@ -301,6 +308,7 @@ mod tests {
             "Annual Report 2024",
             "Book",
             "Untitled Love Song",
+            "Anonymous",
             "Document Management Policy",
             "第一章 概述",
         ] {
@@ -322,6 +330,8 @@ mod tests {
             "无标题",
             "文档1",
             "Microsoft Word - report.docx",
+            "(anonymous)",
+            "(Untitled)",
             "",
         ] {
             assert!(!meaningful_title(title, false), "{title}");

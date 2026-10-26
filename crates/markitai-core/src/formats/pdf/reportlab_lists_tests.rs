@@ -21,3 +21,42 @@ fn reportlab_bullets_and_numbers_are_markdown_lists() {
     }
     assert!(!markdown.contains('•'), "{markdown}");
 }
+
+#[test]
+fn reportlabs_anonymous_title_is_no_title() {
+    // ReportLab writes `(anonymous)` when a document is given no title: the
+    // fixture with its Info title set so, padded to keep every offset.
+    let original = include_bytes!("fixtures/reportlab-lists/reportlab-lists.pdf");
+    let (named, anonymous) = (
+        &b"/Title (Ridge Walk)"[..],
+        &b"/Title (\\(anonymous\\))"[..],
+    );
+    let at = original
+        .windows(named.len())
+        .position(|window| window == named)
+        .unwrap();
+    let keywords = b"/Keywords () ";
+    let dropped = original[..at]
+        .windows(keywords.len())
+        .rposition(|window| window == keywords)
+        .unwrap();
+    let mut bytes = [
+        &original[..dropped],
+        &original[dropped + keywords.len()..at],
+    ]
+    .concat();
+    bytes.extend_from_slice(anonymous);
+    bytes.resize(at + named.len(), b' ');
+    bytes.extend_from_slice(&original[at + named.len()..]);
+    assert_eq!(bytes.len(), original.len());
+
+    let document = extract(&bytes).unwrap();
+    // The page's own title stands in, as for a PDF without one.
+    assert_eq!(
+        document
+            .metadata
+            .get("title")
+            .and_then(|title| title.as_str()),
+        Some("Ridge Walk")
+    );
+}
