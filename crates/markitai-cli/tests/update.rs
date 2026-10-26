@@ -1031,6 +1031,29 @@ mod unix {
     }
 
     #[test]
+    fn the_workbench_refuses_a_release_whose_program_is_another_version() {
+        let releases = Releases::start("2.2.0");
+        releases.publish("2.2.0", "#!/bin/sh\necho 'markitai 2.3.0'\n", false);
+        let home = Home::setup_sh("2.1.0");
+        let server = Serve::start(&home, &releases);
+        server.wait("the daily check", |view| view["latest"] == "2.2.0");
+        server
+            .call("POST", "/api/update", Some(json!({"version": "2.2.0"})))
+            .unwrap();
+        let view = server.wait("the failure", |view| view["state"] == "failed");
+        assert_eq!(view["error"]["code"], "start_failed", "{view}");
+        assert_eq!(view["error"]["rolled_back"], false, "{view}");
+        let reason = view["error"]["reason"].as_str().unwrap();
+        assert!(reason.contains("it reports markitai 2.3.0"), "{reason}");
+        assert!(
+            std::fs::symlink_metadata(home.path("home/.local/bin/markitai"))
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+    }
+
+    #[test]
     fn a_new_version_that_fails_before_it_is_ready_puts_the_old_one_back() {
         let releases = Releases::start("2.2.0");
         releases.publish(

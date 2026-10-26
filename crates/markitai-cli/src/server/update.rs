@@ -553,8 +553,10 @@ fn run(state: &Arc<State>, target: Version) {
         update.set(Phase::Verifying);
         let unpacked = install::unpack(&work, &downloaded)?;
         let program = install::program(&unpacked, installed.script)?;
-        // The new program loads this configuration and opens this history
-        // read-only, without binding, before anything is replaced.
+        // The new program is the release asked for (as the CLI checks); it
+        // loads this configuration and opens this history read-only, without
+        // binding, before anything is replaced.
+        install::dry_start(&program, &["--version".into()], Some(&format!(" {target}")))?;
         let mut arguments: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
         arguments.push("--preflight".into());
         install::dry_start(&program, &arguments, None)?;
