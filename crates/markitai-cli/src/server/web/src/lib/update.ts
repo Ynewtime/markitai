@@ -157,6 +157,12 @@ export function pollDelay(state: UpdateState | null, open: boolean): number {
   return 30_000;
 }
 
+/** The card's "now": the version the page runs on (the one it loaded from, or the one it reconnected
+ * to), not the server's `current`, which names the new version as soon as it is installed. */
+export function runningVersion(running: string | null, status: Pick<UpdateStatus, "current">): string {
+  return running ?? status.current ?? "";
+}
+
 /** The release notes of a version, on the server's source repository. */
 export function notesFor(sourceUrl: string, version: string): string {
   return `${sourceUrl.replace(/\/+$/, "")}/releases/tag/v${version}`;

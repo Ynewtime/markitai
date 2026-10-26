@@ -17,7 +17,7 @@ import type { UpdateControl } from "../hooks/use-update.ts";
 import { useModal } from "../hooks/use-modal.ts";
 import type { Dict } from "../i18n/index.ts";
 import { copyText } from "../lib/clipboard.ts";
-import { CANCELLABLE, failedStep, failureText, fraction, shownError, statusRow, stepOf } from "../lib/update.ts";
+import { CANCELLABLE, failedStep, failureText, fraction, runningVersion, shownError, statusRow, stepOf } from "../lib/update.ts";
 import { Icon } from "./icons.tsx";
 
 /** How long a press must last to show the version instead of opening the card. */
@@ -138,7 +138,8 @@ export function UpdateCard({
     );
   }
   const version = status.target ?? status.latest ?? status.current ?? "";
-  const current = status.current ?? "";
+  // Until the page reconnects to the new build it still runs the old one, whatever is installed.
+  const current = runningVersion(update.running, status);
   const command = status.command ?? "markitai update";
   const copy = () => void copyText(command).then(onCopied);
   const terminal = (

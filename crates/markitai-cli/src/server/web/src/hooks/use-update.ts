@@ -54,6 +54,8 @@ export interface UpdateControl {
   holding: boolean;
   /** The server restarted and the page waits for it to answer. */
   reconnecting: boolean;
+  /** The version this page runs on: the one it loaded from until it reconnects to another. */
+  running: string | null;
 }
 
 export function useUpdate({
@@ -88,6 +90,10 @@ export function useUpdate({
     loadedBuild.current = buildOf(caps);
     loadedVersion.current = caps.update?.current ?? null;
   }
+  // The server reports the installed version as soon as it is installed; the page keeps saying
+  // the one it runs on until it has reconnected.
+  const [reconnectedTo, setReconnectedTo] = useState<string | null>(null);
+  const running = reconnectedTo ?? (caps ? (loadedVersion.current ?? caps.build?.version ?? caps.version) : null);
   const statusRef = useRef(status);
   statusRef.current = status;
   const handlers = useRef({ hasUnsaved, onFailure, onReloadOffer, onBack });
@@ -156,6 +162,7 @@ export function useUpdate({
             }
             handlers.current.onReloadOffer(target);
           }
+          setReconnectedTo(target);
           setReconnecting(false);
           setOpen(false);
           void refresh();
@@ -232,6 +239,7 @@ export function useUpdate({
     dismiss,
     holding: reconnecting || HOLDING.has(current),
     reconnecting,
+    running,
   };
 }
 

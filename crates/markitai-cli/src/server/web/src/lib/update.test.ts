@@ -10,7 +10,7 @@ import { en } from "../i18n/en.ts";
 import { ja } from "../i18n/ja.ts";
 import { zh } from "../i18n/zh.ts";
 import { hasUnsaved, setUnsaved } from "./unsaved.ts";
-import { clock, downloaded, entryLook, errorKey, failedStep, failureText, fraction, HOLDING, notesFor, pollDelay, shownError, statusRow, stepOf } from "./update.ts";
+import { clock, downloaded, entryLook, errorKey, failedStep, failureText, fraction, HOLDING, notesFor, pollDelay, runningVersion, shownError, statusRow, stepOf } from "./update.ts";
 
 const read = (relative: string) => readFileSync(new URL(relative, import.meta.url), "utf8");
 
@@ -147,4 +147,20 @@ test("E3 sits beside the sidebar toggle and before the phone's links; the card i
   assert.ok(!/font-family/.test(num));
   // Phone controls are 28 px with 11 px text.
   assert.match(css, /\.upd-sheet \.btn \{\s*height: 28px;\s*padding: 2px 10px 0;\s*font-size: var\(--text-xs\);/);
+});
+
+test("the card's \"now\" stays the running version until the page has reconnected to the new build", () => {
+  // The server names the installed version while it is still installing or restarting.
+  for (const state of ["downloading", "verifying", "waiting", "installing", "restarting"] as const) {
+    assert.equal(runningVersion("2.1.0", status({ state, current: "2.2.0", target: "2.2.0" })), "2.1.0", state);
+  }
+  // Reconnected to the new build (or reloaded into it): the hook's running version is the new one.
+  assert.equal(runningVersion("2.2.0", status({ current: "2.2.0" })), "2.2.0");
+  // Before the page knows its own version, the server's.
+  assert.equal(runningVersion(null, status()), "2.1.0");
+  const hook = read("../hooks/use-update.ts");
+  assert.equal(hook.match(/setReconnectedTo\(/g)?.length, 1, "only the reconnection changes the running version");
+  assert.match(hook, /setReconnectedTo\(target\);\s*setReconnecting\(false\);/);
+  assert.match(read("../components/update.tsx"), /t\.updCurrent\(current\)/);
+  assert.match(read("../components/update.tsx"), /const current = runningVersion\(update\.running, status\);/);
 });
