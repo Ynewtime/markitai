@@ -1,0 +1,10 @@
+[
+  {
+    "file": "x-author-reply.html",
+    "bytes": 129874,
+    "sha256": "f05b0f27762cba2dba17759f84e7a413797ca6325bf39610a34b9593343cdf20",
+    "content": "a public X post (https://x.com/amorriscode/status/2113972174524674247) as the static fetch receives it logged out: the post, the author's own reply and one other reply",
+    "authored": "fetched once on 2026-10-26 with markitai's static request (its user agent and Accept header), saved unchanged; no account or cookie",
+    "purpose": "an author's reply that neither is numbered nor continues the post goes under ## Comments, marked as the author's, in the order the replies were posted"
+  }
+]

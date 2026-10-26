@@ -355,13 +355,17 @@ without avatars, player controls, counters, the
 of late 2026 that has neither (an `article` holding `[data-engagement-action]`
 buttons, text in `div[dir=auto]`, the date as the text of its `/status/<id>`
 link, a quoted post as a nested `article` in `div[role=link][data-href]`).
-Following the reference's thread policy, the author's own consecutive posts
-right after the main one continue it, each after a `---` rule; the first reply
-from anyone else ends the thread. It and the replies after it (the author's own
-among them) follow under `## Comments`, as the reference writes them: each a
-block quote headed `**Name @handle** · [date](permalink)` with its text, media
-and quoted post, up to the first heading outside a post (X's "Discover more"),
-also in a timeline whose labels are in another language.
+The author's own consecutive posts right after the main one continue it, each
+after a `---` rule, when they read as parts of a thread: numbered (`2/`,
+`(2/5)`), after a post that opens one (`🧵`, `thread:`), or picking up text
+that breaks off (`,` `:` `…`, or a reply starting in lowercase); X's markup
+does not mark a self-thread. Any other reply ends the thread. It and the
+replies after it follow under `## Comments` in the order they were posted
+(by post id): each a block quote headed `**Name @handle** · [date](permalink)`
+(`(author)` after the author's own) with its text, media and quoted post, up
+to the first heading outside a post (X's "Discover more"), also in a timeline
+whose labels are in another language. A static fetch gets only the replies X
+puts in the logged-out page, usually a few.
 Posts of the thread that come before the requested one are not included.
 An X Article embedded in a status page or opened through `/article/<id>` uses
 its own heading, cover and dedicated body: an `x-article-body` beside its `h1`,
