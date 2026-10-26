@@ -1119,14 +1119,15 @@ fn services_receive_the_url_that_was_checked_not_the_typed_text() {
 
 #[test]
 fn the_limiter_admits_a_window_of_requests_and_then_waits() {
-    let limits = Limits::new(Duration::from_millis(300));
+    // A window long enough that a slow or loaded machine can't blur the two.
+    let limits = Limits::new(Duration::from_secs(1));
     let started = std::time::Instant::now();
     limits.acquire("jina", 2);
     limits.acquire("jina", 2);
     limits.acquire("defuddle", 2);
-    assert!(started.elapsed() < Duration::from_millis(200));
+    assert!(started.elapsed() < Duration::from_millis(750));
     limits.acquire("jina", 2);
-    assert!(started.elapsed() >= Duration::from_millis(250));
+    assert!(started.elapsed() >= Duration::from_millis(950));
 }
 
 // ---- Cloudflare -----------------------------------------------------------

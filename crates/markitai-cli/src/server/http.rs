@@ -1508,7 +1508,9 @@ mod error_code_tests {
         assert_eq!(snapshot["items"].as_array().unwrap().len(), 2);
         let (status, _) = call(&router, "GET", "/api/history", &[]).await;
         assert_eq!(status, 200);
-        assert!(started.elapsed() < Duration::from_secs(2));
+        // A read waiting for the deletion would wait until `held` goes; the bound
+        // leaves room for a slow, loaded machine.
+        assert!(started.elapsed() < Duration::from_secs(10));
         drop(held);
         let (status, _) = deleting.await.unwrap();
         assert_eq!(status, 204);
