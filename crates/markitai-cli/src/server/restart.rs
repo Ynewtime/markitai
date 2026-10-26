@@ -217,6 +217,11 @@ fn relaunch_with(
     let mut command = std::process::Command::new(exe);
     command.args(arguments.iter().skip(1));
     command.env(RESTARTED_FROM, from);
+    // The update marker, if any, is the restarted server's.
+    match Pending::load(home) {
+        Some(pending) => command.env(control::UPDATE_ID, pending.id),
+        None => command.env_remove(control::UPDATE_ID),
+    };
     for (name, value) in environment {
         match value {
             Some(value) => command.env(name, value),
@@ -254,7 +259,6 @@ fn relaunch_with(
         if let Some(listener) = &kept.listener {
             close_on_exec(listener.as_raw_fd(), true);
         }
-        let _ = home;
         Relaunched::Failed(error.to_string())
     }
     #[cfg(windows)]

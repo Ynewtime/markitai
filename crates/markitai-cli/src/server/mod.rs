@@ -215,7 +215,8 @@ pub(crate) fn run(cfg: Value, source: SettingsSource, options: ServeOptions) -> 
     let home = markitai_core::config::home();
     let (version, _) = crate::update::current_identity();
     // An update whose new version never got ready is undone first.
-    let start = crate::update::control::on_start(&home, &version);
+    let handed = std::env::var(crate::update::control::UPDATE_ID).ok();
+    let start = crate::update::control::on_start(&home, &version, handed.as_deref());
     if let crate::update::control::Start::Crashed(pending) = &start {
         std::process::exit(restart::roll_back_and_relaunch(
             pending,

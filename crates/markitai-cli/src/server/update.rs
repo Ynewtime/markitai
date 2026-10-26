@@ -599,7 +599,13 @@ fn run(state: &Arc<State>, target: Version) {
             .as_ref()
             .map(ToString::to_string)
             .unwrap_or_default();
-        let pending = Pending::new(&from, &target.to_string(), update.exe.clone(), swapped);
+        let pending = Pending::new(
+            &from,
+            &target.to_string(),
+            update.exe.clone(),
+            swapped,
+            std::process::id(),
+        );
         if let Err(error) = pending.save(&update.home) {
             let _ = pending.swapped.rollback();
             return Err(install::Error::Io {

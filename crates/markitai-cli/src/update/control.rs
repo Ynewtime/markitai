@@ -11,7 +11,9 @@
 //! A restart into a new version leaves `MARKITAI_HOME/update-pending.json`
 //! until the new server is ready: what was swapped and where the old program
 //! waits. A new server that fails before it is ready (or a crash that leaves
-//! the marker for the next start) puts the old version back.
+//! the marker for the next start) puts the old version back. The marker names
+//! the server it is for: only that one (handed the marker's id) acts on it
+//! while it runs, so another `serve` of the same home leaves it alone.
 use super::install::Swapped;
 use serde::{Deserialize, Serialize};
 use std::io;
@@ -20,6 +22,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 const FORMAT: u32 = 1;
+/// The marker id a restarted server is handed: the marker is its own.
+pub(crate) const UPDATE_ID: &str = "MARKITAI_SERVE_UPDATE_ID";
 /// The header the control requests carry the secret in.
 pub(crate) const HEADER: &str = "x-markitai-control";
 /// The last release without restart handover: a server of that version or
@@ -258,6 +262,13 @@ pub(crate) struct Pending {
     /// Set by the new server as it starts: a second start that finds it set
     /// means the first never got ready.
     pub(crate) attempted: bool,
+    /// Handed to the restarted server (`UPDATE_ID`).
+    #[serde(default)]
+    pub(crate) id: String,
+    /// The process the marker is for: the server restarting, then the new
+    /// server once it has started. While it runs, no other start touches the marker.
+    #[serde(default)]
+    pub(crate) server: Option<u32>,
 }
 
 /// Why the last update was undone, for the old server to tell.
@@ -273,7 +284,8 @@ pub(crate) const PENDING: &str = "update-pending.json";
 const FAILED: &str = "update-failed.json";
 
 impl Pending {
-    pub(crate) fn new(from: &str, to: &str, exe: PathBuf, swapped: Swapped) -> Self {
+    /// The marker of an update `server` (a PID) restarts into.
+    pub(crate) fn new(from: &str, to: &str, exe: PathBuf, swapped: Swapped, server: u32) -> Self {
         Self {
             format: FORMAT,
             from: from.into(),
@@ -281,6 +293,8 @@ impl Pending {
             exe,
             swapped,
             attempted: false,
+            id: super::install::new_id(),
+            server: Some(server),
         }
     }
 
@@ -347,11 +361,18 @@ pub(crate) enum Start {
     Crashed(Pending),
 }
 
-/// Read and advance the marker for a server of `version` starting.
-pub(crate) fn on_start(home: &Path, version: &str) -> Start {
+/// Read and advance the marker for a server of `version` starting, handed
+/// the marker id `handed` by the server it restarts.
+pub(crate) fn on_start(home: &Path, version: &str, handed: Option<&str>) -> Start {
     let Some(mut pending) = Pending::load(home) else {
         return Start::Normal;
     };
+    let own = handed.is_some_and(|id| !id.is_empty() && id == pending.id);
+    let me = std::process::id();
+    if !own && pending.server.is_some_and(|pid| pid != me && alive(pid)) {
+        // Another server's update, still in its hands.
+        return Start::Normal;
+    }
     if pending.to != version {
         // The old version runs again (rolled back by hand, or reinstalled).
         Pending::clear(home);
@@ -361,10 +382,46 @@ pub(crate) fn on_start(home: &Path, version: &str) -> Start {
         return Start::Crashed(pending);
     }
     pending.attempted = true;
+    pending.server = Some(me);
     if pending.save(home).is_err() {
         return Start::Normal;
     }
     Start::New(pending)
+}
+
+/// Whether process `pid` still runs.
+fn alive(pid: u32) -> bool {
+    #[cfg(unix)]
+    {
+        let Ok(pid) = libc::pid_t::try_from(pid) else {
+            return false;
+        };
+        // SAFETY: signal 0 only checks that the process exists.
+        let found = unsafe { libc::kill(pid, 0) } == 0;
+        found || io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+    }
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Foundation::{CloseHandle, WAIT_TIMEOUT};
+        use windows_sys::Win32::System::Threading::{
+            OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject,
+        };
+        // SAFETY: the handle is checked, waited on without blocking and closed once.
+        unsafe {
+            let process = OpenProcess(PROCESS_SYNCHRONIZE, 0, pid);
+            if process.is_null() {
+                return false;
+            }
+            let running = WaitForSingleObject(process, 0) == WAIT_TIMEOUT;
+            CloseHandle(process);
+            running
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = pid;
+        false
+    }
 }
 
 #[cfg(test)]
@@ -431,21 +488,22 @@ mod tests {
                 placed: Vec::new(),
                 old_program: Some(kept.clone()),
             },
+            std::process::id(),
         );
         pending.save(home.path()).unwrap();
         // The first start of 2.2.0 carries on.
-        let Start::New(first) = on_start(home.path(), "2.2.0") else {
+        let Start::New(first) = on_start(home.path(), "2.2.0", None) else {
             panic!()
         };
         assert!(first.attempted);
         // It crashed before ready; the next start rolls back.
-        let Start::Crashed(again) = on_start(home.path(), "2.2.0") else {
+        let Start::Crashed(again) = on_start(home.path(), "2.2.0", None) else {
             panic!()
         };
         again.roll_back(home.path(), "crashed").unwrap();
         assert_eq!(std::fs::read_to_string(&program).unwrap(), "old");
         assert!(!kept.exists());
-        assert_eq!(on_start(home.path(), "2.2.0"), Start::Normal);
+        assert_eq!(on_start(home.path(), "2.2.0", None), Start::Normal);
         let failed = Pending::take_failure(home.path()).unwrap();
         assert_eq!(
             (failed.to.as_str(), failed.reason.as_str()),
@@ -455,15 +513,76 @@ mod tests {
         // A ready server commits: the old program goes, the marker too.
         std::fs::write(&kept, "old").unwrap();
         pending.save(home.path()).unwrap();
-        let Start::New(ready) = on_start(home.path(), "2.2.0") else {
+        let Start::New(ready) = on_start(home.path(), "2.2.0", None) else {
             panic!()
         };
         ready.commit(home.path());
         assert!(!kept.exists() && Pending::load(home.path()).is_none());
         // The old version starting with a marker drops it.
         pending.save(home.path()).unwrap();
-        assert_eq!(on_start(home.path(), "2.1.0"), Start::Normal);
+        assert_eq!(on_start(home.path(), "2.1.0", None), Start::Normal);
         assert!(Pending::load(home.path()).is_none());
+    }
+
+    #[test]
+    fn another_servers_marker_is_left_alone_while_that_server_runs() {
+        let home = tempfile::tempdir().unwrap();
+        let program = home.path().join("markitai");
+        let kept = home.path().join(".markitai.old-x");
+        std::fs::write(&program, "new").unwrap();
+        std::fs::write(&kept, "old").unwrap();
+        // A running process that is not this one: the server the marker is for.
+        let mut other = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "update::control::tests::helper_waits_for_its_input",
+                "--test-threads=1",
+            ])
+            .env("MARKITAI_TEST_CONTROL_HELPER", "1")
+            .stdout(std::process::Stdio::null())
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let swapped = Swapped {
+            aside: vec![(program.clone(), kept.clone())],
+            placed: Vec::new(),
+            old_program: Some(kept.clone()),
+        };
+        let pending = Pending::new("2.1.0", "2.2.0", program.clone(), swapped, other.id());
+        pending.save(home.path()).unwrap();
+        // A second serve of either version neither takes nor drops it.
+        assert_eq!(on_start(home.path(), "2.2.0", None), Start::Normal);
+        assert_eq!(
+            on_start(home.path(), "2.1.0", Some("another")),
+            Start::Normal
+        );
+        assert_eq!(Pending::load(home.path()), Some(pending.clone()));
+        // The server handed its id does.
+        let Start::New(first) = on_start(home.path(), "2.2.0", Some(&pending.id)) else {
+            panic!()
+        };
+        assert_eq!(first.server, Some(std::process::id()));
+        // Once the server it names is gone, the next start may undo it.
+        let mut stale = pending.clone();
+        stale.attempted = true;
+        stale.server = Some(other.id());
+        stale.save(home.path()).unwrap();
+        assert_eq!(on_start(home.path(), "2.2.0", None), Start::Normal);
+        let _ = other.kill();
+        let _ = other.wait();
+        assert!(matches!(
+            on_start(home.path(), "2.2.0", None),
+            Start::Crashed(_)
+        ));
+        assert_eq!(std::fs::read_to_string(&kept).unwrap(), "old");
+    }
+
+    /// The process the test above stands in for a running server.
+    #[test]
+    fn helper_waits_for_its_input() {
+        if std::env::var_os("MARKITAI_TEST_CONTROL_HELPER").is_some() {
+            let _ = std::io::Read::read_to_end(&mut std::io::stdin(), &mut Vec::new());
+        }
     }
 
     #[test]

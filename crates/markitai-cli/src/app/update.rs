@@ -876,6 +876,7 @@ fn offer_restart(
         &target.to_string(),
         install.exe.clone(),
         swapped.clone(),
+        control.pid,
     );
     if pending.save(home).is_err() {
         hint(out);
