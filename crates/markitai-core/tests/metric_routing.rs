@@ -16,9 +16,47 @@ use std::time::{Duration, Instant};
 // Each public conversion gets a private configuration environment. HOME stays
 // inherited, while no ambient provider credentials enter the child process.
 fn isolated(name: &str) -> bool {
+    isolated_run(name, false)
+}
+
+/// Usage-based routing counts per wall-clock minute, so its selection evidence
+/// must come from one minute: a run that failed across a minute boundary runs
+/// once more (it then starts at the top of a minute).
+fn isolated_in_one_minute(name: &str) -> bool {
+    isolated_run(name, true)
+}
+
+fn wall_minute() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        / 60
+}
+
+fn isolated_run(name: &str, one_minute: bool) -> bool {
     if std::env::var("MARKITAI_METRIC_ROUTING_TEST").as_deref() == Ok(name) {
         return false;
     }
+    let minute = wall_minute();
+    let (status, stdout, stderr) = run_isolated(name);
+    if !status.success() && one_minute && wall_minute() != minute {
+        eprintln!("{name}: failed across a minute boundary; running it once more");
+        return check_isolated(name, run_isolated(name));
+    }
+    check_isolated(name, (status, stdout, stderr))
+}
+
+fn check_isolated(
+    name: &str,
+    (status, stdout, stderr): (std::process::ExitStatus, String, String),
+) -> bool {
+    assert!(status.success(), "{name}: {status}\n{stdout}\n{stderr}");
+    assert!(stdout.contains("1 passed"), "{stdout}");
+    true
+}
+
+fn run_isolated(name: &str) -> (std::process::ExitStatus, String, String) {
     let dir = tempfile::tempdir().unwrap();
     let stdout = dir.path().join("stdout");
     let stderr = dir.path().join("stderr");
@@ -60,9 +98,7 @@ fn isolated(name: &str) -> bool {
     };
     let stdout = std::fs::read_to_string(stdout).unwrap();
     let stderr = std::fs::read_to_string(stderr).unwrap();
-    assert!(status.success(), "{name}: {status}\n{stdout}\n{stderr}");
-    assert!(stdout.contains("1 passed"), "{stdout}");
-    true
+    (status, stdout, stderr)
 }
 
 #[derive(Clone)]
@@ -314,18 +350,6 @@ fn with_total(request: &Request, index: usize, total: u64) -> (u16, Value) {
     body["usage"] = json!({"prompt_tokens":total-2,"completion_tokens":2,"total_tokens":total});
     (status, body)
 }
-// Selection evidence must not straddle a real wall-clock bucket boundary.
-// This only waits for a fresh test window; it does not assert a speed result.
-fn usage_window() {
-    let second = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs()
-        % 60;
-    if second >= 30 {
-        thread::sleep(Duration::from_secs(60 - second));
-    }
-}
 /// Requests the usage counts as timed out (possibly billed, unreported).
 fn timed_out(usage: &markitai_core::ConversionUsage) -> u64 {
     usage
@@ -343,10 +367,9 @@ fn metric_config(root: &Path, models: Vec<Value>, strategy: &str) -> Value {
 
 #[test]
 fn concurrent_successful_usage_updates_are_not_lost_or_charged_twice() {
-    if isolated("concurrent_successful_usage_updates_are_not_lost_or_charged_twice") {
+    if isolated_in_one_minute("concurrent_successful_usage_updates_are_not_lost_or_charged_twice") {
         return;
     }
-    usage_window();
     let dir = tempfile::tempdir().unwrap();
     let first = Server::new(true, |request, index| with_total(request, index, 5));
     let second = Server::new(false, |request, index| with_total(request, index, 8));
@@ -516,10 +539,11 @@ fn latency_body_timeout_after_flushed_headers_penalizes_the_stalled_deployment()
 
 #[test]
 fn paid_invalid_typed_content_scores_once_but_paid_http_failure_is_not_success() {
-    if isolated("paid_invalid_typed_content_scores_once_but_paid_http_failure_is_not_success") {
+    if isolated_in_one_minute(
+        "paid_invalid_typed_content_scores_once_but_paid_http_failure_is_not_success",
+    ) {
         return;
     }
-    usage_window();
     let dir = tempfile::tempdir().unwrap();
     let first = Server::new(false, |request, index| {
         let (status, mut body) = with_total(request, index, 6);
@@ -589,10 +613,11 @@ fn paid_invalid_typed_content_scores_once_but_paid_http_failure_is_not_success()
 
 #[test]
 fn metric_identity_and_independent_runtimes_do_not_mix_credentials_or_results() {
-    if isolated("metric_identity_and_independent_runtimes_do_not_mix_credentials_or_results") {
+    if isolated_in_one_minute(
+        "metric_identity_and_independent_runtimes_do_not_mix_credentials_or_results",
+    ) {
         return;
     }
-    usage_window();
     let dir = tempfile::tempdir().unwrap();
     let server = Server::new(false, |request, index| with_total(request, index, 10));
     let cfg = metric_config(
