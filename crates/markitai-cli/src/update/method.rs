@@ -108,6 +108,16 @@ pub(crate) struct SetupInstall {
 }
 
 impl SetupInstall {
+    /// The same install with its receipt read again: a running server's
+    /// copy is stale once `markitai update` replaced the release.
+    pub(crate) fn reread(&self) -> Self {
+        let mut install = self.clone();
+        if let Some(receipt) = read_receipt(&self.receipt_dir) {
+            install.receipt = receipt;
+        }
+        install
+    }
+
     /// The release target this install takes archives for: the receipt's,
     /// which setup chose (the native one under Rosetta), else this build's.
     pub(crate) fn target(&self) -> String {
@@ -609,6 +619,19 @@ mod tests {
             (install.script, install.dir.clone()),
             (Script::PowerShell, dir.clone())
         );
+        // A server re-reads the receipt another update rewrote.
+        write(
+            &dir.join("receipt"),
+            "version=2.2.0\nfile=markitai.exe\nfile=new.exe\n",
+        );
+        assert_eq!(install.reread().receipt.all("file"), ["markitai.exe", "new.exe"]);
+        write(
+            &dir.join("receipt"),
+            "version=2.1.0\ntarget=x86_64-pc-windows-msvc\npath_added=1\nfile=markitai.exe\nfile=mkai.exe\n",
+        );
+        windows.version = "2.0.1".into();
+        assert!(matches!(detect(&windows), Method::Unknown { .. }));
+        windows.version = "2.1.0".into();
         // A receipt that does not list markitai.exe is someone else's.
         write(&dir.join("receipt"), "version=2.1.0\nfile=other.exe\n");
         assert!(matches!(detect(&windows), Method::Unknown { .. }));

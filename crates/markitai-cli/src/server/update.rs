@@ -529,6 +529,8 @@ fn run(state: &Arc<State>, target: Version) {
         let Method::Setup(installed) = &update.method else {
             return Err(install::Error::Archive("not a setup install".into()));
         };
+        // `markitai update` may have replaced the release since this server started.
+        let installed = &installed.reread();
         let base = update
             .base
             .clone()
