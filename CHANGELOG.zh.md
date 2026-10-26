@@ -8,6 +8,40 @@
 1.x 版本是 Python 实现，其说明见
 [1.2.0 更新日志](https://github.com/Ynewtime/markitai/blob/v1.2.0/CHANGELOG.zh.md)。
 
+## [2.3.0] - 2026-10-26
+
+工作台为更多服务商列出已知 API 地址并识别密钥所属区域，文档菜单更简洁，并修复了更新和上传的问题。获取 2.3.0 请运行 `markitai update`（2.2.0 及以后），或按原来的安装方式更新：重新运行安装命令，或执行 `uv tool upgrade markitai` / `pip install -U markitai`。
+
+### 新增
+
+- 工作台的「API 地址」现在会列出服务商的已知地址（各区域和 Coding Plan 端点）供选择，也仍可手动输入任意地址。
+- 工作台现在也能按密钥识别 MiniMax、阿里云百炼和 Z.ai 的区域（与 Kimi 相同）；密钥被拒时，错误信息会列出该服务商的其他区域。
+- 工作台现在能加载 Perplexity、Z.ai、Fireworks AI、Helicone 和 Cohere 的模型列表；Codestral、Cloudflare Workers AI 和 Galadriel 改为手动输入模型 ID，不再尝试必然失败的加载。
+
+### 变更
+
+- 工作台的文档菜单更简洁：下载（Markdown、PDF、JSON、全部文件、文件列表）、复制 Markdown、重新转换…（预先填好该文档的选项）和删除，各处顺序一致。
+- 桌面端服务商选择器的类型改为一排标签，不再是下拉菜单。
+- 工作台以中文和日文显示更多转换提示。
+- 再次运行安装脚本更新时，已安装的可选组件不再重复询问，选择“否”也会被记住。
+- 中文帮助和用法错误在所有标签和标题后使用全角冒号。
+
+### 修复
+
+- 选择文件夹后不再在点击转换前就开始转换，Safari 关闭文件对话框时误触的点击也不会；上传失败会说明原因并提供重试。
+- 在反向代理或隧道后面，被拒绝的上传会显示服务器给出的原因，而不是 502。
+- ReportLab 生成的 PDF 中的项目符号和编号列表转换为 Markdown 列表，不再变成 `## •` 标题。
+- X 帖子中作者那条不延续正文的回复归入评论（标明作者），评论按发布时间排序。
+- `markitai serve` 刚启动就按 Ctrl-C 时，会正常停止并保存历史，而不是被直接终止。
+- 更新在解压时磁盘空间不足，或说明文件所在的卷已满时，会说明原因且不做任何更改。
+- 工作台会拒绝程序版本与发布版本不符的发布包；放在 setup 安装位置的其他版本副本不再被当作该安装来更新。
+- 在 macOS 和 Linux 上，新版本若在就绪前卡住，30 秒后会自动撤回，与 Windows 相同。
+- 同一 home 下的第二个 `markitai serve` 不再提交或撤回另一个服务器的更新。
+- 安装目录或 `MARKITAI_HOME` 属于其他用户时，`sudo markitai update` 会拒绝运行。
+- 在 Windows 上，无论 `MARKITAI_HOME` 在哪里，`serve/control` 都只有你本人可读。
+- 运行 `markitai update` 后未重启时，工作台仍能更新 setup.ps1 安装。
+- 发布包和 wheel 包含 rav1d（AVIF 解码器）的许可声明。
+
 ## [2.2.0] - 2026-10-26
 
 新增 `markitai update` 命令和新版本提示。获取 2.2.0 请按原来的安装方式更新：重新运行安装命令，或执行 `uv tool upgrade markitai` / `pip install -U markitai`。

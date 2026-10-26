@@ -418,4 +418,4 @@ Checks for a newer release. A setup-script install is replaced in place: the arc
 
 It exits `0` up to date or updated, `10` when a newer release exists but is not installed here, `1` on a failure, `2` for an older release without `--yes` and no terminal to ask, `130` on Ctrl-C.
 
-After a run on a terminal, a newer release is named once a day: `• New version 2.2.0 (current 2.1.0): markitai update`. The check runs in the background at most daily and never for JSON, stdout output, `-q`, CI or MCP. Turn it off with `markitai config set update.check false` or `MARKITAI_NO_UPDATE_CHECK=1`.
+After a run on a terminal, a newer release is named once a day: `• New version 2.3.0 (current 2.2.0): markitai update`. The check runs in the background at most daily and never for JSON, stdout output, `-q`, CI or MCP. Turn it off with `markitai config set update.check false` or `MARKITAI_NO_UPDATE_CHECK=1`.

@@ -8,6 +8,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Releases 1.x were the Python implementation; their notes are in the
 [1.2.0 changelog](https://github.com/Ynewtime/markitai/blob/v1.2.0/CHANGELOG.md).
 
+## [2.3.0] - 2026-10-26
+
+Adds known API addresses and key regions for more providers in the workbench, simpler document menus, and fixes for updates and uploads. To get 2.3.0, run `markitai update` (2.2.0 and later) or update the way you installed: run the setup command again, or `uv tool upgrade markitai` / `pip install -U markitai`.
+
+### Added
+
+- The workbench's API address field lists the provider's known addresses (regions and Coding Plan endpoints) to pick from, and still takes any address typed.
+- The workbench finds the region of a MiniMax, Alibaba Cloud Model Studio or Z.ai key, as it does for Kimi, and a refused key's error names the provider's other regions.
+- The workbench loads the model lists of Perplexity, Z.ai, Fireworks AI, Helicone and Cohere; Codestral, Cloudflare Workers AI and Galadriel take model IDs typed by hand instead of a load that always fails.
+
+### Changed
+
+- The workbench's document menus are simpler: Download (Markdown, PDF, JSON, all files, file list), Copy Markdown, Re-convert… (opens with the document's options) and Delete, in the same order everywhere.
+- On a desktop, the provider picker's types are a row of chips instead of a menu.
+- The workbench shows more conversion notices in Chinese and Japanese.
+- Running the setup script again to update no longer asks about optional components that are already installed, and remembers a "no".
+- Chinese help and usage errors use full-width colons after every label and heading.
+
+### Fixed
+
+- Choosing a folder no longer starts a conversion before Convert, even from the stray click a closing Safari file dialog can deliver; a failed upload says why and offers Retry.
+- Behind a reverse proxy or tunnel, a refused upload shows the server's reason instead of a 502.
+- PDFs made with ReportLab keep their bullet and numbered lists as Markdown lists instead of `## •` headings.
+- On X posts, the author's reply that doesn't continue the post is listed under Comments (marked as the author's), and comments follow posting order.
+- Ctrl-C right after `markitai serve` starts drains and saves history instead of killing it.
+- An update that runs out of disk space while unpacking, or with a notices folder on a full volume, says so and changes nothing.
+- The workbench refuses a release whose program reports another version, and a copy of another version placed where setup installed markitai is no longer updated as that install.
+- On macOS and Linux, a new version that hangs before it is ready is undone after 30 seconds, as on Windows.
+- A second `markitai serve` in the same home no longer commits or undoes another server's update.
+- `sudo markitai update` refuses when the install or `MARKITAI_HOME` belongs to another user.
+- On Windows, only you can read `serve/control`, wherever `MARKITAI_HOME` is.
+- After a `markitai update` without a restart, the workbench can still update a setup.ps1 install.
+- Release archives and wheels include the rav1d (AVIF decoder) license notices.
+
 ## [2.2.0] - 2026-10-26
 
 Adds `markitai update` and a notice when a newer release is out. To get 2.2.0, update the way you installed: run the setup command again, or `uv tool upgrade markitai` / `pip install -U markitai`.

@@ -418,4 +418,4 @@ markitai doctor | Out-File -Encoding utf8 doctor.txt
 
 退出码：`0` 已是最新或已更新，`10` 有新版本但没有在这里安装，`1` 失败，`2` 要装旧版本但没有 `--yes` 也没有终端可问，`130` 按了 Ctrl-C。
 
-终端上的转换结束后，有新版本时每天最多提示一次：`• 有新版本 2.2.0（当前 2.1.0）：markitai update`。检查在后台进行，每天最多一次；JSON、stdout 输出、`-q`、CI 与 MCP 不检查。用 `markitai config set update.check false` 或 `MARKITAI_NO_UPDATE_CHECK=1` 关闭。
+终端上的转换结束后，有新版本时每天最多提示一次：`• 有新版本 2.3.0（当前 2.2.0）：markitai update`。检查在后台进行，每天最多一次；JSON、stdout 输出、`-q`、CI 与 MCP 不检查。用 `markitai config set update.check false` 或 `MARKITAI_NO_UPDATE_CHECK=1` 关闭。

@@ -191,7 +191,7 @@ MARKITAI_LANG=zh markitai doctor
   无终端时需 `--yes`）。正在运行的 `serve` 会询问是否重启。安装目录或 `MARKITAI_HOME`
   不属于 root 时，以 root 运行会被拒绝。退出码：0 已是最新或已更新，
   10 有新版本但未在此安装，1 失败，130 中断。
-- 终端上的转换结束后，有新版本时每天最多提示一次：`• 有新版本 2.2.0（当前 2.1.0）：markitai update`。
+- 终端上的转换结束后，有新版本时每天最多提示一次：`• 有新版本 2.3.0（当前 2.2.0）：markitai update`。
   检查在后台进行，每天最多一次，最多等 2 秒；JSON、stdout 输出、`-q`、非终端、CI、MCP 与源码构建
   不检查。用 `update.check: false` 或 `MARKITAI_NO_UPDATE_CHECK=1` 关闭。
 

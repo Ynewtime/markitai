@@ -134,7 +134,7 @@ test("the docs open in the page's language where the site has it", () => {
 
 test("a single choice of more than three options is a menu button; the phone sizes are the owner's", () => {
   // The conversion options moved into a dialog (sheet.test.ts): a group's choices are a list there.
-  // The provider types are a row of chips on a desktop (owner, 2.2.1) and a menu on a phone only.
+  // The provider types are a row of chips on a desktop (owner, 2.3.0) and a menu on a phone only.
   const picker = read("../components/provider-picker.tsx");
   assert.match(picker, /const menu = narrow && view\.filters\.length > SEGMENTS_MAX;/);
   assert.match(picker, /\{menu \? \(\n\s+<ChoiceMenu/);
