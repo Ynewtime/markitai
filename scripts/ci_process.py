@@ -21,6 +21,9 @@ class _WindowsJob:
     CREATE_SUSPENDED = 0x00000004
     PROCESS_TERMINATE, PROCESS_SET_QUOTA, PROCESS_SUSPEND_RESUME = 0x0001, 0x0100, 0x0800
     BASIC_ACCOUNTING = 1  # JobObjectBasicAccountingInformation
+    PROCESS_ID_LIST = 3  # JobObjectBasicProcessIdList
+    SYNCHRONIZE = 0x00100000
+    ERROR_MORE_DATA = 234
     EXTENDED_LIMITS = 9  # JobObjectExtendedLimitInformation
     KILL_ON_JOB_CLOSE = 0x00002000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
 
@@ -60,6 +63,7 @@ class _WindowsJob:
              [wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD]),
             (kernel32.OpenProcess, wintypes.HANDLE, [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]),
             (kernel32.CloseHandle, wintypes.BOOL, [wintypes.HANDLE]),
+            (kernel32.WaitForSingleObject, wintypes.DWORD, [wintypes.HANDLE, wintypes.DWORD]),
             # Resumes a process created suspended (all its threads), as psutil does.
             (ntdll.NtResumeProcess, ctypes.c_long, [wintypes.HANDLE]),
         ]
@@ -104,13 +108,49 @@ class _WindowsJob:
             raise self._error()
         return info.ActiveProcesses, info.TotalProcesses
 
+    def _members(self):
+        """Waitable handles to the processes now in the job (the caller closes them)."""
+        ctypes = self._ctypes
+        size = 64
+        while True:
+            class IdList(ctypes.Structure):
+                _fields_ = [("Assigned", ctypes.c_uint32), ("Listed", ctypes.c_uint32),
+                            ("Ids", ctypes.c_size_t * size)]
+            ids = IdList()
+            if self._kernel32.QueryInformationJobObject(self._handle, self.PROCESS_ID_LIST, ctypes.byref(ids),
+                                                        ctypes.sizeof(ids), None):
+                break
+            if ctypes.get_last_error() != self.ERROR_MORE_DATA:
+                raise self._error()
+            size *= 4
+        handles = []
+        for pid in ids.Ids[:ids.Listed]:
+            handle = self._kernel32.OpenProcess(self.SYNCHRONIZE, False, pid)
+            if handle:  # one that has already exited cannot be opened, and needs no wait
+                handles.append(handle)
+        return handles
+
     def stop(self, timeout):
         """Terminate every process in the job, again for any started meanwhile,
-        until none runs or `timeout` passes; return how many still run."""
+        until none runs or `timeout` passes; return how many still run.
+
+        A process counts as gone only once Windows signals it, which it does
+        after closing every handle the process held. The job's active count
+        drops earlier, while a stopped child may still hold the stage's log
+        open, so each member listed before the termination is waited for.
+        """
         deadline = time.monotonic() + timeout
         while True:
-            if not self._kernel32.TerminateJobObject(self._handle, 1):
-                raise self._error()
+            members = self._members()
+            try:
+                if not self._kernel32.TerminateJobObject(self._handle, 1):
+                    raise self._error()
+                for handle in members:
+                    left = max(0, int((deadline - time.monotonic()) * 1000))
+                    self._kernel32.WaitForSingleObject(handle, left)
+            finally:
+                for handle in members:
+                    self._kernel32.CloseHandle(handle)
             running, _ = self.counts()
             if not running or time.monotonic() >= deadline:
                 return running
