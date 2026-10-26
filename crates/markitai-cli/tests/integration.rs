@@ -1,5 +1,6 @@
-//! Every integration test file is a module of this one test binary: linking
-//! one binary instead of one per file is most of a cold test build's time.
+//! Every integration test file but update.rs (a binary of its own) is a
+//! module of this one test binary: linking one binary instead of one per file
+//! is most of a cold test build's time.
 //! Cargo.toml turns automatic test discovery off, so a new `tests/*.rs` file
 //! must be listed here; `every_test_file_is_a_module` fails until it is.
 
@@ -56,8 +57,10 @@ mod stdout_images;
 mod subscription_auth;
 mod terminal_language;
 mod terminal_usage;
-mod update;
 mod zh_output;
+
+/// Test files that are binaries of their own (Cargo.toml lists them).
+const SEPARATE: [&str; 2] = ["integration", "update"];
 
 #[test]
 fn every_test_file_is_a_module() {
@@ -68,7 +71,7 @@ fn every_test_file_is_a_module() {
         let path = entry.unwrap().path();
         let stem = path.file_stem().unwrap().to_str().unwrap().to_owned();
         if path.extension().is_some_and(|extension| extension == "rs")
-            && stem != "integration"
+            && !SEPARATE.contains(&stem.as_str())
             && !listed.contains(&format!("\nmod {stem};\n"))
         {
             missing.push(stem);

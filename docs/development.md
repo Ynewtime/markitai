@@ -45,8 +45,8 @@ compares with another branch) can affect: with nextest, the tests of the
 changed crates and of every crate depending on them (all crates when
 `Cargo.toml`, `Cargo.lock` or `vendor/` changed; none for workbench sources or
 scripts alone), clippy and formatting when a crate changed, and all helper tests. Run the full gate before a merge or
-a release. The CLI's integration tests build as one binary
-(`crates/markitai-cli/tests/integration.rs` lists the CLI's test files).
+a release. The CLI's integration tests build as two binaries: `update` and
+`integration` (`crates/markitai-cli/tests/integration.rs` lists the other test files).
 Build the optimized CLI separately:
 
 ```sh

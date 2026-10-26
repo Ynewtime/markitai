@@ -3,8 +3,14 @@
 //!
 //! The debug build counts as a source build (it never checks); these tests
 //! make it pose as a release with `MARKITAI_TEST_UPDATE_AS`.
-use crate::console;
-use crate::interrupt;
+// A binary of its own: these tests download and restart a ~100 MB debug
+// program, and among every other CLI test in one process they failed on Windows.
+#[path = "support/console.rs"]
+mod console;
+#[path = "support/interrupt.rs"]
+mod interrupt;
+#[path = "../../markitai-core/src/subscription/no_runtimes.rs"]
+mod no_runtimes;
 
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -19,7 +25,8 @@ use std::time::{Duration, Instant};
 /// latest version, `/releases/download/v<version>/<asset>` serves the files.
 struct Releases {
     port: u16,
-    assets: Arc<Mutex<HashMap<String, Vec<u8>>>>,
+    /// Shared, not copied per request: a Windows release holds the ~100 MB debug program.
+    assets: Arc<Mutex<HashMap<String, Arc<Vec<u8>>>>>,
     latest: Arc<Mutex<String>>,
     /// Milliseconds every answer waits; `u64::MAX` never answers.
     stall: Arc<Mutex<u64>>,
@@ -67,10 +74,10 @@ impl Releases {
     }
 
     fn put(&self, version: &str, name: &str, bytes: Vec<u8>) {
-        self.assets
-            .lock()
-            .unwrap()
-            .insert(format!("/releases/download/v{version}/{name}"), bytes);
+        self.assets.lock().unwrap().insert(
+            format!("/releases/download/v{version}/{name}"),
+            Arc::new(bytes),
+        );
     }
 
     /// A release whose archive holds `program` as `markitai`; `corrupt`
@@ -153,7 +160,7 @@ impl Releases {
 
 fn answer(
     stream: TcpStream,
-    assets: &Mutex<HashMap<String, Vec<u8>>>,
+    assets: &Mutex<HashMap<String, Arc<Vec<u8>>>>,
     latest: &Mutex<String>,
     seen: &Mutex<Vec<String>>,
 ) {
@@ -181,21 +188,28 @@ fn answer(
             format!(
                 "HTTP/1.1 302 Found\r\nlocation: https://github.com/Ynewtime/markitai/releases/download/v{version}/{asset}\r\ncontent-length: 0\r\n"
             ),
-            Vec::new(),
+            Arc::default(),
         )
-    } else if let Some(bytes) = assets.lock().unwrap().get(&path) {
+    } else if let Some(bytes) = assets.lock().unwrap().get(&path).cloned() {
         (
             format!("HTTP/1.1 200 OK\r\ncontent-length: {}\r\n", bytes.len()),
-            bytes.clone(),
+            bytes,
         )
     } else {
         (
             "HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\n".into(),
-            Vec::new(),
+            Arc::default(),
         )
     };
     let _ = stream.write_all(format!("{head}connection: close\r\n\r\n").as_bytes());
-    let _ = stream.write_all(&body);
+    // In pieces: Windows locks a send's whole buffer in kernel memory, and one
+    // send of a ~100 MB program can fail (WSAENOBUFS) when memory is short,
+    // which the client sees as a cut connection.
+    for piece in body.chunks(64 * 1024) {
+        if stream.write_all(piece).is_err() {
+            break;
+        }
+    }
 }
 
 fn target() -> &'static str {
