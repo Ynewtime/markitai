@@ -140,7 +140,8 @@ files wait on Convert); typing URLs is Convert's job.
   what could not be deleted. Items still converting cannot be checked.
   **Re-convert…** takes the checked items back to Convert with their originals
   staged and the options open, filled with the items' own options when they share
-  them, so they can be converted again with other options
+  them, so they can be converted again with other options. These options belong to
+  that batch: the Convert page's own choices are back once it is sent or its input cleared
   (LLM enhancement included: with no model set up, an inline note and a notice
   say so and where to add one); Convert then records a new submission and leaves the
   first results as they were. Each kept upload is read back through the item's

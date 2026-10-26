@@ -362,6 +362,14 @@ export function composerFromOptions(options: JobOptions, table: PresetTable = BU
   };
 }
 
+/** Re-convert…'s own composer for its batch: the items' options when they all share them, else a
+ * copy of the composer's. The composer is left as it is, so the Convert page keeps its choices. */
+export function reconvertComposer(own: JobOptions[], composer: Composer, table: PresetTable = BUILTIN_PRESETS): Composer {
+  const [first] = own;
+  if (first && own.every((options) => JSON.stringify(options) === JSON.stringify(first))) return composerFromOptions(first, table);
+  return { ...composer, advanced: { ...composer.advanced } };
+}
+
 /** The defaults the composer's choices would save; null while they name Cloudflare (it asks each time). */
 export function defaultsOf(state: Composer, table: PresetTable = BUILTIN_PRESETS): ConvertDefaults | null {
   const a = state.advanced;

@@ -38,7 +38,7 @@ import { download } from "./lib/download.ts";
 import { addStaged, oversized, removeStaged, type StagedSubmission, type Walked } from "./lib/files.ts";
 import { basename, displayName, fmtBytes } from "./lib/format.ts";
 import { useConvertDefaults } from "./hooks/use-convert-defaults.ts";
-import { composerFromOptions, initialComposer, publicOptions, readRemembered, remember, resolveOptions, withOcrFor, type Composer } from "./lib/options.ts";
+import { initialComposer, publicOptions, readRemembered, reconvertComposer, remember, resolveOptions, withOcrFor, type Composer } from "./lib/options.ts";
 import { prepareRetryBatch, retryBatchAnnouncement, submitRetryBatch } from "./lib/retry-batch.ts";
 import { ADMIN_SECTIONS, DIALOG_ENTRY, entryOnly, listEntry, listQuery, ONLY_ENTRY, OPEN_MODE, parseListState, parseRoute, routePath, SUMMARY_ENTRY, type PaneMode, type Route, type Section } from "./lib/route.ts";
 import { canRetry, waitingJobs, type SessionItem } from "./lib/session.ts";
@@ -152,17 +152,31 @@ export function App() {
 
   // ---- composer options: v1.17 backends give their defaults (below); older ones, the last choice in this browser
   const [composer, setComposer] = useState<Composer>(() => initialComposer(readRemembered()));
+  // Re-convert…'s sheet works on a copy of its own until that batch is sent (or its input is
+  // emptied); the Convert page's choices stay as they were.
+  const [batchComposer, setBatchComposer] = useState<Composer | null>(null);
   const serverDefaults = features?.convert_defaults === true;
   useEffect(() => {
     if (caps !== null && !serverDefaults) remember(composer);
   }, [composer, caps, serverDefaults]);
   useEffect(() => {
     // Also after the server's defaults arrive: a default that asks for a model waits for one.
-    if (caps !== null && !caps.llm.routable) setComposer((state) => (state.llm || state.preset !== "minimal" ? { ...state, preset: "minimal", llm: false } : state));
-  }, [caps, composer.llm, composer.preset]);
+    const clamp = (state: Composer) => (state.llm || state.preset !== "minimal" ? { ...state, preset: "minimal" as const, llm: false } : state);
+    if (caps !== null && !caps.llm.routable) {
+      setComposer(clamp);
+      setBatchComposer((state) => state && clamp(state));
+    }
+  }, [caps, composer.llm, composer.preset, batchComposer?.llm, batchComposer?.preset]);
   const options = useMemo(() => resolveOptions(composer, presets), [composer, presets]);
   const optionsRef = useRef(options);
   optionsRef.current = options;
+  const batchRef = useRef(batchComposer);
+  batchRef.current = batchComposer;
+  const shownComposer = batchComposer ?? composer;
+  const setShownComposer = useCallback((next: Composer) => (batchRef.current !== null ? setBatchComposer(next) : setComposer(next)), []);
+  const sendOptions = useMemo(() => (batchComposer !== null ? resolveOptions(batchComposer, presets) : options), [batchComposer, options, presets]);
+  const sendOptionsRef = useRef(sendOptions);
+  sendOptionsRef.current = sendOptions;
 
   /** Text for any failure, in the interface language; the service's wording stays as detail. */
   const describe = useCallback((error: unknown): { text: string; detail: string } => {
@@ -186,7 +200,7 @@ export function App() {
       toast({ id: "defaults-saved", tone: "success", text: removed ? dicts[localeRef.current].defaultsFollowServer : view.scope === "user" ? dicts[localeRef.current].defaultsSavedOwn : dicts[localeRef.current].defaultsSavedServer }),
     [],
   );
-  const defaults = useConvertDefaults({ enabled: serverDefaults, composer, setComposer, presets, describe, onSaved: onDefaultsSaved });
+  const defaults = useConvertDefaults({ enabled: serverDefaults, composer: shownComposer, setComposer: setShownComposer, presets, describe, onSaved: onDefaultsSaved });
 
   const conversions = useConversions(
     features,
@@ -294,6 +308,10 @@ export function App() {
   urlTextRef.current = urlText;
   const urls = useMemo(() => parseUrls(urlText).urls, [urlText]);
   const [staged, setStaged] = useState<StagedSubmission | null>(null);
+  // Re-convert…'s copy goes with its input: emptied, the Convert page's own choices show again.
+  useEffect(() => {
+    if (!staged?.files.length && !urlText.trim()) setBatchComposer(null);
+  }, [staged, urlText]);
   const [pickedAt, setPickedAt] = useState(0);
   const controllers = useRef(new Set<AbortController>());
   const [upload, setUpload] = useState<Upload | null>(null);
@@ -313,7 +331,7 @@ export function App() {
       if (sending.current) return false;
       sending.current = true;
       try {
-        const authorized = await authorize(optionsRef.current, [
+        const authorized = await authorize(sendOptionsRef.current, [
           ...files.map((file) => ({ name: file.name, kind: "file" as const })),
           ...list.map((name) => ({ name, kind: "url" as const })),
         ]);
@@ -344,6 +362,7 @@ export function App() {
         setSubmitting(controllers.current.size > 0);
         if (!controllers.current.size) setUpload(null);
         if (jobId !== null) {
+          setBatchComposer(null);
           // The new submission is selected in the list: one item, or its group.
           const count = files.length + list.length;
           setRoute({ view: "jobs" });
@@ -583,13 +602,8 @@ export function App() {
           const lines = text.split(/\r?\n/).filter((line) => line.trim());
           return [...lines, ...addresses.filter((address) => !lines.includes(address))].join("\n");
         });
-        // The options start from these items' own (when they share them), not from the composer's.
-        const own = items.map((item) => savedOptions(item));
-        const first = own[0];
-        if (first && own.every((options) => JSON.stringify(options) === JSON.stringify(first))) {
-          defaults.touch();
-          setComposer(composerFromOptions(first, presets));
-        }
+        // The sheet starts from these items' own options (when they share them), on a copy for this batch.
+        setBatchComposer(reconvertComposer(items.map((item) => savedOptions(item)), composer, presets));
         navigate({ view: "convert" });
         setOptionsRequest((value) => value + 1);
         const count = files.length + addresses.length;
@@ -607,7 +621,7 @@ export function App() {
         reconverting.current = false;
       }
     },
-    [maxItems, navigate, announce, note, llmReady, role, userModels, presets],
+    [maxItems, navigate, announce, note, llmReady, role, userModels, presets, composer],
   );
   const downloadArchive = useCallback(
     (path: string, name: string, key?: string) => {
@@ -770,7 +784,7 @@ export function App() {
   const composerPanel = (
     <OptionsPanel
       t={t}
-      state={composer}
+      state={shownComposer}
       presets={presets}
       llmReady={llmReady}
       needsModel={role === "user" && !userModels ? t.advNeedsModelAdmin : t.advNeedsModel}
@@ -790,8 +804,8 @@ export function App() {
       localOnly={role === "user"}
       defaults={defaults.control}
       onChange={(next) => {
-        defaults.touch();
-        setComposer(next);
+        if (batchRef.current === null) defaults.touch();
+        setShownComposer(next);
       }}
       onFiles={(files) => submitFiles(files)}
       onFolder={submitFolder}

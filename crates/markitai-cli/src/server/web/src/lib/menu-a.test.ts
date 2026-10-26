@@ -7,7 +7,7 @@ import test from "node:test";
 import { en } from "../i18n/en.ts";
 import { ja } from "../i18n/ja.ts";
 import { zh } from "../i18n/zh.ts";
-import { BUILTIN_PRESETS, composerFromOptions, emptyOptions, resolveOptions } from "./options.ts";
+import { BUILTIN_PRESETS, composerFromOptions, emptyOptions, initialComposer, readRemembered, reconvertComposer, resolveOptions } from "./options.ts";
 
 const read = (relative: string) => readFileSync(new URL(relative, import.meta.url), "utf8");
 const inspector = read("../components/inspector.tsx");
@@ -63,7 +63,7 @@ test("one zip wording, ellipses only before a dialog, short labels in every lang
 
 test("Re-convert… starts from the document's own options", () => {
   const app = read("../app.tsx");
-  assert.match(app, /setComposer\(composerFromOptions\(first, presets\)\)/);
+  assert.match(app, /setBatchComposer\(reconvertComposer\(items\.map\(\(item\) => savedOptions\(item\)\), composer, presets\)\)/);
   const cases = [
     { ...emptyOptions(), preset: "minimal", llm: false, ocr: true, alt: false, desc: false, screenshot: false, strategy: "static" as const, profile: "rag" as const },
     { ...emptyOptions(), preset: "standard", llm: true, ocr: false, alt: true, desc: false, screenshot: true, format: "json" as const },
@@ -81,4 +81,29 @@ test("Re-convert… starts from the document's own options", () => {
   const named = composerFromOptions({ ...emptyOptions(), preset: "house", llm: true, alt: true, desc: true, screenshot: false }, BUILTIN_PRESETS);
   assert.equal(named.preset, "standard");
   assert.equal(resolveOptions(named).llm, true);
+});
+
+test("Re-convert… leaves the Convert page's options as they were: its sheet works on a copy for that batch", () => {
+  const composer = { ...initialComposer(readRemembered(null)), preset: "minimal" as const, llm: false, ocr: false };
+  const before = structuredClone(composer);
+  const own = { ...emptyOptions(), preset: "rich", llm: true, ocr: true, alt: true, desc: true, screenshot: true, no_cache: true };
+  // Shared options: the copy starts from them.
+  const copy = reconvertComposer([own, { ...own }], composer, BUILTIN_PRESETS);
+  assert.equal(copy.preset, "rich");
+  assert.equal(resolveOptions(copy).ocr, true);
+  assert.deepEqual(composer, before);
+  // Different options: a copy of the composer's, not the composer itself, so changing it in the sheet changes nothing else.
+  const mixed = reconvertComposer([own, { ...own, ocr: false }], composer, BUILTIN_PRESETS);
+  assert.deepEqual(mixed, composer);
+  assert.notEqual(mixed, composer);
+  assert.notEqual(mixed.advanced, composer.advanced);
+  mixed.advanced.textOnly = true;
+  assert.deepEqual(composer, before);
+  // The app sends the copy, shows it in the sheet, and only Convert-page choices touch the composer.
+  const app = read("../app.tsx");
+  const reconvert = app.slice(app.indexOf("const reconvert = useCallback("), app.indexOf("const downloadArchive = useCallback("));
+  assert.ok(!reconvert.includes("setComposer("), "Re-convert sets the Convert page's composer");
+  assert.match(app, /authorize\(sendOptionsRef\.current,/);
+  assert.match(app, /state=\{shownComposer\}/);
+  assert.match(app, /if \(jobId !== null\) \{\s*setBatchComposer\(null\);/);
 });
