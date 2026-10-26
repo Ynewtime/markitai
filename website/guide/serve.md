@@ -69,7 +69,7 @@ The token URL is a credential. Whoever holds it can run conversions with your LL
 |-------|--------------|
 | **Convert** | Paste URLs (one per line), drop files or a folder, or **Upload**. Nothing is sent before **Convert**. A `.urls` file is a list of URLs, as on the command line |
 | **Options** | A dialog (a sheet from the bottom on a phone): Preset, Enhance (LLM, OCR and its language), Images, Output (profile, [document JSON](/guide/cli#format)), Advanced (URL, Files, Pages, Other), and the equivalent command line to copy. A dot on **Options** means the choices differ from the defaults; **Save as default** stores them |
-| **Conversions** | Every item, grouped by submission, live. Filter by name, Failed or Notices; check rows to delete or **Re-convert** several; **Stop remaining** stops what has not started; "⋯" has **Retry failed** and **Download all** |
+| **Conversions** | Every item, grouped by submission, live. Filter by name, Failed or Notices; check rows to **Re-convert…** or delete several; **Stop remaining** stops what has not started; "⋯" has **Download all .zip** and **Retry failed** |
 | **Conversion window** | Click an item: **Preview** (Rendered with tables, math and diagrams, Source, Files, Diff), **Compare** (the original beside the Markdown, with matching parts outlined), **Details** (status, sizes, models, cost, the request options as a command line, notices, the result's start) |
 | **Settings** | Appearance and language, Models, Access token, Edit config |
 
@@ -115,7 +115,6 @@ stateDiagram-v2
   Running --> Failed
   Failed --> Queued: Retry
   Stopped --> Queued: Retry
-  Done --> Queued: Run again, Enhance
   Done --> [*]: 7 days later
 ```
 

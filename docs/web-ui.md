@@ -105,7 +105,7 @@ skipped, `https://example.com/report  Report` naming the output).
 **Conversions** (`/jobs`) states what the list adds up to ("18 of 21 converted,
 3 failed.", with Summary for the notices and failures of everything listed)
 beside Stop remaining (while original items wait for a slot), New conversion
-(to Convert) and "⋯" (Retry failed (N), Download all), then the filters: a name
+(to Convert) and "⋯" (Download all .zip, Retry failed (N)), then the filters: a name
 filter and All / Failed / Notices with their counts. Below sits the list at the
 page's width. Dropping files anywhere still converts them (a folder or several
 files wait on Convert); typing URLs is Convert's job.
@@ -132,18 +132,20 @@ files wait on Convert); typing URLs is Convert's job.
   and the tab list (a folded submission's items too), or clears once all of them
   are checked, like the bar's Select all and Clear. A bar at the
   bottom of the window then says how many are checked, with Select all, Clear,
-  Delete and, to its right, Re-convert (below); Delete asks first ("Delete 3 conversions? Their Markdown, pictures and
+  Re-convert… (below) and, last, Delete, which asks first ("Delete 3 conversions? Their Markdown, pictures and
   kept originals are deleted too.") and one notice reports the result, naming
   what could not be deleted. Items still converting cannot be checked.
-  **Re-convert** takes the checked items back to Convert with their originals
-  staged and the options open, so they can be converted again with other options
+  **Re-convert…** takes the checked items back to Convert with their originals
+  staged and the options open, filled with the items' own options when they share
+  them, so they can be converted again with other options
   (LLM enhancement included: with no model set up, an inline note and a notice
   say so and where to add one); Convert then records a new submission and leaves the
   first results as they were. Each kept upload is read back through the item's
   original route (`GET …/original`, then its `download`), a URL item is added
   by its address, and an original that is no longer kept (a CLI-recorded job, a
   removed upload) is named in a notice and left out. A conversion's "⋯" menu
-  has the same Re-convert for that one item. On a
+  has the same Re-convert… for that one item (it replaces Enhance with LLM and Run
+  again: LLM is one switch in the options). On a
   phone the boxes appear in Select mode (beside the filters; a tap then checks a
   row, Done leaves). The server deletes them in one request
   (`POST /api/history/delete`), or, on a backend without it, the page asks for
@@ -159,11 +161,12 @@ files wait on Convert); typing URLs is Convert's job.
   position (`8 of 14`), the name (all on one centre line with the buttons; a
   long name gives up its middle at about 34 characters and shows in full on
   hover), the actions that matter (Download, which saves the Markdown, with a
-  caret listing Markdown .md, JSON .json (`…/document`, when the backend reports
-  `features.document_json`), All files .zip and Choose files…, which opens
-  Preview's Files; Retry,
-  Add a model or Enable OCR and retry when that is the fix) and "⋯" (Enhance
-  with LLM, Run again, Re-convert, Retry without LLM, Delete), then Preview, Compare and
+  caret listing Markdown .md, PDF… (on Preview and Compare, below), JSON .json
+  (`…/document`, when the backend reports `features.document_json`), All files
+  .zip and View file list, which opens Preview's Files; Retry,
+  Add a model or Enable OCR and retry when that is the fix) and "⋯" (Copy
+  Markdown and Open the page, then Re-convert… and Retry without LLM, then Delete,
+  each group under a hairline), then Preview, Compare and
   Details as tabs; a conversion opens on Preview (a submission, or a
   conversion without a result, on Details; one just submitted shows Details while
   it converts and turns to Preview when it is done, or stays on Details if it
@@ -213,7 +216,7 @@ files wait on Convert); typing URLs is Convert's job.
   A model answer that was requested again and then used is
   no notice (the terminal shows it with `-v`; the cost counts both requests). A
   submission's window shows its progress as one bar (done, failed, stopped,
-  converting, waiting) with Retry failed, Download .zip, Stop remaining and Delete,
+  converting, waiting) with Retry failed, Download all .zip, Stop remaining and Delete,
   the cost, its failures and the notices of all its items (each notice names the
   items it covers, the first three as buttons that open that item and "+N more" for
   the rest; Show item opens the one item, and Show items closes the window and narrows
@@ -241,12 +244,12 @@ files wait on Convert); typing URLs is Convert's job.
   the converted Markdown is kept: it left out or changed too much of the document,
   or (Python's page drift guard) it did not match the document page by page. Each keeps its full original text behind Details.
 
-**Preview** is the window's first tab; its "⋯" adds Copy and Export PDF…,
-which opens a small card with the one choice it asks (Markitai's own header and
+**Preview** is the window's first tab; it adds Copy Markdown to "⋯" and PDF…
+to Download, which opens a small card with the one choice it asks (Markitai's own header and
 footer, explained under it) and Print…, and Open the page for a URL (on Compare
 the page opens from the Original header instead, so it is offered once). **Files** lists the original first (the upload, or the page as the server
 fetched it), then every file of the result, each with its own download, their
-count and size, and Download all (.zip) at the bottom right: one ZIP of the
+count and size, and Download all .zip at the bottom right: one ZIP of the
 item's files and its original (servers without the item ZIP zip a one-item
 submission's job instead, without the original, and offer nothing for an item of
 a larger submission). The window has one fixed
@@ -394,8 +397,9 @@ outline never moves the text. An original that cannot be shown (a DOCX, a page t
 keep) says why and offers its download.
 
 **On phones** the window fills the screen, over the tab bar: back, previous and
-next, and "⋯" (Download's formats and every other action, Copy and Export PDF on
-Preview), the name on a row of its own below them, then the same three tabs. While items wait, Stop remaining
+next, and "⋯" (the same groups in the same order: Download, under a small
+caption, with its formats and View file list, then Copy Markdown, Re-convert…
+and Delete), the name on a row of its own below them, then the same three tabs. While items wait, Stop remaining
 stays a button in the header, since the window covers the list's own: a
 submission's window stops that submission, an item's window the submission it
 belongs to, and Summary everything listed; Compare places the original above the
@@ -576,7 +580,7 @@ when the config editor or a dialog holds edits) and says the new version, with i
   missing OCR, size limits). The service's full wording stays behind Details.
   Provider probe and discovery phrases are translated the same way. A job whose
   history could not be saved (`persistence_error`) reports it in the page.
-- **A failed action on one conversion** (Retry, Delete, Download, Enhance, Copy;
+- **A failed action on one conversion** (Retry, Delete, Download, Copy;
   for a submission Retry failed, Stop, ZIP and Delete) is an error toast: a red ✕,
   one sentence, the service's wording under Details. It stays until it is closed
   or the action is tried again, and the alert live region reads it.
@@ -789,10 +793,9 @@ the dialog says so instead of implying they will be sent. Cancel leaves the
 sources and existing results in place. The service can still refuse a request
 because of its remote-processing policy or configuration.
 
-Retry, Enhance with LLM and Retry all failed each ask again when their effective
+Retry and Retry all failed each ask again when their effective
 options select Cloudflare. They use each item's saved options, falling back to
-the job's options only for older history; Enhance also reconverts the original
-input. Neither history nor browser storage remembers permission. The API's
+the job's options only for older history. Neither history nor browser storage remembers permission. The API's
 [request authorization](serve.md#cloudflare-request-authorization) is explicit
 and applies equally to new jobs and reruns.
 

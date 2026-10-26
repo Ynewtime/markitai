@@ -59,11 +59,11 @@ On a phone, tap **Select** first; **Stop remaining** sits in the header of the f
 **Conversion window.** Click an item or press Enter on it.
 
 - The header's arrows or ↑/↓ move between items; the expand button (or **F**) fills the browser and back, remembered per browser.
-- The header has **Download** (the Markdown; its caret offers JSON, all files as a .zip, or Choose files…) and, when it is the fix, **Retry**, **Add a model** or **Enable OCR and retry**; "⋯" holds **Enhance with LLM**, **Run again**, **Re-convert**, **Retry without LLM** and Delete.
+- The header has **Download** (the Markdown; its caret offers Markdown, PDF…, JSON, all files as a .zip and **View file list**) and, when it is the fix, **Retry**, **Add a model** or **Enable OCR and retry**; "⋯" holds **Copy Markdown**, **Re-convert…** (the options open with this conversion's own, LLM included; the result is a new submission), **Retry without LLM** and Delete. On a phone "⋯" lists the same, Download first.
 - **Show request options** (under the status line; your browser remembers whether it is open) shows the options as the equivalent command line, with a copy button, and the settings no flag sets (`image.format webp`) as chips: only what differs from the defaults, the server's configuration included. A conversion with LLM also saves the Markdown before LLM, so its command line carries `--keep-base`. The chips have no flag: to repeat the conversion exactly, set them in the configuration of wherever you run the line (or pass them with `--config-json`). Jobs from before 2.1.0 show the options their request named.
 - Details also shows how long the item is kept and the start of the result, **Rendered** or as **Source** (its first 12 lines, numbered, with the result's line count); clicking it opens Preview in the same view. A failed action shows an error that stays until you close it; a failed rerun that kept the earlier result says so in Details.
 
-**Preview.** "⋯" adds Copy and Export PDF with an optional header and footer. **Files** lists the original, then every result file, each with its own download, and **Download all (.zip)** of the result with its original.
+**Preview.** **PDF…** prints the document, with an optional header and footer. **Files** lists the original, then every result file, each with its own download, and **Download all .zip** of the result with its original.
 
 - Pictures at absolute `https://` addresses are drawn without a referrer; other addresses show a labelled placeholder.
 - A video written as a linked poster (`[![Video](poster)](https://…/clip.mp4)`; `.mp4`, `.m4v`, `.webm`, `.mov`, `.ogv`) plays in place. Nothing loads until you play it, and one that cannot play turns back into its link.
@@ -97,7 +97,7 @@ A web page in Compare:
 
 A model answer that was requested again and then used is not a notice: nothing is missing, and the cost counts both requests.
 
-**Downloads.** A single file, a submission's zip, or everything with **Download all** in the Conversions "⋯".
+**Downloads.** A single file, a submission's zip, or everything with **Download all .zip** in the Conversions "⋯".
 
 ## LLM Settings Rules
 
