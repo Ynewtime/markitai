@@ -7,11 +7,11 @@ Hash checks do not establish the legal sufficiency of a distribution.
 import hashlib
 import io
 import json
+import os
 from pathlib import Path, PurePosixPath
 import re
 import stat
 import tarfile
-import tempfile
 
 MAX_FILE = 16 * 1024 * 1024
 MAX_TOTAL = 32 * 1024 * 1024
@@ -50,6 +50,52 @@ def _read(root, name, expected=None):
     if not stat.S_ISREG(path.lstat().st_mode) or path.stat().st_size > MAX_FILE:
         raise RuntimeError("License evidence must be a bounded regular file")
     with path.open("rb") as stream:
+        raw = stream.read(MAX_FILE + 1)
+    if len(raw) > MAX_FILE:
+        raise RuntimeError("License evidence file exceeds its bound")
+    if expected is not None:
+        size, digest = expected.get("bytes"), expected.get("sha256")
+        if type(size) is not int or size < 0 or not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise RuntimeError("Invalid license evidence identity")
+        if len(raw) != size or hashlib.sha256(raw).hexdigest() != digest:
+            raise RuntimeError("License evidence byte identity differs")
+    return raw
+
+
+def _listing(root):
+    """`{relative posix path: (path, size)}` for every file under `root`, from one walk.
+
+    Symlinks and special files fail before anything is read. On Windows the
+    type and size come with the directory listing, so no file is opened for
+    its metadata (each stat there opens the file).
+    """
+    if root.is_symlink() or not root.is_dir():
+        raise RuntimeError("License evidence root must be a real directory")
+    files, pending, seen = {}, [(root, "")], 0
+    while pending:
+        directory, prefix = pending.pop()
+        with os.scandir(directory) as entries:
+            for entry in entries:
+                seen += 1
+                # A Windows junction redirects like a symlink (Python 3.12+ names it).
+                if seen > MAX_FILES * 4 or entry.is_symlink() or getattr(entry, "is_junction", bool)():
+                    raise RuntimeError("License evidence must not contain symlinks or excessive entries")
+                name = prefix + entry.name
+                if entry.is_dir(follow_symlinks=False):
+                    pending.append((entry.path, name + "/"))
+                elif entry.is_file(follow_symlinks=False):
+                    files[name] = (Path(entry.path), entry.stat(follow_symlinks=False).st_size)
+                else:
+                    raise RuntimeError("License evidence contains a special file")
+    return files
+
+
+def _read_listed(files, name, expected=None):
+    """`_read` for a file `_listing` found: bounded, then checked against `expected`."""
+    listed = files.get(str(_relative(name)))
+    if listed is None or listed[1] > MAX_FILE:
+        raise RuntimeError("License evidence must be a bounded regular file")
+    with listed[0].open("rb") as stream:
         raw = stream.read(MAX_FILE + 1)
     if len(raw) > MAX_FILE:
         raise RuntimeError("License evidence file exceeds its bound")
@@ -261,6 +307,37 @@ def _historical_terms(asset, entry, data, recorded, repo, commit):
     return raw
 
 
+# Members of reviewed source archives by the archive's SHA-256: the bytes were
+# checked against the reviewed digest before parsing, so a digest names one
+# parse. Repeated staging in one process (tests, packaging) unpacks each once.
+_PARSED_ARCHIVES = {}
+
+
+def _archive_members(raw, label, limit):
+    """`{member name: bytes}` of a reviewed .crate, bounded; never extracts paths."""
+    key = (hashlib.sha256(raw).hexdigest(), label, limit)
+    if key in _PARSED_ARCHIVES:
+        return dict(_PARSED_ARCHIVES[key])
+    # Fixed compressed digest bounds all archive members. Never extract paths.
+    members, total = {}, 0
+    with tarfile.open(fileobj=io.BytesIO(raw), mode="r:gz") as archive:
+        for member in archive:
+            name = str(_relative(member.name))
+            if (not member.isreg() or not name.startswith(label + "/")
+                    or name in members or len(members) >= limit
+                    or not 0 <= member.size <= MAX_FILE):
+                raise RuntimeError("Source archive has unreviewed members")
+            total += member.size
+            if total > MAX_TOTAL:
+                raise RuntimeError("Source archive exceeds its bound")
+            body = archive.extractfile(member).read(MAX_FILE + 1)
+            if len(body) != member.size:
+                raise RuntimeError("Source archive member size differs")
+            members[name] = body
+    _PARSED_ARCHIVES[key] = dict(members)
+    return members
+
+
 def _source_archives(manifest, data, recorded):
     records = manifest.get("source_archives", [])
     if type(records) is not list or len(records) > len(_SOURCE_PACKAGES):
@@ -277,22 +354,7 @@ def _source_archives(manifest, data, recorded):
                 or row.get("source_url") != f"https://static.crates.io/crates/{row.get('package')}/{label}.crate"
                 or hashlib.sha256(raw).hexdigest() != reviewed["sha256"]):
             raise RuntimeError("Source archive is not the reviewed exact package")
-        # Fixed compressed digest bounds all archive members. Never extract paths.
-        members, total = {}, 0
-        with tarfile.open(fileobj=io.BytesIO(raw), mode="r:gz") as archive:
-            for member in archive:
-                name = str(_relative(member.name))
-                if (not member.isreg() or not name.startswith(label + "/")
-                        or name in members or len(members) >= reviewed["members"]
-                        or not 0 <= member.size <= MAX_FILE):
-                    raise RuntimeError("Source archive has unreviewed members")
-                total += member.size
-                if total > MAX_TOTAL:
-                    raise RuntimeError("Source archive exceeds its bound")
-                body = archive.extractfile(member).read(MAX_FILE + 1)
-                if len(body) != member.size:
-                    raise RuntimeError("Source archive member size differs")
-                members[name] = body
+        members = _archive_members(raw, label, reviewed["members"])
         original = f"local-evidence/{label}/"
         if (len(members) != reviewed["members"]
                 or any(members.get(label + "/" + name) != data.get(original + name)
@@ -340,10 +402,24 @@ def stage_overlay(source, destination, packages):
     Missing optional overlays leave the original source-only collector intact.
     A present but corrupt overlay fails closed before any evidence is copied.
     """
+    destination = Path(destination)
+    result, data = _verified_overlay(source, destination, packages)
+    for name, raw in sorted(data.items()):
+        target = destination / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.open("xb") as stream:
+            stream.write(raw)
+    return result
+
+
+def _verified_overlay(source, destination, packages):
+    """`stage_overlay`'s records and the verified files it copies, `{relative path: bytes}`."""
     source, destination = Path(source), Path(destination)
     if not source.exists() and not source.is_symlink():
-        return {"packages": {}, "record": {"status": "absent"}}
-    raw_inventory = _read(source, "inventory.json")
+        return {"packages": {}, "record": {"status": "absent"}}, {}
+    # One walk lists the tree; no symlink or special file anywhere in it is read.
+    files = _listing(source)
+    raw_inventory = _read_listed(files, "inventory.json")
     inventory = _json(raw_inventory)
     if inventory.get("schema") != 1 or type(inventory.get("files")) is not list or len(inventory["files"]) > MAX_FILES:
         raise RuntimeError("Invalid license evidence inventory")
@@ -352,20 +428,12 @@ def stage_overlay(source, destination, packages):
         name = str(_relative(entry["path"]))
         if name in data or name == "inventory.json":
             raise RuntimeError("Duplicate or recursive license evidence inventory")
-        data[name] = _read(source, name, entry)
+        data[name] = _read_listed(files, name, entry)
         identities[name] = {"bytes": entry["bytes"], "sha256": entry["sha256"]}
         total += len(data[name])
         if total > MAX_TOTAL:
             raise RuntimeError("License evidence total exceeds its bound")
-    observed = set()
-    for index, path in enumerate(source.rglob("*")):
-        if index > MAX_FILES * 4 or path.is_symlink():
-            raise RuntimeError("Unexpected or excessive license evidence entries")
-        if path.is_file():
-            observed.add(path.relative_to(source).as_posix())
-        elif not path.is_dir():
-            raise RuntimeError("License evidence contains a special file")
-    if observed != set(data) | {"inventory.json"}:
+    if set(files) != set(data) | {"inventory.json"}:
         raise RuntimeError("License evidence inventory is not exact")
 
     def recorded(entry):
@@ -533,11 +601,6 @@ def stage_overlay(source, destination, packages):
     # All provenance and classification checks precede copying. The caller's
     # clean-source checks also bind the inventory itself to the build revision.
     data["inventory.json"] = raw_inventory
-    for name, raw in sorted(data.items()):
-        target = destination / name
-        target.parent.mkdir(parents=True, exist_ok=True)
-        with target.open("xb") as stream:
-            stream.write(raw)
     return {"packages": matched, "record": {
         "status": "verified", "manifest": {"path": (destination / "manifest.json").relative_to(destination.parent.parent).as_posix(), **identities["manifest.json"]},
         "matched_packages": len(matched),
@@ -549,7 +612,7 @@ def stage_overlay(source, destination, packages):
         "legal_review": "not_performed",
         "source_archives": [{**row, "path": (destination / row["path"]).relative_to(destination.parent.parent).as_posix()} for row in source_archives],
         "archived_evidence_files": len(data),
-        "scope": "Reviewed exact-version declarations and full terms, including explicitly identified historical originals; byte provenance and delivery checks only, no legal review"}}
+        "scope": "Reviewed exact-version declarations and full terms, including explicitly identified historical originals; byte provenance and delivery checks only, no legal review"}}, data
 
 
 def upstream_files(root):
@@ -561,10 +624,9 @@ def upstream_files(root):
     source = Path(root) / "licenses/upstream"
     if not source.exists():
         raise RuntimeError("Required upstream attribution directory is unavailable")
-    with tempfile.TemporaryDirectory(prefix="markitai-upstream-notices-") as temporary:
-        destination = Path(temporary) / "package/licenses/upstream"
-        result = stage_overlay(source, destination, [])
-        if result["record"]["status"] != "verified":
-            raise RuntimeError("Upstream attribution did not validate")
-        return {"licenses/upstream/" + path.relative_to(destination).as_posix(): path.read_bytes()
-                for path in sorted(destination.rglob("*")) if path.is_file()}
+    # The verified bytes stage_overlay would copy, in the order of the copied
+    # tree's sorted paths; nothing is written and read back.
+    result, data = _verified_overlay(source, Path("package/licenses/upstream"), [])
+    if result["record"]["status"] != "verified":
+        raise RuntimeError("Upstream attribution did not validate")
+    return {"licenses/upstream/" + name: data[name] for name in sorted(data, key=Path)}
