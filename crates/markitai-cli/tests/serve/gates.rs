@@ -483,3 +483,56 @@ fn cloudflare_item_options_are_present_on_live_sse_items_without_consent() {
     server.done(&id);
     server.stop();
 }
+
+/// Sends a head and then all of `body` on one connection, and returns what the
+/// server answered. A write or read error means the server closed while bytes
+/// it never read were arriving: through a proxy that is a 502, not its answer.
+fn send_whole(port: u16, head: &str, body: &[u8]) -> String {
+    let mut socket = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    socket.set_read_timeout(Some(WAIT)).unwrap();
+    socket.set_write_timeout(Some(WAIT)).unwrap();
+    socket.write_all(head.as_bytes()).unwrap();
+    for chunk in body.chunks(64 * 1024) {
+        socket
+            .write_all(chunk)
+            .expect("the server stopped reading a refused upload");
+    }
+    let mut raw = Vec::new();
+    socket
+        .read_to_end(&mut raw)
+        .expect("the refusal ended in a reset");
+    String::from_utf8_lossy(&raw).into_owned()
+}
+
+#[test]
+fn a_refused_upload_is_read_to_its_end_so_a_proxy_relays_the_reason() {
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::start(temp.path());
+    let port = server.port;
+    // Larger than the system buffers hold: closing without reading would reset.
+    let body = vec![b'x'; 24 * 1024 * 1024];
+    let head = |length: usize| {
+        format!(
+            "POST /api/jobs HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nOrigin: http://elsewhere.example\r\n\
+             Content-Type: multipart/form-data; boundary=edge\r\nContent-Length: {length}\r\n\r\n"
+        )
+    };
+    let reply = send_whole(port, &head(body.len()), &body);
+    assert!(reply.starts_with("HTTP/1.1 403"), "{reply}");
+    assert!(reply.contains("origin_not_allowed"), "{reply}");
+    assert!(
+        reply.to_ascii_lowercase().contains("connection: close"),
+        "{reply}"
+    );
+
+    // A body declared over one upload's limit is not read: the answer comes at once.
+    let mut socket = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    socket.set_read_timeout(Some(WAIT)).unwrap();
+    socket
+        .write_all(head(200 * 1024 * 1024).as_bytes())
+        .unwrap();
+    socket.write_all(&body[..1024 * 1024]).unwrap();
+    let mut first = [0; 12];
+    socket.read_exact(&mut first).unwrap();
+    assert_eq!(&first, b"HTTP/1.1 403");
+}
