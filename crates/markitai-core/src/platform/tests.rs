@@ -363,3 +363,69 @@ mod windows_paths {
         );
     }
 }
+
+#[test]
+fn restricting_to_the_owner_keeps_the_file_readable_by_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("secret");
+    std::fs::write(&path, "s").unwrap();
+    restrict_to_owner(&path).unwrap();
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "s");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+    // One entry (this user), nothing inherited from the folder.
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        use std::ptr::null_mut;
+        use windows_sys::Win32::Foundation::LocalFree;
+        use windows_sys::Win32::Security::Authorization::{GetNamedSecurityInfoW, SE_FILE_OBJECT};
+        use windows_sys::Win32::Security::{
+            ACL, ACL_SIZE_INFORMATION, AclSizeInformation, DACL_SECURITY_INFORMATION,
+            GetAclInformation, GetSecurityDescriptorControl, PSECURITY_DESCRIPTOR,
+            SE_DACL_PROTECTED,
+        };
+        let wide: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
+        let mut dacl: *mut ACL = null_mut();
+        let mut descriptor: PSECURITY_DESCRIPTOR = null_mut();
+        // SAFETY: a NUL-terminated path and valid out pointers; the
+        // descriptor is freed below, after the DACL inside it was read.
+        unsafe {
+            assert_eq!(
+                GetNamedSecurityInfoW(
+                    wide.as_ptr(),
+                    SE_FILE_OBJECT,
+                    DACL_SECURITY_INFORMATION,
+                    null_mut(),
+                    null_mut(),
+                    &mut dacl,
+                    null_mut(),
+                    &mut descriptor,
+                ),
+                0
+            );
+            let mut size = std::mem::zeroed::<ACL_SIZE_INFORMATION>();
+            assert_ne!(
+                GetAclInformation(
+                    dacl,
+                    (&mut size as *mut ACL_SIZE_INFORMATION).cast(),
+                    std::mem::size_of::<ACL_SIZE_INFORMATION>() as u32,
+                    AclSizeInformation,
+                ),
+                0
+            );
+            let (mut control, mut revision) = (0u16, 0u32);
+            assert_ne!(
+                GetSecurityDescriptorControl(descriptor, &mut control, &mut revision),
+                0
+            );
+            LocalFree(descriptor);
+            assert_eq!(size.AceCount, 1);
+            assert_ne!(control & SE_DACL_PROTECTED, 0);
+        }
+    }
+}

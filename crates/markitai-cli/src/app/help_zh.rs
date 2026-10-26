@@ -98,7 +98,8 @@ fn rewrite(
     let usage_line = if width < 60 {
         "\n  {usage}"
     } else {
-        " {usage}"
+        // The full-width colon carries its own space.
+        "{usage}"
     };
     let summary_width = width
         .saturating_sub(
@@ -113,7 +114,7 @@ fn rewrite(
         .term_width(width)
         .subcommand_help_heading("命令")
         .help_template(format!(
-            "{{before-help}}{{about-with-newline}}\n{usage}用法:{usage:#}{usage_line}\n\n{{all-args}}{{after-help}}"
+            "{{before-help}}{{about-with-newline}}\n{usage}用法：{usage:#}{usage_line}\n\n{{all-args}}{{after-help}}"
         ));
     for child in command.get_subcommands_mut() {
         let built = reference
@@ -122,6 +123,44 @@ fn rewrite(
         *child = rewrite(std::mem::take(child), built, width, summary_width);
     }
     command
+}
+
+/// Clap writes each section heading as `name:` on a line of its own (styled
+/// or not), always with an ASCII colon. Chinese help gives a heading that
+/// holds Chinese the full-width one; English text passes through unchanged.
+pub(super) fn full_width_headings(help: &str) -> String {
+    help.split_inclusive('\n')
+        .map(|line| {
+            let body = line.trim_end_matches('\n');
+            let visible = without_styles(body);
+            let heading = !visible.starts_with(char::is_whitespace)
+                && visible.ends_with(':')
+                && !visible.is_ascii();
+            // Styles are `ESC [ … m` and hold no colon: the last one is the heading's.
+            match body.rfind(':').filter(|_| heading) {
+                Some(at) => format!("{}：{}", &line[..at], &line[at + 1..]),
+                None => line.to_owned(),
+            }
+        })
+        .collect()
+}
+
+/// `text` without its ANSI style sequences.
+fn without_styles(text: &str) -> String {
+    let mut plain = String::with_capacity(text.len());
+    let mut chars = text.chars();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' {
+            for c in chars.by_ref() {
+                if c.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+        } else {
+            plain.push(c);
+        }
+    }
+    plain
 }
 
 /// `-V, --version`, replacing clap's own flag.
@@ -259,19 +298,19 @@ fn describe(command: &str) -> Option<Description> {
         "init" => describe_with(
             "创建或更新配置文件，并写入检测到的 API 模型",
             "创建或更新配置文件，并写入检测到的 API 模型。\n\n从环境变量（MODEL 与各供应商的 API key）以及本机已登录的订阅运行时（Claude Code、Copilot、Codex）检测模型；对运行时只询问登录状态，不发出模型请求，也不保存 key 的值。生成的配置默认关闭 LLM 处理；需要时可在单次运行中加 --llm 启用，或执行 `markitai config set llm.enabled true`。",
-            "示例:\n  markitai init                选择保存位置，以及如何处理已有文件\n  markitai init -y             不提示，创建或更新用户配置\n  markitai init --local        为当前项目写入 ./markitai.json\n  markitai init -o cfg.json    写入自定义路径",
+            "示例：\n  markitai init                选择保存位置，以及如何处理已有文件\n  markitai init -y             不提示，创建或更新用户配置\n  markitai init --local        为当前项目写入 ./markitai.json\n  markitai init -o cfg.json    写入自定义路径",
         ),
         "doctor" => describe_with(
             "诊断已配置的工作流和可选的原生后端",
             "诊断已配置的工作流和可选的原生后端。\n\n缺少可选后端只会报告，不算失败。只有当配置要求了本机无法提供的能力时，退出状态才是 1：已启用的模型缺少凭据、配置的浏览器工作流无法启动、订阅运行时不可用，或 --fix 修复失败。不会发送模型请求，也不会打开远程页面。",
-            "示例:\n  markitai doctor           人类可读的报告\n  markitai doctor --json    机器可读的检查结果\n  markitai doctor --fix     安装缺少的浏览器，以及安装或修复本地 OCR 模型",
+            "示例：\n  markitai doctor           人类可读的报告\n  markitai doctor --json    机器可读的检查结果\n  markitai doctor --fix     安装缺少的浏览器，以及安装或修复本地 OCR 模型",
         ),
         "cache" => describe_with("查看或清理 LLM 与 URL 抓取缓存", "", CACHE_AFTER),
         "auth" => describe_with("查看订阅认证状态，或委托官方运行时完成登录", "", AUTH_AFTER),
         "serve" => describe_with(
             "运行原生 REST 转换服务和网页界面",
             "",
-            "示例:\n  markitai serve                          http://127.0.0.1:3600，并打开浏览器\n  markitai serve --port 8080 --no-open    换一个端口，不打开浏览器\n  markitai serve --host 0.0.0.0           局域网访问，需要启动时打印的访问令牌",
+            "示例：\n  markitai serve                          http://127.0.0.1:3600，并打开浏览器\n  markitai serve --port 8080 --no-open    换一个端口，不打开浏览器\n  markitai serve --host 0.0.0.0           局域网访问，需要启动时打印的访问令牌",
         ),
         "mcp" => describe_with(
             "通过标准输入/输出运行原生 MCP 服务",
@@ -281,67 +320,67 @@ fn describe(command: &str) -> Option<Description> {
         "update" => describe_with(
             "检查新版本并更新这份安装",
             "检查新版本并更新这份安装。\n\n安装脚本装的 markitai 会就地替换：先按发行版的 SHA256SUMS 校验归档，并在替换任何文件前试启动一次新程序；任何一步失败都会全部恢复。其他安装方式（uv、pipx、pip、cargo、包管理器）给出更新它们的命令。正在运行的 markitai serve 会询问是否重启到新版本。退出状态：0 已是最新或已更新，10 有新版本但未在这里安装，1 失败，130 被中断。",
-            "示例:\n  markitai update                  安装最新版本\n  markitai update --check          只检查（有新版本时退出 10）\n  markitai update --check --json   以 JSON 输出结果\n  markitai update --version 2.0.1  安装指定版本",
+            "示例：\n  markitai update                  安装最新版本\n  markitai update --check          只检查（有新版本时退出 10）\n  markitai update --check --json   以 JSON 输出结果\n  markitai update --version 2.0.1  安装指定版本",
         ),
         "list" => describe_with(
             "显示生效的配置；密钥已脱敏",
             "",
-            "示例:\n  markitai config list               以 JSON 显示全部配置\n  markitai config list -f table      每行一项设置\n  markitai config list -f yaml       以 YAML 显示",
+            "示例：\n  markitai config list               以 JSON 显示全部配置\n  markitai config list -f table      每行一项设置\n  markitai config list -f yaml       以 YAML 显示",
         ),
         "path" => describe_with(
             "显示正在使用的配置文件",
             "",
-            "示例:\n  markitai config path                 正在使用的文件，或查找位置\n  markitai -c other.json config path   用 -c 指定的文件",
+            "示例：\n  markitai config path                 正在使用的文件，或查找位置\n  markitai -c other.json config path   用 -c 指定的文件",
         ),
         "validate" => describe_with(
             "按 schema 校验配置文件",
             "",
-            "示例:\n  markitai config validate                  校验正在使用的配置\n  markitai config validate ./markitai.json  校验指定文件",
+            "示例：\n  markitai config validate                  校验正在使用的配置\n  markitai config validate ./markitai.json  校验指定文件",
         ),
         "get" => describe_with(
             "输出单个配置值；配置段以 JSON 输出",
             "",
-            "示例:\n  markitai config get llm.enabled     读取单个值\n  markitai config get output          以 JSON 读取整个配置段",
+            "示例：\n  markitai config get llm.enabled     读取单个值\n  markitai config get output          以 JSON 读取整个配置段",
         ),
         "set" => describe_with(
             "校验并保存单个配置值；无效值不会写入",
             "",
-            "示例:\n  markitai config set output.on_conflict skip    永不替换已有结果\n  markitai config set output.dir ~/Documents/md  批处理默认写到这里\n  markitai config set llm.enabled true           启用模型处理",
+            "示例：\n  markitai config set output.on_conflict skip    永不替换已有结果\n  markitai config set output.dir ~/Documents/md  批处理默认写到这里\n  markitai config set llm.enabled true           启用模型处理",
         ),
         "edit" => describe_with(
             "在终端中编辑配置项；每个值校验后立即保存",
             "",
-            "示例:\n  markitai config edit    浏览、搜索（/关键字）并修改设置；q 退出",
+            "示例：\n  markitai config edit    浏览、搜索（/关键字）并修改设置；q 退出",
         ),
         "stats" => describe_with(
             "显示缓存条目数与磁盘占用",
             "",
-            "示例:\n  markitai cache stats                  条目数与磁盘占用\n  markitai cache stats --json           供脚本使用的精确字节数\n  markitai cache stats -v --limit 5     按模型列出最近 5 条 LLM 条目",
+            "示例：\n  markitai cache stats                  条目数与磁盘占用\n  markitai cache stats --json           供脚本使用的精确字节数\n  markitai cache stats -v --limit 5     按模型列出最近 5 条 LLM 条目",
         ),
         "clear" => describe_with(
             "清理 LLM 与 URL 抓取缓存",
             "",
-            "示例:\n  markitai cache clear                           先确认再清理\n  markitai cache clear -y                        不经确认直接清理\n  markitai cache clear -y --include-spa-domains  同时忘记已学习的浏览器域名",
+            "示例：\n  markitai cache clear                           先确认再清理\n  markitai cache clear -y                        不经确认直接清理\n  markitai cache clear -y --include-spa-domains  同时忘记已学习的浏览器域名",
         ),
         "spa-domains" => describe_with(
             "查看或清空已学习的浏览器域名路由",
             "",
-            "示例:\n  markitai cache spa-domains           列出已学习的域名\n  markitai cache spa-domains --json    以 JSON 输出\n  markitai cache spa-domains --clear   忘记全部已学习的域名",
+            "示例：\n  markitai cache spa-domains           列出已学习的域名\n  markitai cache spa-domains --json    以 JSON 输出\n  markitai cache spa-domains --clear   忘记全部已学习的域名",
         ),
         "copilot" => describe_with(
             "通过已安装的官方 CLI 使用 GitHub Copilot",
             "",
-            "示例:\n  markitai auth copilot status           运行时是否已登录？\n  markitai auth copilot status --json    机器可读的状态\n  markitai auth copilot login            通过官方运行时登录",
+            "示例：\n  markitai auth copilot status           运行时是否已登录？\n  markitai auth copilot status --json    机器可读的状态\n  markitai auth copilot login            通过官方运行时登录",
         ),
         "claude" => describe_with(
             "Claude 订阅适配器状态",
             "",
-            "示例:\n  markitai auth claude status           运行时是否已登录？\n  markitai auth claude status --json    机器可读的状态\n  markitai auth claude login            通过官方运行时登录",
+            "示例：\n  markitai auth claude status           运行时是否已登录？\n  markitai auth claude status --json    机器可读的状态\n  markitai auth claude login            通过官方运行时登录",
         ),
         "chatgpt" => describe_with(
             "ChatGPT 订阅适配器状态",
             "",
-            "示例:\n  markitai auth chatgpt status           运行时是否已登录？\n  markitai auth chatgpt status --json    机器可读的状态\n  markitai auth chatgpt login            通过官方运行时登录",
+            "示例：\n  markitai auth chatgpt status           运行时是否已登录？\n  markitai auth chatgpt status --json    机器可读的状态\n  markitai auth chatgpt login            通过官方运行时登录",
         ),
         "status" => describe_with("查看现有认证状态，不发起登录", "", ""),
         "login" => describe_with("打开官方运行时的交互式登录流程", "", ""),
@@ -350,12 +389,12 @@ fn describe(command: &str) -> Option<Description> {
 }
 
 const ROOT_AFTER: &str = "\
--p 预设:
+-p 预设：
   minimal   纯转换，不经过模型处理
   standard  --llm --alt --desc
   rich      --llm --alt --desc --screenshot
 
-示例:
+示例：
   markitai report.docx                     把 Markdown 输出到 stdout
   markitai report.pdf -o out/              写出 out/report.pdf.md
   markitai notes.html -o out/notes.md      指定输出文件名
@@ -370,26 +409,26 @@ const ROOT_AFTER: &str = "\
 const CONFIG_AFTER: &str = "\
 键使用点号表示法，例如 llm.enabled 或 llm.model_list[0].model_name。使用哪个配置文件，依次取 -c、MARKITAI_CONFIG、./markitai.json，最后是用户目录下的 config.json。
 
-示例:
+示例：
   markitai config list -f table           显示全部生效配置
   markitai config get llm.enabled         读取单个值
   markitai config set output.dir ./out    校验并保存单个值
   markitai config path                    显示正在使用哪个配置文件";
 
 const CACHE_AFTER: &str = "\
-示例:
+示例：
   markitai cache stats                    条目数与磁盘占用
   markitai cache stats -v --limit 10      按模型列出最近的 LLM 条目
   markitai cache clear -y                 不经确认直接清理";
 
 const AUTH_AFTER: &str = "\
-示例:
+示例：
   markitai auth                         全部订阅运行时的状态
   markitai auth claude status           单个运行时（加 --json 供脚本使用）
   markitai auth chatgpt login           通过官方运行时登录";
 
 const MCP_AFTER: &str = "\
-示例:
+示例：
   markitai mcp                          通过 stdio 向 MCP 客户端提供这些工具
   markitai -c cfg.json mcp              使用指定的配置文件提供服务";
 
@@ -906,9 +945,34 @@ mod tests {
                 ] {
                     assert!(!help.contains(english), "{path}: {english}\n{help}");
                 }
-                assert!(help.contains("用法:"), "{path}");
+                assert!(help.contains("用法："), "{path}");
             }
         }
+    }
+
+    #[test]
+    fn clap_headings_in_chinese_take_full_width_colons() {
+        let help = "关于\n\n\u{1b}[1m\u{1b}[4m命令:\u{1b}[0m\n  init  创建: 配置\n\nLLM、OCR 与截图:\nOptions:\n";
+        assert_eq!(
+            full_width_headings(help),
+            "关于\n\n\u{1b}[1m\u{1b}[4m命令：\u{1b}[0m\n  init  创建: 配置\n\nLLM、OCR 与截图：\nOptions:\n"
+        );
+        // A rendered command: every heading clap wrote is full-width.
+        let rendered = localize_at_width(super::super::english_command, 78)
+            .color(clap::ColorChoice::Never)
+            .render_help()
+            .to_string();
+        let shown = full_width_headings(&rendered);
+        assert!(
+            shown.contains("\n命令：\n") && shown.contains("\n选项：\n"),
+            "{shown}"
+        );
+        assert!(
+            shown
+                .lines()
+                .all(|line| line.starts_with(' ') || line.is_ascii() || !line.ends_with(':')),
+            "{shown}"
+        );
     }
 
     #[test]

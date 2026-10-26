@@ -19,7 +19,7 @@ use crate::update::version::Version;
 use crate::update::{self as updates};
 use serde_json::json;
 use std::io::{self, BufRead, IsTerminal, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 pub(super) const NEWER: i32 = 10;
@@ -277,6 +277,21 @@ pub(super) fn run(options: &Options) -> CliResult<i32> {
         }
     };
     let home = markitai_core::config::home();
+    // `sudo markitai update` would leave root's files in another user's install and home.
+    let install = match &detected {
+        Method::Setup(install) => Some(install),
+        _ => None,
+    };
+    if let Some(owned) = not_roots(install, &home) {
+        let owned = shown(&owned);
+        out.say(
+            Shape::verdict(Mark::Error),
+            format!("{owned} isn't root's; run markitai update as its owner"),
+            format!("{owned} 不属于 root；请用它的所有者运行 markitai update"),
+        );
+        report.error = Some(("not_writable".into(), format!("{owned} isn't root's")));
+        return finish(&report, FAILED);
+    }
     // The latest release, asked now; recorded for the notice too. The attempt
     // is recorded first (as a failure until it answers), so a check that
     // never finishes still backs off.
@@ -468,6 +483,41 @@ pub(super) fn run(options: &Options) -> CliResult<i32> {
             }
         }
     }
+}
+
+/// Run as root: the first of the folders an update writes (the install's,
+/// `MARKITAI_HOME`) that belongs to another user. A folder not made yet is
+/// judged by the folder it would be made in.
+fn not_roots(install: Option<&SetupInstall>, home: &Path) -> Option<PathBuf> {
+    #[cfg(unix)]
+    {
+        // SAFETY: geteuid only reads this process's effective user.
+        if unsafe { libc::geteuid() } != 0 {
+            return None;
+        }
+        not_owned_by(0, install, home)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (install, home);
+        None
+    }
+}
+
+#[cfg(unix)]
+fn not_owned_by(user: u32, install: Option<&SetupInstall>, home: &Path) -> Option<PathBuf> {
+    use std::os::unix::fs::MetadataExt;
+    let mut folders = vec![home.to_owned()];
+    if let Some(install) = install {
+        folders.push(install.dir.clone());
+        folders.extend(install.receipt_dir.parent().map(Path::to_owned));
+    }
+    folders.into_iter().find(|folder| {
+        folder
+            .ancestors()
+            .find_map(|path| std::fs::metadata(path).ok())
+            .is_some_and(|metadata| metadata.uid() != user)
+    })
 }
 
 fn nothing_changed(out: &Out) {
@@ -826,6 +876,7 @@ fn offer_restart(
         &target.to_string(),
         install.exe.clone(),
         swapped.clone(),
+        control.pid,
     );
     if pending.save(home).is_err() {
         hint(out);
@@ -910,5 +961,34 @@ fn offer_restart(
                 kept: true,
             })
         }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn root_is_refused_over_another_users_install_or_home() {
+        use std::os::unix::fs::MetadataExt;
+        let root = tempfile::tempdir().unwrap();
+        let me = std::fs::metadata(root.path()).unwrap().uid();
+        let bin = root.path().join("bin");
+        std::fs::create_dir(&bin).unwrap();
+        let install = SetupInstall {
+            script: method::Script::Shell,
+            exe: bin.join("markitai"),
+            dir: bin,
+            receipt_dir: root.path().join("share/markitai/current"),
+            receipt: method::Receipt::parse("version=2.1.0\n"),
+        };
+        // A home not made yet is judged by the folder it would be made in.
+        let home = root.path().join("home/.markitai");
+        assert_eq!(not_owned_by(me, Some(&install), &home), None);
+        assert_eq!(not_owned_by(me + 1, None, &home), Some(home.clone()));
+        assert_eq!(
+            not_owned_by(me + 1, Some(&install), &home),
+            Some(home.clone())
+        );
     }
 }

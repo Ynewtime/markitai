@@ -529,6 +529,8 @@ fn run(state: &Arc<State>, target: Version) {
         let Method::Setup(installed) = &update.method else {
             return Err(install::Error::Archive("not a setup install".into()));
         };
+        // `markitai update` may have replaced the release since this server started.
+        let installed = &installed.reread();
         let base = update
             .base
             .clone()
@@ -551,8 +553,10 @@ fn run(state: &Arc<State>, target: Version) {
         update.set(Phase::Verifying);
         let unpacked = install::unpack(&work, &downloaded)?;
         let program = install::program(&unpacked, installed.script)?;
-        // The new program loads this configuration and opens this history
-        // read-only, without binding, before anything is replaced.
+        // The new program is the release asked for (as the CLI checks); it
+        // loads this configuration and opens this history read-only, without
+        // binding, before anything is replaced.
+        install::dry_start(&program, &["--version".into()], Some(&format!(" {target}")))?;
         let mut arguments: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
         arguments.push("--preflight".into());
         install::dry_start(&program, &arguments, None)?;
@@ -595,7 +599,13 @@ fn run(state: &Arc<State>, target: Version) {
             .as_ref()
             .map(ToString::to_string)
             .unwrap_or_default();
-        let pending = Pending::new(&from, &target.to_string(), update.exe.clone(), swapped);
+        let pending = Pending::new(
+            &from,
+            &target.to_string(),
+            update.exe.clone(),
+            swapped,
+            std::process::id(),
+        );
         if let Err(error) = pending.save(&update.home) {
             let _ = pending.swapped.rollback();
             return Err(install::Error::Io {

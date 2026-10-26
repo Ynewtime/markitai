@@ -108,6 +108,16 @@ pub(crate) struct SetupInstall {
 }
 
 impl SetupInstall {
+    /// The same install with its receipt read again: a running server's
+    /// copy is stale once `markitai update` replaced the release.
+    pub(crate) fn reread(&self) -> Self {
+        let mut install = self.clone();
+        if let Some(receipt) = read_receipt(&self.receipt_dir) {
+            install.receipt = receipt;
+        }
+        install
+    }
+
     /// The release target this install takes archives for: the receipt's,
     /// which setup chose (the native one under Rosetta), else this build's.
     pub(crate) fn target(&self) -> String {
@@ -385,11 +395,21 @@ fn read_receipt(dir: &Path) -> Option<Receipt> {
     receipt.valid().then_some(receipt)
 }
 
+/// The receipt records the running version: a copy of another version at
+/// the install's path (copied by hand, `cargo install --root`) is not it.
+fn records(receipt: &Receipt, facts: &Facts) -> bool {
+    let parse = super::version::Version::parse;
+    receipt
+        .get("version")
+        .and_then(|recorded| parse(recorded.trim().trim_start_matches('v')))
+        .is_some_and(|recorded| parse(&facts.version) == Some(recorded))
+}
+
 fn setup_install(facts: &Facts, exe: &Path) -> Option<SetupInstall> {
     if facts.windows {
         // setup.ps1: the receipt beside markitai.exe lists it.
         let dir = exe.parent()?;
-        let receipt = read_receipt(dir)?;
+        let receipt = read_receipt(dir).filter(|receipt| records(receipt, facts))?;
         let names = receipt.all("file");
         if !names
             .iter()
@@ -424,7 +444,7 @@ fn setup_install(facts: &Facts, exe: &Path) -> Option<SetupInstall> {
         .map(PathBuf::from)
         .or_else(|| facts.home.as_ref().map(|home| home.join(".local/share")))?;
     let receipt_dir = data.join("markitai").join("current");
-    let receipt = read_receipt(&receipt_dir)?;
+    let receipt = read_receipt(&receipt_dir).filter(|receipt| records(receipt, facts))?;
     let dir = PathBuf::from(receipt.get("bin_dir").filter(|dir| !dir.is_empty())?);
     let installed = dir.join("markitai");
     if !same_file(&installed, exe) {
@@ -568,6 +588,10 @@ mod tests {
                 path: Some(root.path().join("opt/markitai"))
             }
         );
+        // A copy of another version at the install's path is not the install.
+        let mut other = facts(root.path(), Some(bin.join("markitai")));
+        other.version = "2.0.1".into();
+        assert!(matches!(detect(&other), Method::Unknown { .. }));
         // XDG_DATA_HOME moves the receipt.
         let mut moved = facts(root.path(), Some(bin.join("markitai")));
         moved.env.insert(
@@ -595,6 +619,22 @@ mod tests {
             (install.script, install.dir.clone()),
             (Script::PowerShell, dir.clone())
         );
+        // A server re-reads the receipt another update rewrote.
+        write(
+            &dir.join("receipt"),
+            "version=2.2.0\nfile=markitai.exe\nfile=new.exe\n",
+        );
+        assert_eq!(
+            install.reread().receipt.all("file"),
+            ["markitai.exe", "new.exe"]
+        );
+        write(
+            &dir.join("receipt"),
+            "version=2.1.0\ntarget=x86_64-pc-windows-msvc\npath_added=1\nfile=markitai.exe\nfile=mkai.exe\n",
+        );
+        windows.version = "2.0.1".into();
+        assert!(matches!(detect(&windows), Method::Unknown { .. }));
+        windows.version = "2.1.0".into();
         // A receipt that does not list markitai.exe is someone else's.
         write(&dir.join("receipt"), "version=2.1.0\nfile=other.exe\n");
         assert!(matches!(detect(&windows), Method::Unknown { .. }));

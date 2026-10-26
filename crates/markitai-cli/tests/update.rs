@@ -256,9 +256,10 @@ impl Home {
         }
     }
 
-    /// A setup.sh install whose `bin_dir/markitai` is (a link to) the test binary.
+    /// A setup.sh install of `version` whose `bin_dir/markitai` is (a link to)
+    /// the test binary.
     #[cfg(unix)]
-    fn setup_sh() -> Self {
+    fn setup_sh(version: &str) -> Self {
         let root = tempfile::tempdir().unwrap();
         let bin = root.path().join("home/.local/bin");
         let current = root.path().join("home/.local/share/markitai/current");
@@ -270,7 +271,7 @@ impl Home {
         std::fs::write(
             current.join("receipt"),
             format!(
-                "version=2.1.0\ntarget={}\nbin_dir={}\n",
+                "version={version}\ntarget={}\nbin_dir={}\n",
                 target(),
                 bin.display()
             ),
@@ -450,6 +451,19 @@ impl Serve {
         let status = reply.split_whitespace().nth(1)?.parse().ok()?;
         let body = reply.split_once("\r\n\r\n")?.1;
         Some((status, serde_json::from_str(body).unwrap_or(Value::Null)))
+    }
+
+    /// The captured log once it holds `line`.
+    #[cfg(unix)]
+    fn log_with(&self, line: &str) -> String {
+        let started = Instant::now();
+        loop {
+            let log = self.log.lock().unwrap().clone();
+            if log.contains(line) || started.elapsed() > Duration::from_secs(90) {
+                return log;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
     }
 
     /// `GET /api/update` until `done` holds.
@@ -639,7 +653,7 @@ mod unix {
     fn a_setup_install_is_replaced_in_place_and_its_receipt_rewritten() {
         let releases = Releases::start("2.2.0");
         releases.publish("2.2.0", "#!/bin/sh\necho \"markitai 2.2.0\"\n", false);
-        let home = Home::setup_sh();
+        let home = Home::setup_sh("2.1.0");
         let (stdout, stderr, code) = text(&home.run(&releases, &["update", "--json"], &[]));
         assert_eq!(code, 0, "{stderr}");
         let answer: Value = serde_json::from_str(&stdout).unwrap();
@@ -683,7 +697,7 @@ mod unix {
     fn a_mismatching_archive_changes_nothing() {
         let releases = Releases::start("2.2.0");
         releases.publish("2.2.0", "#!/bin/sh\necho \"markitai 2.2.0\"\n", true);
-        let home = Home::setup_sh();
+        let home = Home::setup_sh("2.1.0");
         let (_, stderr, code) = text(&home.run(&releases, &["update"], &[("MARKITAI_LANG", "zh")]));
         assert_eq!(code, 1, "{stderr}");
         assert!(
@@ -714,7 +728,7 @@ mod unix {
     fn a_new_program_that_does_not_start_is_not_installed() {
         let releases = Releases::start("2.2.0");
         releases.publish("2.2.0", "#!/bin/sh\necho broken >&2\nexit 3\n", false);
-        let home = Home::setup_sh();
+        let home = Home::setup_sh("2.1.0");
         let (_, stderr, code) = text(&home.run(&releases, &["update"], &[]));
         assert_eq!(code, 1, "{stderr}");
         assert!(
@@ -735,7 +749,7 @@ mod unix {
     fn a_downgrade_without_a_terminal_needs_yes() {
         let releases = Releases::start("2.2.0");
         releases.publish("2.0.1", "#!/bin/sh\necho \"markitai 2.0.1\"\n", false);
-        let home = Home::setup_sh();
+        let home = Home::setup_sh("2.1.0");
         let (_, stderr, code) = text(&home.run(&releases, &["update", "--version", "2.0.1"], &[]));
         assert_eq!(code, 2, "{stderr}");
         assert!(stderr.contains("Needs confirmation"), "{stderr}");
@@ -969,7 +983,7 @@ mod unix {
     fn the_workbench_updates_a_loopback_server_which_restarts_in_place() {
         let releases = Releases::start("2.2.0");
         releases.publish("2.2.0", &posing_program(""), false);
-        let home = Home::setup_sh();
+        let home = Home::setup_sh("2.1.0");
         let server = Serve::start(&home, &releases);
         let pid = server.child.id();
         let view = server.wait("the daily check", |view| view["latest"] == "2.2.0");
@@ -1017,7 +1031,9 @@ mod unix {
             std::fs::read_to_string(home.path("home/.local/share/markitai/current/receipt"))
                 .unwrap();
         assert!(receipt.starts_with("version=2.2.0\n"), "{receipt}");
-        let log = server.log.lock().unwrap().clone();
+        // The server answered; its last startup line may still be on its way
+        // through the pipe.
+        let log = server.log_with("✓ Updated from 2.1.0");
         for line in [
             "→ Updating to 2.2.0 (from the web workbench)",
             "✓ Downloaded and verified 2.2.0",
@@ -1030,6 +1046,29 @@ mod unix {
     }
 
     #[test]
+    fn the_workbench_refuses_a_release_whose_program_is_another_version() {
+        let releases = Releases::start("2.2.0");
+        releases.publish("2.2.0", "#!/bin/sh\necho 'markitai 2.3.0'\n", false);
+        let home = Home::setup_sh("2.1.0");
+        let server = Serve::start(&home, &releases);
+        server.wait("the daily check", |view| view["latest"] == "2.2.0");
+        server
+            .call("POST", "/api/update", Some(json!({"version": "2.2.0"})))
+            .unwrap();
+        let view = server.wait("the failure", |view| view["state"] == "failed");
+        assert_eq!(view["error"]["code"], "start_failed", "{view}");
+        assert_eq!(view["error"]["rolled_back"], false, "{view}");
+        let reason = view["error"]["reason"].as_str().unwrap();
+        assert!(reason.contains("it reports markitai 2.3.0"), "{reason}");
+        assert!(
+            std::fs::symlink_metadata(home.path("home/.local/bin/markitai"))
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+    }
+
+    #[test]
     fn a_new_version_that_fails_before_it_is_ready_puts_the_old_one_back() {
         let releases = Releases::start("2.2.0");
         releases.publish(
@@ -1037,7 +1076,7 @@ mod unix {
             &posing_program("MARKITAI_TEST_UPDATE_FAIL_START=1"),
             false,
         );
-        let home = Home::setup_sh();
+        let home = Home::setup_sh("2.1.0");
         let server = Serve::start(&home, &releases);
         server.wait("the daily check", |view| view["latest"] == "2.2.0");
         server
@@ -1069,6 +1108,52 @@ mod unix {
             assert!(log.contains(line), "{line}: {log}");
         }
     }
+
+    #[test]
+    fn a_new_version_that_hangs_before_it_is_ready_is_rolled_back() {
+        let releases = Releases::start("2.2.0");
+        releases.publish(
+            "2.2.0",
+            &posing_program("MARKITAI_TEST_UPDATE_HANG_START=1"),
+            false,
+        );
+        let home = Home::setup_sh("2.1.0");
+        // The watchdog's 30 seconds, shortened; nothing here is timed.
+        let server = Serve::start_with(
+            &home,
+            &releases,
+            &[
+                ("MARKITAI_SERVE_TOKEN", TOKEN),
+                ("MARKITAI_TEST_UPDATE_READY_MS", "300"),
+            ],
+            Some(free_port()),
+        );
+        let pid = server.child.id();
+        server.wait("the daily check", |view| view["latest"] == "2.2.0");
+        server
+            .call("POST", "/api/update", Some(json!({"version": "2.2.0"})))
+            .unwrap();
+        let view = server.wait("the rollback", |view| {
+            view["error"]["code"] == "start_failed"
+        });
+        assert_eq!(view["current"], "2.1.0");
+        assert!(
+            view["error"]["reason"]
+                .as_str()
+                .unwrap()
+                .contains("did not get ready"),
+            "{view}"
+        );
+        // The same process and port; the old program is back.
+        assert_eq!(server.child.id(), pid);
+        assert!(
+            std::fs::symlink_metadata(home.path("home/.local/bin/markitai"))
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert!(!home.path("mh/update-pending.json").exists());
+    }
 }
 
 /// `markitai update` restarting the server it finds (R2). Windows installs
@@ -1091,7 +1176,7 @@ mod restart_by_cli {
                 ""
             };
             releases.publish("2.2.0", &unix::posing_program(extra), false);
-            Home::setup_sh()
+            Home::setup_sh("2.1.1")
         }
         #[cfg(windows)]
         {
@@ -1178,5 +1263,35 @@ mod restart_by_cli {
                 .file_type()
                 .is_symlink()
         );
+    }
+
+    /// Unix: the new version's own watchdog (the Windows parent's wait is
+    /// the other test's path) gives the port and token back.
+    #[cfg(unix)]
+    #[test]
+    fn a_new_version_that_hangs_before_it_is_ready_leaves_the_old_one_serving() {
+        let releases = Releases::start("2.2.0");
+        releases.publish(
+            "2.2.0",
+            &unix::posing_program("MARKITAI_TEST_UPDATE_HANG_START=1"),
+            false,
+        );
+        let home = Home::setup_sh("2.1.1");
+        let server = Serve::start_with(
+            &home,
+            &releases,
+            &[
+                ("MARKITAI_TEST_UPDATE_AS", "2.1.1"),
+                ("MARKITAI_TEST_UPDATE_READY_MS", "300"),
+            ],
+            None,
+        );
+        let (said, code) = update(&home, &releases);
+        assert_eq!(code, 1, "{said}");
+        assert!(said.contains("did not get ready"), "{said}");
+        let view = server.wait("the rollback", |view| {
+            view["current"] == "2.1.1" && view["error"]["code"] == "start_failed"
+        });
+        assert_eq!(view["error"]["rolled_back"], true, "{view}");
     }
 }

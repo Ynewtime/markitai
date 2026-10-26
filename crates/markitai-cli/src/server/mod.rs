@@ -215,7 +215,8 @@ pub(crate) fn run(cfg: Value, source: SettingsSource, options: ServeOptions) -> 
     let home = markitai_core::config::home();
     let (version, _) = crate::update::current_identity();
     // An update whose new version never got ready is undone first.
-    let start = crate::update::control::on_start(&home, &version);
+    let handed = std::env::var(crate::update::control::UPDATE_ID).ok();
+    let start = crate::update::control::on_start(&home, &version, handed.as_deref());
     if let crate::update::control::Start::Crashed(pending) = &start {
         std::process::exit(restart::roll_back_and_relaunch(
             pending,
@@ -230,6 +231,8 @@ pub(crate) fn run(cfg: Value, source: SettingsSource, options: ServeOptions) -> 
         _ => None,
     };
     let mut handover = Some(restart::Handover::take());
+    // Unix: a new version not ready in 30 seconds is undone.
+    let watchdog = restart::Watchdog::start(pending.as_ref(), &home, handover.as_ref());
     // Handed on again if this start fails and the old version takes it.
     let handed_token = handover
         .as_ref()
@@ -257,6 +260,7 @@ pub(crate) fn run(cfg: Value, source: SettingsSource, options: ServeOptions) -> 
             &options,
             handover.take().unwrap_or_default(),
             pending.as_ref().filter(|_| undone.is_none()),
+            watchdog.as_ref(),
             undone.take(),
         ));
         drop(runtime);
@@ -294,6 +298,12 @@ pub(crate) fn run(cfg: Value, source: SettingsSource, options: ServeOptions) -> 
             }
             Err(Failure { ready, message }) => {
                 if !ready && let Some(pending) = &pending {
+                    if watchdog.as_ref().is_some_and(|watch| !watch.finish()) {
+                        // The watchdog is undoing it already.
+                        loop {
+                            std::thread::park();
+                        }
+                    }
                     std::process::exit(restart::roll_back_and_relaunch(
                         pending,
                         &home,
@@ -306,6 +316,33 @@ pub(crate) fn run(cfg: Value, source: SettingsSource, options: ServeOptions) -> 
             }
         }
     }
+}
+
+/// Ctrl-C (and SIGTERM on Unix), registered now: the returned future ends
+/// at the first one, even one that came before it was awaited.
+#[cfg(unix)]
+fn shutdown_signals() -> std::io::Result<impl std::future::Future<Output = ()>> {
+    use tokio::signal::unix::{SignalKind, signal};
+    let mut interrupt = signal(SignalKind::interrupt())?;
+    let mut terminate = signal(SignalKind::terminate())?;
+    Ok(async move {
+        tokio::select! { _ = interrupt.recv() => {}, _ = terminate.recv() => {} }
+    })
+}
+
+#[cfg(windows)]
+fn shutdown_signals() -> std::io::Result<impl std::future::Future<Output = ()>> {
+    let mut interrupt = tokio::signal::windows::ctrl_c()?;
+    Ok(async move {
+        let _ = interrupt.recv().await;
+    })
+}
+
+#[cfg(not(any(unix, windows)))]
+fn shutdown_signals() -> std::io::Result<impl std::future::Future<Output = ()>> {
+    Ok(async {
+        let _ = tokio::signal::ctrl_c().await;
+    })
 }
 
 fn say_restart_failed(to: &str, current: &str, reason: &str) {
@@ -342,6 +379,7 @@ async fn serve(
     options: &ServeOptions,
     handover: restart::Handover,
     pending: Option<&crate::update::control::Pending>,
+    watchdog: Option<&restart::Watchdog>,
     undone: Option<String>,
 ) -> Result<Outcome, Failure> {
     // A debug build can fail here on purpose: the tests of an update whose
@@ -355,6 +393,12 @@ async fn serve(
                 .to_owned()
                 .into(),
         );
+    }
+    // And hang before it is ready.
+    if cfg!(debug_assertions) && std::env::var_os("MARKITAI_TEST_UPDATE_HANG_START").is_some() {
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(3600));
+        }
     }
     let serve_home = markitai_core::config::home().join("serve");
     let root = serve_home.join("jobs");
@@ -460,8 +504,11 @@ async fn serve(
     retention::start(&state);
     let router = router(&state);
     let _ = state.address.set(address);
-    // Ready: the new version of an update stays, the old files go.
-    if let Some(pending) = pending {
+    // Ready: the new version of an update stays, the old files go (unless
+    // the watchdog has just undone it).
+    if let Some(pending) = pending
+        && watchdog.is_none_or(restart::Watchdog::finish)
+    {
         pending.commit(&markitai_core::config::home());
     }
     update::publish_control(&state, address);
@@ -472,6 +519,9 @@ async fn serve(
     let _ = std::thread::Builder::new()
         .name("markitai-ocr-warm".into())
         .spawn(move || markitai_core::warm_local_ocr(&cfg));
+    // Listening for Ctrl-C and SIGTERM before the startup lines say the
+    // server is up: a signal from then on drains instead of killing it.
+    let interrupted = shutdown_signals().map_err(|e| e.to_string())?;
     let token = state.token();
     let restarted = handover.from.is_some();
     if restarted && state.update.updated_from.is_some() {
@@ -514,17 +564,6 @@ async fn serve(
     .with_graceful_shutdown(async move {
         let restarting = async {
             let _ = restart_requested.wait_for(Option::is_some).await;
-        };
-        #[cfg(unix)]
-        let interrupted = async {
-            let mut terminate =
-                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-                    .expect("install SIGTERM handler");
-            tokio::select! { _=tokio::signal::ctrl_c()=>{}, _=terminate.recv()=>{} }
-        };
-        #[cfg(not(unix))]
-        let interrupted = async {
-            let _ = tokio::signal::ctrl_c().await;
         };
         let restart = tokio::select! { _ = interrupted => false, _ = restarting => true };
         shutdown_state.closing.store(true, Ordering::SeqCst);

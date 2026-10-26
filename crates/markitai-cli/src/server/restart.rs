@@ -13,11 +13,13 @@
 //! process waits up to 30 seconds for it to report ready in the control
 //! file. It then stays as an idle parent and exits with the child's code.
 //! A child that does not get ready is ended, the files are put back, and
-//! this process serves again itself.
+//! this process serves again itself. On Unix the new version watches itself
+//! for as long ([`Watchdog`]): not ready in 30 seconds, it puts the old
+//! version back and execs it.
 use crate::update::control::{self, Pending};
 use std::ffi::OsString;
-use std::path::Path;
-#[cfg(windows)]
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::Duration;
 
 #[cfg(unix)]
@@ -27,6 +29,9 @@ const TOKEN_FD: &str = "MARKITAI_SERVE_TOKEN_FD";
 #[cfg(windows)]
 const TOKEN_STDIN: &str = "MARKITAI_SERVE_TOKEN_STDIN";
 const RESTARTED_FROM: &str = "MARKITAI_SERVE_RESTARTED_FROM";
+/// How long a new version may take to get ready before it is undone.
+const READY: Duration = Duration::from_secs(30);
+const NOT_READY: &str = "it did not get ready within 30 seconds";
 /// How long a restarted Windows server retries binding the port its
 /// parent just closed.
 #[cfg(windows)]
@@ -217,6 +222,11 @@ fn relaunch_with(
     let mut command = std::process::Command::new(exe);
     command.args(arguments.iter().skip(1));
     command.env(RESTARTED_FROM, from);
+    // The update marker, if any, is the restarted server's.
+    match Pending::load(home) {
+        Some(pending) => command.env(control::UPDATE_ID, pending.id),
+        None => command.env_remove(control::UPDATE_ID),
+    };
     for (name, value) in environment {
         match value {
             Some(value) => command.env(name, value),
@@ -254,7 +264,6 @@ fn relaunch_with(
         if let Some(listener) = &kept.listener {
             close_on_exec(listener.as_raw_fd(), true);
         }
-        let _ = home;
         Relaunched::Failed(error.to_string())
     }
     #[cfg(windows)]
@@ -278,7 +287,7 @@ fn relaunch_with(
             let _ = std::io::Write::write_all(&mut stdin, format!("{token}\n").as_bytes());
         }
         let id = child.id();
-        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        let deadline = std::time::Instant::now() + ready_wait();
         loop {
             if control::Control::read(home).is_some_and(|found| found.pid == id) {
                 break;
@@ -294,7 +303,7 @@ fn relaunch_with(
                 Ok(None) if std::time::Instant::now() >= deadline => {
                     let _ = child.kill();
                     let _ = child.wait();
-                    return Relaunched::Failed("it did not get ready within 30 seconds".into());
+                    return Relaunched::Failed(NOT_READY.into());
                 }
                 Ok(None) => std::thread::sleep(Duration::from_millis(100)),
             }
@@ -313,6 +322,86 @@ fn relaunch_with(
     {
         let _ = (command, token, kept, handover, home, from);
         Relaunched::Failed("restarting is not supported on this system".into())
+    }
+}
+
+/// [`READY`]; a debug build takes `MARKITAI_TEST_UPDATE_READY_MS` (the tests).
+fn ready_wait() -> Duration {
+    std::env::var("MARKITAI_TEST_UPDATE_READY_MS")
+        .ok()
+        .filter(|_| cfg!(debug_assertions))
+        .and_then(|value| value.parse().ok())
+        .map_or(READY, Duration::from_millis)
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum Watch {
+    Waiting,
+    Done,
+    Fired,
+}
+
+/// Unix: a new version's first start that is not ready in [`READY`] puts
+/// the old version back and execs it, with the handed token and socket.
+pub(super) struct Watchdog(Arc<(Mutex<Watch>, Condvar)>);
+
+impl Watchdog {
+    /// Watch this start of `pending`'s new version (Unix; the Windows
+    /// parent watches its child itself).
+    pub(super) fn start(
+        pending: Option<&Pending>,
+        home: &Path,
+        handover: Option<&Handover>,
+    ) -> Option<Self> {
+        if !cfg!(unix) {
+            return None;
+        }
+        let pending = pending?.clone();
+        let home: PathBuf = home.to_owned();
+        let token = handover.and_then(|handover| handover.token.clone());
+        #[cfg(unix)]
+        let kept = Kept {
+            listener: handover
+                .and_then(|handover| handover.listener.as_ref())
+                .and_then(|listener| std::os::fd::AsFd::as_fd(listener).try_clone_to_owned().ok()),
+        };
+        #[cfg(not(unix))]
+        let kept = Kept::default();
+        let shared = Arc::new((Mutex::new(Watch::Waiting), Condvar::new()));
+        let watched = shared.clone();
+        let wait = ready_wait();
+        std::thread::Builder::new()
+            .name("markitai-ready-watch".into())
+            .spawn(move || {
+                let (lock, changed) = &*watched;
+                let state = lock.lock().unwrap_or_else(PoisonError::into_inner);
+                let (mut state, _) = changed
+                    .wait_timeout_while(state, wait, |state| *state == Watch::Waiting)
+                    .unwrap_or_else(PoisonError::into_inner);
+                if *state != Watch::Waiting {
+                    return;
+                }
+                // Held from here on: the server can no longer commit.
+                *state = Watch::Fired;
+                let code =
+                    roll_back_and_relaunch(&pending, &home, NOT_READY, token.as_deref(), kept);
+                std::process::exit(code);
+            })
+            .ok()?;
+        Some(Self(shared))
+    }
+
+    /// The start got ready or failed: whether it is still this process's to
+    /// commit or undo (false once the watchdog has undone it).
+    pub(super) fn finish(&self) -> bool {
+        let (lock, changed) = &*self.0;
+        let mut state = lock.lock().unwrap_or_else(PoisonError::into_inner);
+        if *state == Watch::Fired {
+            return false;
+        }
+        *state = Watch::Done;
+        changed.notify_all();
+        true
     }
 }
 
@@ -379,6 +468,7 @@ pub(super) fn roll_back_and_relaunch(
     let posed: &[(&str, Option<&str>)] = if cfg!(debug_assertions) {
         &[
             ("MARKITAI_TEST_UPDATE_FAIL_START", None),
+            ("MARKITAI_TEST_UPDATE_HANG_START", None),
             ("MARKITAI_TEST_UPDATE_AS", Some(from.as_str())),
         ]
     } else {

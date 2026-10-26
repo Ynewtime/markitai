@@ -232,6 +232,12 @@ struct Survey {
     prefix: String,
 }
 
+#[cfg(test)]
+thread_local! {
+    /// The elements the last [`survey`] looked at.
+    static SURVEYED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// One walk over the drawing, in document order, that gives up past
 /// [`MAX_DEPTH`] or [`MAX_ELEMENTS`] before anything else reads it.
 fn survey(svg: ElementRef<'_>) -> Option<Survey> {
@@ -259,6 +265,8 @@ fn survey(svg: ElementRef<'_>) -> Option<Survey> {
             }
             Node::Element(value) => {
                 elements += 1;
+                #[cfg(test)]
+                SURVEYED.set(elements);
                 if depth > MAX_DEPTH || elements > MAX_ELEMENTS {
                     return None;
                 }
@@ -1263,9 +1271,10 @@ mod tests {
             ("<defs><g><rect class=\"a\"/>", "</g></defs>"),
         ] {
             let nested = format!("<svg>{}{}</svg>", open.repeat(40_000), close.repeat(40_000));
-            let started = std::time::Instant::now();
             assert_eq!(kept(&nested), None);
-            assert!(started.elapsed() < std::time::Duration::from_secs(5));
+            // The walk stopped at the depth limit (at most two elements a
+            // level), not after the drawing's tens of thousands.
+            assert!(SURVEYED.get() <= 2 * (MAX_DEPTH + 2), "{}", SURVEYED.get());
         }
         let wide = format!(
             "<svg><text>t</text>{}</svg>",

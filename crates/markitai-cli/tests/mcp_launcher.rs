@@ -167,7 +167,7 @@ fn the_launcher_help_follows_the_terminal_language() {
     let output = launcher.run("zh", &["--help"]);
     assert_eq!(output.status.code(), Some(0));
     let help = text(&output.stdout);
-    assert!(help.contains("用法: markitai-mcp"), "{help}");
+    assert!(help.contains("用法：markitai-mcp"), "{help}");
     assert!(help.contains("-V, --version"), "{help}");
     assert!(help.contains("显示版本"), "{help}");
     for english in ["Usage:", "Print help", "Print version", "Options:"] {

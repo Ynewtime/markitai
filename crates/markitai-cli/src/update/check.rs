@@ -5,7 +5,9 @@
 //! The daily check asks GitHub for `<base>/latest/download/SHA256SUMS` and
 //! does not follow the redirect: its `Location` names the release
 //! (`…/download/v2.2.0/SHA256SUMS`), so nothing is downloaded. A mirror that
-//! answers with the file itself works too.
+//! answers with the file itself works too. Only this request stays on the
+//! base: a new release's description, its SHA256SUMS and archive follow up
+//! to five HTTPS redirects, as GitHub serves assets from its download host.
 use super::version::Version;
 use reqwest::blocking::{Client, Response};
 use std::io::Read;

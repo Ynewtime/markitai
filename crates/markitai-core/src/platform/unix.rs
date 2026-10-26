@@ -63,6 +63,11 @@ pub(super) fn private_file(options: &mut OpenOptions) -> &mut OpenOptions {
     options.mode(0o600)
 }
 
+pub(super) fn restrict_to_owner(path: &Path) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+}
+
 pub(super) fn private_directory() -> DirBuilder {
     let mut builder = DirBuilder::new();
     builder.mode(0o700);
