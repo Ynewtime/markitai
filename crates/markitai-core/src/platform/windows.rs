@@ -14,14 +14,17 @@ use std::path::{Path, PathBuf};
 use std::ptr::null_mut;
 use std::sync::OnceLock;
 use windows_sys::Win32::Foundation::{CloseHandle, ERROR_SUCCESS, HANDLE, LocalFree};
-use windows_sys::Win32::Security::Authorization::{GetSecurityInfo, SE_FILE_OBJECT};
+use windows_sys::Win32::Security::Authorization::{
+    GetSecurityInfo, SE_FILE_OBJECT, SetNamedSecurityInfoW,
+};
 use windows_sys::Win32::Security::{
-    GetLengthSid, GetTokenInformation, IsValidSid, OWNER_SECURITY_INFORMATION,
-    PSECURITY_DESCRIPTOR, PSID, TOKEN_INFORMATION_CLASS, TOKEN_OWNER, TOKEN_QUERY, TOKEN_USER,
-    TokenOwner, TokenUser,
+    ACCESS_ALLOWED_ACE, ACL, ACL_REVISION, AddAccessAllowedAce, DACL_SECURITY_INFORMATION,
+    GetLengthSid, GetTokenInformation, InitializeAcl, IsValidSid, OWNER_SECURITY_INFORMATION,
+    PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID, TOKEN_INFORMATION_CLASS,
+    TOKEN_OWNER, TOKEN_QUERY, TOKEN_USER, TokenOwner, TokenUser,
 };
 use windows_sys::Win32::Storage::FileSystem::{
-    BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_REPARSE_POINT, FILE_BASIC_INFO,
+    BY_HANDLE_FILE_INFORMATION, FILE_ALL_ACCESS, FILE_ATTRIBUTE_REPARSE_POINT, FILE_BASIC_INFO,
     FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_ID_INFO,
     FILE_INFO_BY_HANDLE_CLASS, FILE_READ_ATTRIBUTES, FILE_STANDARD_INFO, FileBasicInfo, FileIdInfo,
     FileStandardInfo, GetFileInformationByHandle, GetFileInformationByHandleEx, READ_CONTROL,
@@ -151,6 +154,61 @@ fn token_owners() -> Option<Vec<Vec<u8>>> {
     // SAFETY: the token handle was opened above and is closed once.
     unsafe { CloseHandle(token) };
     owners
+}
+
+/// A protected DACL with one entry: full access for this process's user.
+pub(super) fn restrict_to_owner(path: &Path) -> io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    let denied = || io::Error::other("cannot read this process's user");
+    let mut token: HANDLE = null_mut();
+    // SAFETY: the pseudo-handle of this process and a writable handle slot.
+    if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let user = token_information(token, TokenUser);
+    // SAFETY: the token handle was opened above and is closed once.
+    unsafe { CloseHandle(token) };
+    let user = user.ok_or_else(denied)?;
+    // SAFETY: a successful TokenUser query starts with a TOKEN_USER whose SID
+    // points into the same buffer, which lives until the end of this function.
+    let sid = unsafe { (*user.as_ptr().cast::<TOKEN_USER>()).User.Sid };
+    // SAFETY: IsValidSid accepts any candidate pointer; the length is read only
+    // from a valid SID.
+    if unsafe { IsValidSid(sid) } == 0 {
+        return Err(denied());
+    }
+    // SAFETY: as above.
+    let sid_length = unsafe { GetLengthSid(sid) } as usize;
+    let length = size_of::<ACL>() + size_of::<ACCESS_ALLOWED_ACE>() - size_of::<u32>() + sid_length;
+    let mut acl = vec![0u64; length.div_ceil(size_of::<u64>())];
+    let acl = acl.as_mut_ptr().cast::<ACL>();
+    // SAFETY: the buffer holds `length` writable, 8-byte aligned bytes: room
+    // for the header and one entry carrying this SID.
+    let built = unsafe {
+        InitializeAcl(acl, length as u32, ACL_REVISION) != 0
+            && AddAccessAllowedAce(acl, ACL_REVISION, FILE_ALL_ACCESS, sid) != 0
+    };
+    if !built {
+        return Err(io::Error::last_os_error());
+    }
+    let wide: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
+    // SAFETY: a NUL-terminated path and the ACL built above; owner, group and
+    // SACL are left as they are.
+    let status = unsafe {
+        SetNamedSecurityInfoW(
+            wide.as_ptr(),
+            SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+            null_mut(),
+            null_mut(),
+            acl,
+            std::ptr::null(),
+        )
+    };
+    if status != ERROR_SUCCESS {
+        return Err(io::Error::from_raw_os_error(status as i32));
+    }
+    Ok(())
 }
 
 fn token_information(token: HANDLE, class: TOKEN_INFORMATION_CLASS) -> Option<Vec<u64>> {

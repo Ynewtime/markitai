@@ -172,6 +172,12 @@ pub fn private_file(options: &mut OpenOptions) -> &mut OpenOptions {
     imp::private_file(options)
 }
 
+/// Restrict an existing file to its owner: mode `0600` on Unix; on Windows an
+/// ACL that grants this process's user alone and inherits nothing.
+pub fn restrict_to_owner(path: &Path) -> io::Result<()> {
+    imp::restrict_to_owner(path)
+}
+
 /// A builder whose directories are restricted to their owner: mode `0700` on
 /// Unix. Windows directories inherit their parent's ACL.
 pub fn private_directory() -> DirBuilder {

@@ -5,7 +5,8 @@
 //! the person running the server: `markitai update` sends the secret to the
 //! server's loopback address to ask it how much work is running and to
 //! restart into the new version (`POST /api/update/restart`). The file
-//! permission is the authorisation, the same on every system.
+//! permission is the authorisation, the same on every system (Windows: an
+//! ACL for the user alone, not the folder's inherited one).
 //!
 //! A restart into a new version leaves `MARKITAI_HOME/update-pending.json`
 //! until the new server is ready: what was swapped and where the old program
@@ -51,13 +52,8 @@ fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let dir = path.parent().unwrap_or(Path::new("."));
     markitai_core::output::create_private_dir(dir)?;
     let mut temporary = tempfile::NamedTempFile::new_in(dir)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        temporary
-            .as_file()
-            .set_permissions(std::fs::Permissions::from_mode(0o600))?;
-    }
+    // Before the secret is written: 0600 on Unix, the user's own ACL on Windows.
+    markitai_core::platform::restrict_to_owner(temporary.path())?;
     io::Write::write_all(&mut temporary, bytes)?;
     temporary.as_file().sync_all()?;
     markitai_core::platform::persist(temporary, path)
