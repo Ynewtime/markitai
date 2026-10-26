@@ -164,8 +164,9 @@ class SetupShTests(unittest.TestCase):
     def run_setup(self, *arguments, shell="sh", **environment):
         env = {"HOME": str(self.home), "PATH": "/usr/bin:/bin", "LANG": "C.UTF-8", "NO_COLOR": "1",
                "MARKITAI_DOWNLOAD_URL": self.releases.base, "TMPDIR": str(self.work), **environment}
+        # A session of its own: setup.sh would otherwise ask the developer's terminal (/dev/tty).
         return subprocess.run([shell, str(SETUP_SH), *arguments], env=env, capture_output=True, text=True,
-                              stdin=subprocess.DEVNULL, timeout=120)
+                              stdin=subprocess.DEVNULL, timeout=120, start_new_session=True)
 
     def run_with_terminal(self, answer="", **environment):
         """setup.sh with a terminal on stdin that has `answer` typed ahead."""
@@ -388,7 +389,7 @@ class SetupShTests(unittest.TestCase):
         env = {"HOME": str(self.home), "PATH": f"{tools}:/usr/bin:/bin", "LANG": "C", "TERM": "dumb",
                "MARKITAI_DOWNLOAD_URL": self.releases.base, "TMPDIR": str(self.work)}
         result = subprocess.run(["sh"], input=SETUP_SH.read_text(encoding="utf-8"), env=env,
-                                capture_output=True, text=True, timeout=120)
+                                capture_output=True, text=True, timeout=120, start_new_session=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("uv tool uninstall markitai", (self.home / "calls").read_text())
         self.assertIn("+ Removed the Python markitai that uv installed", result.stdout)
@@ -783,7 +784,8 @@ class SetupPs1Tests(unittest.TestCase):
                             'else echo fix >> "$(dirname "$0")/fixes"; fi\n')
             fake.chmod(0o755)
             (work / "scratch/fake-markitai.cmd").write_text(
-                '@echo off\r\nif "%2"=="--json" (type "%~dp0doctor.json") else (echo fix>>"%~dp0fixes")\r\n')
+                '@echo off\r\nif "%2"=="--json" (type "%~dp0doctor.json") else (echo fix>>"%~dp0fixes")\r\n',
+                newline="")
             home = work / "home"
             home.mkdir()
             env = {**os.environ, "HOME": str(home), "USERPROFILE": str(home), "TMPDIR": str(work / "scratch")}
