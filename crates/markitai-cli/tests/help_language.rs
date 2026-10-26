@@ -5,10 +5,9 @@
 //! added; Chinese help must offer exactly the same commands and options, fit
 //! an 80 column terminal and leave no English frame behind. Regenerate the
 //! snapshot after an intended English change with
-//! `MARKITAI_UPDATE_HELP_SNAPSHOT=1 cargo test -p markitai-cli --test help_language`.
+//! `MARKITAI_UPDATE_HELP_SNAPSHOT=1 cargo test -p markitai-cli --test integration help_language::`.
 #![cfg(unix)]
-#[path = "support/console.rs"]
-mod console;
+use crate::console;
 
 use std::collections::BTreeSet;
 use std::path::Path;

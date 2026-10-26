@@ -1,6 +1,5 @@
 #![cfg(unix)]
-#[path = "support/console.rs"]
-mod console;
+use crate::console;
 
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};

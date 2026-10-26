@@ -4,8 +4,7 @@
 //! is spelled (percent-encoded `..`, absolute, through a planted link), only
 //! has its text rewritten: no file outside the output folder is read, moved
 //! or replaced.
-#[path = "support/console.rs"]
-mod console;
+use crate::console;
 
 use std::collections::BTreeMap;
 use std::fs;

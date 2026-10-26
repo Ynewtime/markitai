@@ -3,8 +3,7 @@ use std::ffi::OsStr;
 use std::path::Path;
 use std::process::{Command, Output};
 
-#[path = "support/console.rs"]
-mod console;
+use crate::console;
 
 fn command(root: &Path) -> Command {
     let mut command = isolated(env!("CARGO_BIN_EXE_markitai"), root);

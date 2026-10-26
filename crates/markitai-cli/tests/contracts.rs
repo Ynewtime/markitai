@@ -2,8 +2,7 @@ use serde_json::{Value, json};
 use std::path::Path;
 use std::process::{Command, Output};
 
-#[path = "support/console.rs"]
-mod console;
+use crate::console;
 
 fn invoke(root: &Path, args: &[&str]) -> Output {
     invoke_env(root, args, &[])

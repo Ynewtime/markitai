@@ -1,8 +1,7 @@
 //! Actual service static routing and browser bootstrap contract. Browser rendering
 //! and interactive behavior have separate real-browser acceptance.
 #![cfg(unix)]
-#[path = "support/console.rs"]
-mod console;
+use crate::console;
 
 use serde_json::json;
 use std::{

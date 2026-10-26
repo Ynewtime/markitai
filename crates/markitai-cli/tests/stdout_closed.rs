@@ -2,8 +2,7 @@
 //! quietly, as with other Unix tools; a stream that cannot be written for any
 //! other reason fails with a message that names it.
 #![cfg(unix)]
-#[path = "support/console.rs"]
-mod console;
+use crate::console;
 
 use std::os::fd::{FromRawFd, OwnedFd};
 use std::os::unix::process::CommandExt;

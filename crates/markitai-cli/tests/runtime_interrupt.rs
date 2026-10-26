@@ -15,8 +15,7 @@
 //! The runtime's private workspace (its prompt and settings files) must not
 //! outlive the CLI either; each CLI gets a temporary directory of its own to
 //! check that, and so that nothing a failure leaves reaches the machine's.
-#[path = "support/console.rs"]
-mod console;
+use crate::console;
 
 use serde_json::json;
 use std::io::{BufRead, BufReader, Write};
@@ -26,10 +25,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
-#[path = "../../markitai-core/src/subscription/fake_runtime.rs"]
-mod fake_runtime;
-#[path = "support/interrupt.rs"]
-mod interrupt;
+use crate::fake_runtime;
+use crate::interrupt;
 
 struct Fixture {
     root: tempfile::TempDir,

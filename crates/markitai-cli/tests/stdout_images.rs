@@ -1,8 +1,7 @@
 //! A document printed to stdout links its images to files saved under
 //! `MARKITAI_HOME/assets` (`image.stdout_persist`), never under the real
 //! home or next to the input; turning that off keeps relative references.
-#[path = "support/console.rs"]
-mod console;
+use crate::console;
 
 use serde_json::json;
 use std::io::Write;

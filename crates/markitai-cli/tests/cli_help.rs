@@ -1,5 +1,4 @@
-#[path = "support/console.rs"]
-mod console;
+use crate::console;
 
 use std::path::Path;
 use std::process::{Command, Output};

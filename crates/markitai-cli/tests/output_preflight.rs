@@ -1,6 +1,5 @@
 //! Read-only decisions must not leave write-claim markers behind.
-#[path = "support/console.rs"]
-mod console;
+use crate::console;
 
 use std::fs;
 use std::path::PathBuf;

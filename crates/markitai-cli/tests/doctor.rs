@@ -2,8 +2,7 @@ use serde_json::{Value, json};
 use std::path::Path;
 use std::process::{Command, Output};
 
-#[path = "support/console.rs"]
-mod console;
+use crate::console;
 
 fn command(root: &Path, cfg: Value) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_markitai"));

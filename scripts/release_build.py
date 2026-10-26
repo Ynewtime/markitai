@@ -279,8 +279,8 @@ def prepare_version(root, version, run_cargo=True):
     if run_cargo:
         # Only the workspace's own entries in Cargo.lock change.
         run(["cargo", "update", "--workspace"], cwd=root)
-        run(["cargo", "test", "--locked", "-p", "markitai-cli", "--test", "help_language", "--",
-             "english_help_is_unchanged"], cwd=root, env={**os.environ, "MARKITAI_UPDATE_HELP_SNAPSHOT": "1"})
+        run(["cargo", "test", "--locked", "-p", "markitai-cli", "--test", "integration", "--",
+             "help_language::english_help_is_unchanged"], cwd=root, env={**os.environ, "MARKITAI_UPDATE_HELP_SNAPSHOT": "1"})
     check_versions(root, f"v{version}")
     stale = stale_versions(root, old)
     for line in stale:

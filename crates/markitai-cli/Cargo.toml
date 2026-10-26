@@ -5,6 +5,8 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 license.workspace = true
+# One test binary: tests/integration.rs declares every tests/*.rs as a module.
+autotests = false
 
 # The program is a library so the Python wheel's native extension runs it too.
 [lib]
@@ -22,6 +24,10 @@ test = false
 name = "mkai"
 path = "src/mkai.rs"
 test = false
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
 
 [features]
 portable-media = ["markitai-core/portable-media"]

@@ -1,7 +1,6 @@
 #![cfg(unix)]
 //! What `markitai serve` prints when it starts, and why it refuses to.
-#[path = "support/console.rs"]
-mod console;
+use crate::console;
 
 use std::{
     io::{BufRead, BufReader},

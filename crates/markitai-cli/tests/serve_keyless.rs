@@ -7,8 +7,7 @@
 //! hand-written entry; a keyed connection cannot be made keyless at another
 //! host. Two loopback model servers stand for a caller's host and the
 //! operator's endpoint.
-#[path = "support/console.rs"]
-mod console;
+use crate::console;
 
 use serde_json::{Value, json};
 use std::{

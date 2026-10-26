@@ -1,7 +1,6 @@
 //! `--format json`: the document on stdout, beside the Markdown, under an
 //! exact name and in a batch with its index (docs/json-output.md).
-#[path = "support/console.rs"]
-mod console;
+use crate::console;
 
 use serde_json::Value;
 use std::fs;

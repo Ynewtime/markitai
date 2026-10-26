@@ -1,5 +1,4 @@
-#[path = "support/console.rs"]
-mod console;
+use crate::console;
 
 use serde_json::{Value, json};
 use std::path::Path;

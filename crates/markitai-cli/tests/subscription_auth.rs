@@ -4,10 +4,8 @@ use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-#[path = "support/console.rs"]
-mod console;
-#[path = "../../markitai-core/src/subscription/fake_runtime.rs"]
-mod fake_runtime;
+use crate::console;
+use crate::fake_runtime;
 
 /// Variables the CLI itself needs on each platform; everything else is cleared.
 const SYSTEM: &[&str] = &[

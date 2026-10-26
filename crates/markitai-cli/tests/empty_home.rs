@@ -1,8 +1,7 @@
 use std::path::Path;
 use std::process::Command;
 
-#[path = "support/console.rs"]
-mod console;
+use crate::console;
 
 fn init(work: &Path, vars: &[(&str, &Path)]) -> std::process::Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_markitai"));

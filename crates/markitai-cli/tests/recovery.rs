@@ -1,7 +1,6 @@
 //! Durable batch state, ownership and `--resume`.
 #![cfg(unix)]
-#[path = "support/console.rs"]
-mod console;
+use crate::console;
 
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -16,8 +15,7 @@ use std::sync::{
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-#[path = "support/interrupt.rs"]
-mod interrupt;
+use crate::interrupt;
 
 const WAIT: Duration = Duration::from_secs(20);
 const INTERRUPTED: &str = "  ! Interrupted: stopping new work and waiting for active conversions.";

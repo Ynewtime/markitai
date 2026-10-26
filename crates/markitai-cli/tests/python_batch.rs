@@ -2,8 +2,7 @@
 //! `tests/fixtures/python-batch`) are collected after upgrading: by ID or by
 //! `--llm-batch --resume`, from a loopback provider that answers the Python
 //! requests. Python's files are never modified.
-#[path = "support/console.rs"]
-mod console;
+use crate::console;
 
 use serde_json::{Value, json};
 use std::io::{Read, Write};

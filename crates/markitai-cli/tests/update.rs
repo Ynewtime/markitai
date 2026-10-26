@@ -3,10 +3,8 @@
 //!
 //! The debug build counts as a source build (it never checks); these tests
 //! make it pose as a release with `MARKITAI_TEST_UPDATE_AS`.
-#[path = "support/console.rs"]
-mod console;
-#[path = "support/interrupt.rs"]
-mod interrupt;
+use crate::console;
+use crate::interrupt;
 
 use serde_json::{Value, json};
 use std::collections::HashMap;

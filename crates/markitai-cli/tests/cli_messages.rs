@@ -4,8 +4,7 @@ use serde_json::{Value, json};
 use std::path::Path;
 use std::process::{Command, Output};
 
-#[path = "support/console.rs"]
-mod console;
+use crate::console;
 
 /// A valid 1x1 RGBA PNG (every chunk checksum correct).
 const TINY_PNG: &[u8] = &[

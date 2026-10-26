@@ -6,8 +6,7 @@ use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
 
-#[path = "support/console.rs"]
-mod console;
+use crate::console;
 
 /// A clean environment: nothing from the developer's locale leaks in.
 fn command(root: &Path, envs: &[(&str, &str)]) -> Command {

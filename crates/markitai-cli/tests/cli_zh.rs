@@ -6,8 +6,7 @@ use serde_json::{Value, json};
 use std::path::Path;
 use std::process::{Command, Output};
 
-#[path = "support/console.rs"]
-mod console;
+use crate::console;
 
 const ZH: &[(&str, &str)] = &[("MARKITAI_LANG", "zh")];
 const EN: &[(&str, &str)] = &[("MARKITAI_LANG", "en")];

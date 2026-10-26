@@ -8,8 +8,7 @@
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-#[path = "support/console.rs"]
-mod console;
+use crate::console;
 #[path = "support/prose.rs"]
 mod prose;
 

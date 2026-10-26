@@ -1,8 +1,7 @@
 //! An interrupted batch says how many items it never started and how to
 //! continue, in the terminal language.
 #![cfg(unix)]
-#[path = "support/console.rs"]
-mod console;
+use crate::console;
 
 use std::io::{BufRead, BufReader};
 use std::net::TcpListener;
@@ -10,8 +9,7 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-#[path = "support/interrupt.rs"]
-mod interrupt;
+use crate::interrupt;
 
 const WAIT: Duration = Duration::from_secs(20);
 

@@ -1,8 +1,7 @@
 //! `--llm-batch` against a loopback Anthropic Message Batches server: submit,
 //! wait, collect, a pending handoff, resume and an uncertain creation proven
 //! by reconciliation. No provider is contacted; keys are fixture strings.
-#[path = "support/console.rs"]
-mod console;
+use crate::console;
 
 use serde_json::{Value, json};
 use std::io::{Read, Write};
