@@ -10,8 +10,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 /// Answers each connection on its own thread and holds every answer until
-/// `hold` requests are in flight together (or a second passed), recording
-/// the largest number in flight.
+/// `hold` requests have arrived (or `patience` passed), recording the largest
+/// number in flight. Once that many arrived, nothing waits any more: an answer
+/// that leaves first cannot hold the others back.
 struct Model {
     base: String,
     requests: Arc<Mutex<Vec<Value>>>,
@@ -22,6 +23,9 @@ struct Model {
 
 impl Model {
     fn new(hold: usize, answer: fn(&Value) -> String) -> Self {
+        Self::holding(hold, Duration::from_secs(1), answer)
+    }
+    fn holding(hold: usize, patience: Duration, answer: fn(&Value) -> String) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         listener.set_nonblocking(true).unwrap();
         let base = format!("http://{}/v1", listener.local_addr().unwrap());
@@ -31,6 +35,7 @@ impl Model {
         let (captured, highest, stopping) = (requests.clone(), peak.clone(), stop.clone());
         let worker = thread::spawn(move || {
             let active = Arc::new(AtomicUsize::new(0));
+            let arrived = Arc::new(AtomicUsize::new(0));
             let mut connections = Vec::new();
             while !stopping.load(Ordering::Acquire) {
                 let mut stream = match listener.accept() {
@@ -41,15 +46,20 @@ impl Model {
                     }
                     Err(error) => panic!("mock accept failed: {error}"),
                 };
-                let (captured, highest, active) =
-                    (captured.clone(), highest.clone(), active.clone());
+                let (captured, highest, active, arrived) = (
+                    captured.clone(),
+                    highest.clone(),
+                    active.clone(),
+                    arrived.clone(),
+                );
                 connections.push(thread::spawn(move || {
                     stream.set_nonblocking(false).unwrap();
                     let request = read(&stream);
                     let now = active.fetch_add(1, Ordering::AcqRel) + 1;
                     highest.fetch_max(now, Ordering::AcqRel);
-                    let deadline = Instant::now() + Duration::from_secs(1);
-                    while active.load(Ordering::Acquire) < hold && Instant::now() < deadline {
+                    arrived.fetch_add(1, Ordering::AcqRel);
+                    let deadline = Instant::now() + patience;
+                    while arrived.load(Ordering::Acquire) < hold && Instant::now() < deadline {
                         thread::sleep(Duration::from_millis(2));
                     }
                     let content = answer(&request);
@@ -232,9 +242,21 @@ fn text_and_image_requests_spend_one_budget_per_document() {
     let source = report(dir.path());
     // The text answers are rejected; its retries and both images share the
     // document's cap of three instead of each holding a cap of their own.
-    let model = Model::new(1, rejecting);
-    let output = run(&source, config(&model, 3, 3));
-    assert_eq!(model.requests().len(), 3);
+    // Every answer waits until all three are in flight: a failed enhancement
+    // abandons the image requests not yet sent, so a text that failed twice
+    // before an image thread started would leave them unsent.
+    let model = Model::holding(3, Duration::from_secs(60), rejecting);
+    let mut slow = config(&model, 3, 3);
+    // No request gives up while it waits for the others.
+    slow["llm"]["router_settings"]["timeout"] = json!(90);
+    let output = run(&source, slow);
+    let requests = model.requests();
+    assert_eq!(requests.len(), 3);
+    // The text's second request found the budget spent by the images.
+    assert_eq!(
+        requests.iter().filter(|request| is_image(request)).count(),
+        2
+    );
     assert_eq!(output.usage.requests, 3);
     assert!(output.llm_markdown.is_none());
     assert!(
