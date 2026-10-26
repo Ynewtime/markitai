@@ -10,6 +10,7 @@ import tarfile
 import tempfile
 import unittest
 import zipfile
+from unittest.mock import patch
 
 import bounded_run
 import release_build
@@ -253,8 +254,14 @@ class AssetTests(unittest.TestCase):
 class LicenseSetTests(unittest.TestCase):
     """Wheels embed and serve the CLI's workbench, so they carry the archives' license set."""
 
+    @classmethod
+    def setUpClass(cls):
+        # The repository's license set, verified once: each verification reads
+        # the whole evidence tree, which is slow on Windows.
+        cls.licenses = release_build.release_attribution(ROOT)
+
     def test_wheels_carry_the_web_licenses(self):
-        expected = release_build.release_attribution(ROOT)
+        expected = self.licenses
         for name in ["LICENSE", "NOTICE", "vendor/web/Inter-OFL.txt", "vendor/web/KaTeX-LICENSE",
                      "vendor/web/marked-LICENSE", "vendor/web/provenance.json",
                      "licenses/libwebp/COPYING", "licenses/rav1d/COPYING", "licenses/rav1d/LICENSE-dav1d-rs"]:
@@ -283,7 +290,10 @@ class LicenseSetTests(unittest.TestCase):
         return archive, wheel
 
     def test_archive_and_wheel_sets_are_compared(self):
-        licenses = release_build.release_attribution(ROOT)
+        licenses = self.licenses
+        # check_release_licenses compares with the set verified once above.
+        attribution = patch.object(release_build, "release_attribution", lambda root: licenses)
+        self.enterContext(attribution)
         with tempfile.TemporaryDirectory() as directory:
             folder = Path(directory)
             archive, wheel = self.write(folder, "9.8.7", licenses)

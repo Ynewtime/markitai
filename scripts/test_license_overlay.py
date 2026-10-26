@@ -3,14 +3,13 @@ import hashlib
 import io
 import json
 import os
-from pathlib import Path
-import shutil
+from pathlib import Path, PurePosixPath
 import tempfile
 import unittest
 import tarfile
 import zipfile
 
-from license_overlay import stage_overlay, upstream_files
+from license_overlay import DISK, MAX_FILE, MAX_FILES, _relative, stage_overlay, upstream_files
 from ci_packages import supplement_wheel_licenses, verify_node_licenses
 from package_go_static import bundle_licenses, inventory, package_archive, unpack_verified
 
@@ -24,63 +23,80 @@ LOCK_REFRESH = {"alloc-stdlib@0.3.0", "objc2@0.6.5", "jni@0.22.4", "jni-macros@0
                 "jni-sys-macros@0.4.1", "rustls-platform-verifier-android@0.2.0"}
 
 
-def _link_or_copy(source, target):
-    """A hard link where the file system allows one (no bytes are written), else a copy."""
-    try:
-        os.link(source, target)
-    except OSError:
-        shutil.copy2(source, target)
+class MemoryFiles:
+    """`license_overlay.Disk` over a dict of `{absolute Path: bytes}`.
+
+    The counterexamples stage the overlay hundreds of times; on Windows every
+    file operation is slow, so they read and change the fixture in memory. The
+    disk walk itself (symlinks, special files) is tested on a real tree.
+    """
+
+    def __init__(self, store):
+        self.store = store
+
+    def under(self, root):
+        prefix = os.path.join(str(root), "")
+        return [path for path in self.store if str(path).startswith(prefix)]
+
+    def exists(self, path):
+        return path in self.store or bool(self.under(path))
+
+    def listing(self, root):
+        found = self.under(root)
+        if not found:
+            raise RuntimeError("License evidence root must be a real directory")
+        if len(found) > MAX_FILES * 4:
+            raise RuntimeError("License evidence must not contain symlinks or excessive entries")
+        start = len(os.path.join(str(root), ""))
+        return {str(path)[start:].replace(os.sep, "/"): (path, len(self.store[path])) for path in found}
+
+    def read(self, key):
+        return self.store[key][:MAX_FILE + 1]
+
+    def package(self, directory, name):
+        path = directory / str(_relative(name))
+        if path not in self.store:
+            raise FileNotFoundError(path)
+        if len(self.store[path]) > MAX_FILE:
+            raise RuntimeError("License evidence must be a bounded regular file")
+        return self.store[path]
+
+    def write_new(self, path, raw):
+        if path in self.store:
+            raise FileExistsError(path)
+        self.store[path] = raw
 
 
 class LicenseOverlayTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        # The fixture tree (the evidence and the registry sources) is built once;
-        # each test gets hard links to it, which on Windows avoids writing, and
-        # having scanned, hundreds of files per test. Tests change a file only
-        # through `write`, which replaces the link. On POSIX the shared files are
-        # read-only, so a write through a link fails instead of leaking into
-        # later tests.
-        pristine = tempfile.TemporaryDirectory()
-        cls.addClassCleanup(pristine.cleanup)
-        cls.pristine = Path(pristine.name)
-        vendor = cls.pristine / "repository/licenses/upstream"
-        shutil.copytree(VENDOR, vendor)
-        for item in json.loads((vendor / "manifest.json").read_text())["packages"]:
+        # The fixture (the evidence and the registry sources), read once into
+        # memory; each test changes its own copy (see MemoryFiles).
+        contents = {}
+        for path in VENDOR.rglob("*"):
+            if path.is_file():
+                contents[PurePosixPath("repository/licenses/upstream", path.relative_to(VENDOR).as_posix())] = path.read_bytes()
+        manifest = json.loads((VENDOR / "manifest.json").read_text(encoding="utf-8"))
+        for item in manifest["packages"]:
             label = f"{item['name']}-{item['version']}"
-            source = cls.pristine / "registry" / label
-            source.mkdir(parents=True)
             for name in [".cargo_vcs_info.json", "Cargo.toml.orig"]:
-                shutil.copyfile(vendor / "local-evidence" / label / name, source / name)
+                contents[PurePosixPath("registry", label, name)] = (VENDOR / "local-evidence" / label / name).read_bytes()
             if item["name"] in {"nom-language", "tract-extra"}:
-                with tarfile.open(vendor / "source-archives" / (label + ".crate")) as archive:
+                with tarfile.open(VENDOR / "source-archives" / (label + ".crate")) as archive:
                     for member in archive:
                         name = member.name.removeprefix(label + "/")
                         if name.startswith("src/") and name.endswith(".rs"):
-                            target = source / name
-                            target.parent.mkdir(parents=True, exist_ok=True)
-                            target.write_bytes(archive.extractfile(member).read())
-        # Listed once, so setUp makes each folder and link without stat calls
-        # (each one opens the file on Windows).
-        cls.folders, cls.files = [], []
-        for path in sorted(cls.pristine.rglob("*")):
-            (cls.folders if path.is_dir() else cls.files).append(path.relative_to(cls.pristine))
-            if os.name != "nt" and path.is_file():
-                path.chmod(0o444)
+                            contents[PurePosixPath("registry", label, name)] = archive.extractfile(member).read()
+        cls.contents = contents
 
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
-        for folder in self.folders:
-            (self.root / folder).mkdir()
-        for name in self.files:
-            _link_or_copy(self.pristine / name, self.root / name)
-        self.trash = self.root / "replaced"
-        self.trash.mkdir()
+        self.files = MemoryFiles({self.root / name: raw for name, raw in self.contents.items()})
         self.repository = self.root / "repository"
         self.vendor = self.repository / "licenses/upstream"
-        self.manifest = json.loads((self.vendor / "manifest.json").read_text())
+        self.manifest = json.loads(self.read_text(self.vendor / "manifest.json"))
         self.packages = []
         self.node_packages = []
         self.heif_packages = []
@@ -111,22 +127,42 @@ class LicenseOverlayTests(unittest.TestCase):
                                   "manifest_path": str(source / "Cargo.toml")})
         self.destination = self.root / "module/licenses/upstream"
 
+    def stage(self, packages):
+        """stage_overlay on this test's fixture, in memory."""
+        return stage_overlay(self.vendor, self.destination, packages, files=self.files)
+
     def write(self, path, content):
-        """Give `path` new content without writing through a link to the shared tree."""
+        self.files.store[Path(path)] = content.encode("utf-8") if isinstance(content, str) else content
+
+    def read(self, path):
+        """The fixture's bytes, or a file a disk test's packaging wrote."""
         path = Path(path)
-        if path.exists():
-            # A rename works on read-only files on Windows too, unlike unlink.
-            path.rename(self.trash / f"{len(list(self.trash.iterdir()))}")
-        if isinstance(content, str):
-            path.write_text(content)
-        else:
-            path.write_bytes(content)
+        return self.files.store[path] if path in self.files.store else path.read_bytes()
+
+    def read_text(self, path):
+        return self.read(path).decode("utf-8")
+
+    def remove(self, path):
+        del self.files.store[Path(path)]
+
+    def exists(self, path):
+        return self.files.exists(Path(path)) or Path(path).exists()
+
+    def remove_tree(self, root):
+        for path in self.files.under(Path(root)):
+            del self.files.store[path]
+
+    def materialize(self):
+        """Write the fixture to disk, for the tests of the disk walk and of packaging."""
+        for path, raw in self.files.store.items():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(raw)
 
     def seal(self, name):
         """Rehash one changed test input to exercise semantic checks separately."""
-        raw = (self.vendor / name).read_bytes()
+        raw = self.read(self.vendor / name)
         path = self.vendor / "inventory.json"
-        value = json.loads(path.read_text())
+        value = json.loads(self.read_text(path))
         row = next(entry for entry in value["files"] if entry["path"] == name)
         row.update(bytes=len(raw), sha256=hashlib.sha256(raw).hexdigest())
         self.write(path, json.dumps(value))
@@ -150,6 +186,7 @@ class LicenseOverlayTests(unittest.TestCase):
         toolchain.parent.mkdir(parents=True)
         self.write(toolchain, "Fixture toolchain notice\n")
         self.destination.parent.parent.mkdir(parents=True)
+        self.materialize()  # packaging reads the repository on disk
         record = bundle_licenses(metadata, self.destination.parent, self.repository, sysroot)
         self.assertEqual(record["legal_review"], "not_performed")
         self.assertEqual(record["upstream_overlay"]["complete_text_packages"], 17)
@@ -163,8 +200,8 @@ class LicenseOverlayTests(unittest.TestCase):
         copied = [text for p in record["dependencies"] for text in p["texts"] if text.get("origin") == "verified_upstream_overlay"]
         self.assertEqual(len(copied), 26)
         for text in copied:
-            raw = (self.destination.parent.parent / text["path"]).read_bytes()
-            self.assertEqual(raw, Path(text["source"]).read_bytes())
+            raw = self.read(self.destination.parent.parent / text["path"])
+            self.assertEqual(raw, self.read(text["source"]))
             self.assertEqual(hashlib.sha256(raw).hexdigest(), text["sha256"])
         self.assertEqual(inventory(self.vendor), inventory(self.destination))
         archive = self.root / "licenses.tgz"
@@ -177,11 +214,11 @@ class LicenseOverlayTests(unittest.TestCase):
         historical = self.manifest["historical_collection"]["unresolved_full_license_text"]
         self.assertEqual(len(historical), 9)
         self.assertEqual(self.manifest["historical_collection"]["source"], "input-manifest.json")
-        result = stage_overlay(self.vendor, self.destination, self.packages)
+        result = self.stage(self.packages)
         self.assertEqual(result["record"]["complete_text_packages"], 17)
         self.assertEqual(result["record"]["historical_text_packages"], 3)
         self.assertEqual(result["record"]["legal_review"], "not_performed")
-        copied = json.loads((self.destination / "manifest.json").read_text())
+        copied = json.loads(self.read_text(self.destination / "manifest.json"))
         self.assertEqual(copied["historical_collection"]["unresolved_full_license_text"], historical)
         self.assertEqual(copied["unresolved_full_license_text"], [])
 
@@ -201,12 +238,12 @@ class LicenseOverlayTests(unittest.TestCase):
                     self.manifest["summary"][field] = value
                 self.save_manifest()
                 with self.assertRaisesRegex(RuntimeError, "summary differs"):
-                    stage_overlay(self.vendor, self.destination, self.packages)
-                self.assertFalse(self.destination.exists())
+                    self.stage(self.packages)
+                self.assertFalse(self.exists(self.destination))
 
     def test_a_new_version_cannot_inherit_old_version_license_evidence(self):
         future = dict(self.packages[0], id="registry+fixture#alloc-stdlib@99.0", version="99.0")
-        result = stage_overlay(self.vendor, self.destination, [future])
+        result = self.stage([future])
         self.assertEqual(result["packages"], {})
         self.assertEqual(result["record"]["matched_packages"], 0)
 
@@ -216,49 +253,50 @@ class LicenseOverlayTests(unittest.TestCase):
                 package = dict(self.packages[0])
                 directory = Path(package["manifest_path"]).parent
                 name = ".cargo_vcs_info.json" if kind == "vcs" else "Cargo.toml.orig"
-                previous = (directory / name).read_bytes()
+                previous = self.read(directory / name)
                 if kind == "license":
                     package["license"] = "MIT"
                 else:
                     self.write((directory / name), previous + b"\n")
                 with self.assertRaisesRegex(RuntimeError, "differs"):
-                    stage_overlay(self.vendor, self.destination, [package])
-                self.assertFalse(self.destination.exists())
+                    self.stage([package])
+                self.assertFalse(self.exists(self.destination))
                 self.write((directory / name), previous)
 
     def test_changed_asset_bytes_fail_before_copying(self):
         asset = self.manifest["packages"][0]["assets"][0]["path"]
         self.write((self.vendor / asset), b"substituted text")
         with self.assertRaisesRegex(RuntimeError, "identity differs"):
-            stage_overlay(self.vendor, self.destination, self.packages)
-        self.assertFalse(self.destination.exists())
+            self.stage(self.packages)
+        self.assertFalse(self.exists(self.destination))
         self.seal(asset)
         with self.assertRaisesRegex(RuntimeError, "identity differs"):
-            stage_overlay(self.vendor, self.destination, self.packages)
-        self.assertFalse(self.destination.exists())
+            self.stage(self.packages)
+        self.assertFalse(self.exists(self.destination))
 
     def test_notice_classification_and_upstream_url_are_checked(self):
         notice = next(p for p in self.manifest["packages"] if p["name"] == "objc2")
         notice["complete_license_options_present"] = []
         self.save_manifest()
         with self.assertRaisesRegex(RuntimeError, "cannot claim"):
-            stage_overlay(self.vendor, self.destination, self.packages)
+            self.stage(self.packages)
         notice["complete_license_options_present"] = ["MIT"]
         notice["assets"][0]["source_url"] = "https://raw.githubusercontent.com/example/other/main/LICENSE"
         self.save_manifest()
         with self.assertRaisesRegex(RuntimeError, "URL or hash"):
-            stage_overlay(self.vendor, self.destination, self.packages)
-        self.assertFalse(self.destination.exists())
+            self.stage(self.packages)
+        self.assertFalse(self.exists(self.destination))
 
     def test_notice_extraction_must_equal_exact_source_byte_range(self):
         selector = next(p for p in self.manifest["packages"] if p["name"] == "selectors")
         selector["assets"][0]["source_byte_range"]["end_exclusive"] -= 1
         self.save_manifest()
         with self.assertRaisesRegex(RuntimeError, "source bytes"):
-            stage_overlay(self.vendor, self.destination, self.packages)
-        self.assertFalse(self.destination.exists())
+            self.stage(self.packages)
+        self.assertFalse(self.exists(self.destination))
 
     def test_inventory_rejects_symlinks(self):
+        self.materialize()  # the disk walk itself
         source = self.vendor / "README.md"
         outside = self.root / "readme"
         source.rename(outside)
@@ -269,35 +307,35 @@ class LicenseOverlayTests(unittest.TestCase):
                 raise
             self.skipTest("this Windows account may not create symlinks")
         with self.assertRaisesRegex(RuntimeError, "symlinks"):
-            stage_overlay(self.vendor, self.destination, self.packages)
+            stage_overlay(self.vendor, self.destination, self.packages, files=DISK)
         self.assertFalse(self.destination.exists())
 
     def test_inventory_rejects_traversal_and_unlisted_files(self):
         self.write((self.vendor / "unreviewed.txt"), "extra")
         with self.assertRaisesRegex(RuntimeError, "not exact"):
-            stage_overlay(self.vendor, self.destination, self.packages)
-        (self.vendor / "unreviewed.txt").unlink()
-        value = json.loads((self.vendor / "inventory.json").read_text())
+            self.stage(self.packages)
+        self.remove(self.vendor / "unreviewed.txt")
+        value = json.loads(self.read_text(self.vendor / "inventory.json"))
         value["files"][0]["path"] = "../escape"
         self.write((self.vendor / "inventory.json"), json.dumps(value))
         with self.assertRaisesRegex(RuntimeError, "escapes"):
-            stage_overlay(self.vendor, self.destination, self.packages)
-        self.assertFalse(self.destination.exists())
+            self.stage(self.packages)
+        self.assertFalse(self.exists(self.destination))
 
     def test_boolean_sizes_and_duplicate_manifest_keys_are_not_accepted(self):
-        value = json.loads((self.vendor / "inventory.json").read_text())
+        value = json.loads(self.read_text(self.vendor / "inventory.json"))
         previous = json.dumps(value)
         value["files"][0]["bytes"] = True
         self.write((self.vendor / "inventory.json"), json.dumps(value))
         with self.assertRaisesRegex(RuntimeError, "identity"):
-            stage_overlay(self.vendor, self.destination, self.packages)
+            self.stage(self.packages)
         self.write((self.vendor / "inventory.json"), previous)
-        raw = (self.vendor / "manifest.json").read_text()
+        raw = self.read_text(self.vendor / "manifest.json")
         self.write((self.vendor / "manifest.json"), raw.replace('"schema": 1,', '"schema": 1, "schema": 1,', 1))
         self.seal("manifest.json")
         with self.assertRaisesRegex(RuntimeError, "Duplicate"):
-            stage_overlay(self.vendor, self.destination, self.packages)
-        self.assertFalse(self.destination.exists())
+            self.stage(self.packages)
+        self.assertFalse(self.exists(self.destination))
 
 
     def authority(self):
@@ -317,14 +355,14 @@ class LicenseOverlayTests(unittest.TestCase):
                 asset[field] = value
                 self.save_manifest()
                 with self.assertRaises(RuntimeError):
-                    stage_overlay(self.vendor, self.destination, self.packages)
-                self.assertFalse(self.destination.exists())
+                    self.stage(self.packages)
+                self.assertFalse(self.exists(self.destination))
                 asset[field] = old
         self.save_manifest()
 
     def test_resealed_authority_substitution_still_fails_reviewed_digest(self):
         _, asset = self.authority()
-        raw = (self.vendor / asset["source_path"]).read_bytes() + b"\nSubstituted terms\n"
+        raw = self.read(self.vendor / asset["source_path"]) + b"\nSubstituted terms\n"
         for name in [asset["source_path"], asset["path"]]:
             self.write((self.vendor / name), raw)
             self.seal(name)
@@ -332,13 +370,13 @@ class LicenseOverlayTests(unittest.TestCase):
                      source_sha256=hashlib.sha256(raw).hexdigest())
         self.save_manifest()
         with self.assertRaisesRegex(RuntimeError, "reviewed text hash"):
-            stage_overlay(self.vendor, self.destination, self.packages)
-        self.assertFalse(self.destination.exists())
+            self.stage(self.packages)
+        self.assertFalse(self.exists(self.destination))
 
     def test_authority_requires_the_link_in_the_verified_version_notice(self):
         entry, _ = self.authority()
         notice = entry["assets"][0]
-        raw = (self.vendor / notice["source_path"]).read_bytes().replace(
+        raw = self.read(self.vendor / notice["source_path"]).replace(
             b"[Apache-2.0]: https://www.apache.org/licenses/LICENSE-2.0",
             b"[Apache-2.0]: https://example.invalid/unreviewed")
         for name in [notice["source_path"], notice["path"]]:
@@ -348,11 +386,11 @@ class LicenseOverlayTests(unittest.TestCase):
                       source_sha256=hashlib.sha256(raw).hexdigest())
         self.save_manifest()
         with self.assertRaisesRegex(RuntimeError, "does not link"):
-            stage_overlay(self.vendor, self.destination, self.packages)
-        self.assertFalse(self.destination.exists())
+            self.stage(self.packages)
+        self.assertFalse(self.exists(self.destination))
 
     def test_historical_original_closes_text_gap_without_claiming_legal_review(self):
-        result = stage_overlay(self.vendor, self.destination, self.packages + self.lock_packages)
+        result = self.stage(self.packages + self.lock_packages)
         self.assertEqual(result["record"]["historical_text_packages"], 4)
         self.assertEqual(result["record"]["legal_review"], "not_performed")
         for entry in self.manifest["packages"]:
@@ -365,14 +403,14 @@ class LicenseOverlayTests(unittest.TestCase):
             supplemental = next(t for t in record["texts"] if t.get("source_kind") == "historical_notice")
             self.assertTrue(supplemental["provenance_verified"])
             self.assertEqual(supplemental["legal_review"], "not_performed")
-            self.assertIn(b"Copyright (c) Steven Sheldon", Path(supplemental["source"]).read_bytes())
-        shutil.rmtree(self.destination)
+            self.assertIn(b"Copyright (c) Steven Sheldon", self.read(supplemental["source"]))
+        self.remove_tree(self.destination)
         entry = next(p for p in self.manifest["packages"] if p.get("supplemental"))
         entry["supplemental"][0]["legal_review"] = "approved"
         self.save_manifest()
         with self.assertRaisesRegex(RuntimeError, "reviewed scope"):
-            stage_overlay(self.vendor, self.destination, self.packages)
-        self.assertFalse(self.destination.exists())
+            self.stage(self.packages)
+        self.assertFalse(self.exists(self.destination))
 
     def test_historical_scope_cannot_expand_to_other_versions_or_current_commit(self):
         entry = next(p for p in self.manifest["packages"] if p.get("supplemental"))
@@ -387,15 +425,15 @@ class LicenseOverlayTests(unittest.TestCase):
                 target[field] = value
                 self.save_manifest()
                 with self.assertRaises(RuntimeError):
-                    stage_overlay(self.vendor, self.destination, self.packages)
-                self.assertFalse(self.destination.exists())
+                    self.stage(self.packages)
+                self.assertFalse(self.exists(self.destination))
                 target[field] = old
         self.save_manifest()
 
     def test_resealed_historical_terms_cannot_replace_original_copyright(self):
         entry = next(p for p in self.manifest["packages"] if p.get("supplemental"))
         asset = entry["supplemental"][0]
-        raw = (self.vendor / asset["source_path"]).read_bytes().replace(
+        raw = self.read(self.vendor / asset["source_path"]).replace(
             b"Copyright (c) Steven Sheldon", b"Copyright (c) <year> <copyright holders>")
         for name in [asset["source_path"], asset["path"]]:
             self.write((self.vendor / name), raw)
@@ -404,13 +442,13 @@ class LicenseOverlayTests(unittest.TestCase):
                      source_sha256=hashlib.sha256(raw).hexdigest())
         self.save_manifest()
         with self.assertRaisesRegex(RuntimeError, "Historical original URL or reviewed text hash"):
-            stage_overlay(self.vendor, self.destination, self.packages)
-        self.assertFalse(self.destination.exists())
+            self.stage(self.packages)
+        self.assertFalse(self.exists(self.destination))
 
     def test_resealed_current_notice_cannot_drop_apple_sdk_discussion(self):
         entry = next(p for p in self.manifest["packages"] if p.get("supplemental"))
         notice = entry["assets"][0]
-        raw = (self.vendor / notice["source_path"]).read_bytes().split(b"## Apple SDKs")[0]
+        raw = self.read(self.vendor / notice["source_path"]).split(b"## Apple SDKs")[0]
         # The pinned root notice is shared by dispatch2 and objc2. Reseal all
         # references so rejection tests the reviewed historical notice, not a
         # stale digest in an earlier package.
@@ -425,58 +463,58 @@ class LicenseOverlayTests(unittest.TestCase):
                                  source_sha256=hashlib.sha256(raw).hexdigest())
         self.save_manifest()
         with self.assertRaisesRegex(RuntimeError, "current-version MIT notice differs"):
-            stage_overlay(self.vendor, self.destination, self.packages)
-        self.assertFalse(self.destination.exists())
+            self.stage(self.packages)
+        self.assertFalse(self.exists(self.destination))
 
     def test_current_package_mit_declaration_is_required_even_with_historical_text(self):
         entry = next(p for p in self.manifest["packages"] if p.get("supplemental"))
         suffix = entry["path_in_vcs"] + "/Cargo.toml"
         upstream = next(p for p in entry["evidence"] if p["path"].startswith("upstream/") and p["path"].endswith(suffix))
         original = next(p for p in entry["evidence"] if p["path"].endswith("/Cargo.toml.orig"))
-        raw = (self.vendor / upstream["path"]).read_bytes().replace(b'license = "MIT"', b'license = "Apache-2.0"')
+        raw = self.read(self.vendor / upstream["path"]).replace(b'license = "MIT"', b'license = "Apache-2.0"')
         for proof in [upstream, original]:
             self.write((self.vendor / proof["path"]), raw)
             proof.update(bytes=len(raw), sha256=hashlib.sha256(raw).hexdigest())
             self.seal(proof["path"])
         self.save_manifest()
         with self.assertRaisesRegex(RuntimeError, "current package MIT declaration"):
-            stage_overlay(self.vendor, self.destination, self.packages)
-        self.assertFalse(self.destination.exists())
+            self.stage(self.packages)
+        self.assertFalse(self.exists(self.destination))
 
     def test_missing_or_resealed_historical_provenance_is_not_accepted(self):
         entry = next(p for p in self.manifest["packages"] if p.get("supplemental"))
         proof = entry["supplemental"][0]["proofs"][0]
-        raw = (self.vendor / proof["path"]).read_bytes() + b"changed"
+        raw = self.read(self.vendor / proof["path"]) + b"changed"
         self.write((self.vendor / proof["path"]), raw)
         proof.update(bytes=len(raw), sha256=hashlib.sha256(raw).hexdigest())
         self.seal(proof["path"])
         self.save_manifest()
         with self.assertRaisesRegex(RuntimeError, "Historical provenance"):
-            stage_overlay(self.vendor, self.destination, self.packages)
-        self.assertFalse(self.destination.exists())
+            self.stage(self.packages)
+        self.assertFalse(self.exists(self.destination))
 
     def test_source_archive_matches_exact_package_and_is_not_only_a_link(self):
-        result = stage_overlay(self.vendor, self.destination, self.packages)
+        result = self.stage(self.packages)
         source = result["record"]["source_archives"][0]
         archive = self.destination.parent.parent / source["path"]
-        self.assertEqual(hashlib.sha256(archive.read_bytes()).hexdigest(), source["sha256"])
-        with tarfile.open(archive) as contents:
+        self.assertEqual(hashlib.sha256(self.read(archive)).hexdigest(), source["sha256"])
+        with tarfile.open(fileobj=io.BytesIO(self.read(archive))) as contents:
             self.assertEqual(len(contents.getmembers()), 22)
             original = contents.extractfile("selectors-0.38.0/Cargo.toml.orig").read()
-            self.assertEqual(original, (self.vendor / "local-evidence/selectors-0.38.0/Cargo.toml.orig").read_bytes())
-        shutil.rmtree(self.destination)
+            self.assertEqual(original, self.read(self.vendor / "local-evidence/selectors-0.38.0/Cargo.toml.orig"))
+        self.remove_tree(self.destination)
         row = self.manifest["source_archives"][0]
-        raw = (self.vendor / row["path"]).read_bytes() + b"changed"
+        raw = self.read(self.vendor / row["path"]) + b"changed"
         self.write((self.vendor / row["path"]), raw)
         row.update(bytes=len(raw), sha256=hashlib.sha256(raw).hexdigest())
         self.seal(row["path"])
         self.save_manifest()
         with self.assertRaisesRegex(RuntimeError, "reviewed exact package"):
-            stage_overlay(self.vendor, self.destination, self.packages)
-        self.assertFalse(self.destination.exists())
+            self.stage(self.packages)
+        self.assertFalse(self.exists(self.destination))
 
     def test_parent_terms_close_both_gaps_with_truthful_manifest_provenance(self):
-        result = stage_overlay(self.vendor, self.destination, self.packages)
+        result = self.stage(self.packages)
         self.assertEqual(result["record"]["exact_commit_manifest_matches"], 39)
         self.assertEqual(result["record"]["reviewed_publication_version_stamps"], 1)
         expected = {"nom-language": ("raw_exact_match", ["LICENSE"], 7),
@@ -491,18 +529,18 @@ class LicenseOverlayTests(unittest.TestCase):
             self.assertFalse(record["historical_provenance"])
             self.assertEqual([Path(text["source"]).name for text in record["texts"]], terms)
             archive = next(a for a in self.manifest["source_archives"] if a["package"] == name)
-            with tarfile.open(self.vendor / archive["path"]) as source:
+            with tarfile.open(fileobj=io.BytesIO(self.read(self.vendor / archive["path"]))) as source:
                 self.assertEqual(len(source.getmembers()), members)
                 prefix = f"{name}-{entry['version']}/"
                 for filename in ["Cargo.toml.orig", ".cargo_vcs_info.json"]:
                     self.assertEqual(source.extractfile(prefix + filename).read(),
-                                     (self.vendor / "local-evidence" / prefix / filename).read_bytes())
+                                     self.read(self.vendor / "local-evidence" / prefix / filename))
             if name == "tract-extra":
-                original = (self.vendor / "local-evidence/tract-extra-0.23.8/Cargo.toml.orig").read_bytes()
-                upstream = (self.vendor / f"upstream/sonos/tract/{entry['commit']}/extra/Cargo.toml").read_bytes()
+                original = self.read(self.vendor / "local-evidence/tract-extra-0.23.8/Cargo.toml.orig")
+                upstream = self.read(self.vendor / f"upstream/sonos/tract/{entry['commit']}/extra/Cargo.toml")
                 self.assertNotEqual(original, upstream)
                 self.assertEqual(upstream.replace(b'\nversion = "0.23.8-pre"\n', b'\nversion = "0.23.8"\n'), original)
-                vcs = json.loads((self.vendor / "local-evidence/tract-extra-0.23.8/.cargo_vcs_info.json").read_bytes())
+                vcs = json.loads(self.read(self.vendor / "local-evidence/tract-extra-0.23.8/.cargo_vcs_info.json"))
                 self.assertIs(vcs["git"]["dirty"], True)
         self.assertEqual(result["record"]["legal_review"], "not_performed")
 
@@ -520,8 +558,8 @@ class LicenseOverlayTests(unittest.TestCase):
                 entry[field] = value
                 self.save_manifest()
                 with self.assertRaises(RuntimeError):
-                    stage_overlay(self.vendor, self.destination, self.packages)
-                self.assertFalse(self.destination.exists())
+                    self.stage(self.packages)
+                self.assertFalse(self.exists(self.destination))
                 entry[field] = old
         self.save_manifest()
 
@@ -531,7 +569,7 @@ class LicenseOverlayTests(unittest.TestCase):
                  "local-evidence/tract-extra-0.23.8/Cargo.toml.orig",
                  "local-evidence/tract-extra-0.23.8/.cargo_vcs_info.json"]
         for name in names:
-            previous = (self.vendor / name).read_bytes()
+            previous = self.read(self.vendor / name)
             variants = [previous + b"\n"]
             if name.endswith(".cargo_vcs_info.json"):
                 value = json.loads(previous)
@@ -546,8 +584,8 @@ class LicenseOverlayTests(unittest.TestCase):
                     self.seal(name)
                     self.save_manifest()
                     with self.assertRaises(RuntimeError):
-                        stage_overlay(self.vendor, self.destination, self.packages)
-                    self.assertFalse(self.destination.exists())
+                        self.stage(self.packages)
+                    self.assertFalse(self.exists(self.destination))
                     self.write((self.vendor / name), previous)
                     proof.clear()
                     proof.update(old)
@@ -558,15 +596,15 @@ class LicenseOverlayTests(unittest.TestCase):
         entry = next(p for p in self.manifest["packages"] if p["name"] == "tract-extra")
         name = f"upstream/sonos/tract/{entry['commit']}/extra/src/lib.rs"
         proof = next(p for p in entry["evidence"] if p["path"] == name)
-        previous, old = (self.vendor / name).read_bytes(), dict(proof)
+        previous, old = self.read(self.vendor / name), dict(proof)
         raw = previous + b"\n// changed source\n"
         self.write((self.vendor / name), raw)
         proof.update(bytes=len(raw), sha256=hashlib.sha256(raw).hexdigest())
         self.seal(name)
         self.save_manifest()
         with self.assertRaisesRegex(RuntimeError, "Rust source differs"):
-            stage_overlay(self.vendor, self.destination, self.packages)
-        self.assertFalse(self.destination.exists())
+            self.stage(self.packages)
+        self.assertFalse(self.exists(self.destination))
         self.write((self.vendor / name), previous)
         proof.clear()
         proof.update(old)
@@ -576,8 +614,8 @@ class LicenseOverlayTests(unittest.TestCase):
         current = Path(package["manifest_path"]).parent / "src/lib.rs"
         self.write(current, raw)
         with self.assertRaisesRegex(RuntimeError, "Current package Rust source differs"):
-            stage_overlay(self.vendor, self.destination, self.packages)
-        self.assertFalse(self.destination.exists())
+            self.stage(self.packages)
+        self.assertFalse(self.exists(self.destination))
 
     def test_resealed_parent_terms_and_workspace_claims_cannot_change(self):
         for package in ["nom-language", "tract-extra"]:
@@ -586,11 +624,11 @@ class LicenseOverlayTests(unittest.TestCase):
                 entry[field] = True
                 self.save_manifest()
                 with self.assertRaisesRegex(RuntimeError, "parent license package scope"):
-                    stage_overlay(self.vendor, self.destination, self.packages)
-                self.assertFalse(self.destination.exists())
+                    self.stage(self.packages)
+                self.assertFalse(self.exists(self.destination))
                 entry[field] = False
             for asset in entry["assets"]:
-                previous, old = (self.vendor / asset["path"]).read_bytes(), dict(asset)
+                previous, old = self.read(self.vendor / asset["path"]), dict(asset)
                 raw = previous + b"\nSubstituted terms\n"
                 for name in [asset["path"], asset["source_path"]]:
                     self.write((self.vendor / name), raw)
@@ -602,8 +640,8 @@ class LicenseOverlayTests(unittest.TestCase):
                              source_sha256=hashlib.sha256(raw).hexdigest())
                 self.save_manifest()
                 with self.assertRaisesRegex(RuntimeError, "parent original terms hash"):
-                    stage_overlay(self.vendor, self.destination, self.packages)
-                self.assertFalse(self.destination.exists())
+                    self.stage(self.packages)
+                self.assertFalse(self.exists(self.destination))
                 for name in [asset["path"], asset["source_path"]]:
                     self.write((self.vendor / name), previous)
                     self.seal(name)
@@ -620,19 +658,19 @@ class LicenseOverlayTests(unittest.TestCase):
             self.manifest["source_archives"] = [a for a in self.manifest["source_archives"] if a["package"] != package]
             self.save_manifest()
             with self.assertRaisesRegex(RuntimeError, "archive inventory is incomplete"):
-                stage_overlay(self.vendor, self.destination, self.packages)
-            self.assertFalse(self.destination.exists())
+                self.stage(self.packages)
+            self.assertFalse(self.exists(self.destination))
             self.manifest = json.loads(json.dumps(original))
             row = next(a for a in self.manifest["source_archives"] if a["package"] == package)
-            previous = (self.vendor / row["path"]).read_bytes()
+            previous = self.read(self.vendor / row["path"])
             raw = previous + b"changed"
             self.write((self.vendor / row["path"]), raw)
             row.update(bytes=len(raw), sha256=hashlib.sha256(raw).hexdigest())
             self.seal(row["path"])
             self.save_manifest()
             with self.assertRaisesRegex(RuntimeError, "reviewed exact package"):
-                stage_overlay(self.vendor, self.destination, self.packages)
-            self.assertFalse(self.destination.exists())
+                self.stage(self.packages)
+            self.assertFalse(self.exists(self.destination))
             self.write((self.vendor / row["path"]), previous)
             self.seal(row["path"])
         self.manifest = original
@@ -644,13 +682,13 @@ class LicenseOverlayTests(unittest.TestCase):
         nom["publication_version_stamp"] = tract["publication_version_stamp"]
         self.save_manifest()
         with self.assertRaisesRegex(RuntimeError, "Raw manifest match has inconsistent provenance"):
-            stage_overlay(self.vendor, self.destination, self.packages)
-        self.assertFalse(self.destination.exists())
+            self.stage(self.packages)
+        self.assertFalse(self.exists(self.destination))
 
     def test_resealed_normalized_tract_manifest_cannot_be_claimed_as_raw_exact(self):
         entry = next(p for p in self.manifest["packages"] if p["name"] == "tract-extra")
         name = f"upstream/sonos/tract/{entry['commit']}/extra/Cargo.toml"
-        raw = (self.vendor / "local-evidence/tract-extra-0.23.8/Cargo.toml.orig").read_bytes()
+        raw = self.read(self.vendor / "local-evidence/tract-extra-0.23.8/Cargo.toml.orig")
         self.write((self.vendor / name), raw)
         proof = next(p for p in entry["evidence"] if p["path"] == name)
         proof.update(bytes=len(raw), sha256=hashlib.sha256(raw).hexdigest())
@@ -660,13 +698,13 @@ class LicenseOverlayTests(unittest.TestCase):
         self.manifest["summary"].update(exact_commit_manifest_matches=17, reviewed_publication_version_stamps=0)
         self.save_manifest()
         with self.assertRaisesRegex(RuntimeError, "reviewed stamp"):
-            stage_overlay(self.vendor, self.destination, self.packages)
-        self.assertFalse(self.destination.exists())
+            self.stage(self.packages)
+        self.assertFalse(self.exists(self.destination))
 
     def test_wheel_and_npm_payloads_include_verified_offline_source_and_notices(self):
-        files = upstream_files(self.repository)
+        files = upstream_files(self.repository, files=self.files)
         source_name = "licenses/upstream/source-archives/selectors-0.38.0.crate"
-        self.assertEqual(files[source_name], (self.vendor / "source-archives/selectors-0.38.0.crate").read_bytes())
+        self.assertEqual(files[source_name], self.read(self.vendor / "source-archives/selectors-0.38.0.crate"))
         source = self.root / "base.whl"
         wheel = self.root / "final.whl"
         with zipfile.ZipFile(source, "w") as archive:
@@ -695,15 +733,15 @@ class LicenseOverlayTests(unittest.TestCase):
             verify_node_licenses(npm, files)
 
     def test_node_terms_are_extra_to_the_original_seventeen_package_closure(self):
-        result = stage_overlay(self.vendor, self.destination, self.packages)
+        result = self.stage(self.packages)
         self.assertEqual(len(self.packages), 17)
         self.assertEqual(len(self.node_packages), 4)
         self.assertEqual(result["record"]["matched_packages"], 17)
         self.assertEqual(result["record"]["complete_text_packages"], 17)
         self.assertTrue(all(not key.rsplit("#", 1)[-1].startswith("napi") for key in result["packages"]))
-        shutil.rmtree(self.destination)
+        self.remove_tree(self.destination)
         napi = [p for p in self.refresh_packages if p["name"].startswith("napi")]
-        result = stage_overlay(self.vendor, self.destination, self.packages + self.node_packages + napi)
+        result = self.stage(self.packages + self.node_packages + napi)
         self.assertEqual(result["record"]["matched_packages"], 25)
         self.assertEqual(result["record"]["complete_text_packages"], 25)
         self.assertEqual(result["record"]["exact_commit_manifest_matches"], 39)
@@ -719,7 +757,7 @@ class LicenseOverlayTests(unittest.TestCase):
             self.assertFalse(record["historical_provenance"])
             self.assertIsNone(record["full_text_gap"])
             self.assertEqual(len(record["texts"]), 1)
-            raw = Path(record["texts"][0]["source"]).read_bytes()
+            raw = self.read(record["texts"][0]["source"])
             self.assertEqual(raw.count(b"MIT License"), 2)
             self.assertIn(b"Copyright (c) 2020-present LongYinan", raw)
             self.assertIn(b"Copyright (c) 2018 GitHub", raw)
@@ -728,7 +766,7 @@ class LicenseOverlayTests(unittest.TestCase):
 
     def test_heifer_terms_cover_the_workspace_inherited_license_of_each_crate(self):
         self.assertEqual(len(self.heif_packages), 4)
-        result = stage_overlay(self.vendor, self.destination, self.packages + self.heif_packages)
+        result = self.stage(self.packages + self.heif_packages)
         self.assertEqual(result["record"]["matched_packages"], 21)
         for package in self.heif_packages:
             entry = next(p for p in self.manifest["packages"] if p["id"] == package["id"])
@@ -741,13 +779,13 @@ class LicenseOverlayTests(unittest.TestCase):
 
     def test_qppocr_terms_are_the_published_commit_root_licenses(self):
         self.assertEqual(len(self.qpp_packages), 3)
-        result = stage_overlay(self.vendor, self.destination, self.packages + self.qpp_packages)
+        result = self.stage(self.packages + self.qpp_packages)
         self.assertEqual(result["record"]["matched_packages"], 20)
         for package in self.qpp_packages:
             entry = next(p for p in self.manifest["packages"] if p["id"] == package["id"])
             self.assertNotIn("vcs_record", entry)
-            vcs = json.loads((self.vendor / "local-evidence" / f"{package['name']}-{package['version']}"
-                              / ".cargo_vcs_info.json").read_text())
+            vcs = json.loads(self.read_text(self.vendor / "local-evidence" / f"{package['name']}-{package['version']}"
+                              / ".cargo_vcs_info.json"))
             self.assertEqual((vcs["git"]["sha1"], vcs["path_in_vcs"]), (entry["commit"], entry["path_in_vcs"]))
             record = result["packages"][package["id"]]
             self.assertEqual(record["manifest_provenance"], "raw_exact_match")
@@ -758,26 +796,26 @@ class LicenseOverlayTests(unittest.TestCase):
     def test_every_package_needs_its_published_vcs_record(self):
         # The evidence names the commit the crate says it was published from.
         name = "local-evidence/qppocr-core-0.3.1/.cargo_vcs_info.json"
-        (self.vendor / name).unlink()
-        value = json.loads((self.vendor / "inventory.json").read_text())
+        self.remove(self.vendor / name)
+        value = json.loads(self.read_text(self.vendor / "inventory.json"))
         value["files"] = [row for row in value["files"] if row["path"] != name]
         self.write((self.vendor / "inventory.json"), json.dumps(value))
         entry = next(p for p in self.manifest["packages"] if p["name"] == "qppocr-core")
         entry["evidence"] = [proof for proof in entry["evidence"] if proof["path"] != name]
         self.save_manifest()
         with self.assertRaisesRegex(RuntimeError, "Missing exact-version package evidence"):
-            stage_overlay(self.vendor, self.destination, self.packages)
-        self.assertFalse(self.destination.exists())
+            self.stage(self.packages)
+        self.assertFalse(self.exists(self.destination))
 
     def test_a_qppocr_crate_whose_published_vcs_record_differs_is_rejected(self):
         directory = Path(self.qpp_packages[0]["manifest_path"]).parent
         self.write((directory / ".cargo_vcs_info.json"), "{}")
         with self.assertRaisesRegex(RuntimeError, "Current package source differs"):
-            stage_overlay(self.vendor, self.destination, self.packages + self.qpp_packages)
+            self.stage(self.packages + self.qpp_packages)
 
     def test_selectors_0_41_takes_the_reviewed_mpl_terms_through_its_own_notice(self):
         package = next(p for p in self.refresh_packages if p["name"] == "selectors")
-        result = stage_overlay(self.vendor, self.destination, self.packages + [package])
+        result = self.stage(self.packages + [package])
         self.assertEqual(result["record"]["matched_packages"], 18)
         record = result["packages"][package["id"]]
         self.assertEqual(record["manifest_provenance"], "raw_exact_match")
@@ -797,21 +835,21 @@ class LicenseOverlayTests(unittest.TestCase):
         notice["source_path"] = notice["source_path"].replace(entry["commit"], "572ecba2d1600e7c3d490586692a209faf703baa")
         self.save_manifest()
         with self.assertRaisesRegex(RuntimeError, "outside the attributed commit"):
-            stage_overlay(self.vendor, self.destination, self.refresh_packages)
-        self.assertFalse(self.destination.exists())
+            self.stage(self.refresh_packages)
+        self.assertFalse(self.exists(self.destination))
 
     def test_refreshed_napi_tuples_keep_both_original_copyrights_from_their_commit(self):
         napi = [p for p in self.refresh_packages if p["name"].startswith("napi")]
         self.assertEqual(sorted(p["name"] for p in napi),
                          ["napi", "napi-derive", "napi-derive-backend", "napi-sys"])
-        result = stage_overlay(self.vendor, self.destination, self.node_packages + napi)
+        result = self.stage(self.node_packages + napi)
         self.assertEqual(result["record"]["matched_packages"], 8)
         for package in napi:
             record = result["packages"][package["id"]]
             self.assertEqual(record["commit"], "d9cb526c15e63ba30e06b4d169068c9854180595")
             self.assertEqual(record["manifest_provenance"], "raw_exact_match")
             self.assertEqual(len(record["texts"]), 1)
-            raw = (self.destination.parent.parent / record["texts"][0]["path"]).read_bytes()
+            raw = self.read(self.destination.parent.parent / record["texts"][0]["path"])
             self.assertEqual(raw.count(b"MIT License"), 2)
         archives = {(row["package"], row["version"]) for row in result["record"]["source_archives"]}
         self.assertTrue({(p["name"], p["version"]) for p in napi} <= archives)
@@ -821,22 +859,22 @@ class LicenseOverlayTests(unittest.TestCase):
         entry["commit"] = "37109f133043aff379a38edfb8b1548e7e9309e5"
         self.save_manifest()
         with self.assertRaises(RuntimeError):
-            stage_overlay(self.vendor, self.destination, self.refresh_packages)
-        self.assertFalse(self.destination.exists())
+            self.stage(self.refresh_packages)
+        self.assertFalse(self.exists(self.destination))
 
     def test_lock_refresh_tuples_take_their_own_commit_root_terms(self):
         self.assertEqual(sorted(p["name"] for p in self.lock_packages),
                          ["alloc-stdlib", "jni", "jni-macros", "jni-sys-macros", "objc2",
                           "rustls-platform-verifier-android"])
-        result = stage_overlay(self.vendor, self.destination, self.packages + self.lock_packages)
+        result = self.stage(self.packages + self.lock_packages)
         self.assertEqual(result["record"]["matched_packages"], 23)
         self.assertEqual(result["record"]["complete_text_packages"], 23)
         expected = {"alloc-stdlib": ["LICENSE"], "objc2": ["LICENSE-MIT-HISTORICAL.txt", "LICENSE.md"]}
         for package in self.lock_packages:
             entry = next(p for p in self.manifest["packages"] if p["id"] == package["id"])
             self.assertEqual(entry["license_inherited_from_workspace"], package["name"] == "jni")
-            vcs = json.loads((self.vendor / "local-evidence" / f"{package['name']}-{package['version']}"
-                              / ".cargo_vcs_info.json").read_text())
+            vcs = json.loads(self.read_text(self.vendor / "local-evidence" / f"{package['name']}-{package['version']}"
+                              / ".cargo_vcs_info.json"))
             self.assertEqual((vcs["git"]["sha1"], vcs["path_in_vcs"]), (entry["commit"], entry["path_in_vcs"]))
             record = result["packages"][package["id"]]
             self.assertEqual(record["manifest_provenance"], "raw_exact_match")
@@ -853,8 +891,8 @@ class LicenseOverlayTests(unittest.TestCase):
             entry["license_inherited_from_workspace"] = claim
             self.save_manifest()
             with self.assertRaisesRegex(RuntimeError, "parent license package scope"):
-                stage_overlay(self.vendor, self.destination, self.lock_packages)
-            self.assertFalse(self.destination.exists())
+                self.stage(self.lock_packages)
+            self.assertFalse(self.exists(self.destination))
             entry["license_inherited_from_workspace"] = not claim
         self.save_manifest()
 
@@ -864,12 +902,12 @@ class LicenseOverlayTests(unittest.TestCase):
         entry["supplemental"][0]["proofs"][0] = dict(old["supplemental"][0]["proofs"][0])
         self.save_manifest()
         with self.assertRaisesRegex(RuntimeError, "target-anchored provenance"):
-            stage_overlay(self.vendor, self.destination, self.lock_packages)
-        self.assertFalse(self.destination.exists())
+            self.stage(self.lock_packages)
+        self.assertFalse(self.exists(self.destination))
 
     def test_atomig_macro_terms_are_the_published_commit_root_licenses(self):
         self.assertEqual(len(self.avif_packages), 1)
-        result = stage_overlay(self.vendor, self.destination, self.packages + self.avif_packages)
+        result = self.stage(self.packages + self.avif_packages)
         self.assertEqual(result["record"]["matched_packages"], 18)
         package = self.avif_packages[0]
         entry = next(p for p in self.manifest["packages"] if p["id"] == package["id"])
@@ -889,7 +927,7 @@ class LicenseOverlayTests(unittest.TestCase):
                  original + ".cargo_vcs_info.json"]
         for name in names:
             with self.subTest(name=name):
-                previous = (self.vendor / name).read_bytes()
+                previous = self.read(self.vendor / name)
                 proof = next(p for p in entry["evidence"] if p["path"] == name)
                 old_proof = dict(proof)
                 raw = previous + b"\n"
@@ -898,8 +936,8 @@ class LicenseOverlayTests(unittest.TestCase):
                 self.seal(name)
                 self.save_manifest()
                 with self.assertRaises(RuntimeError):
-                    stage_overlay(self.vendor, self.destination, self.node_packages)
-                self.assertFalse(self.destination.exists())
+                    self.stage(self.node_packages)
+                self.assertFalse(self.exists(self.destination))
                 self.write((self.vendor / name), previous)
                 proof.clear()
                 proof.update(old_proof)
@@ -909,7 +947,7 @@ class LicenseOverlayTests(unittest.TestCase):
     def test_node_original_terms_cannot_drop_a_copyright_even_after_resealing(self):
         entry = next(p for p in self.manifest["packages"] if p["name"] == "napi-build")
         asset = entry["assets"][0]
-        previous = (self.vendor / asset["path"]).read_bytes()
+        previous = self.read(self.vendor / asset["path"])
         raw = previous.split(b"\nMIT License\n", 1)[0] + b"\n"
         self.assertNotEqual(raw, previous)
         for name in [asset["path"], asset["source_path"]]:
@@ -921,8 +959,8 @@ class LicenseOverlayTests(unittest.TestCase):
                      source_sha256=hashlib.sha256(raw).hexdigest())
         self.save_manifest()
         with self.assertRaisesRegex(RuntimeError, "parent original terms hash"):
-            stage_overlay(self.vendor, self.destination, self.node_packages)
-        self.assertFalse(self.destination.exists())
+            self.stage(self.node_packages)
+        self.assertFalse(self.exists(self.destination))
 
     def test_node_scope_and_original_archives_remain_fixed(self):
         original = json.loads(json.dumps(self.manifest))
@@ -938,43 +976,43 @@ class LicenseOverlayTests(unittest.TestCase):
                 entry[field] = value
                 self.save_manifest()
                 with self.assertRaises(RuntimeError):
-                    stage_overlay(self.vendor, self.destination, self.node_packages)
-                self.assertFalse(self.destination.exists())
+                    self.stage(self.node_packages)
+                self.assertFalse(self.exists(self.destination))
         self.manifest = json.loads(json.dumps(original))
         self.manifest["source_archives"] = [a for a in self.manifest["source_archives"] if a["package"] != "napi"]
         self.save_manifest()
         with self.assertRaisesRegex(RuntimeError, "archive inventory is incomplete"):
-            stage_overlay(self.vendor, self.destination, self.node_packages)
-        self.assertFalse(self.destination.exists())
+            self.stage(self.node_packages)
+        self.assertFalse(self.exists(self.destination))
         self.manifest = json.loads(json.dumps(original))
         archive = next(a for a in self.manifest["source_archives"] if a["package"] == "napi")
-        raw = (self.vendor / archive["path"]).read_bytes() + b"changed"
+        raw = self.read(self.vendor / archive["path"]) + b"changed"
         self.write((self.vendor / archive["path"]), raw)
         archive.update(bytes=len(raw), sha256=hashlib.sha256(raw).hexdigest())
         self.seal(archive["path"])
         self.save_manifest()
         with self.assertRaisesRegex(RuntimeError, "reviewed exact package"):
-            stage_overlay(self.vendor, self.destination, self.node_packages)
-        self.assertFalse(self.destination.exists())
+            self.stage(self.node_packages)
+        self.assertFalse(self.exists(self.destination))
 
     def test_node_runtime_metadata_must_match_published_vcs_and_original(self):
         package = self.node_packages[0]
         source = Path(package["manifest_path"]).parent
         for name in [".cargo_vcs_info.json", "Cargo.toml.orig"]:
-            previous = (source / name).read_bytes()
+            previous = self.read(source / name)
             self.write((source / name), previous + b"\n")
             with self.assertRaisesRegex(RuntimeError, "Current package source differs"):
-                stage_overlay(self.vendor, self.destination, [package])
-            self.assertFalse(self.destination.exists())
+                self.stage([package])
+            self.assertFalse(self.exists(self.destination))
             self.write((source / name), previous)
 
     def test_node_payload_verifier_checks_both_original_copyrights_byte_for_byte(self):
-        files = upstream_files(self.repository)
+        files = upstream_files(self.repository, files=self.files)
         names = ["licenses/upstream/overlay/licenses/" + name + "/LICENSE" for name in
                  ["napi-3.14.0", "napi-build-2.6.0", "napi-derive-3.6.10", "napi-sys-3.4.0",
                   "napi-3.15.0", "napi-derive-3.6.13", "napi-sys-3.4.1", "napi-derive-backend-6.1.6"]]
         for name in names:
-            self.assertEqual(files[name], (self.repository / name).read_bytes())
+            self.assertEqual(files[name], self.read(self.repository / name))
             self.assertEqual(files[name].count(b"MIT License"), 2)
         npm = self.root / "node.tgz"
         def archive_with(changed=None):
