@@ -136,10 +136,12 @@ test("the add form sends no address for a provider that takes none", () => {
 test("a provider without a model list takes model IDs by hand, even when a saved card claims a list", () => {
   // Python 1.3.0 sends `supports_discovery: true` for every saved connection.
   const saved = { kind: "configured" as const, provider_id: "p1", supports_discovery: true };
-  for (const provider of ["vertex_ai", "vertex_ai_beta", "bedrock", "perplexity", "zai", "fireworks_ai"]) {
+  for (const provider of ["vertex_ai", "vertex_ai_beta", "bedrock"]) {
     assert.equal(listsModels(card(provider, provider, saved)), false, provider);
   }
-  for (const provider of ["openai", "copilot", "groq", "ollama"]) assert.equal(listsModels(card(provider, provider, saved)), true, provider);
+  for (const provider of ["openai", "copilot", "groq", "ollama", "perplexity", "zai", "fireworks_ai"]) {
+    assert.equal(listsModels(card(provider, provider, saved)), true, provider);
+  }
   assert.equal(listsModels(card("cohere", "Cohere", { supports_discovery: false })), false);
 });
 
@@ -148,5 +150,6 @@ test("a saved login or subscription connection offers no key and no address", ()
   assert.match(source, /const takesKey = login === null && !subscription;/);
   assert.match(source, /\{takesKey && \(\s*<button/);
   assert.match(source, /\{login === null && !subscription && \(\s*<span class="text-actions">/);
-  assert.match(source, /const manualOnly = provider !== null && !listsModels\(provider\);/);
+  // A backend that still enters a provider's models by hand answers a load with `source: "manual"`.
+  assert.match(source, /const manualOnly = provider !== null && \(!listsModels\(provider\) \|\| discovery\?\.source === "manual"\);/);
 });

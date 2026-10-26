@@ -6,8 +6,11 @@ import { foundFromKey } from "./regions.ts";
 test("a card with more than one region finds the address from the key", () => {
   assert.equal(foundFromKey({ regions: ["https://api.minimax.io/v1", "https://api.minimax.cn/v1"] }), true);
   assert.equal(foundFromKey({ regions: ["https://only.example/v1"] }), false);
-  // Models entered by hand (Z.ai): no list to find the address with.
-  assert.equal(foundFromKey({ regions: ["https://api.z.ai/api/paas/v4", "https://open.bigmodel.cn/api/paas/v4"], supports_discovery: false }), false);
+  // Z.ai lists its models: a key refused at api.z.ai is tried at open.bigmodel.cn.
+  const zai = ["https://api.z.ai/api/paas/v4", "https://open.bigmodel.cn/api/paas/v4"];
+  assert.equal(foundFromKey({ regions: zai, supports_discovery: true }), true);
+  // Models entered by hand: no list to find the address with.
+  assert.equal(foundFromKey({ regions: zai, supports_discovery: false }), false);
   assert.equal(foundFromKey({}), false);
   assert.equal(foundFromKey(null), false);
   // The address field says so for every such provider, not only on the Kimi card.

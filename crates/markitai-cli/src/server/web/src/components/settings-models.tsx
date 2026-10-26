@@ -549,8 +549,9 @@ export function ModelsSettings({
   // Vertex AI (and watsonx, GigaChat) sign in with the server's own login at
   // their own endpoint: the server refuses them an address, so none is offered.
   const login = provider !== null ? ownEndpointLogin(provider) : null;
-  // The provider lists no models (a saved connection too): IDs are entered by hand.
-  const manualOnly = provider !== null && !listsModels(provider);
+  // The provider lists no models (a saved connection too), or the server says so
+  // when asked: IDs are entered by hand.
+  const manualOnly = provider !== null && (!listsModels(provider) || discovery?.source === "manual");
   const autoLoads = !manualOnly && (existing || subscription || (local && Boolean(provider?.default_base)));
   // Azure, a custom endpoint and servers without a default address (vLLM) need one.
   const needsBase =

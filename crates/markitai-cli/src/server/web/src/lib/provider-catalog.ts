@@ -56,8 +56,11 @@ export const ownEndpointLogin = (card: Pick<ProviderCard, "provider">): string |
 /** Providers that publish no model list, by both backends' catalogues. A
  * saved connection's card may still claim a list (Python 1.3.0 sends
  * `supports_discovery: true` for every saved connection), so the page knows
- * these by name and offers model IDs by hand instead of a failed load. */
-const NO_MODEL_LIST = new Set(["bedrock", "vertex_ai", "vertex_ai_beta", "perplexity", "zai", "fireworks_ai"]);
+ * these by name and offers model IDs by hand instead of a failed load. A
+ * provider one backend still lists by hand (Python 1.3.0: Perplexity, Z.ai,
+ * Fireworks AI) answers a load with `source: "manual"`, which the page takes
+ * the same way. */
+const NO_MODEL_LIST = new Set(["bedrock", "vertex_ai", "vertex_ai_beta"]);
 
 /** Whether the page can load a provider's model list. */
 export const listsModels = (card: Pick<ProviderCard, "provider" | "supports_discovery">): boolean =>
