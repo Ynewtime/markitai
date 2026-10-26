@@ -58,6 +58,11 @@ jobs:
           cache: false
       - name: Install Rust components
         run: rustup toolchain install ${{ env.RUSTUP_TOOLCHAIN }} --profile minimal --component rustfmt --component clippy
+      # check.py runs the Rust tests with nextest when it is installed.
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        if: matrix.lane == 'checks'
+        with:
+          tool: cargo-nextest@0.9.149
       # Dependency artifacts only: workspace/vendor code must rebuild after checkout.
       # The action also handles the nested static-CRT target directory.
       - name: Restore Cargo dependencies

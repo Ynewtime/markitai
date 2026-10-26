@@ -6,8 +6,9 @@ name: Release
 # publishing from the `pypi` environment), then server.json on the MCP
 # Registry, and it redeploys markitai.dev for the new notes. Started by hand, it
 # builds and tests everything and publishes nothing unless dry_run is off and
-# the run is on a tag. Nothing here needs a stored secret; release builds use
-# no caches.
+# the run is on a tag. Nothing here needs a stored secret. The release builds
+# (cli, wheel, sdist) use no caches; only the test job restores a dependency
+# cache, saved by runs on main.
 on:
   push:
     tags: ['v2.*']
@@ -117,7 +118,10 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  # The development gate (scripts/check.py) on every release platform.
+  # The development gate (scripts/check.py) on every release platform. The
+  # builds below do not wait for prepare: the four macOS builds take their
+  # runners first, and a macOS test job that has to wait for one (an account
+  # runs at most five macOS jobs at once) still ends before the slowest build.
   test:
     needs: prepare
     strategy:
@@ -141,13 +145,25 @@ jobs:
           package-manager-cache: false
       - name: Install Rust
         run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component rustfmt --component clippy
+      # check.py runs the Rust tests with nextest when it is installed.
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        with:
+          tool: cargo-nextest@0.9.149
+      # Third-party dependency artifacts only; the workspace and vendored crates rebuild.
+      - name: Restore Cargo dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          key: release-test-v1-${{ matrix.os }}
+          cache-bin: false
+          cache-workspace-crates: false
+          cache-on-failure: false
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Formatting, tests, lint and harness tests
         run: python scripts/check.py
 
   # CLI archives, built natively. Linux builds run in the manylinux_2_28 image
   # so that the archive needs glibc 2.28 at most.
   cli:
-    needs: prepare
     strategy:
       fail-fast: false
       matrix:
@@ -165,7 +181,6 @@ jobs:
     env:
       TARGET: ${{ matrix.target }}
       IMAGE: ${{ matrix.image }}
-      VERSION: ${{ needs.prepare.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -173,6 +188,10 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.13'
+      # The version the archive is named after (prepare checks it against the tag).
+      - name: Version
+        id: version
+        run: python scripts/release_build.py version --github-output "$GITHUB_OUTPUT"
       - name: Build the archive (manylinux_2_28)
         if: matrix.image
         run: |
@@ -185,6 +204,8 @@ jobs:
         if: '!matrix.image'
         run: python scripts/release_build.py cli --target "$TARGET" --output dist
       - name: Install and exercise the archive
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: python scripts/release_build.py smoke --target "$TARGET" dist/markitai-v"$VERSION"-"$TARGET".*
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -196,7 +217,6 @@ jobs:
   # abi3 wheels (CPython 3.10+), one per platform. Each is installed into a
   # new venv and runs its commands, the Python API and bindings/python/tests.
   wheel:
-    needs: prepare
     strategy:
       fail-fast: false
       matrix:
@@ -246,7 +266,6 @@ jobs:
 
   # The source distribution, proven by building and installing it with pip.
   sdist:
-    needs: prepare
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     permissions:
