@@ -37,6 +37,21 @@ a shared 110-minute package budget. Silent linking alone is not a failure.
 Actual cache benefit depends on the runner and cache availability; compare real
 stage times before claiming a speedup.
 
+## Checks
+
+`.github/workflows/check.yml` runs `scripts/check.py` with cargo-nextest on the
+six release platforms on every push to `main`, on pull requests (without the
+Intel Mac), by hand (`gh workflow run check.yml -f platforms='["windows-2025"]'`)
+and as the release workflow's `test` job. Runs on `main` save a Cargo cache per
+platform (`target/` and Cargo's downloads), which every run restores, so only
+the workspace crates build: third-party crates are keyed by their Cargo.lock
+entries and the manifests (a release commit's version bump keeps the key), and
+the vendored crates are reused only when `vendor/` is the tree the cache was
+built from (`scripts/ci_cache.py`). `main` restores only a cache with its own
+dependencies, so a saved cache never carries dropped crates; a branch or tag
+falls back to the newest one. Only a passing check saves; `-f save_cache=true`
+also saves on a branch, for that branch alone (to time a warm run before a merge).
+
 ## Running package acceptance
 
 From a clean committed checkout, with Rust, Node/npm, Python with venv/pip,
@@ -199,13 +214,13 @@ run on GitHub-hosted runners. Pushing a `v2.*` tag publishes; starting it by
 hand (`gh workflow run release.yml`) is a dry run that builds and tests
 everything and publishes nothing (`-f dry_run=false` publishes only when run on
 a tag). It uses no stored secrets, and its builds no caches (the `test` job
-restores a dependency cache saved by runs on `main`). Each step runs a subcommand of
+restores the [check](#checks) cache saved by runs on `main`). Each step runs a subcommand of
 `scripts/release_build.py`, which also runs locally:
 
 | Job | What it does |
 |---|---|
 | `prepare` | Checks the tag names the Cargo version and that `bindings/python/pyproject.toml` and `server.json` agree, that a published tag is on `main`, and writes the release notes: the tag's `## [X.Y.Z]` section of `CHANGELOG.md` with a link to the full changelog, and the same from `CHANGELOG.zh.md` (a release without either fails). A section over 100,000 characters is represented by its lead, the summary between the heading and its first `###`; without one, the run fails here, dry runs too (GitHub refuses a Release body over 125,000 characters). |
-| `test` | `scripts/check.py` on the six release platforms, with cargo-nextest. The builds do not wait for `prepare`, so the four macOS builds start first and a macOS test job that waits for a runner (at most five macOS jobs run at once) still ends before them. |
+| `test` | [`check.yml`](#checks) on the six release platforms; a dry run leaves out the Intel Mac unless started with `-f intel_mac_tests=true` (`main`'s check runs it, and `smoke-intel` runs the x86_64 macOS artifacts there). A tag run always runs all six. |
 | `cli` | `markitai-v<version>-<target>.tar.gz` (`.zip` on Windows) for `aarch64-apple-darwin`, `x86_64-apple-darwin`, `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`, `x86_64-pc-windows-msvc` and `aarch64-pc-windows-msvc`, built natively, then extracted and run (version, aliases, Markdown round trip, MCP tools, `doctor --json`). The `x86_64-apple-darwin` one is cross-compiled on the arm64 macOS runners (same release profile and macOS 11 minimum, about twice as fast) and run by `smoke-intel`. |
 | `wheel` | One abi3 wheel per platform (`cp310-abi3`, `macosx_11_0`, `manylinux_2_28`, `win_amd64`, `win_arm64`) with the CLI archives' license set, installed into a new venv: its three commands, the Python API and `bindings/python/tests`. The `x86_64-apple-darwin` wheel is cross-compiled like its archive and installed by `smoke-intel`. |
 | `smoke-intel` | On an Intel Mac, the same install-and-run checks for the cross-compiled `x86_64-apple-darwin` archive and wheel; it builds nothing. |

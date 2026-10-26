@@ -1,0 +1,126 @@
+name: Check
+
+# scripts/check.py on the release platforms (docs/ci.md#checks): on a push to
+# main, on pull requests, by hand, and as the release workflow's test job.
+# Runs on main save a Cargo cache per platform, which every other run restores
+# (a branch or tag can read main's caches); third-party and vendored crates
+# then come from it and only the workspace crates build.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: 'JSON list of runners (default: all six)'
+        required: false
+        default: ''
+      save_cache:
+        description: 'Also save the cache from this branch (only this branch reads it)'
+        type: boolean
+        default: false
+  workflow_call:
+    inputs:
+      platforms:
+        description: 'JSON list of runners'
+        type: string
+        required: true
+
+permissions: {}
+
+# A newer push to main (or to a pull request) replaces a running check; the
+# release workflow's call has a group of its own and one run per ref.
+concurrency:
+  group: ${{ github.workflow }}-check-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'push' || github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: never
+  RUSTUP_TOOLCHAIN: 1.99.1
+  CARGO_INCREMENTAL: '0'
+  CARGO_PROFILE_DEV_DEBUG: '0'
+  CARGO_PROFILE_TEST_DEBUG: '0'
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        # Pull requests leave out the Intel Mac (slowest, and it waits for a
+        # macOS runner); main and releases run it.
+        os: ${{ fromJSON(inputs.platforms || (github.event_name == 'pull_request' && '["macos-15", "ubuntu-24.04", "ubuntu-24.04-arm", "windows-2025", "windows-11-arm"]' || '["macos-15", "macos-15-intel", "ubuntu-24.04", "ubuntu-24.04-arm", "windows-2025", "windows-11-arm"]')) }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Install Rust
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component rustfmt --component clippy
+      # check.py runs the Rust tests with nextest when it is installed.
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        with:
+          tool: cargo-nextest@0.9.149
+      # Keyed by the third-party dependencies (ci_cache.py key) and the vendor/
+      # tree. main restores only a cache of the same dependencies, so a saved
+      # cache never carries crates the lock dropped; other refs take the
+      # closest one.
+      - name: Cache key
+        id: key
+        env:
+          OS: ${{ matrix.os }}
+          MAIN: ${{ github.ref == 'refs/heads/main' }}
+        run: |
+          prefix="check-v1-$OS-rust$RUSTUP_TOOLCHAIN"
+          dependencies=$(python scripts/ci_cache.py key)
+          {
+            echo "key=$prefix-$dependencies-$(git rev-parse HEAD:vendor)"
+            echo "restore<<EOF"
+            echo "$prefix-$dependencies-"
+            if [ "$MAIN" != true ]; then echo "$prefix-"; fi
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+      - name: Restore the Cargo cache
+        id: cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ steps.key.outputs.key }}
+          restore-keys: ${{ steps.key.outputs.restore }}
+      - name: Reuse the cached vendored crates
+        run: python scripts/ci_cache.py restore
+      - name: Formatting, tests, lint and harness tests
+        run: python scripts/check.py
+      # Only a passing check saves: a key is never saved twice, and a build
+      # stopped by an error or a cancel would leave crates out of it.
+      - name: Prune the Cargo cache
+        id: prune
+        if: (github.ref == 'refs/heads/main' || inputs.save_cache) && steps.cache.outputs.cache-hit != 'true'
+        run: python scripts/ci_cache.py prune
+      - name: Save the Cargo cache
+        if: steps.prune.outcome == 'success'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ steps.key.outputs.key }}
