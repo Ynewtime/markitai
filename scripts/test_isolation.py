@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 from audit_formats import run_worker
 import bounded_run
-from check import affected_crates, run_lanes, run_steps, test_command, test_skips, unshimmed_path
+from check import PART, SPLIT_AT, affected_crates, helper_parts, helper_tests, run_lanes, run_steps, test_command, test_skips, unshimmed_path
 from isolation import isolated_env
 
 
@@ -226,3 +226,30 @@ class CheckQuick(unittest.TestCase):
                           "-E", "package(markitai-cli) | package(markitai-ffi)"])
         self.assertEqual(test_command(["markitai-cli"], False, {}),
                          ["cargo", "test", "--workspace", "--locked", "--no-fail-fast"])
+
+
+class CheckHelperParts(unittest.TestCase):
+    def test_a_large_file_runs_in_parts_that_together_run_all_its_tests(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "scripts").mkdir()
+            # One test is inherited: only the loader's list, not the file's text, names it twice.
+            tests = "".join(f"    def test_{index:02}(self):\n        pass\n" for index in range(SPLIT_AT + 1))
+            (root / "scripts/test_large.py").write_text(
+                "import unittest\n\n\nclass Base(unittest.TestCase):\n" + tests
+                + "\n\nclass Child(Base):\n    pass\n", encoding="utf-8")
+            (root / "scripts/test_small.py").write_text(
+                "import unittest\n\n\nclass Small(unittest.TestCase):\n    def test_one(self):\n        pass\n",
+                encoding="utf-8")
+            files = sorted((root / "scripts").glob("test_*.py"))
+            items = helper_parts(root, dict(os.environ), files)
+            parts = [patterns for path, patterns in items if path.name == "test_large.py"]
+            expected = 2 * (SPLIT_AT + 1)
+            self.assertEqual(len(parts), -(-expected // PART))
+            self.assertEqual(sorted(p for part in parts for p in part),
+                             sorted(f"*.{cls}.test_{index:02}" for cls in ["Base", "Child"]
+                                    for index in range(SPLIT_AT + 1)))
+            self.assertEqual(items[-1], (root / "scripts/test_small.py", None))
+            with patch("sys.stdout", new_callable=io.StringIO) as stdout:
+                self.assertEqual(helper_tests(root, dict(os.environ)), 0)
+            self.assertIn(f"helper tests: {expected + 1} tests in 2 files, OK", stdout.getvalue())

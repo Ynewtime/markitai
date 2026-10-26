@@ -180,34 +180,91 @@ def run_lanes(foreground, background):
     return codes.get("foreground") or codes.get("background", 1)
 
 
-def helper_tests(root, environment, jobs=None):
-    """The `scripts/test_*.py` suites, one interpreter per file, several files at once.
+# A helper test file with more tests than this runs in parts of at most PART
+# tests, each in an interpreter of its own, so no single file is the tail.
+SPLIT_AT, PART = 16, 8
 
-    Each file runs as `unittest discover` would run it from the repository
-    root; a failing file's whole output is shown, a passing one gets a line.
+
+def helper_parts(root, environment, files):
+    """`(file, -k patterns or None)` work items, the parts of large files first.
+
+    A file is split by the test IDs unittest's loader lists (inherited tests
+    included); each part selects its tests by exact `-k` patterns.
+    """
+    large = [path for path in files
+             if len(re.findall(r"^\s+def test", path.read_text(encoding="utf-8"), re.MULTILINE)) > SPLIT_AT]
+
+    def listed(path):
+        code = ("import sys, unittest\n"
+                "def ids(suite):\n"
+                "    for item in suite:\n"
+                "        yield from ids(item) if isinstance(item, unittest.TestSuite) else [item.id()]\n"
+                f"print('\\n'.join(ids(unittest.defaultTestLoader.discover('scripts', pattern={path.name!r}))))")
+        result = subprocess.run([sys.executable, "-c", code], cwd=root, env=environment, capture_output=True,
+                                text=True, encoding="utf-8", errors="replace")
+        names = result.stdout.split()
+        # A file that does not load runs whole, and reports its own error.
+        return path, (names if result.returncode == 0 and names else None)
+
+    items = []
+    with ThreadPoolExecutor(max_workers=max(1, len(large))) as pool:
+        for path, names in pool.map(listed, large):
+            if names is None:
+                continue
+            count = -(-len(names) // PART)
+            for index in range(count):
+                part = names[index::count]  # dealt in turn, so slow neighbours spread
+                items.append((path, ["*." + name.split(".", 1)[1] for name in part]))
+    split = {path for path, _ in items}
+    return items + [(path, None) for path in files if path not in split]
+
+
+def helper_tests(root, environment, jobs=None):
+    """The `scripts/test_*.py` suites, one interpreter per file (or part of a large file), several at once.
+
+    Each runs as `unittest discover` would run it from the repository root; a
+    failing one's whole output is shown, a passing file gets a line.
     """
     files = sorted((root / "scripts").glob("test_*.py"))
+    items = helper_parts(root, environment, files)
 
-    def run(path):
+    def run(item):
+        path, patterns = item
         started = time.monotonic()
-        result = subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "scripts", "-p", path.name],
-                                cwd=root, env=environment, capture_output=True, text=True, encoding="utf-8",
-                                errors="replace")
-        return path.name, result, time.monotonic() - started
+        selection = [argument for pattern in patterns or [] for argument in ("-k", pattern)]
+        result = subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "scripts", "-p", path.name,
+                                 *selection], cwd=root, env=environment, capture_output=True, text=True,
+                                encoding="utf-8", errors="replace")
+        return item, result, time.monotonic() - started
 
     total, code = 0, 0
-    with ThreadPoolExecutor(max_workers=jobs or min(len(files), max(2, os.cpu_count() or 2))) as pool:
-        for name, result, seconds in pool.map(run, files):
+    summary = {}  # file name: [tests run, skipped, parts, slowest part's seconds, tests expected or None]
+    with ThreadPoolExecutor(max_workers=jobs or min(len(items), max(2, os.cpu_count() or 2))) as pool:
+        for (path, patterns), result, seconds in pool.map(run, items):
             output = result.stdout + result.stderr
             ran = re.search(r"^Ran (\d+) tests?", output, re.MULTILINE)
-            total += int(ran.group(1)) if ran else 0
+            skipped = re.search(r"\(skipped=(\d+)\)", output)
+            count = int(ran.group(1)) if ran else 0
+            total += count
+            row = summary.setdefault(path.name, [0, 0, 0, 0.0, 0 if patterns else None])
+            row[0] += count
+            row[1] += int(skipped.group(1)) if skipped else 0
+            row[2] += 1
+            row[3] = max(row[3], seconds)
+            if patterns:
+                row[4] += len(patterns)
             if result.returncode:
                 code = code or result.returncode
-                print(f"--- {name} failed (exit {result.returncode}) in {seconds:.1f} s\n{output}", flush=True)
-            else:
-                skipped = re.search(r"\(skipped=(\d+)\)", output)
-                print(f"{name}: {ran.group(1) if ran else 0} tests passed"
-                      f"{f', {skipped.group(1)} skipped' if skipped else ''} in {seconds:.1f} s", flush=True)
+                part = f" (part {row[2]})" if patterns else ""
+                print(f"--- {path.name}{part} failed (exit {result.returncode}) in {seconds:.1f} s\n{output}",
+                      flush=True)
+    for name, (count, skipped, parts, seconds, expected) in sorted(summary.items()):
+        if expected is not None and count != expected:
+            code = code or 1
+            print(f"--- {name}: its {parts} parts ran {count} of its {expected} tests", flush=True)
+        detail = f", {skipped} skipped" if skipped else ""
+        timing = f"in {parts} parts, the slowest {seconds:.1f} s" if parts > 1 else f"in {seconds:.1f} s"
+        print(f"{name}: {count} tests{detail} {timing}", flush=True)
     print(f"helper tests: {total} tests in {len(files)} files, {'FAILED' if code else 'OK'}", flush=True)
     return code
 

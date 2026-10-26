@@ -20,7 +20,7 @@ three commands below and the `scripts/test_*.py` helper tests. The Rust tests
 run with [cargo-nextest](https://nexte.st) when it is installed (each test in a
 process of its own, every test binary at once), otherwise with `cargo test`;
 `MARKITAI_CHECK_RUNNER=cargo` or `nextest` chooses. Formatting and the helper
-tests (several files at once) run beside the Rust tests and clippy, and their
+tests (several files at once, a file of over 16 tests in parts) run beside the Rust tests and clippy, and their
 output follows them. The helper tests include the
 workbench tests, which import its npm packages: when Node is installed and
 `crates/markitai-cli/src/server/web/node_modules` is missing or differs from
