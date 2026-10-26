@@ -1,6 +1,7 @@
 """Reject personal machine paths and common secret formats without echoing them."""
 from pathlib import Path
 import re
+import stat
 import subprocess
 
 
@@ -29,16 +30,32 @@ SECRETS = re.compile(
 )
 
 
+# Every match of a pattern contains one of its hints; a substring search is far
+# cheaper than the pattern's scan, so text holding none of them is skipped.
+GITHUB_TOKEN_HINT = re.compile(rb"gh[pousr]_")
+HINTS = {
+    HOME_PATHS: (b"Users", b"/" + b"home/"),
+    TEMP_PATHS: (b"/" + b"folders/",),
+    SECRETS: (b"-----BEGIN ", b"github_pat_", b"sk-", b"AKIA", GITHUB_TOKEN_HINT),
+    CAPTURE_TRACKING: (b'<meta name="', b"data-hydro-"),
+}
+
+
+def _may_match(pattern, data):
+    return any(hint.search(data) if isinstance(hint, re.Pattern) else hint in data for hint in HINTS[pattern])
+
+
 def findings(data):
     """Return only category and line, never the matched private value."""
     result = []
-    for match in HOME_PATHS.finditer(data):
+    for match in HOME_PATHS.finditer(data) if _may_match(HOME_PATHS, data) else ():
         name = match[1].decode("utf-8", errors="replace").lower()
         if name not in SYNTHETIC_USERS:
             result.append(("personal home path", data[:match.start()].count(b"\n") + 1))
     for label, pattern in (("personal temporary path", TEMP_PATHS), ("secret-shaped value", SECRETS),
                            ("browser analytics in a saved page", CAPTURE_TRACKING)):
-        result.extend((label, data[:match.start()].count(b"\n") + 1) for match in pattern.finditer(data))
+        if _may_match(pattern, data):
+            result.extend((label, data[:match.start()].count(b"\n") + 1) for match in pattern.finditer(data))
     return result
 
 
@@ -48,7 +65,11 @@ def check_repository(root):
     result = []
     for name in filter(None, names):
         path = root / name
-        if path.is_file() and not path.is_symlink():
+        try:
+            mode = path.lstat().st_mode
+        except FileNotFoundError:
+            continue
+        if stat.S_ISREG(mode):
             result.extend((name, line, category) for category, line in findings(path.read_bytes()))
     return result
 
