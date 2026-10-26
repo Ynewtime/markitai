@@ -1078,7 +1078,13 @@ fn compatible_prefixes_discover_through_models_or_ask_for_manual_ids() {
     assert_eq!(refused["status"], "unavailable");
     assert!(refused["models"].as_array().unwrap().is_empty());
     // No model list is read: no request, an explicit manual-entry answer.
-    for provider in ["bedrock", "vertex_ai", "codestral", "cloudflare", "galadriel"] {
+    for provider in [
+        "bedrock",
+        "vertex_ai",
+        "codestral",
+        "cloudflare",
+        "galadriel",
+    ] {
         let result = discover(&json!({"provider":provider,"api_key":"private-test-key"})).unwrap();
         assert_eq!(result["status"], "unavailable");
         assert_eq!(result["source"], "manual");
@@ -1419,7 +1425,10 @@ fn perplexity_zai_fireworks_helicone_and_cohere_list_models_where_documented() {
     .unwrap();
     assert_eq!(result["status"], "unavailable");
     assert_eq!(result["reason"], "provider_error");
-    assert_eq!(result["detail"], "Model discovery response has no model list");
+    assert_eq!(
+        result["detail"],
+        "Model discovery response has no model list"
+    );
     assert!(result["models"].as_array().unwrap().is_empty());
 }
 
