@@ -16,7 +16,12 @@ installation steps are in the [quick start](quickstart.md) and
 `python scripts/check.py` runs the source gate with `MARKITAI_HOME` set to
 `.local/test-home` and `HOME` and `USERPROFILE` set to `.local/test-user-home`
 on all hosts; `scripts/check.sh` delegates to it on Unix. It runs the first
-three commands below and the `scripts/test_*.py` helper tests. Those include the
+three commands below and the `scripts/test_*.py` helper tests. The Rust tests
+run with [cargo-nextest](https://nexte.st) when it is installed (each test in a
+process of its own, every test binary at once), otherwise with `cargo test`;
+`MARKITAI_CHECK_RUNNER=cargo` or `nextest` chooses. Formatting and the helper
+tests (several files at once) run beside the Rust tests and clippy, and their
+output follows them. The helper tests include the
 workbench tests, which import its npm packages: when Node is installed and
 `crates/markitai-cli/src/server/web/node_modules` is missing or differs from
 `package-lock.json`, the gate first runs `npm ci` there (it says so) and skips
@@ -30,6 +35,15 @@ or Node reached through a home-relative shim (mise, asdf) is replaced on `PATH`
 by the directory of the interpreter it resolves to. Other tools must be on
 `PATH` by an absolute directory. `MARKITAI_CHECK_SKIP="name other"` passes each
 space-separated name to the Rust tests as `--skip name` (e.g. Vision OCR in a macOS VM).
+
+For branch work, `python scripts/check.py --quick` checks only what the files
+changed since the branch left `origin/main` (committed or not; `--base REF`
+compares with another branch) can affect: the tests and clippy of the changed
+crates and of every crate depending on them (all crates when `Cargo.toml`,
+`Cargo.lock` or `vendor/` changed; none for workbench sources or scripts
+alone), formatting, and all helper tests. Run the full gate before a merge or
+a release. The CLI's integration tests build as one binary
+(`crates/markitai-cli/tests/integration.rs` lists the CLI's test files).
 Build the optimized CLI separately:
 
 ```sh

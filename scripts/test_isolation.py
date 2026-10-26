@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 from audit_formats import run_worker
 import bounded_run
-from check import run_steps, test_skips, unshimmed_path
+from check import affected_crates, run_lanes, run_steps, test_command, test_skips, unshimmed_path
 from isolation import isolated_env
 
 
@@ -176,3 +176,50 @@ class CheckSteps(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CheckLanes(unittest.TestCase):
+    def test_the_background_lane_is_shown_after_the_foreground_and_both_failures_are_named(self):
+        def step(name, code):
+            return name, lambda: print(f"{name} says hello") or code, None
+
+        with (patch("sys.stdout", new_callable=io.StringIO) as stdout,
+              patch("sys.stderr", new_callable=io.StringIO) as stderr):
+            code = run_lanes([step("test", 0), step("clippy", 1)], [step("fmt", 3), step("helpers", 0)])
+        self.assertEqual(code, 1)
+        said = [line for line in stdout.getvalue().splitlines() if line.endswith("says hello")]
+        self.assertEqual(said[:2], ["test says hello", "clippy says hello"])
+        self.assertEqual(sorted(said[2:]), ["fmt says hello", "helpers says hello"])
+        self.assertEqual(stderr.getvalue().splitlines()[-1], "check.py: failed: clippy, fmt")
+
+
+class CheckQuick(unittest.TestCase):
+    CRATES = {
+        "markitai-core": ("crates/markitai-core/", []),
+        "markitai-cli": ("crates/markitai-cli/", ["markitai-core"]),
+        "markitai-ffi": ("crates/markitai-ffi/", ["markitai-core"]),
+        "markitai-python": ("crates/markitai-python/", ["markitai-core", "markitai-cli"]),
+    }
+
+    def test_a_crate_brings_every_crate_that_depends_on_it(self):
+        self.assertEqual(affected_crates(["crates/markitai-core/src/lib.rs"], self.CRATES), set(self.CRATES))
+        self.assertEqual(affected_crates(["crates/markitai-cli/tests/cache.rs"], self.CRATES),
+                         {"markitai-cli", "markitai-python"})
+        self.assertEqual(affected_crates(["crates/markitai-ffi/src/lib.rs", "docs/ci.md"], self.CRATES),
+                         {"markitai-ffi"})
+
+    def test_workspace_files_bring_every_crate(self):
+        for path in ["Cargo.lock", "Cargo.toml", "vendor/lopdf/src/lib.rs", ".config/nextest.toml"]:
+            self.assertIsNone(affected_crates([path], self.CRATES), path)
+
+    def test_workbench_sources_bring_no_crate_but_its_embedded_build_does(self):
+        web = "crates/markitai-cli/src/server/web/"
+        self.assertEqual(affected_crates([web + "src/app.tsx", "scripts/check.py"], self.CRATES), set())
+        self.assertEqual(affected_crates([web + "dist/app.js"], self.CRATES), {"markitai-cli", "markitai-python"})
+
+    def test_nextest_or_cargo_test_with_the_same_selection_and_skips(self):
+        skip = {"MARKITAI_CHECK_SKIP": "vision"}
+        self.assertEqual(test_command(None, True, skip),
+                         ["cargo", "nextest", "run", "--workspace", "--locked", "--no-fail-fast", "--", "--skip", "vision"])
+        self.assertEqual(test_command(["markitai-cli"], False, {}),
+                         ["cargo", "test", "-p", "markitai-cli", "--locked", "--no-fail-fast"])
