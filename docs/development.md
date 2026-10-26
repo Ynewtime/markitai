@@ -32,11 +32,11 @@ every thread's stack, so a hang fails instead of holding CI. Every step runs eve
 after one fails; the last line names the failed ones, and the exit code is non-zero. `CARGO_HOME` and
 `RUSTUP_HOME` default to the original home's `.cargo` and `.rustup`, and Python
 or Node reached through a home-relative shim (mise, asdf) is replaced on `PATH`
-by the directory of the interpreter it resolves to. A `PATH` directory holding
-the official `copilot`, `claude` or `codex` runtime is replaced by links to its
-other programs (left out on Windows), so the tests never start the developer's
-own runtime, as on hosted CI. Other tools must be on
-`PATH` by an absolute directory. `MARKITAI_CHECK_SKIP="name other"` passes each
+by the directory of the interpreter it resolves to. Other tools must be on
+`PATH` by an absolute directory. However they are started, the Rust tests never
+see the developer's own `copilot`, `claude` or `codex` (hosted CI has none):
+each test process replaces a `PATH` directory holding one by links to its other
+programs, or leaves it out on Windows. `MARKITAI_CHECK_SKIP="name other"` passes each
 space-separated name to the Rust tests as `--skip name` (e.g. Vision OCR in a macOS VM).
 
 For branch work, `python scripts/check.py --quick` checks only what the files
