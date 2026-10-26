@@ -583,7 +583,7 @@ The policy engine orders strategies per domain and learns which need a browser: 
 
 ### Proxies
 
-`HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY` and `NO_PROXY` apply (lower-case names too). Without them markitai uses the system proxy. A SOCKS proxy works only for the browser. `SSL_CERT_FILE` / `SSL_CERT_DIR` replace the system certificates.
+`HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY` and `NO_PROXY` apply (lower-case names too). Without them markitai uses the system proxy. A SOCKS proxy works only for the browser. `SSL_CERT_FILE` / `SSL_CERT_DIR` replace the system certificates. Behind a TUN proxy or VPN app (Clash, Surge, sing-box) whose direct route times out, set `HTTPS_PROXY` to its local port, for example `http://127.0.0.1:7890`.
 
 ## Cache Configuration
 

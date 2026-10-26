@@ -583,7 +583,7 @@ export CLOUDFLARE_ACCOUNT_ID="your-account-id"
 
 ### 代理 {#proxies}
 
-认 `HTTPS_PROXY`、`HTTP_PROXY`、`ALL_PROXY` 和 `NO_PROXY`（小写名称也认）。都没设时用系统代理。SOCKS 代理只对浏览器有效。`SSL_CERT_FILE` / `SSL_CERT_DIR` 取代系统证书。
+认 `HTTPS_PROXY`、`HTTP_PROXY`、`ALL_PROXY` 和 `NO_PROXY`（小写名称也认）。都没设时用系统代理。SOCKS 代理只对浏览器有效。`SSL_CERT_FILE` / `SSL_CERT_DIR` 取代系统证书。在 TUN 代理或 VPN 应用（Clash、Surge、sing-box）后面直接连接超时时，把 `HTTPS_PROXY` 设为它的本地端口，例如 `http://127.0.0.1:7890`。
 
 ## 缓存配置
 
