@@ -115,10 +115,23 @@ pub(super) fn load(
     let suffix = match provider {
         "ollama" => "api/tags",
         "azure" if !path.ends_with("/v1") => "openai/models",
+        // Helicone's gateway answers every other GET with 405.
+        "helicone" if !path.ends_with("/v1") => "v1/models",
         _ => "models",
     };
-    url.set_path(&format!("{path}/{suffix}"));
+    if provider == "cohere" {
+        // Cohere's list sits beside its native API, not under the
+        // Compatibility API's path, and names models as `name`.
+        url.set_path("/v1/models");
+    } else {
+        url.set_path(&format!("{path}/{suffix}"));
+    }
     match provider {
+        "cohere" => {
+            url.query_pairs_mut()
+                .append_pair("endpoint", "chat")
+                .append_pair("page_size", "1000");
+        }
         "anthropic" => {
             url.query_pairs_mut().append_pair("limit", "1000");
         }
@@ -248,7 +261,7 @@ pub(super) fn load(
 }
 pub(super) fn parse(provider: &str, data: &Value) -> Result<Value> {
     let records = data
-        .get(if matches!(provider, "gemini" | "ollama") {
+        .get(if matches!(provider, "gemini" | "ollama" | "cohere") {
             "models"
         } else {
             "data"
@@ -273,7 +286,7 @@ pub(super) fn parse(provider: &str, data: &Value) -> Result<Value> {
             continue;
         }
         let Some(raw) = record
-            .get(if matches!(provider, "gemini" | "ollama") {
+            .get(if matches!(provider, "gemini" | "ollama" | "cohere") {
                 "name"
             } else {
                 "id"
@@ -325,10 +338,11 @@ pub(super) fn parse(provider: &str, data: &Value) -> Result<Value> {
         models.push(json!({"model":model,"label":label,"supports_vision":vision}));
     }
     let paginated = data.get("has_more").and_then(Value::as_bool) == Some(true)
-        || data
-            .get("nextPageToken")
-            .and_then(Value::as_str)
-            .is_some_and(|s| !s.is_empty());
+        || ["nextPageToken", "next_page_token"].iter().any(|token| {
+            data.get(token)
+                .and_then(Value::as_str)
+                .is_some_and(|s| !s.is_empty())
+        });
     let authoritative = provider != "azure" && !paginated;
     let mut result = json!({"provider":provider,"status":if authoritative{"ok"}else{"partial"},"source":"live_api","authoritative":authoritative,"cached":false,"stale":false,"models":models});
     if provider == "azure" {

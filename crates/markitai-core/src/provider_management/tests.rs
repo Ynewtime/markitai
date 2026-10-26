@@ -1078,7 +1078,7 @@ fn compatible_prefixes_discover_through_models_or_ask_for_manual_ids() {
     assert_eq!(refused["status"], "unavailable");
     assert!(refused["models"].as_array().unwrap().is_empty());
     // No model list is read: no request, an explicit manual-entry answer.
-    for provider in ["bedrock", "vertex_ai"] {
+    for provider in ["bedrock", "vertex_ai", "codestral", "cloudflare", "galadriel"] {
         let result = discover(&json!({"provider":provider,"api_key":"private-test-key"})).unwrap();
         assert_eq!(result["status"], "unavailable");
         assert_eq!(result["source"], "manual");
@@ -1352,7 +1352,7 @@ fn every_regional_provider_tries_a_refused_key_at_its_regions_in_order() {
 }
 
 #[test]
-fn perplexity_zai_and_fireworks_list_models_at_their_inference_paths() {
+fn perplexity_zai_fireworks_helicone_and_cohere_list_models_where_documented() {
     let body = r#"{"object":"list","data":[{"id":"fixture-model","object":"model","owned_by":"fixture"}]}"#;
     for (provider, path) in [
         ("perplexity", "/router/v1"),
@@ -1382,6 +1382,34 @@ fn perplexity_zai_and_fireworks_list_models_at_their_inference_paths() {
         );
         assert!(requests[0].contains("authorization: Bearer private-test-key"));
     }
+    // Helicone's gateway lists at /v1/models beside its bare base.
+    let server = Mock::new(move |_| reply(200, body));
+    let result = discover_explicit(
+        &json!({"provider":"helicone","api_key":"private-test-key","api_base":server.base,"refresh":true}),
+    )
+    .unwrap();
+    assert_eq!(result["models"][0]["model"], "helicone/fixture-model");
+    assert!(server.requests()[0].starts_with("GET /v1/models HTTP/1.1"));
+    // Cohere's native list, beside the Compatibility API, names models as
+    // `name`, filtered to chat models; a next page makes it partial.
+    let server = Mock::new(|_| {
+        reply(
+            200,
+            r#"{"models":[{"name":"command-fixture","endpoints":["chat"]}],"next_page_token":"p2"}"#,
+        )
+    });
+    let result = discover_explicit(
+        &json!({"provider":"cohere","api_key":"private-test-key","api_base":format!("{}/compatibility/v1",server.base),"refresh":true}),
+    )
+    .unwrap();
+    assert_eq!(result["models"][0]["model"], "cohere/command-fixture");
+    assert_eq!(result["status"], "partial");
+    let request = &server.requests()[0];
+    assert!(
+        request.starts_with("GET /v1/models?endpoint=chat&page_size=1000 HTTP/1.1"),
+        "{request}"
+    );
+    assert!(request.contains("authorization: Bearer private-test-key"));
     // An answer of another shape is a list that could not be read: it says
     // so, and model IDs can still be entered by hand.
     let server = Mock::new(|_| reply(200, r#"{"code":200,"msg":"ok","models":["glm-x"]}"#));

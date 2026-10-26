@@ -55,8 +55,10 @@ const REFERENCE: [&str; 8] = [
     "custom",
 ];
 /// OpenAI-compatible prefixes with no model list endpoint (checked
-/// 2026-10-26): their model IDs are entered by hand.
-const MANUAL_MODELS: [&str; 0] = [];
+/// 2026-10-26): Codestral's endpoint answers `/models` with 404, Cloudflare's
+/// and Galadriel's documentation names chat completions only. Their model IDs
+/// are entered by hand.
+const MANUAL_MODELS: [&str; 3] = ["codestral", "cloudflare", "galadriel"];
 
 /// The groups of the provider picker, in its order: the providers most
 /// people start with, then subscription runtimes, model makers' own APIs,
