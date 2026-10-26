@@ -294,6 +294,7 @@ export function App() {
   urlTextRef.current = urlText;
   const urls = useMemo(() => parseUrls(urlText).urls, [urlText]);
   const [staged, setStaged] = useState<StagedSubmission | null>(null);
+  const [pickedAt, setPickedAt] = useState(0);
   const controllers = useRef(new Set<AbortController>());
   const [upload, setUpload] = useState<Upload | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -391,6 +392,7 @@ export function App() {
       if (notes.length) note({ id: "drop", tone: "warning", text: notes.join(" · ") });
       stagedRef.current = next;
       setStaged(next);
+      setPickedAt(Date.now());
       // The staged list and its Convert button live on the Convert page.
       if (routeRef.current.view !== "convert") navigate({ view: "convert" });
     },
@@ -806,6 +808,7 @@ export function App() {
           onRemoveStaged={(file) => setStaged((current) => (current ? removeStaged(current, file) : null))}
           tools={tools}
           held={update.holding}
+          pickedAt={pickedAt}
         />
       )}
     />

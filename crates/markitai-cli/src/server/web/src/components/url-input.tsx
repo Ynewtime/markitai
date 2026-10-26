@@ -9,7 +9,7 @@ import type { ComponentChildren } from "preact";
 import { useRef, useState } from "preact/hooks";
 import { NARROW, useMedia } from "../hooks/use-media.ts";
 import type { Dict } from "../i18n/index.ts";
-import { relativePath, type StagedSubmission } from "../lib/files.ts";
+import { deliberate, relativePath, type StagedSubmission } from "../lib/files.ts";
 import { fmtBytes } from "../lib/format.ts";
 import { MiddleName } from "./file-name.tsx";
 import { Icon } from "./icons.tsx";
@@ -70,6 +70,7 @@ export function UrlInput({
   onRemoveStaged,
   tools,
   held = false,
+  pickedAt = 0,
 }: {
   t: Dict;
   text: string;
@@ -84,6 +85,8 @@ export function UrlInput({
   tools?: ComponentChildren;
   /** v1.24: the server is updating and holds new conversions until it has restarted. */
   held?: boolean;
+  /** When files were last picked or dropped (`Date.now()`); see `deliberate`. */
+  pickedAt?: number;
 }) {
   const [sending, setSending] = useState(false);
   const field = useRef<HTMLTextAreaElement>(null);
@@ -138,7 +141,9 @@ export function UrlInput({
           title={held ? undefined : busy || sending ? t.convertBusy : empty ? t.convertNothing : undefined}
           disabled={busy || sending || empty || held}
           aria-busy={busy || sending || undefined}
-          onClick={() => void submit()}
+          onClick={(event) => {
+            if (deliberate(event.detail, Date.now(), pickedAt)) void submit();
+          }}
         >
           <Icon name="ArrowRight" size={14} />
           <span class="tool-text">{held ? t.updHeld : t.convert}</span>

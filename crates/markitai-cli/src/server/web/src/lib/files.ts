@@ -177,3 +177,16 @@ export function removeStaged(current: StagedSubmission, file: File): StagedSubmi
   const kind = current.kind === "urls" && !files.some((kept) => /\.urls$/i.test(relativePath(kept))) ? "files" : current.kind;
   return { files, label: kind === "files" ? "" : current.label, kind };
 }
+
+/** How long after a pick or drop a pointer click on Convert is taken as a stray
+ * one: the second click of a double click on the system picker's button, or a
+ * click the browser delivers as the picker closes, lands on Convert. */
+export const PICK_SETTLE_MS = 1000;
+
+/** Whether a click on Convert is the person's: a keyboard press (`detail` 0)
+ * always is; a pointer click is not when it is part of a double click or comes
+ * right after files were picked or dropped. */
+export function deliberate(detail: number, now: number, pickedAt: number): boolean {
+  if (detail === 0) return true;
+  return detail === 1 && now - pickedAt >= PICK_SETTLE_MS;
+}
