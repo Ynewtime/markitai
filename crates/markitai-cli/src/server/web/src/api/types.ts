@@ -497,6 +497,10 @@ export interface ProviderCard {
   icon?: string | null;
   /** Further model prefixes routed the same way and other searched names. */
   aliases?: string[];
+  /** v1.25: the endpoints of a provider whose keys work only in the region or plan that
+   * issued them, the default first. Model discovery without an address tries a key at
+   * each in turn; absent elsewhere (and from an older backend). */
+  regions?: string[];
 }
 
 export interface ProviderCredentials {

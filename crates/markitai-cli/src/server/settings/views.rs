@@ -1,7 +1,7 @@
 use super::{SettingsSource, identity, model, store::Data};
 use markitai_core::provider_management::{
     catalog, environment_key_variable, held_key_variable, provider_default_base,
-    provider_entry as entry, provider_label,
+    provider_entry as entry, provider_label, provider_regions,
 };
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
@@ -11,7 +11,8 @@ fn set(variable: &str) -> bool {
 }
 /// What a card says about its provider beyond the connection: the picker
 /// group, brand mark and search names, the documented endpoint, the key
-/// variable, whether a key is needed, whether models can be listed.
+/// variable, whether a key is needed, whether models can be listed, and the
+/// regions a key may belong to.
 fn facts(name: &str, card: &mut Value) {
     let entry = entry(name);
     if let Some(entry) = &entry {
@@ -23,6 +24,11 @@ fn facts(name: &str, card: &mut Value) {
         held_key_variable(entry.key_variables, set).or(entry.key_variables.first().copied())
     });
     card["default_base"] = json!(entry.as_ref().and_then(|entry| entry.default_base));
+    // A key pasted for a provider that issues keys per region is tried at each.
+    let regions = provider_regions(name);
+    if !regions.is_empty() {
+        card["regions"] = json!(regions);
+    }
     card["key_variable"] = json!(variable);
     card["key_optional"] = json!(entry.as_ref().is_some_and(|entry| entry.key_optional));
     if card

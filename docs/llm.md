@@ -265,35 +265,35 @@ Notes on individual entries:
   usable without a key; the hosted APIs count as routable only with one.
   `ollama_chat/` also reads `OLLAMA_API_BASE`, as LiteLLM does.
 
-### Moonshot AI and Kimi Code
+### Keys that belong to a region
 
-Kimi's models come from two services with separate keys, each in two regions
-(checked 2026-10-24). A key works only at the endpoint of the service and
-region that issued it; elsewhere the answer is HTTP 401 (`Invalid
-Authentication`).
+Some providers issue a key for one region (or service) only; any other endpoint
+answers it with HTTP 401 (checked 2026-10-26). Set the region's address as
+`api_base` or the base variable, e.g. `MOONSHOT_API_BASE=https://api.moonshot.cn/v1`
+beside `MOONSHOT_API_KEY`. A refused key's error names the provider's other
+regions and the keys that belong elsewhere. The workbench finds the region from
+the key: with no address typed, it tries the default first, then each other
+region, and saves the models with the address that listed them. Moonshot's open
+platform and Kimi Code are one Kimi card there, tried in turn (Kimi Code first for
+a key in its documented `sk-kimi-` form).
 
-| Key from | Prefix | Base URL | Key variable | Base variables |
-|---|---|---|---|---|
-| Kimi open platform, international (platform.kimi.ai) | `moonshot/` | `https://api.moonshot.ai/v1` (default) | `MOONSHOT_API_KEY` | `MOONSHOT_API_BASE` |
-| Kimi open platform, China (platform.kimi.com, 开放平台) | `moonshot/` | `https://api.moonshot.cn/v1` | `MOONSHOT_API_KEY` | `MOONSHOT_API_BASE` |
-| Kimi Code membership, kimi.com | `kimi_code/` | `https://api.kimi.com/coding/v1` (default) | `KIMI_API_KEY` | `KIMI_CODE_API_BASE`, `KIMI_CODE_BASE_URL` |
-| Kimi Code membership, kimi.ai | `kimi_code/` | `https://api.kimi.ai/coding/v1` | `KIMI_API_KEY` | `KIMI_CODE_API_BASE`, `KIMI_CODE_BASE_URL` |
+| Prefix | Region: Base URL (default first) | Key from | Docs |
+|---|---|---|---|
+| `moonshot/` | International: `https://api.moonshot.ai/v1`; China: `https://api.moonshot.cn/v1` | platform.kimi.ai; platform.kimi.com (开放平台) | platform.kimi.ai/docs/guide/start-using-kimi-api |
+| `kimi_code/` | kimi.com: `https://api.kimi.com/coding/v1`; kimi.ai: `https://api.kimi.ai/coding/v1` | a Kimi Code membership, kimi.com; kimi.ai | Kimi Code's guide for Claude Code |
+| `minimax/` | Global: `https://api.minimax.io/v1`; Mainland China: `https://api.minimax.cn/v1` | platform.minimax.io; platform.minimax.cn | platform.minimax.io/docs/coding-plan/faq |
+| `zai/` | International: `https://api.z.ai/api/paas/v4`; China: `https://open.bigmodel.cn/api/paas/v4` | z.ai; bigmodel.cn (智谱开放平台) | docs.z.ai/guides/develop/http/introduction; docs.bigmodel.cn/cn/api/introduction |
+| `dashscope/` | Beijing: `https://dashscope.aliyuncs.com/compatible-mode/v1`; Singapore: `https://dashscope-intl.aliyuncs.com/compatible-mode/v1`; US (Virginia): `https://dashscope-us.aliyuncs.com/compatible-mode/v1`; Hong Kong: `https://cn-hongkong.dashscope.aliyuncs.com/compatible-mode/v1` | Model Studio, per region | alibabacloud.com/help/en/model-studio/base-url |
 
-A China platform key in the configuration file:
-
-```json
-{"model_name": "default",
- "litellm_params": {"model": "moonshot/kimi-k3", "api_key": "env:MOONSHOT_API_KEY",
-                    "api_base": "https://api.moonshot.cn/v1"}}
-```
-
-or `MOONSHOT_API_BASE=https://api.moonshot.cn/v1` beside `MOONSHOT_API_KEY`. A
-Kimi Code key is `{"model": "kimi_code/k3"}` with `KIMI_API_KEY` set (model IDs
-such as `k3.1-pro`, `k3`, `kimi-for-coding`; the workbench lists the ones the
-key may use). A refused key's error names the other region's address and the
-other service. The workbench offers both services as one Kimi card: it tries
-the open platform's regions, then Kimi Code's (Kimi Code first for a key in its
-documented `sk-kimi-` form), and saves the models under the one that lists them.
+Kimi Code takes `KIMI_API_KEY`, its address `KIMI_CODE_API_BASE` or
+`KIMI_CODE_BASE_URL` (model IDs such as `k3.1-pro`, `k3`,
+`kimi-for-coding`; the workbench lists the ones the key may use). Z.ai's models
+are entered by hand, so the workbench has no list to find its region with; its
+and Zhipu's Coding Plan endpoints (`…/api/coding/paas/v4`) take either kind of
+key, as MiniMax's addresses take its M Plan keys (`sk-cp-…`). Model Studio's
+Coding Plan keys (`sk-sp-…`) work only at the plan's own endpoints, for coding
+tools, and are not tried there; a workspace-dedicated Model Studio host
+(`<workspace>.<region>.maas.aliyuncs.com`) is set as `api_base` and tried alone.
 
 Kimi Code is reached at its Anthropic-compatible Messages endpoint
 (`…/coding/v1/messages`, `x-api-key`), the one Kimi documents for Claude Code;
@@ -327,7 +327,7 @@ provider picker offers them like the prefixes of the first table.
 | `meta/` | `https://api.meta.ai/v1` | `MODEL_API_KEY`, `META_API_KEY` | `META_API_BASE` | dev.meta.ai/docs/api-reference |
 | `featherless_ai/` | `https://api.featherless.ai/v1` | `FEATHERLESS_API_KEY`, `FEATHERLESS_AI_API_KEY` | `FEATHERLESS_AI_API_BASE`, `FEATHERLESS_API_BASE` | featherless.ai/docs/getting-started |
 | `nscale/` | `https://inference.api.nscale.com/v1` | `NSCALE_SERVICE_TOKEN`, `NSCALE_API_KEY` | `NSCALE_API_BASE` | docs.nscale.com/docs/use-cases/chat |
-| `dashscope/` | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `DASHSCOPE_API_KEY` | `DASHSCOPE_API_BASE` | LiteLLM's default; Model Studio now documents per-workspace regional hosts (alibabacloud.com/help/en/model-studio/compatibility-of-openai-with-dashscope), set yours as `api_base` |
+| `dashscope/` | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `DASHSCOPE_API_KEY` | `DASHSCOPE_API_BASE` | alibabacloud.com/help/en/model-studio/base-url; other regions under [Keys that belong to a region](#keys-that-belong-to-a-region) |
 | `qwencloud/` | `https://dashscope-intl.aliyuncs.com/compatible-mode/v1` | `QWENCLOUD_API_KEY`, `DASHSCOPE_API_KEY` | `QWENCLOUD_API_BASE` | LiteLLM's default (Model Studio's Singapore host) |
 | `qwen_ai_platform/` | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `QWEN_AI_PLATFORM_API_KEY`, `DASHSCOPE_API_KEY` | `QWEN_AI_PLATFORM_API_BASE` | LiteLLM's default |
 | `modelscope/` | `https://api-inference.modelscope.cn/v1` | `MODELSCOPE_API_KEY` | `MODELSCOPE_API_BASE` | LiteLLM's default (modelscope.cn renders its docs only in a browser) |
@@ -362,7 +362,7 @@ provider picker offers them like the prefixes of the first table.
 | `scx-ai/` | `https://api.scx.ai/v1` | `SCX_API_KEY` | `SCX_API_BASE` | scx.ai model pages |
 | `nadir/` | `https://api.getnadir.com/v1` | `NADIR_API_KEY` | `NADIR_API_BASE` | getnadir.com/docs |
 | `amazon_nova/` | `https://api.nova.amazon.com/v1` | `NOVA_API_KEY`, `AMAZON_NOVA_API_KEY` | `AMAZON_NOVA_API_BASE` | github.com/amazon-nova-api/getting-started-with-nova-api |
-| `minimax/` | `https://api.minimax.io/v1` | `MINIMAX_API_KEY` | `MINIMAX_API_BASE` | platform.minimax.io/docs/api-reference/text-openai-api (China: `https://api.minimax.cn/v1` as `api_base`) |
+| `minimax/` | `https://api.minimax.io/v1` | `MINIMAX_API_KEY` | `MINIMAX_API_BASE` | platform.minimax.io/docs/api-reference/text-openai-api (China: [Keys that belong to a region](#keys-that-belong-to-a-region)) |
 | `ovhcloud/` | `https://oai.endpoints.kepler.ai.cloud.ovh.net/v1` | `OVH_AI_ENDPOINTS_ACCESS_TOKEN`, `OVHCLOUD_API_KEY` | `OVHCLOUD_API_BASE` | docs.ovhcloud.com AI Endpoints guides |
 | `compactifai/` | `https://api.compactif.ai/v1` | `COMPACTIFAI_API_KEY` | `COMPACTIFAI_API_BASE` | docs.compactif.ai/api_reference |
 | `gradient_ai/` | `https://inference.do-ai.run/v1` | `MODEL_ACCESS_KEY`, `GRADIENT_AI_API_KEY`, `DIGITALOCEAN_TOKEN` | `GRADIENT_AI_API_BASE` | docs.digitalocean.com/products/inference/how-to/use-chat-completions-api (LiteLLM omits `/v1`) |

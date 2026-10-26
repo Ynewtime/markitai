@@ -534,13 +534,15 @@ provider error), under Connection error what the network reported (`connection
 refused`, a TLS failure); markitai's own sentences (a timeout, a key variable not
 set, an unreadable answer) and text that repeats the heading open nothing, and a
 model test's toast follows the same rule. A rejected key names the hosts that
-refused it (contract v1.21 `endpoints`, else the address the page asked). Moonshot
-AI and Kimi Code keys belong to a region: when the default endpoint refuses a
-new connection's key and the provider's other region lists its models
-(`api_base`, contract v1.21), the page fills that address into API address and
-says so, and the models are saved with it, also for a key the server reads from
-its environment (a saved connection is told to change its address instead). A
-key that neither Kimi service takes gets one sentence saying so.
+refused it (contract v1.21 `endpoints`, else the address the page asked). For a
+provider whose keys belong to a region (the card's `regions`, contract v1.25: Moonshot
+AI, Kimi Code, MiniMax, Model Studio; see [LLM](llm.md#keys-that-belong-to-a-region))
+API address shows `Found from the key`: when the default endpoint refuses a new
+connection's key and another region lists its models (`api_base`, contract v1.21),
+the page fills that address in and says so, and the models are saved with it, also
+for a key the server reads from its environment (a saved connection is told to
+change its address instead). A key that neither Kimi service takes gets one
+sentence saying so.
 
 ## Updating the server
 
@@ -819,7 +821,8 @@ job options `format` (under `document_json`), `ocr_lang` (with `ocr_languages` a
 keys as saved defaults; contract v1.22 adds `settings`, read when present, to jobs
 and items, and v1.23 `markdown_lines` to a result, so the Details count the lines of
 an output whose start is an excerpt; v1.24 `Capabilities.update` and `/api/update`
-on a loopback server, see [service](serve.md#updates)); a missing feature hides its control instead of failing (no Stop
+on a loopback server, see [service](serve.md#updates); v1.25 `regions` on a provider
+card); a missing feature hides its control instead of failing (no Stop
 remaining, no Compare, archives saved through the page, history read job by job,
 images read from the file route).
 `docs_url` points the Docs link at the backend's own documentation (both servers name

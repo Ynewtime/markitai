@@ -13,6 +13,7 @@ import { serviceNote } from "../i18n/errors.ts";
 import { addingIsBlocked, listFailure, providerWords, regionBlocked, runtimeFailure, testFailure, type TestFailure } from "../lib/model-test.ts";
 import { endpointFor, modelName, pickerRows, refusedHosts, removals } from "../lib/models.ts";
 import { isKimiCard, kimiOrder, kimiServiceAt, kimiServices, kimiTypedBase, type KimiService } from "../lib/kimi.ts";
+import { foundFromKey } from "../lib/regions.ts";
 import { isSubscription, listsModels, ownEndpointLogin, usesCloudCredentials } from "../lib/provider-catalog.ts";
 import {
   CredentialInputError,
@@ -1335,8 +1336,8 @@ export function ModelsSettings({
                             type="url"
                             value={draftBase}
                             placeholder={
-                              kimi
-                                ? t.kimiBaseAuto
+                              kimi || foundFromKey(provider)
+                                ? t.baseAuto
                                 : needsBase
                                 ? provider.provider === "hosted_vllm"
                                   ? "http://127.0.0.1:8000/v1"

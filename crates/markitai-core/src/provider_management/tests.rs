@@ -1279,6 +1279,85 @@ fn a_key_refused_at_one_region_is_tried_at_the_others_and_names_the_one_that_lis
 }
 
 #[test]
+fn every_regional_provider_tries_a_refused_key_at_its_regions_in_order() {
+    let refused = || {
+        reply(
+            401,
+            r#"{"error":{"message":"Incorrect API key provided.","code":"invalid_api_key"}}"#,
+        )
+    };
+    let listed = || reply(200, r#"{"object":"list","data":[{"id":"fixture-model"}]}"#);
+    for provider in ["moonshot", "kimi_code", "minimax", "dashscope"] {
+        let bases = provider_regions(provider);
+        assert!(bases.len() >= 2, "{provider}");
+        assert_eq!(
+            provider_default_base(provider),
+            Some(bases[0]),
+            "{provider}"
+        );
+        let (default, others) = (bases[0], other_regions(provider, bases[0]));
+        assert_eq!(others, bases[1..], "{provider}");
+        // Each documented endpoint stands in for a fake server: the last one
+        // takes the key, every one before it refuses it.
+        let run = |servers: &[Mock]| {
+            let at = |base: &str| {
+                let index = bases.iter().position(|known| *known == base).unwrap();
+                format!("{}/v1", servers[index].base)
+            };
+            regional_list(default, &others, |base: &str| {
+                discover_explicit(&json!({"provider":provider,"api_key":"fake-regional-key","api_base":at(base),"refresh":true}))
+            })
+            .unwrap()
+        };
+        let last = bases.len() - 1;
+        let servers: Vec<Mock> = (0..bases.len())
+            .map(|index| {
+                if index == last {
+                    Mock::new(move |_| listed())
+                } else {
+                    Mock::new(move |_| refused())
+                }
+            })
+            .collect();
+        let found = run(&servers);
+        assert_eq!(found["status"], "ok", "{provider}: {found}");
+        assert_eq!(found["api_base"], bases[last], "{provider}");
+        assert_eq!(
+            found["models"][0]["model"],
+            format!("{provider}/fixture-model"),
+            "{provider}"
+        );
+        for server in &servers {
+            assert_eq!(server.requests().len(), 1, "{provider}");
+        }
+        // Refused everywhere: the refusal names every endpoint, in order.
+        let servers: Vec<Mock> = bases
+            .iter()
+            .map(|_| Mock::new(move |_| refused()))
+            .collect();
+        let none = run(&servers);
+        assert_eq!(none["reason"], "key_rejected", "{provider}");
+        assert_eq!(none["endpoints"], json!(bases), "{provider}");
+        assert!(none.get("api_base").is_none(), "{provider}");
+    }
+    assert!(provider_regions("openai").is_empty());
+    // Z.ai lists no models, so nothing is tried; its regions still name the
+    // other platform and let the server's key be saved there.
+    assert_eq!(
+        provider_regions("zai"),
+        [
+            "https://api.z.ai/api/paas/v4",
+            "https://open.bigmodel.cn/api/paas/v4"
+        ]
+    );
+    assert_eq!(
+        provider_default_base("zai"),
+        Some(provider_regions("zai")[0])
+    );
+    assert!(!provider_entry("zai").unwrap().discovery);
+}
+
+#[test]
 fn a_discovery_aimed_at_an_address_or_without_a_key_tries_no_other_region() {
     // An address of its own is the one asked: Moonshot's refusal there is final.
     let (result, requests) = discovered(
