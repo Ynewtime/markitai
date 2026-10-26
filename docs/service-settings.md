@@ -107,9 +107,9 @@ enter the key itself or change `api_base` in the configuration file. Default por
 and trailing slashes may normalize, but paths and query strings still matter.
 An implicit server endpoint cannot be replaced with a client-supplied URL. The
 one exception is an environment card of a provider that issues keys per region
-(Moonshot AI, Kimi Code): `credential_provider_id: "env:<provider>"` may come
-with `api_base` set to that provider's other documented region, where model
-discovery found the key's models (contract v1.21).
+(Moonshot AI, Kimi Code, MiniMax, Model Studio): `credential_provider_id:
+"env:<provider>"` may come with `api_base` set to another of that provider's
+documented regions, where model discovery found the key's models (contract v1.21).
 Custom endpoints without credential references use only the caller's literal key;
 they do not borrow the server's default key or a different saved model's key.
 Literal/cleared connections persist `use_environment_credentials: false` so
