@@ -182,7 +182,7 @@ export function MarkdownView({
   compactBar?: boolean;
   /** Files lists the item's original too (the server keeps originals). */
   originals?: boolean;
-  /** Files' Download all (.zip); null hides it. */
+  /** Files' Download all .zip; null hides it. */
   onDownloadAll?: (() => void) | null;
   /** Called with the rendered body once its content is in place (and with null when it goes). */
   onRendered?: (root: HTMLElement | null) => void;
