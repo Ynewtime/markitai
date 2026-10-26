@@ -107,32 +107,35 @@ impl Server {
                     values.push(request.clone());
                     index
                 };
-                let response = reply(&request, index);
-                match response {
+                // One write per answer: a client that stops reading at its limit
+                // and hangs up can't fail a later write of this answer.
+                let mut answer = Vec::new();
+                match reply(&request, index) {
                     Reply::Bytes(status, body) => {
-                        write!(stream, "HTTP/1.1 {status} Fixture\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).unwrap();
-                        stream.write_all(&body).unwrap();
+                        write!(answer, "HTTP/1.1 {status} Fixture\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).unwrap();
+                        answer.extend_from_slice(&body);
                     }
                     Reply::Redirect(url) => {
-                        write!(stream, "HTTP/1.1 307 Temporary Redirect\r\nLocation: {url}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
+                        write!(answer, "HTTP/1.1 307 Temporary Redirect\r\nLocation: {url}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
                     }
                     Reply::Truncated(body) => {
                         write!(
-                            stream,
+                            answer,
                             "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
                             body.len() + 100
                         )
                         .unwrap();
-                        stream.write_all(&body).unwrap();
+                        answer.extend_from_slice(&body);
                     }
                     Reply::Chunked(body) => {
-                        stream.write_all(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n").unwrap();
-                        write!(stream, "{:x}\r\n", body.len()).unwrap();
-                        stream.write_all(&body).unwrap();
-                        stream.write_all(b"\r\n0\r\n\r\n").unwrap();
+                        answer.extend_from_slice(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n");
+                        write!(answer, "{:x}\r\n", body.len()).unwrap();
+                        answer.extend_from_slice(&body);
+                        answer.extend_from_slice(b"\r\n0\r\n\r\n");
                     }
-                    Reply::Disconnect => (),
+                    Reply::Disconnect => continue,
                 }
+                stream.write_all(&answer).unwrap();
             }
         });
         Self {
