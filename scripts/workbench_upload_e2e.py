@@ -11,8 +11,9 @@ in Chinese and checks:
 
 1. folder: with the caret in the URL line, the Folder tool picks a folder of
    24 files (about 9 MB: Word, Excel, HTML and PDF fixtures from this repository
-   and a generated 6 MB image-only PDF), then Enter is pressed (the key that
-   confirms a system picker). Nothing is sent: no ``POST /api/jobs`` before
+   and a generated 6 MB image-only PDF). Then come what a closing system picker
+   may hand the page: the second click of a double click and a single click over
+   Convert, and Enter. Nothing is sent: no ``POST /api/jobs`` before a deliberate
    Convert, the files wait in the list and Convert is enabled. Convert then sends
    them in exactly one request, the job is created with 24 items and the page
    follows its events. The time from the click to the service's answer is printed.
@@ -29,7 +30,8 @@ in Chinese and checks:
 the one built into the binary (for testing sources before ``dist/`` is
 rebuilt). ``--shots DIR`` saves screenshots at 1280 and 390 px wide.
 ``--nginx [PATH]`` runs checks 1 and 2 through nginx too (on ``--port`` + 1;
-check 3 uses + 2). ``--throttle KBPS`` limits the browser's upload rate (Chrome's network
+check 3 uses + 2). ``--browser webkit`` runs it in Playwright's WebKit (Safari's engine) instead of
+Chromium. ``--throttle KBPS`` limits the browser's upload rate (Chrome's network
 emulation) so the progress notice can be seen. Needs Playwright's Chromium
 (``playwright install chromium``, or ``PLAYWRIGHT_BROWSERS_PATH``).
 
@@ -71,6 +73,8 @@ SAMPLES = [
 ]
 FOLDER_FILES = 24
 LEAD = "无法开始转换"
+# The workbench's PICK_SETTLE_MS and a margin.
+SETTLE_MS = 1200
 
 
 def make_folder(folder: Path) -> int:
@@ -164,11 +168,24 @@ def open_page(browser, origin: str, token: str, width: int, ui: Path | None) -> 
 
 
 def pick_folder(page: Page, folder: Path) -> None:
+    """The owner's sequence: caret in the URL line, a click on Folder, a folder chosen;
+    then what a closing system picker may hand the page."""
     page.locator("textarea.url-box").click()
     with page.expect_file_chooser() as chooser:
         page.locator("label.upload-folder").click()
     chooser.value.set_files(str(folder))
-    # The key that confirms the system picker lands in the page.
+    page.locator(".staged-title").wait_for()
+    convert = page.locator("button.tool-convert")
+    assert convert.is_enabled(), "Convert is disabled with a folder waiting"
+    box = convert.bounding_box()
+    assert box is not None
+    # The second click of a double click on the picker's button, then a click as it
+    # closes, both over Convert; then the Return that confirms a picker.
+    page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+    page.mouse.down(click_count=2)
+    page.mouse.up(click_count=2)
+    page.mouse.down()
+    page.mouse.up()
     page.locator("textarea.url-box").focus()
     page.keyboard.press("Enter")
 
@@ -182,7 +199,6 @@ def check_folder(page: Page, token: str, folder: Path, size: int, shots: Path | 
     pick_folder(page, folder)
     page.wait_for_timeout(2000)
     assert not watch.posts, f"{len(watch.posts)} job request(s) before Convert"
-    assert page.locator(".staged-title").inner_text().strip(), "no staged list"
     convert = page.locator("button.tool-convert")
     assert convert.is_enabled(), "Convert is disabled with a folder waiting"
     if shots:
@@ -224,6 +240,8 @@ def check_errors(page: Page, folder: Path, shots: Path | None, tag: str) -> None
     watch = Watch(page)
     small = folder / "notes-0.html"
     page.locator("label.upload-main input").set_input_files(str(small))
+    # Convert takes a pointer click a second after a pick (see PICK_SETTLE_MS).
+    page.wait_for_timeout(SETTLE_MS)
     convert = page.locator("button.tool-convert")
 
     def gateway(route: Route) -> None:
@@ -305,6 +323,7 @@ def check_refused(page: Page, folder: Path, tag: str, tries: int = 4) -> None:
         with page.expect_file_chooser() as chooser:
             page.locator("label.upload-folder").click()
         chooser.value.set_files(str(folder))
+        page.wait_for_timeout(SETTLE_MS)
         with page.expect_response(lambda response: response.request.method == "POST" and response.url.endswith("/api/jobs"), timeout=120_000) as answer:
             page.locator("button.tool-convert").click()
         page.wait_for_function(f"() => (document.querySelector('.toasts')?.innerText ?? '').includes('{LEAD}')")
@@ -324,6 +343,7 @@ def main() -> None:
     parser.add_argument("--shots", type=Path)
     parser.add_argument("--throttle", type=int, help="upload rate in KB/s")
     parser.add_argument("--nginx", nargs="?", const="nginx", help="also test through nginx (this binary)")
+    parser.add_argument("--browser", choices=["chromium", "webkit"], default="chromium")
     parser.add_argument("--only", choices=["folder", "errors", "refused"])
     args = parser.parse_args()
     if args.shots:
@@ -336,7 +356,7 @@ def main() -> None:
         origin = args.origin or f"http://127.0.0.1:{args.port + 1 if proxy else args.port}"
         try:
             with sync_playwright() as playwright:
-                browser = playwright.chromium.launch()
+                browser = getattr(playwright, args.browser).launch()
                 for width, tag in [(1280, "desktop"), (390, "phone")]:
                     if args.only in (None, "folder"):
                         page = open_page(browser, origin, token, width, args.ui)
