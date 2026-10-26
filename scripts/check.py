@@ -61,25 +61,52 @@ def test_skips(environment):
     return ["--", *(argument for name in names for argument in ("--skip", name))] if names else []
 
 
+def run_steps(steps):
+    """Run every step, even after one fails, and name the failed ones last.
+
+    Each step is `(name, action, needs)`: `action()` returns an exit code, and a
+    step whose `needs` (an earlier step's name) failed is not run. Returns the
+    first failure's exit code, or 0.
+    """
+    failed, skipped, first = [], [], 0
+    for name, action, needs in steps:
+        if needs in failed:
+            print(f"check.py: not running {name}: {needs} failed", file=sys.stderr, flush=True)
+            skipped.append(name)
+            continue
+        code = action()
+        if code:
+            failed.append(name)
+            first = first or code
+    if failed:
+        summary = f"check.py: failed: {', '.join(failed)}"
+        if skipped:
+            summary += f"; not run: {', '.join(skipped)}"
+        print(summary, file=sys.stderr, flush=True)
+    return first
+
+
 def main():
     root = Path(__file__).resolve().parents[1]
     local = root / ".local"
     environment = isolated_env(local / "test-user-home", local / "test-home")
     environment["PATH"] = unshimmed_path(os.environ.get("PATH", ""))
-    commands = [
-        ["cargo", "fmt", "--all", "--check"],
+
+    def command(*arguments):
+        return lambda: subprocess.run(arguments, cwd=root, env=environment).returncode
+
+    return run_steps([
+        ("cargo fmt", command("cargo", "fmt", "--all", "--check"), None),
         # Every test binary runs even after a failure, so one run reports them all.
-        ["cargo", "test", "--workspace", "--locked", "--no-fail-fast", *test_skips(os.environ)],
-        ["cargo", "clippy", "--workspace", "--all-targets", "--locked", "--", "-D", "warnings"],
+        ("cargo test", command("cargo", "test", "--workspace", "--locked", "--no-fail-fast",
+                               *test_skips(os.environ)), None),
+        ("cargo clippy", command("cargo", "clippy", "--workspace", "--all-targets", "--locked", "--",
+                                 "-D", "warnings"), None),
         # The helper tests include the workbench's, which need its locked npm packages.
-        lambda: install_web_dependencies(root, environment),
-        [sys.executable, "-m", "unittest", "discover", "-s", "scripts", "-p", "test_*.py"],
-    ]
-    for command in commands:
-        code = command() if callable(command) else subprocess.run(command, cwd=root, env=environment).returncode
-        if code:
-            return code
-    return 0
+        ("npm ci", lambda: install_web_dependencies(root, environment), None),
+        ("helper tests", command(sys.executable, "-m", "unittest", "discover", "-s", "scripts", "-p", "test_*.py"),
+         "npm ci"),
+    ])
 
 
 if __name__ == "__main__":

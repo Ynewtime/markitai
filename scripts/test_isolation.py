@@ -1,4 +1,5 @@
 """Helper-run tests and audits never resolve `~` to the developer's real home."""
+import io
 import json
 import os
 from pathlib import Path
@@ -9,7 +10,7 @@ import unittest
 from unittest.mock import patch
 
 from audit_formats import run_worker
-from check import test_skips, unshimmed_path
+from check import run_steps, test_skips, unshimmed_path
 from isolation import isolated_env
 
 
@@ -139,6 +140,34 @@ class CheckSkips(unittest.TestCase):
         self.assertEqual(test_skips({"MARKITAI_CHECK_SKIP": " "}), [])
         self.assertEqual(test_skips({"MARKITAI_CHECK_SKIP": " vision  ocr::tests::macos "}),
                          ["--", "--skip", "vision", "--skip", "ocr::tests::macos"])
+
+
+class CheckSteps(unittest.TestCase):
+    def test_every_step_runs_after_a_failure_and_the_failed_ones_are_named(self):
+        ran = []
+
+        def step(name, code):
+            return name, lambda: ran.append(name) or code, None
+
+        with patch("sys.stderr", new_callable=io.StringIO) as stderr:
+            code = run_steps([step("fmt", 0), step("test", 101), step("clippy", 1), step("npm ci", 0),
+                              ("helpers", lambda: ran.append("helpers") or 0, "npm ci")])
+        self.assertEqual(code, 101)
+        self.assertEqual(ran, ["fmt", "test", "clippy", "npm ci", "helpers"])
+        self.assertEqual(stderr.getvalue().splitlines()[-1], "check.py: failed: test, clippy")
+
+    def test_a_step_whose_prerequisite_failed_is_not_run(self):
+        ran = []
+        with patch("sys.stderr", new_callable=io.StringIO) as stderr:
+            code = run_steps([("npm ci", lambda: 1, None),
+                              ("helpers", lambda: ran.append("helpers") or 0, "npm ci")])
+        self.assertEqual((code, ran), (1, []))
+        self.assertEqual(stderr.getvalue().splitlines()[-1], "check.py: failed: npm ci; not run: helpers")
+
+    def test_all_passing_prints_nothing_and_returns_zero(self):
+        with patch("sys.stderr", new_callable=io.StringIO) as stderr:
+            self.assertEqual(run_steps([("fmt", lambda: 0, None)]), 0)
+        self.assertEqual(stderr.getvalue(), "")
 
 
 if __name__ == "__main__":
