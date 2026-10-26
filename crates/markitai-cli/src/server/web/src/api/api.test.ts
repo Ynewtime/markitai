@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { download } from "../lib/download.ts";
-import { ApiError, downloadTicket, eventsPath, filePath, isRevisionConflict, NetworkError, throttle, upload } from "./client.ts";
+import { ApiError, downloadTicket, eventsPath, filePath, isRevisionConflict, NetworkError, NoAnswerError, throttle, upload } from "./client.ts";
 import { bearer, hasToken, initToken, serviceURL, setToken, takeToken } from "./token.ts";
 
 const ORIGIN = "http://127.0.0.1:3600";
@@ -197,6 +197,19 @@ test("an upload can be cancelled; service, network and redirect failures keep th
   Object.assign(FakeRequest.last!, { status: 200, responseURL: "http://elsewhere.example/", responseText: "{}" });
   FakeRequest.last!.onload?.();
   await assert.rejects(redirected, (error: Error) => error instanceof NetworkError);
+
+  // A sent body waits a bounded time for the answer; a prompt answer clears the wait.
+  let sent = 0;
+  const silent = upload("/api/jobs", new FormData(), { ...hooks, answerTimeout: 20, onSent: () => sent++ });
+  FakeRequest.last!.upload.onload?.({ lengthComputable: true, total: 10 });
+  assert.equal(sent, 1);
+  await assert.rejects(silent, (error: Error) => error instanceof NoAnswerError && error.seconds === 0);
+  const prompt = upload("/api/jobs", new FormData(), { ...hooks, answerTimeout: 20 });
+  FakeRequest.last!.upload.onload?.({ lengthComputable: true, total: 10 });
+  Object.assign(FakeRequest.last!, { status: 201, responseURL: `${ORIGIN}/api/jobs`, responseText: '{"job_id":"x"}' });
+  FakeRequest.last!.onload?.();
+  assert.deepEqual(await prompt, { job_id: "x" });
+  await new Promise((resolve) => setTimeout(resolve, 40));
   (globalThis as { location?: unknown }).location = originalLocation;
 });
 

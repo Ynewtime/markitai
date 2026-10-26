@@ -421,7 +421,9 @@ its sentence (a short lead in bold when it has one), at most one text action
 when there is any, and a close button. Done and warning toasts leave after 5 s,
 never while pressed, hovered or focused; errors stay until closed; a swipe down
 dismisses one. An upload in progress is a toast with
-Cancel until it ends. Screen readers hear every notice (errors at once, others
+Cancel until it ends; once sent, it counts the seconds until the server answers
+and fails after 120 s. A refused submission names the reason (a proxy's
+gateway error by its HTTP status), with Retry when sending again can help. Screen readers hear every notice (errors at once, others
 politely). Lasting conditions are not notices: a conversion that ran without a
 model or whose history could not be saved says so in its window's Details, and a list
 that cannot load shows a panel (below).

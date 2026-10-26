@@ -70,6 +70,17 @@ export class NetworkError extends Error {
   }
 }
 
+/** The service took the whole upload but gave no answer in time (a proxy that holds
+ * the request, a stalled server). `seconds` is how long the page waited. */
+export class NoAnswerError extends Error {
+  readonly seconds: number;
+  constructor(seconds: number) {
+    super("no-answer");
+    this.name = "NoAnswerError";
+    this.seconds = seconds;
+  }
+}
+
 export const isAbort = (error: unknown): boolean =>
   error instanceof DOMException ? error.name === "AbortError" : (error as { name?: string })?.name === "AbortError";
 
@@ -177,6 +188,10 @@ export async function fetchBlob(path: string): Promise<{ blob: Blob; name: strin
 export interface UploadHooks {
   signal?: AbortSignal;
   onProgress?: (loaded: number, total: number) => void;
+  /** The browser has sent the whole body; the service still has to answer. */
+  onSent?: () => void;
+  /** How long (ms) to wait for that answer before failing with `NoAnswerError`. */
+  answerTimeout?: number;
   Request?: { new (): XMLHttpRequest };
 }
 
@@ -194,8 +209,11 @@ export function upload<T>(path: string, body: FormData, hooks: UploadHooks = {})
     }
     const request = new Request();
     const cancel = () => request.abort();
+    let silent: ReturnType<typeof setTimeout> | null = null;
+    let timedOut = false;
     const settle = (finish: () => void) => {
       hooks.signal?.removeEventListener("abort", cancel);
+      if (silent !== null) clearTimeout(silent);
       finish();
     };
     request.open("POST", url.href);
@@ -203,8 +221,15 @@ export function upload<T>(path: string, body: FormData, hooks: UploadHooks = {})
     request.upload.onprogress = (event) => hooks.onProgress?.(event.loaded, event.lengthComputable ? event.total : 0);
     request.upload.onload = (event) => {
       if (event?.lengthComputable) hooks.onProgress?.(event.total, event.total);
+      hooks.onSent?.();
+      const wait = hooks.answerTimeout;
+      if (wait !== undefined && silent === null)
+        silent = setTimeout(() => {
+          timedOut = true;
+          request.abort();
+        }, wait);
     };
-    request.onabort = () => settle(() => reject(aborted()));
+    request.onabort = () => settle(() => reject(timedOut ? new NoAnswerError(Math.round((hooks.answerTimeout ?? 0) / 1000)) : aborted()));
     request.onerror = () => {
       signal("markitai:offline");
       settle(() => reject(new NetworkError()));
