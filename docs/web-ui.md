@@ -47,7 +47,8 @@ on a phone the short text actions (Full details, Show items, breadcrumbs) answer
 taps across 44 px.
 
 **Convert** (`/`) is a headline, one sentence and the composer: the URL field
-(Enter converts, Shift+Enter starts a new line, a pasted list grows the field up
+(Enter converts what was typed, with any chosen files, and does nothing in an
+empty field; Shift+Enter starts a new line, a pasted list grows the field up
 to six rows), Options, Upload (files) and Folder on the left, Convert on the
 right. Options opens the conversion options in a dialog (a sheet from the bottom
 edge on a phone, closed by dragging its handle down, tapping outside or Esc; a

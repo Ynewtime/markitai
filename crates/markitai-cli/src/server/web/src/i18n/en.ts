@@ -31,6 +31,8 @@ export const en = {
   urlPlaceholder: "Paste URLs · one per line · or drop files",
   urlPlaceholderShort: "Paste URLs or drop files",
   convert: "Convert",
+  convertBusy: "Sending the previous batch…",
+  convertNothing: "Type a URL, or choose files or a folder",
   options: "Options",
   cliAria: "CLI command",
   cliPathsInfo: "About the file paths",

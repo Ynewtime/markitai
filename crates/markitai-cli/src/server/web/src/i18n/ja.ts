@@ -28,6 +28,8 @@ export const ja: Dict = {
   urlPlaceholder: "URL を貼り付け · 1 行に 1 つ · ファイルのドロップも可",
   urlPlaceholderShort: "URL を貼り付けるか、ファイルをドロップ",
   convert: "変換",
+  convertBusy: "前のバッチを送信しています…",
+  convertNothing: "URL を入力するか、ファイルまたはフォルダーを選んでください",
   options: "オプション",
   cliAria: "CLI コマンド",
   cliPathsInfo: "ファイルのパスについて",

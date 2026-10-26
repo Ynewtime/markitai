@@ -26,6 +26,8 @@ export const zh: Dict = {
   urlPlaceholder: "粘贴 URL（每行一个），或拖入文件转换",
   urlPlaceholderShort: "粘贴 URL，或拖入文件",
   convert: "转换",
+  convertBusy: "正在发送上一批…",
+  convertNothing: "输入网址，或选择文件或文件夹",
   options: "选项",
   cliAria: "CLI 命令",
   cliPathsInfo: "关于文件路径",

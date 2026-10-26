@@ -1,8 +1,10 @@
 // The URL line: a textarea dressed as one input that grows a row per pasted URL
 // (up to six), above a bar with the composer tools on the left and Convert on
-// the right. Enter converts, Shift+Enter breaks the line, and confirming an
-// IME composition never submits. Chosen files wait above the line, each with
-// its own remove button, until Convert sends them with the URLs.
+// the right. Enter converts what was typed (with any chosen files), Shift+Enter
+// breaks the line, and confirming an IME composition never submits. Chosen
+// files wait above the line, each with its own remove button, until Convert
+// sends them with the URLs: an Enter in an empty line sends nothing, so the
+// key that confirms the system's file or folder picker cannot start a job.
 import type { ComponentChildren } from "preact";
 import { useRef, useState } from "preact/hooks";
 import { NARROW, useMedia } from "../hooks/use-media.ts";
@@ -115,7 +117,7 @@ export function UrlInput({
           onKeyDown={(event) => {
             if (event.key !== "Enter" || event.shiftKey || event.isComposing) return;
             event.preventDefault();
-            void submit();
+            if (text.trim() !== "") void submit();
           }}
         />
       </div>
@@ -133,6 +135,7 @@ export function UrlInput({
           type="button"
           class={held ? "tool tool-convert is-held" : "tool tool-convert"}
           aria-label={held ? t.updHeld : t.convert}
+          title={held ? undefined : busy || sending ? t.convertBusy : empty ? t.convertNothing : undefined}
           disabled={busy || sending || empty || held}
           aria-busy={busy || sending || undefined}
           onClick={() => void submit()}
