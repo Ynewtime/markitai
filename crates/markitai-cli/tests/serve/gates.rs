@@ -525,13 +525,17 @@ fn a_refused_upload_is_read_to_its_end_so_a_proxy_relays_the_reason() {
         "{reply}"
     );
 
-    // A body declared over one upload's limit is not read: the answer comes at once.
+    // A body declared over one upload's limit is not read: the answer comes at once,
+    // and the server may close while the body is still being written.
     let mut socket = TcpStream::connect(("127.0.0.1", port)).unwrap();
     socket.set_read_timeout(Some(WAIT)).unwrap();
+    socket.set_write_timeout(Some(WAIT)).unwrap();
     socket
         .write_all(head(200 * 1024 * 1024).as_bytes())
         .unwrap();
-    socket.write_all(&body[..1024 * 1024]).unwrap();
+    if let Err(error) = socket.write_all(&body[..1024 * 1024]) {
+        assert!(closed_early(&error), "{error}");
+    }
     let mut first = [0; 12];
     socket.read_exact(&mut first).unwrap();
     assert_eq!(&first, b"HTTP/1.1 403");
