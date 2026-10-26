@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import patch
 
 from audit_formats import run_worker
-from check import unshimmed_path
+from check import test_skips, unshimmed_path
 from isolation import isolated_env
 
 
@@ -131,6 +131,14 @@ class UnshimmedPath(unittest.TestCase):
             root = Path(directory)
             self.tool(root / "bin", "node", root / "bin" / "node")
             self.assertEqual(unshimmed_path(str(root / "bin")), str(root / "bin"))
+
+
+class CheckSkips(unittest.TestCase):
+    def test_each_name_in_markitai_check_skip_becomes_a_skip_filter(self):
+        self.assertEqual(test_skips({}), [])
+        self.assertEqual(test_skips({"MARKITAI_CHECK_SKIP": " "}), [])
+        self.assertEqual(test_skips({"MARKITAI_CHECK_SKIP": " vision  ocr::tests::macos "}),
+                         ["--", "--skip", "vision", "--skip", "ocr::tests::macos"])
 
 
 if __name__ == "__main__":

@@ -55,6 +55,12 @@ def install_web_dependencies(root, environment):
     return code
 
 
+def test_skips(environment):
+    """`--skip` filters for the cargo tests from MARKITAI_CHECK_SKIP (space-separated names)."""
+    names = environment.get("MARKITAI_CHECK_SKIP", "").split()
+    return ["--", *(argument for name in names for argument in ("--skip", name))] if names else []
+
+
 def main():
     root = Path(__file__).resolve().parents[1]
     local = root / ".local"
@@ -63,7 +69,7 @@ def main():
     commands = [
         ["cargo", "fmt", "--all", "--check"],
         # Every test binary runs even after a failure, so one run reports them all.
-        ["cargo", "test", "--workspace", "--locked", "--no-fail-fast"],
+        ["cargo", "test", "--workspace", "--locked", "--no-fail-fast", *test_skips(os.environ)],
         ["cargo", "clippy", "--workspace", "--all-targets", "--locked", "--", "-D", "warnings"],
         # The helper tests include the workbench's, which need its locked npm packages.
         lambda: install_web_dependencies(root, environment),

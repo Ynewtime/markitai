@@ -24,7 +24,8 @@ if npm is missing or the install fails. `CARGO_HOME` and
 `RUSTUP_HOME` default to the original home's `.cargo` and `.rustup`, and Python
 or Node reached through a home-relative shim (mise, asdf) is replaced on `PATH`
 by the directory of the interpreter it resolves to. Other tools must be on
-`PATH` by an absolute directory.
+`PATH` by an absolute directory. `MARKITAI_CHECK_SKIP="name other"` passes each
+space-separated name to the Rust tests as `--skip name` (e.g. Vision OCR in a macOS VM).
 Build the optimized CLI separately:
 
 ```sh
