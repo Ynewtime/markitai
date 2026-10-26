@@ -503,6 +503,19 @@ export interface ProviderCard {
    * issued them, the default first. Model discovery without an address tries a key at
    * each in turn; absent elsewhere (and from an older backend). */
   regions?: string[];
+  /** v1.27: the documented addresses to offer for the address, labelled: the regions in the order of
+   * `regions`, then plan endpoints (`plan: "coding"`, never tried with a key). Absent for a provider
+   * with one address or none, and from older backends: offer `regions` or `default_base` then. */
+  endpoints?: ProviderEndpoint[];
+}
+
+/** v1.27: one documented address of a provider. */
+export interface ProviderEndpoint {
+  base: string;
+  /** An area code (`global`, `china`, `beijing`, `singapore`, `us_virginia`, `hong_kong`) or a site shown as written (`kimi.com`). */
+  region: string;
+  /** A subscription plan's endpoint (`coding`). */
+  plan?: string;
 }
 
 export interface ProviderCredentials {

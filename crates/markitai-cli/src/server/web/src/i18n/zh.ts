@@ -461,6 +461,18 @@ export const zh: Dict = {
   regionElsewhereTitle: "这个密钥属于另一个地址",
   regionElsewhere: (base) => `这个密钥在 ${base} 有效。添加模型前，请把地址改为它。`,
   kimiPlatform: "Kimi 开放平台",
+  endpointList: "已知地址",
+  endpointLabel: (region, plan, service) =>
+    [
+      service === "kimi_code" ? "Kimi Code" : service ? "Kimi 开放平台" : "",
+      region === null
+        ? "默认"
+        : ({ global: "国际", china: "中国大陆", beijing: "北京", singapore: "新加坡", us_virginia: "美国（弗吉尼亚）", hong_kong: "中国香港" } as Record<string, string>)[region] ?? region,
+      plan === "coding" ? "Coding Plan" : (plan ?? ""),
+    ]
+      .filter(Boolean)
+      .join(" · "),
+  planTerms: "Coding Plan 地址只接受套餐密钥，且仅限服务商支持的编程工具使用；其他用途可能被拒绝，或导致密钥被停用。",
   baseAuto: "按密钥自动识别",
   kimiFound: (service) => (service === "kimi_code" ? "Kimi Code 会员密钥" : "Kimi 开放平台密钥"),
   kimiMemberTerms: "按 Kimi 条款仅限交互使用；批量转换请用开放平台密钥。",

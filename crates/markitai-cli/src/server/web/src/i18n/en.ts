@@ -489,6 +489,18 @@ export const en = {
   regionElsewhereTitle: "This key works at another address",
   regionElsewhere: (base: string) => `This key works at ${base}. Change the address to it before adding models.`,
   kimiPlatform: "Kimi Platform",
+  endpointList: "Known addresses",
+  endpointLabel: (region: string | null, plan: string | null, service?: string): string =>
+    [
+      service === "kimi_code" ? "Kimi Code" : service ? "Kimi Platform" : "",
+      region === null
+        ? "Default"
+        : ({ global: "International", china: "Mainland China", beijing: "Beijing", singapore: "Singapore", us_virginia: "US (Virginia)", hong_kong: "Hong Kong" } as Record<string, string>)[region] ?? region,
+      plan === "coding" ? "Coding Plan" : (plan ?? ""),
+    ]
+      .filter(Boolean)
+      .join(" · "),
+  planTerms: "Coding Plan addresses take plan keys in the provider's supported coding tools only; other use may be refused or get the key suspended.",
   baseAuto: "Found from the key",
   kimiFound: (service: string): string => (service === "kimi_code" ? "Kimi Code membership key" : "Kimi Platform key"),
   kimiMemberTerms: "Interactive use only, by Kimi's terms. Batch conversions need a platform key.",

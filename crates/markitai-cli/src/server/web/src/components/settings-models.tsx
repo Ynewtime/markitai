@@ -14,6 +14,8 @@ import { addingIsBlocked, listFailure, providerWords, regionBlocked, runtimeFail
 import { endpointFor, modelName, pickerRows, refusedHosts, removals } from "../lib/models.ts";
 import { isKimiCard, kimiOrder, kimiServiceAt, kimiServices, kimiTypedBase, type KimiService } from "../lib/kimi.ts";
 import { foundFromKey } from "../lib/regions.ts";
+import { cardEndpoints, type EndpointChoice, kimiEndpoints, matchingChoice } from "../lib/endpoints.ts";
+import { AddressField } from "./address-field.tsx";
 import { isSubscription, listsModels, ownEndpointLogin, usesCloudCredentials } from "../lib/provider-catalog.ts";
 import {
   CredentialInputError,
@@ -569,6 +571,13 @@ export function ModelsSettings({
     !manualOnly &&
     (autoLoads ||
       (needsBase ? draftBase.trim() !== "" && (!keyRequired || draftKey.trim() !== "") : !keyRequired || draftKey.trim() !== ""));
+
+  // The addresses the API address field lists: the Kimi card's two services, else the card's own.
+  const endpointChoices = useMemo(
+    () => (provider === null ? [] : kimi ? kimiEndpoints(services!.moonshot, services!.kimi_code) : cardEndpoints(provider)),
+    [provider, kimi, services],
+  );
+  const endpointName = (choice: EndpointChoice) => t.endpointLabel(choice.region, choice.plan, choice.service);
 
   // ---- a saved provider's connection, at the top of its page. The key and the
   // address change independently; a write sends only the field that changes,
@@ -1145,17 +1154,22 @@ export function ModelsSettings({
                   <label class="field-label" for="conn-base">
                     {t.setApiBase}
                   </label>
-                  <input
+                  <AddressField
                     id="conn-base"
-                    type="url"
-                    inputMode="url"
                     value={connBase}
+                    choices={endpointChoices}
+                    label={endpointName}
+                    listLabel={t.endpointList}
                     placeholder={conn.placeholder || "https://example.com/v1"}
                     disabled={connBusy}
-                    autoComplete="off"
-                    spellcheck={false}
-                    onInput={(event) => setConnBase(event.currentTarget.value)}
+                    describedBy={matchingChoice(endpointChoices, connBase)?.plan ? "conn-base-plan" : undefined}
+                    onInput={setConnBase}
                   />
+                  {matchingChoice(endpointChoices, connBase)?.plan && (
+                    <p id="conn-base-plan" class="field-hint">
+                      {t.planTerms}
+                    </p>
+                  )}
                 </div>
                 <Secret
                   t={t}
@@ -1328,14 +1342,18 @@ export function ModelsSettings({
                         </div>
                       )}
                       {((showsKey && needsBase) || baseOptional) && (
-                        <label class="field">
-                          <span class="field-label">
+                        <div class="field">
+                          <label class="field-label" for="connect-base">
                             {t.setApiBase}
                             <span class="field-required">{needsBase ? t.requiredField : t.optionalField}</span>
-                          </span>
-                          <input
-                            type="url"
+                          </label>
+                          <AddressField
+                            id="connect-base"
                             value={draftBase}
+                            choices={endpointChoices}
+                            label={endpointName}
+                            listLabel={t.endpointList}
+                            describedBy={matchingChoice(endpointChoices, draftBase)?.plan ? "connect-base-plan" : undefined}
                             placeholder={
                               kimi || foundFromKey(provider)
                                 ? t.baseAuto
@@ -1347,9 +1365,15 @@ export function ModelsSettings({
                                   ? "http://127.0.0.1:11434"
                                   : (provider.default_base ?? "https://example.com/v1")
                             }
-                            onInput={(event) => setDraftBase(event.currentTarget.value)}
+                            onInput={setDraftBase}
                           />
-                        </label>
+                          {/* A Coding Plan address: its terms, in one line. */}
+                          {matchingChoice(endpointChoices, draftBase)?.plan && (
+                            <p id="connect-base-plan" class="field-hint">
+                              {t.planTerms}
+                            </p>
+                          )}
+                        </div>
                       )}
                     </div>
                   )}

@@ -474,6 +474,18 @@ export const ja: Dict = {
   regionElsewhereTitle: "このキーは別のアドレスで有効です",
   regionElsewhere: (base) => `このキーは ${base} で有効です。モデルを追加する前にアドレスを変更してください。`,
   kimiPlatform: "Kimi プラットフォーム",
+  endpointList: "既知のアドレス",
+  endpointLabel: (region, plan, service) =>
+    [
+      service === "kimi_code" ? "Kimi Code" : service ? "Kimi プラットフォーム" : "",
+      region === null
+        ? "デフォルト"
+        : ({ global: "国際", china: "中国本土", beijing: "北京", singapore: "シンガポール", us_virginia: "米国（バージニア）", hong_kong: "香港" } as Record<string, string>)[region] ?? region,
+      plan === "coding" ? "Coding Plan" : (plan ?? ""),
+    ]
+      .filter(Boolean)
+      .join(" · "),
+  planTerms: "Coding Plan のアドレスはプランのキー専用で、プロバイダーが対応するコーディングツールでのみ使えます。それ以外の利用は拒否されたり、キーが停止されたりすることがあります。",
   baseAuto: "キーから自動判定",
   kimiFound: (service) => (service === "kimi_code" ? "Kimi Code 会員のキー" : "Kimi プラットフォームのキー"),
   kimiMemberTerms: "Kimi の規約により対話的な利用のみです。一括変換にはプラットフォームのキーを使ってください。",

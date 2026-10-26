@@ -5047,6 +5047,99 @@ input[type="password"],
   height: 15px;
   accent-color: var(--accent);
 }
+/* the API address: a field whose list of known addresses opens under it (a listbox, not <datalist>) */
+.addr-combo {
+  position: relative;
+}
+.dialog .addr-combo input[role="combobox"] {
+  padding-right: 30px;
+  text-overflow: ellipsis;
+}
+.addr-combo-caret {
+  position: absolute;
+  top: 50%;
+  right: 11px;
+  display: inline-flex;
+  color: var(--text-3);
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+.addr-combo-list {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  left: 0;
+  z-index: 50;
+  display: grid;
+  gap: 2px;
+  max-height: 260px;
+  margin: 0;
+  padding: 4px;
+  overflow-y: auto;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  box-shadow: var(--shadow-pop);
+  list-style: none;
+  overscroll-behavior: contain;
+}
+/* one entry: its name, the address in the mono face (cut at the end), the check on the field's value */
+.addr-combo-list > li {
+  display: grid;
+  grid-template-columns: minmax(0, max-content) minmax(0, 1fr) 13px;
+  align-items: center;
+  gap: 10px;
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: var(--r-xs);
+  font-size: var(--text-ui);
+  color: var(--text-1);
+  cursor: pointer;
+}
+.addr-combo-label {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.addr-combo-base {
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text-3);
+}
+.addr-combo-check {
+  display: inline-flex;
+  color: var(--accent);
+}
+.addr-combo-list > li.is-active {
+  background: var(--strip);
+}
+@media (hover: hover) {
+  .addr-combo-list > li:hover {
+    background: var(--strip);
+  }
+}
+/* on a phone the entries keep the phone's option size: 11 px text, 28 px tall, each reaching 3 px
+   past its edges for a finger */
+@media screen and (max-width: 760px) {
+  .addr-combo-list > li {
+    position: relative;
+    min-height: 28px;
+    padding: 0 8px;
+    gap: 8px;
+    font-size: var(--text-xs);
+  }
+  .addr-combo-list > li::before {
+    content: "";
+    position: absolute;
+    inset: -3px 0;
+  }
+  .addr-combo-base {
+    font-size: 10px;
+  }
+}
 .secret {
   position: relative;
 }
