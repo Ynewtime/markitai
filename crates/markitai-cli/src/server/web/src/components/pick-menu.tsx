@@ -173,6 +173,7 @@ export interface DownloadEntry {
   ext?: string;
   icon: IconName;
   run: () => void;
+  disabled?: boolean;
 }
 
 /** Download, and beside it a caret with the formats: the button saves the first entry. */
@@ -222,8 +223,9 @@ export function SplitDownload({
               type="button"
               role="menuitem"
               tabIndex={-1}
+              disabled={entry.disabled}
               onClick={() => {
-                // focus goes back to the caret (an entry that moves it, as Choose files does, wins)
+                // focus goes back to the caret (an entry that moves it, as View file list does, wins)
                 menu.close();
                 entry.run();
               }}

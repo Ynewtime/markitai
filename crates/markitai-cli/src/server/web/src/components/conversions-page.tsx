@@ -62,7 +62,7 @@ export interface ConversionsPageProps {
   /** The list shows only these items (a notice's "Show items"), or all when null. */
   only: string[] | null;
   onOnly: (keys: string[] | null) => void;
-  /** Download all (.zip) for an item's Files, or null when this server cannot zip it. */
+  /** Download all .zip for an item's Files, or null when this server cannot zip it. */
   downloadAll: (item: SessionItem) => (() => void) | null;
   onCopied: () => void;
   announce: (message: string) => void;
@@ -271,10 +271,10 @@ export function ConversionsPage(props: ConversionsPageProps) {
             <ActionMenu
               label={t.moreActions}
               actions={[
+                { key: "zip", label: t.downloadAllZip, icon: "DownloadSimple" as const, run: props.head.onZip, disabled: !props.head.canZip },
                 ...(props.head.retryable > 0
                   ? [{ key: "retry", label: t.retryFailedN(props.head.retryable), icon: "ArrowCounterClockwise" as const, run: props.head.onRetry, disabled: props.head.retrying }]
                   : []),
-                { key: "zip", label: t.downloadAll, icon: "DownloadSimple" as const, run: props.head.onZip, disabled: !props.head.canZip },
               ]}
             />
           )}
@@ -360,6 +360,17 @@ export function ConversionsPage(props: ConversionsPageProps) {
                 {t.clearSelection}
               </button>
               <button
+                type="button"
+                class="btn select-reconvert"
+                disabled={chosen.length === 0}
+                title={t.reconvertTitle}
+                aria-label={t.reconvert}
+                onClick={() => props.onReconvert(chosen)}
+              >
+                <Icon name="ArrowCounterClockwise" size={14} />
+                <span class="select-reconvert-text">{t.reconvert}</span>
+              </button>
+              <button
                 ref={deleteButton}
                 type="button"
                 class="btn btn-danger select-delete"
@@ -370,17 +381,6 @@ export function ConversionsPage(props: ConversionsPageProps) {
               >
                 <Icon name="Trash" size={14} />
                 {t.deleteSelected}
-              </button>
-              <button
-                type="button"
-                class="btn select-reconvert"
-                disabled={chosen.length === 0}
-                title={t.reconvertTitle}
-                aria-label={t.reconvert}
-                onClick={() => props.onReconvert(chosen)}
-              >
-                <Icon name="ArrowCounterClockwise" size={14} />
-                <span class="select-reconvert-text">{t.reconvert}</span>
               </button>
               <ConfirmPopover
                 triggerLabel={t.deleteSelected}

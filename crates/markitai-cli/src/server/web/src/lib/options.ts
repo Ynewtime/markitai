@@ -319,6 +319,49 @@ export function composerFromDefaults(defaults: ConvertDefaults, table: PresetTab
   };
 }
 
+/** The composer that converts with these job options again (Re-convert…): their preset when it is
+ * one of the composer's, else the closest; image switches only where they differ from it. */
+export function composerFromOptions(options: JobOptions, table: PresetTable = BUILTIN_PRESETS): Composer {
+  const llm = options.llm ?? false;
+  const saved: ConvertDefaults = {
+    llm,
+    ocr: options.ocr ?? false,
+    alt: options.alt ?? false,
+    desc: options.desc ?? false,
+    screenshot: options.screenshot ?? false,
+    screenshot_only: options.screenshot_only ?? false,
+    pure: options.pure ?? false,
+    no_cache: options.no_cache ?? false,
+    no_compress: options.no_compress ?? false,
+    profile: options.profile,
+    // Cloudflare is never a saved default: set below.
+    strategy: "auto",
+    ...(options.format ? { format: options.format } : {}),
+    ...(options.ocr_lang ? { ocr_lang: options.ocr_lang } : {}),
+    ...(typeof options.ocr_all_pages === "boolean" ? { ocr_all_pages: options.ocr_all_pages } : {}),
+    ...(typeof options.page_markers === "boolean" ? { page_markers: options.page_markers } : {}),
+  };
+  const closest = composerFromDefaults(saved, table);
+  const own = PRESETS.find((preset) => preset === options.preset) ?? null;
+  const state = own !== null && own !== closest.preset ? { ...closest, preset: own, advanced: { ...closest.advanced, alt: null, desc: null, screenshot: null } } : closest;
+  const features = featuresOf(state.preset, table);
+  // Without a model the pictures were not analysed: the preset's switches stand for when one is turned on.
+  const analysed = llm && !saved.pure;
+  const differs = (key: "alt" | "desc", value: boolean) => (analysed && features[key] !== value ? value : null);
+  return {
+    ...state,
+    advanced: {
+      ...state.advanced,
+      alt: differs("alt", saved.alt),
+      desc: differs("desc", saved.desc),
+      screenshot: saved.screenshot_only || features.screenshot === saved.screenshot ? null : saved.screenshot,
+      textOnly: options.text_only === true,
+      strategy: options.strategy ?? "auto",
+      backend: options.backend ?? "native",
+    },
+  };
+}
+
 /** The defaults the composer's choices would save; null while they name Cloudflare (it asks each time). */
 export function defaultsOf(state: Composer, table: PresetTable = BUILTIN_PRESETS): ConvertDefaults | null {
   const a = state.advanced;

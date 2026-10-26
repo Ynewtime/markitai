@@ -38,7 +38,7 @@ import { download } from "./lib/download.ts";
 import { addStaged, oversized, removeStaged, type StagedSubmission, type Walked } from "./lib/files.ts";
 import { basename, displayName, fmtBytes } from "./lib/format.ts";
 import { useConvertDefaults } from "./hooks/use-convert-defaults.ts";
-import { initialComposer, publicOptions, readRemembered, remember, resolveOptions, withOcrFor, type Composer } from "./lib/options.ts";
+import { composerFromOptions, initialComposer, publicOptions, readRemembered, remember, resolveOptions, withOcrFor, type Composer } from "./lib/options.ts";
 import { prepareRetryBatch, retryBatchAnnouncement, submitRetryBatch } from "./lib/retry-batch.ts";
 import { ADMIN_SECTIONS, DIALOG_ENTRY, entryOnly, listEntry, listQuery, ONLY_ENTRY, OPEN_MODE, parseListState, parseRoute, routePath, SUMMARY_ENTRY, type PaneMode, type Route, type Section } from "./lib/route.ts";
 import { canRetry, waitingJobs, type SessionItem } from "./lib/session.ts";
@@ -503,14 +503,6 @@ export function App() {
       void retry(item);
     },
     reconvert: (item) => void reconvert([item]),
-    enhance: (item) => {
-      void (async () => {
-        const authorized = await authorize({ ...savedOptions(item), llm: true }, [{ name: item.name, kind: item.kind }], true);
-        if (authorized === null) return;
-        const error = await requestItem(item, () => conversionsRef.current.enhance(item, authorized), dicts[localeRef.current].llmEnhanceFailed);
-        if (error === null) announce(dicts[localeRef.current].enhanceWithLlm(item.name));
-      })();
-    },
     remove: async (item) => {
       const error = await requestItem(item, () => conversionsRef.current.removeItem(item), dicts[localeRef.current].deleteFailed);
       if (error !== null) return false;
@@ -591,6 +583,13 @@ export function App() {
           const lines = text.split(/\r?\n/).filter((line) => line.trim());
           return [...lines, ...addresses.filter((address) => !lines.includes(address))].join("\n");
         });
+        // The options start from these items' own (when they share them), not from the composer's.
+        const own = items.map((item) => savedOptions(item));
+        const first = own[0];
+        if (first && own.every((options) => JSON.stringify(options) === JSON.stringify(first))) {
+          defaults.touch();
+          setComposer(composerFromOptions(first, presets));
+        }
         navigate({ view: "convert" });
         setOptionsRequest((value) => value + 1);
         const count = files.length + addresses.length;
@@ -608,7 +607,7 @@ export function App() {
         reconverting.current = false;
       }
     },
-    [maxItems, navigate, announce, note, llmReady, role, userModels],
+    [maxItems, navigate, announce, note, llmReady, role, userModels, presets],
   );
   const downloadArchive = useCallback(
     (path: string, name: string, key?: string) => {

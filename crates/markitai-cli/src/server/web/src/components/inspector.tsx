@@ -50,8 +50,7 @@ export interface ItemActionsApi {
   retry(item: SessionItem): void;
   retryPlain(item: SessionItem): void;
   retryWithOcr(item: SessionItem): void;
-  enhance(item: SessionItem): void;
-  /** Convert this item's original again with options chosen on the Convert page: a new submission. */
+  /** Convert this item's original again, its own options shown to change first: a new submission. */
   reconvert(item: SessionItem): void;
   remove(item: SessionItem): Promise<boolean>;
   openModels(): void;
@@ -65,7 +64,7 @@ export interface JobActionsApi {
   select(key: string): void;
 }
 
-/** An action on this conversion that failed (Retry, Delete, Download, Enhance,
+/** An action on this conversion that failed (Retry, Delete, Download, Re-convert,
  * Copy): one sentence, and the service's full wording behind Full details. */
 export interface ActionFailure {
   key: string;
@@ -599,10 +598,7 @@ export function itemActs(ctx: InspectorContext, item: SessionItem, actions: Item
     more.push({ key: "plain", label: t.retryPlain, icon: "ArrowCounterClockwise", disabled: busy, run: () => actions.retryPlain(item) });
   } else if (noModel && retryable) shown.push({ key: "plain", label: t.retryPlain, icon: "ArrowCounterClockwise", primary: true, disabled: busy, run: () => actions.retryPlain(item) });
   if (imageOnly && retryable) shown.push({ key: "ocr", label: t.enableOcr, primary: true, disabled: busy, run: () => actions.retryWithOcr(item) });
-  if (previewable && item.status === "done" && ctx.documentJson)
-    more.push({ key: "json", label: t.downloadJson, title: t.downloadJsonTitle, icon: "DownloadSimple", run: () => actions.downloadJson(item) });
-  if (previewable && !item.llmEnhanced && item.retryable && ctx.llmReady) more.push({ key: "enhance", label: t.enhance, icon: "MagicWand", disabled: busy, run: () => actions.enhance(item) });
-  if (previewable && retryable === false && item.retryable) more.push({ key: "again", label: t.runAgain, icon: "ArrowCounterClockwise", disabled: busy, run: () => actions.retry(item) });
+  // Enhance with LLM and Run again are Re-convert…, whose options start from this item's (LLM one switch there).
   if (item.status !== "running" && item.status !== "queued")
     more.push({ key: "reconvert", label: t.reconvert, title: t.reconvertItemTitle, icon: "ArrowCounterClockwise", disabled: busy, run: () => actions.reconvert(item) });
   const danger: MenuDanger | null =
@@ -947,7 +943,7 @@ export function jobActs(ctx: InspectorContext, job: ConvJob, items: SessionItem[
   const more: Act[] = [];
   if (retryable > 0)
     shown.push({ key: "retry-failed", label: t.retryFailedN(retryable), icon: "ArrowCounterClockwise", primary: true, disabled: busy, busy, run: () => actions.retryFailed(job.jobId) });
-  if (!running) shown.push({ key: "zip", label: t.downloadZip, icon: "DownloadSimple", run: () => actions.zip(job.jobId) });
+  if (!running) shown.push({ key: "zip", label: t.downloadAllZip, icon: "DownloadSimple", run: () => actions.zip(job.jobId) });
   if (waiting && ctx.cancel) shown.push(stopAct(ctx, job.jobId, actions));
   const danger: MenuDanger | null = running
     ? null
