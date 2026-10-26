@@ -10,6 +10,7 @@ import unittest
 from unittest.mock import patch
 
 from audit_formats import run_worker
+import bounded_run
 from check import run_steps, test_skips, unshimmed_path
 from isolation import isolated_env
 
@@ -60,6 +61,9 @@ class IsolatedEnvironment(unittest.TestCase):
 class StateGuard(unittest.TestCase):
     """Audit hooks cannot be removed, so each case runs in its own interpreter."""
 
+    def setUp(self):
+        bounded_run.watch(self)
+
     def guarded(self, code):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory) / "home"
@@ -69,8 +73,8 @@ class StateGuard(unittest.TestCase):
             script = "\n".join([
                 "import json, os, socket, sys", f"sys.path.insert(0, {str(Path(__file__).parent)!r})",
                 "from isolation import ProtectedStateAccess, install_state_guard", code])
-            return subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=60,
-                                  env=isolated_env(home, Path(directory) / "state"), cwd=directory)
+            return bounded_run.run([sys.executable, "-c", script], text=True,
+                                   env=isolated_env(home, Path(directory) / "state"), cwd=directory)
 
     def test_real_state_and_network_are_blocked_and_recorded(self):
         result = self.guarded("""

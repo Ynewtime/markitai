@@ -20,7 +20,10 @@ three commands below and the `scripts/test_*.py` helper tests. Those include the
 workbench tests, which import its npm packages: when Node is installed and
 `crates/markitai-cli/src/server/web/node_modules` is missing or differs from
 `package-lock.json`, the gate first runs `npm ci` there (it says so) and skips
-the helper tests if npm is missing or the install fails. Every step runs even
+the helper tests if npm is missing or the install fails. Helper tests start
+child processes through `scripts/bounded_run.py`: each is stopped, with all it
+started, after a minute or two, and a test running over three minutes ends the run with
+every thread's stack, so a hang fails instead of holding CI. Every step runs even
 after one fails; the last line names the failed ones, and the exit code is non-zero. `CARGO_HOME` and
 `RUSTUP_HOME` default to the original home's `.cargo` and `.rustup`, and Python
 or Node reached through a home-relative shim (mise, asdf) is replaced on `PATH`

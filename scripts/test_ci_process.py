@@ -8,11 +8,13 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+import bounded_run
 from ci_process import run_logged, _stop_tree, write_summary
 
 
 class CIProcessTests(unittest.TestCase):
     def setUp(self):
+        bounded_run.watch(self)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)

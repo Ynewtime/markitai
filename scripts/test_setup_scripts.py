@@ -14,13 +14,14 @@ import os
 import platform
 import re
 import shutil
-import subprocess
 import sys
 import tarfile
 import tempfile
 import threading
 import unittest
 import zipfile
+
+import bounded_run
 
 ROOT = Path(__file__).resolve().parents[1]
 SETUP_SH = ROOT / "scripts/install/setup.sh"
@@ -76,7 +77,7 @@ def shell_target():
     if not machine or not system:
         return None
     if system == "apple-darwin" and machine == "x86_64":
-        translated = subprocess.run(["sysctl", "-n", "sysctl.proc_translated"], capture_output=True, text=True)
+        translated = bounded_run.run(["sysctl", "-n", "sysctl.proc_translated"], text=True)
         if translated.stdout.strip() == "1":
             machine = "aarch64"
     return f"{machine}-{system}"
@@ -147,6 +148,7 @@ class FakeReleases:
 @unittest.skipUnless(shutil.which("sh") and shell_target() and os.name != "nt", "needs a POSIX shell on macOS/Linux")
 class SetupShTests(unittest.TestCase):
     def setUp(self):
+        bounded_run.watch(self)
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         self.work = Path(directory.name)
@@ -164,9 +166,8 @@ class SetupShTests(unittest.TestCase):
     def run_setup(self, *arguments, shell="sh", **environment):
         env = {"HOME": str(self.home), "PATH": "/usr/bin:/bin", "LANG": "C.UTF-8", "NO_COLOR": "1",
                "MARKITAI_DOWNLOAD_URL": self.releases.base, "TMPDIR": str(self.work), **environment}
-        # A session of its own: setup.sh would otherwise ask the developer's terminal (/dev/tty).
-        return subprocess.run([shell, str(SETUP_SH), *arguments], env=env, capture_output=True, text=True,
-                              stdin=subprocess.DEVNULL, timeout=120, start_new_session=True)
+        # In a session of its own (bounded_run): setup.sh would otherwise ask the developer's terminal (/dev/tty).
+        return bounded_run.run([shell, str(SETUP_SH), *arguments], env=env, text=True)
 
     def run_with_terminal(self, answer="", **environment):
         """setup.sh with a terminal on stdin that has `answer` typed ahead; it must read all of it."""
@@ -182,8 +183,7 @@ class SetupShTests(unittest.TestCase):
             os.write(leader, answer.encode())
             env = {"HOME": str(self.home), "PATH": "/usr/bin:/bin", "LANG": "C.UTF-8", "NO_COLOR": "1",
                    "MARKITAI_DOWNLOAD_URL": self.releases.base, "TMPDIR": str(self.work), **environment}
-            result = subprocess.run(["sh", str(SETUP_SH)], env=env, capture_output=True, text=True,
-                                    stdin=follower, timeout=120, start_new_session=True)
+            result = bounded_run.run(["sh", str(SETUP_SH)], env=env, text=True, stdin=follower)
             # An answer left unread would pass for the default at end of input.
             unread = array.array("i", [0])
             fcntl.ioctl(follower, termios.FIONREAD, unread)
@@ -261,7 +261,7 @@ class SetupShTests(unittest.TestCase):
         result = self.run_setup()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         bin_dir = self.home / ".local/bin"
-        self.assertEqual(subprocess.check_output([bin_dir / "markitai", "--version"], text=True).strip(),
+        self.assertEqual(bounded_run.output([bin_dir / "markitai", "--version"], text=True).strip(),
                          "markitai 2.0.0")
         for alias in ["mkai", "markitai-mcp"]:
             self.assertEqual(os.readlink(bin_dir / alias), "markitai")
@@ -285,7 +285,7 @@ class SetupShTests(unittest.TestCase):
         pinned = self.run_setup(MARKITAI_VERSION="v2.0.1", MARKITAI_INSTALL_OPTIONAL="1",
                                 PATH=f"{bin_dir}:/usr/bin:/bin")
         self.assertEqual(pinned.returncode, 0, pinned.stdout + pinned.stderr)
-        self.assertEqual(subprocess.check_output([bin_dir / "markitai", "--version"], text=True).strip(),
+        self.assertEqual(bounded_run.output([bin_dir / "markitai", "--version"], text=True).strip(),
                          "markitai 2.0.1")
         self.assertNotIn("PATH does not include", pinned.stdout)
         self.assertIn("doctor doctor --fix", (self.home / "calls").read_text())
@@ -327,7 +327,7 @@ class SetupShTests(unittest.TestCase):
         updated = self.run_setup(MARKITAI_VERSION="2.0.1")
         self.assertEqual(updated.returncode, 0, updated.stdout + updated.stderr)
         self.assertFalse((self.home / ".local/bin").exists())
-        self.assertEqual(subprocess.check_output([custom / "markitai", "--version"], text=True).strip(), "markitai 2.0.1")
+        self.assertEqual(bounded_run.output([custom / "markitai", "--version"], text=True).strip(), "markitai 2.0.1")
         self.assertEqual(self.run_setup("--uninstall").returncode, 0)
         self.assertEqual(list(custom.iterdir()), [])
 
@@ -399,8 +399,7 @@ class SetupShTests(unittest.TestCase):
         tools = self.fake_uv()
         env = {"HOME": str(self.home), "PATH": f"{tools}:/usr/bin:/bin", "LANG": "C", "TERM": "dumb",
                "MARKITAI_DOWNLOAD_URL": self.releases.base, "TMPDIR": str(self.work)}
-        result = subprocess.run(["sh"], input=SETUP_SH.read_text(encoding="utf-8"), env=env,
-                                capture_output=True, text=True, timeout=120, start_new_session=True)
+        result = bounded_run.run(["sh"], input=SETUP_SH.read_text(encoding="utf-8"), env=env, text=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("uv tool uninstall markitai", (self.home / "calls").read_text())
         self.assertIn("+ Removed the Python markitai that uv installed", result.stdout)
@@ -772,6 +771,9 @@ foreach ($output in @($piped, $block)) {
 
 @unittest.skipUnless(shutil.which("pwsh"), "needs PowerShell 7 (pwsh)")
 class SetupPs1Tests(unittest.TestCase):
+    def setUp(self):
+        bounded_run.watch(self)
+
     def test_functions_against_a_fake_release(self):
         with tempfile.TemporaryDirectory() as directory:
             work = Path(directory)
@@ -802,9 +804,9 @@ class SetupPs1Tests(unittest.TestCase):
             env = {**os.environ, "HOME": str(home), "USERPROFILE": str(home), "TMPDIR": str(work / "scratch")}
             for name in ["MARKITAI_VERSION", "MARKITAI_INSTALL_DIR", "MARKITAI_UNINSTALL"]:
                 env.pop(name, None)
-            result = subprocess.run(["pwsh", "-NoLogo", "-NoProfile", "-NonInteractive", "-File", str(harness),
-                                     "-Script", str(SETUP_PS1), "-Base", releases.base, "-Work", str(work / "scratch")],
-                                    capture_output=True, text=True, timeout=180, env=env)
+            result = bounded_run.run(["pwsh", "-NoLogo", "-NoProfile", "-NonInteractive", "-File", str(harness),
+                                      "-Script", str(SETUP_PS1), "-Base", releases.base, "-Work", str(work / "scratch")],
+                                     text=True, timeout=120, env=env)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertEqual(result.stdout.strip().splitlines()[-1], "ok")
 
@@ -842,9 +844,8 @@ class SetupPs1Tests(unittest.TestCase):
             load = f"Get-Content -Raw -LiteralPath '{script}'"
 
             def run(*arguments):
-                result = subprocess.run(["pwsh", "-NoLogo", "-NoProfile", "-NonInteractive", *arguments],
-                                        capture_output=True, text=True, timeout=180, env=env,
-                                        stdin=subprocess.DEVNULL)
+                result = bounded_run.run(["pwsh", "-NoLogo", "-NoProfile", "-NonInteractive", *arguments],
+                                         text=True, timeout=120, env=env)
                 shown = result.stdout + result.stderr
                 for raw in ["Exception", "Line |", "CategoryInfo", "FullyQualifiedErrorId", "markitai setup:"]:
                     self.assertNotIn(raw, shown)
@@ -884,8 +885,8 @@ class SetupPs1Tests(unittest.TestCase):
                    "LOCALAPPDATA": str(work / "LocalAppData"), "MARKITAI_HOME": str(work / "state")}
             for name in ["MARKITAI_VERSION", "MARKITAI_INSTALL_DIR", "MARKITAI_UNINSTALL"]:
                 env.pop(name, None)
-            result = subprocess.run(["pwsh", "-NoLogo", "-NoProfile", "-NonInteractive", "-File", str(harness),
-                                     "-Script", str(SETUP_PS1)], capture_output=True, text=True, timeout=180, env=env)
+            result = bounded_run.run(["pwsh", "-NoLogo", "-NoProfile", "-NonInteractive", "-File", str(harness),
+                                      "-Script", str(SETUP_PS1)], text=True, timeout=120, env=env)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertEqual(result.stdout.strip().splitlines()[-1], "ok")
 
@@ -896,6 +897,9 @@ POWERSHELLS = [name for name in ["pwsh", "powershell"] if shutil.which(name)]
 
 @unittest.skipUnless(POWERSHELLS, "needs PowerShell")
 class UserPathKindTests(unittest.TestCase):
+    def setUp(self):
+        bounded_run.watch(self)
+
     def test_the_user_path_keeps_its_registry_kind(self):
         # On Windows against a scratch key under HKCU\Software, elsewhere against a stand-in.
         for shell in POWERSHELLS:
@@ -905,8 +909,8 @@ class UserPathKindTests(unittest.TestCase):
                 arguments = ["-Script", str(SETUP_PS1)]
                 if sys.platform == "win32":
                     arguments += ["-TestKey", f"Software\\markitai-setup-test-{os.getpid()}-{shell}"]
-                result = subprocess.run([shell, "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
-                                         "-File", str(harness), *arguments], capture_output=True, text=True, timeout=120)
+                result = bounded_run.run([shell, "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+                                          "-File", str(harness), *arguments], text=True, timeout=120)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertEqual(result.stdout.strip().splitlines()[-1], "ok")
 

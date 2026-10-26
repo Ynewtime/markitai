@@ -1,17 +1,20 @@
 import json
 from pathlib import Path
-import subprocess
 import tempfile
 import unittest
 from audit_state import compare, fixtures, repository_state
+import bounded_run
 
 
 class StateAuditTests(unittest.TestCase):
+    def setUp(self):
+        bounded_run.watch(self)
+
     def test_provenance_uses_explicit_checkout_and_detects_same_status_content_changes(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             def git(*args):
-                return subprocess.check_output(['git', *args], cwd=root, stderr=subprocess.DEVNULL)
+                return bounded_run.output(['git', *args], cwd=root)
             git('init', '-q')
             tracked = root / 'tracked.txt'; tracked.write_text('initial')
             git('add', 'tracked.txt')

@@ -21,6 +21,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+import bounded_run
 import check
 from web_deps import stale_web_dependencies
 
@@ -64,6 +65,7 @@ def source_digest():
 
 class WebDistTest(unittest.TestCase):
     def setUp(self):
+        bounded_run.watch(self)
         self.manifest = json.loads((DIST / "manifest.json").read_text(encoding="utf-8"))
 
     def test_every_built_file_matches_the_manifest(self):
@@ -137,7 +139,7 @@ class WebDistTest(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which("node") and (WEB / "node_modules/esbuild").is_dir(), "Node or the pinned toolchain is not installed")
     def test_a_rebuild_reproduces_dist(self):
-        result = subprocess.run(["node", "build.mjs", "--check"], cwd=WEB, capture_output=True, encoding="utf-8", errors="replace", timeout=300)
+        result = bounded_run.run(["node", "build.mjs", "--check"], cwd=WEB, encoding="utf-8", errors="replace", timeout=120)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     @unittest.skipUnless(shutil.which("node"), "Node is not installed")
@@ -154,7 +156,7 @@ class WebDistTest(unittest.TestCase):
             ["node", "scripts/check-css-scale.mjs"],
             ["node", "scripts/check-contrast.mjs"],
         ]:
-            result = subprocess.run(command, cwd=WEB, capture_output=True, encoding="utf-8", errors="replace", timeout=300)
+            result = bounded_run.run(command, cwd=WEB, encoding="utf-8", errors="replace", timeout=120)
             self.assertEqual(result.returncode, 0, result.stdout[-4000:] + result.stderr[-4000:])
 
 

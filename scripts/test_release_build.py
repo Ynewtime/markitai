@@ -4,13 +4,13 @@ import io
 import json
 import os
 import re
-import subprocess
 import sys
 import tarfile
 import tempfile
 import unittest
 import zipfile
 
+import bounded_run
 import release_build
 from release_build import (TARGETS, archive_name, check_versions, expected_assets, extract_release_archive,
                            github_anchor, glibc_requirement, python_version, release_body, release_notes,
@@ -123,6 +123,9 @@ class NotesTests(unittest.TestCase):
 
 
 class PrepareVersionTests(unittest.TestCase):
+    def setUp(self):
+        bounded_run.watch(self)
+
     def copy(self, directory):
         root = Path(directory)
         for name in ["Cargo.toml", "bindings/python/pyproject.toml", "bindings/python/README.md",
@@ -138,8 +141,8 @@ class PrepareVersionTests(unittest.TestCase):
         (root / "vendor/crate/Cargo.toml").write_text(f'version = "{old}"\n', encoding="utf-8")
         (root / "scripts").mkdir()
         (root / "scripts/test_x.py").write_text(f"'{old}'\n", encoding="utf-8")
-        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
-        subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+        bounded_run.run(["git", "init", "-q"], cwd=root, check=True)
+        bounded_run.run(["git", "add", "-A"], cwd=root, check=True)
         return root, old
 
     def test_sets_every_manifest_and_lists_what_still_names_the_old_version(self):

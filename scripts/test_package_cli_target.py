@@ -10,6 +10,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+import bounded_run
 from package_cli_target import executable_arch, macho_minimum, main, workspace_version, validate_target
 
 
@@ -25,6 +26,7 @@ def expected_remap(home, root):
 
 class TargetPackagingTests(unittest.TestCase):
     def setUp(self):
+        bounded_run.watch(self)
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
@@ -86,7 +88,7 @@ class TargetPackagingTests(unittest.TestCase):
 
     def test_the_host_target_and_malformed_triples_are_refused_before_any_build(self):
         host = next(line.split(": ", 1)[1] for line in
-                    subprocess.check_output(["rustc", "-vV"], text=True).splitlines() if line.startswith("host: "))
+                    bounded_run.output(["rustc", "-vV"], text=True).splitlines() if line.startswith("host: "))
         cases = [("x86_64", "triple"), ("x86_64-apple-darwin;rm", "triple"),
                                 ("riscv64gc-unknown-linux-gnu", "Unsupported"),
                                 ("x86_64-pc-windows-gnu", "Windows")]

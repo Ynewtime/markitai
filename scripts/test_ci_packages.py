@@ -22,6 +22,7 @@ from ci_packages import (apply_path_remap, _sbom_without_local_paths, npm_comman
                          verify_node_licenses, write_cli_zip, extract_cli_zip, doctor_probe, mcp_probe, identity, package_attribution,
                          write_single_binary_tar, extract_single_binary_tar, windows_cli_build, main, pinned_maturin)
 from cli_documentation import DOCUMENTATION_PATHS
+import bounded_run
 
 
 def expected_remap(home, root):
@@ -36,6 +37,7 @@ def expected_remap(home, root):
 
 class PackageValidationTests(unittest.TestCase):
     def setUp(self):
+        bounded_run.watch(self)
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
@@ -556,9 +558,9 @@ for line in sys.stdin:
         (self.root / "package.json").write_text(json.dumps({
             "name": "markitai-attribution-fixture", "version": "1.0.0", "files": [*licenses, *directories]
         }), encoding="utf-8")
-        result = subprocess.run([*npm_command(shutil.which("npm"), shutil.which("node")),
-                                 "pack", "--json", "--ignore-scripts", "--offline"],
-                                cwd=self.root, capture_output=True, text=True, timeout=30)
+        result = bounded_run.run([*npm_command(shutil.which("npm"), shutil.which("node")),
+                                  "pack", "--json", "--ignore-scripts", "--offline"],
+                                 cwd=self.root, text=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stderr)
         package = self.root / packed_filename(result.stdout)
         verify_node_licenses(package, licenses)
