@@ -363,6 +363,43 @@ fn text(output: &Output) -> (String, String, i32) {
     )
 }
 
+#[cfg(unix)]
+fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64
+}
+
+#[cfg(unix)]
+fn seed_cache(home: &Home, latest: &str, due: bool) {
+    std::fs::create_dir_all(home.path("mh")).unwrap();
+    let checked_at = if due { Value::Null } else { json!(unix_now()) };
+    std::fs::write(
+        home.path("mh/update-check.json"),
+        json!({
+            "format": 1,
+            "checked_at": checked_at,
+            "latest": latest,
+            "failures": 0,
+            "retry_at": null,
+            "notified": null
+        })
+        .to_string(),
+    )
+    .unwrap();
+}
+
+#[cfg(unix)]
+fn rearm_notice(home: &Home) {
+    let mut cache = home.cache();
+    cache["checked_at"] = json!(unix_now());
+    cache["retry_at"] = Value::Null;
+    cache["failures"] = json!(0);
+    cache["notified"] = Value::Null;
+    std::fs::write(home.path("mh/update-check.json"), cache.to_string()).unwrap();
+}
+
 /// A server run from the setup install, with its token and port as it printed them.
 struct Serve {
     child: std::process::Child,
@@ -771,10 +808,10 @@ mod unix {
         assert!(stderr.contains("✓ Downgraded to 2.0.1"), "{stderr}");
     }
 
-    /// Run with stderr on a pseudo-terminal; what it wrote.
-    fn on_a_terminal(command: &mut Command) -> (String, i32) {
+    /// A pseudo-terminal: its master, and its slave to give a run.
+    fn pty() -> (std::fs::File, std::os::fd::OwnedFd) {
         use std::os::fd::{FromRawFd, OwnedFd};
-        let (mut master, slave) = unsafe {
+        let (master, slave) = unsafe {
             let (mut master, mut slave) = (0, 0);
             let mut window = libc::winsize {
                 ws_row: 24,
@@ -802,11 +839,38 @@ mod unix {
                 OwnedFd::from_raw_fd(slave),
             )
         };
-        command.stdout(Stdio::null()).stderr(Stdio::from(slave));
-        let mut child = command.spawn().unwrap();
-        // Replacing the command's copy of the slave closes it, so the
+        (master, slave)
+    }
+
+    /// Run with stderr on a pseudo-terminal; what it wrote there, its
+    /// stdout and its exit status.
+    fn on_a_terminal_with_stdout(command: &mut Command) -> (String, String, i32) {
+        run_on_a_terminal(command, false)
+    }
+
+    fn on_a_terminal(command: &mut Command) -> (String, i32) {
+        let (terminal, _, code) = run_on_a_terminal(command, false);
+        (terminal, code)
+    }
+
+    /// Run with stdout and stderr on one pseudo-terminal; what it showed.
+    fn all_on_a_terminal(command: &mut Command) -> (String, i32) {
+        let (terminal, _, code) = run_on_a_terminal(command, true);
+        (terminal, code)
+    }
+
+    fn run_on_a_terminal(command: &mut Command, stdout_too: bool) -> (String, String, i32) {
+        let (mut master, slave) = pty();
+        let stdout = if stdout_too {
+            Stdio::from(slave.try_clone().unwrap())
+        } else {
+            Stdio::piped()
+        };
+        command.stdout(stdout).stderr(Stdio::from(slave));
+        let child = command.spawn().unwrap();
+        // Replacing the command's copies of the slave closes them, so the
         // master reads to the end once the child exits.
-        command.stderr(Stdio::null());
+        command.stdout(Stdio::null()).stderr(Stdio::null());
         let reader = std::thread::spawn(move || {
             let mut bytes = Vec::new();
             let mut buffer = [0_u8; 4096];
@@ -818,10 +882,11 @@ mod unix {
             }
             bytes
         });
-        let status = child.wait().unwrap();
+        let output = child.wait_with_output().unwrap();
         (
             String::from_utf8_lossy(&reader.join().unwrap()).into_owned(),
-            status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            output.status.code().unwrap_or(-1),
         )
     }
 
@@ -879,7 +944,6 @@ mod unix {
         for args in [
             &["a.txt", "-o", "out", "-q"][..],
             &["a.txt", "-o", "out", "--json"],
-            &["a.txt"],
         ] {
             let mut command = home.command(&releases, &[]);
             command.args(args);
@@ -894,6 +958,354 @@ mod unix {
             shown.contains("• New version 2.3.0 (current 2.1.0): markitai update"),
             "{shown:?}"
         );
+    }
+
+    fn terminal_command(home: &Home, releases: &Releases, args: &[&str]) -> Command {
+        let mut command = home.command(releases, &[("TERM", "xterm"), ("NO_COLOR", "1")]);
+        command.args(args);
+        command
+    }
+
+    #[test]
+    fn the_notice_follows_any_command_on_stderr_and_stdout_stays_clean() {
+        let releases = Releases::start("2.2.0");
+        let home = Home::plain();
+        std::fs::write(home.path("a.txt"), "Words.\n").unwrap();
+        seed_cache(&home, "2.2.0", false);
+        let notice = "• New version 2.2.0 (current 2.1.0): markitai update";
+        // Markdown on stdout: the notice goes to the terminal only.
+        let (terminal, stdout, code) =
+            on_a_terminal_with_stdout(&mut terminal_command(&home, &releases, &["a.txt"]));
+        assert_eq!(code, 0, "{terminal}");
+        assert!(stdout.ends_with("\n\nWords.\n"), "{stdout:?}");
+        assert!(!stdout.contains("New version"), "{stdout:?}");
+        assert!(terminal.contains(notice), "{terminal:?}");
+        // Once a day.
+        let (terminal, _, code) =
+            on_a_terminal_with_stdout(&mut terminal_command(&home, &releases, &["config", "path"]));
+        assert_eq!(code, 0, "{terminal}");
+        assert!(!terminal.contains("New version"), "{terminal:?}");
+        for args in [
+            &["config", "path"][..],
+            &["config", "list", "-f", "table"],
+            &["cache", "stats"],
+            &["doctor"],
+            &["init", "--yes", "--local"],
+            &["-h"],
+            &["doctor", "-h"],
+        ] {
+            rearm_notice(&home);
+            let (terminal, stdout, code) =
+                on_a_terminal_with_stdout(&mut terminal_command(&home, &releases, args));
+            assert_eq!(code, 0, "{args:?}: {terminal}");
+            assert!(terminal.contains(notice), "{args:?}: {terminal:?}");
+            assert!(!stdout.contains("New version"), "{args:?}: {stdout}");
+        }
+        // A command that fails at run time still ended normally.
+        rearm_notice(&home);
+        let missing = home.path("missing-copilot");
+        let mut command = home.command(
+            &releases,
+            &[
+                ("TERM", "xterm"),
+                ("NO_COLOR", "1"),
+                ("COPILOT_CLI_PATH", missing.to_str().unwrap()),
+            ],
+        );
+        let (terminal, _, code) =
+            on_a_terminal_with_stdout(command.args(["auth", "copilot", "status"]));
+        assert_eq!(code, 1, "{terminal}");
+        assert!(terminal.contains(notice), "{terminal:?}");
+        // Doctor's report on a terminal names the release itself.
+        rearm_notice(&home);
+        let (terminal, code) =
+            all_on_a_terminal(&mut terminal_command(&home, &releases, &["doctor"]));
+        assert_eq!(code, 0, "{terminal}");
+        assert!(terminal.contains("2.2.0 is available"), "{terminal:?}");
+        assert!(!terminal.contains(notice), "{terminal:?}");
+        // Its help is no report.
+        let (terminal, code) =
+            all_on_a_terminal(&mut terminal_command(&home, &releases, &["doctor", "-h"]));
+        assert_eq!(code, 0, "{terminal}");
+        assert!(terminal.contains(notice), "{terminal:?}");
+        assert!(releases.requests().is_empty(), "{:?}", releases.requests());
+    }
+
+    #[test]
+    fn json_quiet_usage_mcp_source_and_opt_outs_stay_silent() {
+        let releases = Releases::start("2.2.0");
+        let home = Home::plain();
+        std::fs::write(home.path("a.txt"), "Words.\n").unwrap();
+        std::fs::write(
+            home.path("json.json"),
+            r#"{"output":{"format":"json"},"llm":{"enabled":false}}"#,
+        )
+        .unwrap();
+        // JSON on stdout: no notice, and no check either, even when one is due.
+        for args in [
+            &["a.txt", "-o", "out", "--json"][..],
+            &["a.txt", "-f", "json"],
+            &["-c", "json.json", "a.txt"],
+            &["--config-json", r#"{"output":{"format":"json"}}"#, "a.txt"],
+            &["doctor", "--json"],
+            &["config", "list"],
+            &["config", "get", "output"],
+            &["-c", "json.json", "config", "get", "llm.enabled"],
+            &["cache", "stats", "--json"],
+            &["cache", "spa-domains", "--json"],
+        ] {
+            seed_cache(&home, "2.2.0", true);
+            let (terminal, stdout, code) =
+                on_a_terminal_with_stdout(&mut terminal_command(&home, &releases, args));
+            assert_eq!(code, 0, "{args:?}: {terminal}");
+            assert!(!terminal.contains("New version"), "{args:?}: {terminal:?}");
+            serde_json::from_str::<Value>(&stdout).unwrap_or_else(|error| {
+                panic!("{args:?}: stdout is not clean JSON: {error}: {stdout}")
+            });
+        }
+        seed_cache(&home, "2.2.0", true);
+        let missing = home.path("missing-copilot");
+        let mut command = home.command(
+            &releases,
+            &[
+                ("TERM", "xterm"),
+                ("NO_COLOR", "1"),
+                ("COPILOT_CLI_PATH", missing.to_str().unwrap()),
+            ],
+        );
+        let (terminal, stdout, code) =
+            on_a_terminal_with_stdout(command.args(["auth", "copilot", "status", "--json"]));
+        assert_eq!(code, 0, "{terminal}");
+        assert!(!terminal.contains("New version"), "{terminal:?}");
+        serde_json::from_str::<Value>(&stdout).unwrap();
+        // `config get` prints a value for a script, even a plain string.
+        let (terminal, stdout, _) = on_a_terminal_with_stdout(&mut terminal_command(
+            &home,
+            &releases,
+            &["config", "get", "output.on_conflict"],
+        ));
+        assert_eq!(stdout, "rename\n");
+        assert!(!terminal.contains("New version"), "{terminal:?}");
+        // Quiet, previews, usage errors, MCP and update itself.
+        for args in [
+            &["mcp"][..],
+            &["mcp", "--version"],
+            &["update", "-h"],
+            &["--bogus"],
+            &["a.txt", "--json"],
+            &["a.txt", "--dry-run"],
+            &["-q", "config", "path"],
+            &["-q", "-V"],
+        ] {
+            rearm_notice(&home);
+            let (terminal, _, _) =
+                on_a_terminal_with_stdout(&mut terminal_command(&home, &releases, args));
+            assert!(!terminal.contains("New version"), "{args:?}: {terminal:?}");
+        }
+        for (name, value) in [("CI", "true"), ("MARKITAI_NO_UPDATE_CHECK", "1")] {
+            rearm_notice(&home);
+            let mut command = home.command(
+                &releases,
+                &[("TERM", "xterm"), ("NO_COLOR", "1"), (name, value)],
+            );
+            let (terminal, _, code) = on_a_terminal_with_stdout(command.args(["config", "path"]));
+            assert_eq!(code, 0, "{terminal}");
+            assert!(!terminal.contains("New version"), "{name}: {terminal:?}");
+        }
+        std::fs::write(home.path("cfg.json"), r#"{"update":{"check":false}}"#).unwrap();
+        rearm_notice(&home);
+        let (terminal, _, code) = on_a_terminal_with_stdout(&mut terminal_command(
+            &home,
+            &releases,
+            &["-c", "cfg.json", "config", "path"],
+        ));
+        assert_eq!(code, 0, "{terminal}");
+        assert!(!terminal.contains("New version"), "{terminal:?}");
+        // A source build.
+        rearm_notice(&home);
+        let mut source = terminal_command(&home, &releases, &["config", "path"]);
+        source.env_remove("MARKITAI_TEST_UPDATE_AS");
+        let (terminal, _, code) = on_a_terminal_with_stdout(&mut source);
+        assert_eq!(code, 0, "{terminal}");
+        assert!(!terminal.contains("New version"), "{terminal:?}");
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(releases.requests().is_empty(), "{:?}", releases.requests());
+    }
+
+    #[test]
+    fn version_uses_the_cache_without_waiting_and_keeps_stdout_to_one_line() {
+        let version_line = format!("markitai {}\n", markitai_core::VERSION);
+        let releases = Releases::start("2.2.0");
+        *releases.stall.lock().unwrap() = u64::MAX;
+        let home = Home::plain();
+        seed_cache(&home, "2.2.0", true);
+        let mut baseline = home.command(
+            &releases,
+            &[
+                ("TERM", "xterm"),
+                ("NO_COLOR", "1"),
+                ("MARKITAI_NO_UPDATE_CHECK", "1"),
+            ],
+        );
+        baseline.arg("-V");
+        let started = Instant::now();
+        let (_, stdout, code) = on_a_terminal_with_stdout(&mut baseline);
+        let baseline_time = started.elapsed();
+        assert_eq!(code, 0);
+        assert_eq!(stdout, version_line);
+        seed_cache(&home, "2.2.0", true);
+        let started = Instant::now();
+        let (terminal, stdout, code) =
+            on_a_terminal_with_stdout(&mut terminal_command(&home, &releases, &["-V"]));
+        let took = started.elapsed();
+        assert_eq!(code, 0, "{terminal}");
+        assert_eq!(stdout, version_line);
+        assert!(
+            terminal.contains("• New version 2.2.0 (current 2.1.0): markitai update"),
+            "{terminal:?}"
+        );
+        assert!(
+            took < baseline_time + Duration::from_millis(900),
+            "{took:?} vs {baseline_time:?}"
+        );
+        let (terminal, stdout, code) =
+            on_a_terminal_with_stdout(&mut terminal_command(&home, &releases, &["-V"]));
+        assert_eq!(code, 0, "{terminal}");
+        assert_eq!(stdout, version_line);
+        assert!(!terminal.contains("New version"), "{terminal:?}");
+        rearm_notice(&home);
+        let mut chinese = home.command(
+            &releases,
+            &[
+                ("TERM", "xterm"),
+                ("NO_COLOR", "1"),
+                ("MARKITAI_LANG", "zh"),
+            ],
+        );
+        let (terminal, stdout, code) = on_a_terminal_with_stdout(chinese.arg("--version"));
+        assert_eq!(code, 0, "{terminal}");
+        assert_eq!(stdout, version_line);
+        assert!(
+            terminal.contains("• 有新版本 2.2.0（当前 2.1.0）：markitai update"),
+            "{terminal:?}"
+        );
+        // Checking turned off in the configuration the command line names
+        // ("false" is false there too).
+        std::fs::write(home.path("cfg.json"), r#"{"update":{"check":false}}"#).unwrap();
+        for args in [
+            &["-c", "cfg.json", "-V"][..],
+            &[
+                "--config-json",
+                r#"{"update":{"check":"false"}}"#,
+                "--version",
+            ],
+        ] {
+            rearm_notice(&home);
+            let (terminal, stdout, code) =
+                on_a_terminal_with_stdout(&mut terminal_command(&home, &releases, args));
+            assert_eq!(code, 0, "{args:?}: {terminal}");
+            assert_eq!(stdout, version_line);
+            assert!(!terminal.contains("New version"), "{args:?}: {terminal:?}");
+        }
+        let output = home.run(&releases, &["-V"], &[]);
+        let (stdout, stderr, code) = text(&output);
+        assert_eq!(code, 0);
+        assert_eq!(stdout, version_line);
+        assert!(stderr.is_empty(), "{stderr:?}");
+    }
+
+    fn terminal_server(
+        home: &Home,
+        releases: &Releases,
+        language: &str,
+        quiet: bool,
+        args: &[&str],
+    ) -> Serve {
+        let (mut master, stderr) = pty();
+        let mut command = home.command(
+            releases,
+            &[
+                ("TERM", "xterm"),
+                ("NO_COLOR", "1"),
+                ("MARKITAI_LANG", language),
+                ("MARKITAI_SERVE_TOKEN", TOKEN),
+            ],
+        );
+        interrupt::interruptible(&mut command);
+        if quiet {
+            command.arg("-q");
+        }
+        command
+            .arg("serve")
+            .args(args)
+            .args(["--port", "0", "--no-open"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::from(stderr));
+        let child = command.spawn().unwrap();
+        command.stderr(Stdio::null());
+        let log = Arc::new(Mutex::new(String::new()));
+        let copy = log.clone();
+        std::thread::spawn(move || {
+            let mut buffer = [0_u8; 4096];
+            while let Ok(count) = master.read(&mut buffer) {
+                if count == 0 {
+                    break;
+                }
+                copy.lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .push_str(&String::from_utf8_lossy(&buffer[..count]));
+            }
+        });
+        Serve {
+            child,
+            port: 0,
+            token: TOKEN.into(),
+            log,
+        }
+    }
+
+    #[test]
+    fn serve_names_a_cached_release_in_its_terminal_banner() {
+        let releases = Releases::start("2.2.0");
+        let home = Home::plain();
+        seed_cache(&home, "2.2.0", false);
+        let mut server = terminal_server(
+            &home,
+            &releases,
+            "en",
+            false,
+            &["--allowed-host", "proxy.example"],
+        );
+        let log = server.log_with("Press Ctrl-C to stop");
+        assert!(
+            log.contains("  • New version 2.2.0 (current 2.1.0): markitai update"),
+            "{log:?}"
+        );
+        server.port = log
+            .split("http://127.0.0.1:")
+            .nth(1)
+            .and_then(|rest| {
+                rest.split(|character: char| !character.is_ascii_digit())
+                    .next()
+            })
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert_eq!(
+            server.call("GET", "/api/update", None).map(|reply| reply.0),
+            Some(404)
+        );
+        drop(server);
+        let server = terminal_server(&home, &releases, "zh", false, &[]);
+        let log = server.log_with("按 Ctrl-C 停止");
+        assert!(
+            log.contains("  • 有新版本 2.2.0（当前 2.1.0）：markitai update"),
+            "{log:?}"
+        );
+        drop(server);
+        let server = terminal_server(&home, &releases, "en", true, &[]);
+        let log = server.log_with("Press Ctrl-C to stop");
+        assert!(!log.contains("New version"), "{log:?}");
     }
 
     fn wait_for_cache(home: &Home, done: impl Fn(&Value) -> bool) -> Value {

@@ -64,6 +64,7 @@ pub struct ServeOptions {
     /// Load the configuration and the stored state, then exit without
     /// binding: the dry start of a downloaded update.
     pub preflight: bool,
+    pub quiet: bool,
 }
 
 struct State {
@@ -540,6 +541,7 @@ async fn serve(
             token.as_deref(),
             &check_cfg,
             undone.as_deref(),
+            options.quiet,
         );
     }
     if !options.no_open && !restarted && undone.is_none() {
@@ -656,13 +658,14 @@ fn print_startup(
     token: Option<&str>,
     cfg: &Value,
     undone: Option<&str>,
+    quiet: bool,
 ) {
     // Shown absolute: a relative MARKITAI_HOME would otherwise name nothing useful.
     let data = std::path::absolute(&state.root).unwrap_or_else(|_| state.root.clone());
     let failed = undone
         .map(str::to_owned)
         .or_else(|| state.update.undone.as_ref().map(|failed| failed.to.clone()));
-    let newer = startup_notice(cfg);
+    let newer = startup_notice(cfg, quiet);
     // After the lines that told why the update was undone.
     if failed.is_some() {
         crate::app::logging::blank();
@@ -738,13 +741,14 @@ fn print_startup(
 /// outside CI, with checks on.
 fn startup_notice(
     cfg: &Value,
+    quiet: bool,
 ) -> Option<(
     crate::update::version::Version,
     crate::update::version::Version,
     String,
 )> {
     use std::io::IsTerminal;
-    if !std::io::stderr().is_terminal() || crate::update::ci() {
+    if quiet || !std::io::stderr().is_terminal() || crate::update::ci() {
         return None;
     }
     let (latest, current) = crate::update::cached_newer(Some(cfg))?;

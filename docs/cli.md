@@ -73,7 +73,7 @@ OCR 模型不随归档提供；按[本地 OCR](ocr.md)提前准备。
 时间按**本机时区**显示并带 UTC 偏移（如 `2026-10-05 21:15:06 +08:00`），复制到
 别处也不会产生歧义。`SOURCE_DATE_EPOCH` 可固定该时间，使可复现构建报告被复现
 构建的身份。
-`-h` 与 `--version` 保持原样（`--version` 仍是一行，版本号在最后一个词）。
+`-h` 与 `--version` 保持原样（`--version` 的 stdout 仍是一行，版本号在最后一个词）。
 
 布尔正反开关重复时最后一个生效。preset 先应用，显式参数再覆盖。
 `-s static`/`playwright` 在本机抓取，但仍访问输入网址；`--no-remote-fetch`
@@ -191,9 +191,10 @@ MARKITAI_LANG=zh markitai doctor
   无终端时需 `--yes`）。正在运行的 `serve` 会询问是否重启。安装目录或 `MARKITAI_HOME`
   不属于 root 时，以 root 运行会被拒绝。退出码：0 已是最新或已更新，
   10 有新版本但未在此安装，1 失败，130 中断。
-- 终端上的转换结束后，有新版本时每天最多提示一次：`• 有新版本 2.3.0（当前 2.2.0）：markitai update`。
-  检查在后台进行，每天最多一次，最多等 2 秒；JSON、stdout 输出、`-q`、非终端、CI、MCP 与源码构建
-  不检查。用 `update.check: false` 或 `MARKITAI_NO_UPDATE_CHECK=1` 关闭。
+- 终端上的命令结束后（含输出到 stdout 的转换、`-h` 与 `-V`），上次检查发现新版本时每天最多在 stderr 提示一次：
+  `• 有新版本 2.3.0（当前 2.2.0）：markitai update`；`serve` 写在启动信息里。
+  检查在后台进行，每天最多一次，最多 2 秒，命令不等它；JSON 输出、`config get`、`-q`、预览、非终端、CI、MCP 与源码构建
+  不检查，`doctor` 在终端上自己写出新版本。用 `update.check: false` 或 `MARKITAI_NO_UPDATE_CHECK=1` 关闭。
 
 转换 `--json` 顶层为 `version`、`ok`、`error`、`batch`、`items`、`totals`。
 逐项读取 `items[].status`（completed/failed/skipped/pending）、`output`、`error`、

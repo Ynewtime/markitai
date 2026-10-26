@@ -652,7 +652,9 @@ pub fn run(mut arguments: Vec<std::ffi::OsString>) -> i32 {
     }
     if arguments.len() == 1 {
         print_root_help();
-        return settle_stdout(0);
+        let code = settle_stdout(0);
+        notice_after_display(&arguments, launcher);
+        return code;
     }
     if let Some(message) = compat::removed_option(&arguments[1..]) {
         let error = cli_command().error(clap::error::ErrorKind::UnknownArgument, message);
@@ -666,7 +668,7 @@ pub fn run(mut arguments: Vec<std::ffi::OsString>) -> i32 {
         command = as_mcp_launcher(command);
     }
     let cli = command
-        .try_get_matches_from_mut(arguments)
+        .try_get_matches_from_mut(&arguments)
         .and_then(|matches| Cli::from_arg_matches(&matches))
         .unwrap_or_else(|error| {
             let stream = if error.use_stderr() {
@@ -678,10 +680,19 @@ pub fn run(mut arguments: Vec<std::ffi::OsString>) -> i32 {
             if error.use_stderr() && print_usage_error_zh(&error) {
                 std::process::exit(error.exit_code());
             }
-            if print_help_zh(&error, stream) {
-                std::process::exit(settle_stdout(error.exit_code()));
+            if !print_help_zh(&error, stream) {
+                if error.use_stderr() {
+                    error.exit()
+                }
+                let _ = error.print();
+                let _ = io::stdout().flush();
             }
-            error.exit()
+            let code = settle_stdout(error.exit_code());
+            // Help or the version line asked for, not a usage error.
+            if !error.use_stderr() {
+                notice_after_display(&arguments, launcher);
+            }
+            std::process::exit(code);
         });
     // Serve and MCP drain active work on the signals their asynchronous
     // runtime owns; the remaining terminating signals kill external runtimes.
@@ -712,30 +723,118 @@ pub fn run(mut arguments: Vec<std::ffi::OsString>) -> i32 {
     code
 }
 
-/// The daily update check of a conversion run (`crate::update`), started
-/// once its configuration is known and finished after its last line.
+/// The daily update check of a run (`crate::update`), started once its
+/// configuration is known and finished after its last line.
 static UPDATE_CHECK: Mutex<Option<crate::update::Background>> = Mutex::new(None);
 
-/// Whether this run may show the new-version notice: a conversion whose
-/// Markdown goes to files (not stdout), not JSON, not quiet, not a preview,
-/// with a terminal on stderr.
-fn notice_wanted(cli: &Cli) -> bool {
-    let json_stdout = cli.output.is_none()
-        && cli
-            .format
-            .as_deref()
-            .is_some_and(|format| format.eq_ignore_ascii_case("json"));
-    (cli.output.is_some() || cli.interactive)
-        && !cli.json
-        && !json_stdout
-        && !cli.quiet
-        && !cli.dry_run
-        && io::stderr().is_terminal()
+/// The configuration a run without its own (a subcommand, help, the version
+/// line) judges the notice by: the selected file and `--config-json`, read
+/// quietly; what cannot be read counts as not there.
+fn notice_config(cli: &Cli) -> Value {
+    let mut raw = config::selected_path(cli.config.as_deref())
+        .and_then(|path| config::read_file(&path).ok().flatten())
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+        .filter(Value::is_object)
+        .unwrap_or_else(|| json!({}));
+    if let Some(overrides) = cli
+        .config_json
+        .as_deref()
+        .and_then(|text| serde_json::from_str::<Value>(text).ok())
+        .filter(Value::is_object)
+    {
+        config::merge(&mut raw, overrides);
+    }
+    // `update.check` as the loaded configuration has it ("false" is false).
+    if let Some(check) = raw.pointer("/update/check").cloned()
+        && let Ok(normalized) = config::normalize(&json!({"update": {"check": check}}))
+    {
+        raw["update"]["check"] = normalized["update"]["check"].clone();
+    }
+    raw
 }
 
-fn start_update_check(cli: &Cli, cfg: &Value) {
-    let background = crate::update::Background::start(notice_wanted(cli), Some(cfg));
+/// Whether this run may show the new-version notice: on a terminal stderr,
+/// not quiet or a preview, not `serve` (its startup lines name the release),
+/// `mcp` or `update`, and not one whose stdout is JSON or a doctor report on
+/// a terminal (it names the release itself). `brief`: only help or the
+/// version line was shown.
+fn notice_wanted(cli: &Cli, cfg: &Value, brief: bool) -> bool {
+    if cli.quiet || cli.dry_run || !io::stderr().is_terminal() {
+        return false;
+    }
+    let silent = match &cli.command {
+        None => {
+            let format = cli.format.as_deref().or(cfg["output"]["format"].as_str());
+            cli.json
+                || (cli.output.is_none() && format.is_some_and(|f| f.eq_ignore_ascii_case("json")))
+        }
+        Some(Command::Serve { .. } | Command::Mcp | Command::Update { .. }) => return false,
+        // A value for a script, JSON for all but a string.
+        Some(Command::Config {
+            command: ConfigCommand::Get { .. },
+        }) => true,
+        Some(Command::Config {
+            command: ConfigCommand::List { format, .. },
+        }) => format.eq_ignore_ascii_case("json"),
+        // Its report on a terminal names the release already.
+        Some(Command::Doctor { json, .. }) => *json || (!brief && io::stdout().is_terminal()),
+        Some(Command::Cache {
+            command: CacheCommand::Stats { json, .. } | CacheCommand::SpaDomains { json, .. },
+        }) => *json,
+        Some(Command::Auth {
+            command:
+                Some(
+                    auth::Command::Copilot { command }
+                    | auth::Command::Claude { command }
+                    | auth::Command::Chatgpt { command },
+                ),
+        }) => matches!(command, Some(auth::Action::Status { json: true })),
+        _ => false,
+    };
+    !silent
+}
+
+/// `brief`: the run only shows help or the version line.
+fn start_update_check(cli: &Cli, cfg: &Value, brief: bool) {
+    let background = crate::update::Background::start(
+        notice_wanted(cli, cfg, brief),
+        long_run(cli, brief),
+        Some(cfg),
+    );
     *UPDATE_CHECK.lock().unwrap_or_else(|e| e.into_inner()) = Some(background);
+}
+
+/// Whether the run lasts long enough for the Python wheel's check thread
+/// (`Background::start`): a conversion or provider batch, not a subcommand
+/// (`serve` checks on its own) or help.
+fn long_run(cli: &Cli, brief: bool) -> bool {
+    !brief && cli.command.is_none()
+}
+
+/// After help or the version line: the notice from the cache, judged as the
+/// same command line without `-h`/`-V` would be (`markitai mcp --version`
+/// never, `markitai -c off.json -V` by that file); none when that line is not
+/// a command (`markitai config -h`). Nothing waits: a due check is handed to
+/// the background as after any run.
+fn notice_after_display(arguments: &[std::ffi::OsString], launcher: bool) {
+    let rest = arguments.iter().filter(|argument| {
+        !matches!(
+            argument.to_str(),
+            Some("-h" | "--help" | "-V" | "--version")
+        )
+    });
+    let mut command = cli_command();
+    if launcher {
+        command = as_mcp_launcher(command);
+    }
+    let Ok(cli) = command
+        .try_get_matches_from(rest)
+        .and_then(|matches| Cli::from_arg_matches(&matches))
+    else {
+        return;
+    };
+    start_update_check(&cli, &notice_config(&cli), true);
+    finish_update_check(0);
 }
 
 /// The L1 notice after a run that ended normally (not a usage error or an
@@ -951,6 +1050,7 @@ fn execute(cli: &Cli) -> CliResult<i32> {
         return Err((2, "--config-json must be a JSON object".into()));
     }
     if let Some(command) = &cli.command {
+        start_update_check(cli, &notice_config(cli), false);
         return subcommand(cli, command, overrides);
     }
     if cli.interactive && cli.json {
@@ -960,7 +1060,9 @@ fn execute(cli: &Cli) -> CliResult<i32> {
         if cli.input.is_some() || cli.interactive || cli.llm_batch || cli.resume || cli.dry_run {
             return Err((2, "Batch collection cannot be mixed with input, submission, resume, preview or interactive mode".into()));
         }
-        return provider_batch::collect(cli, id, conversion_config(cli, overrides)?);
+        let cfg = conversion_config(cli, overrides)?;
+        start_update_check(cli, &cfg, false);
+        return provider_batch::collect(cli, id, cfg);
     }
     if cli.llm_batch_timeout.is_some() && !cli.llm_batch {
         return Err((2, "--llm-batch-timeout requires --llm-batch".into()));
@@ -972,14 +1074,17 @@ fn execute(cli: &Cli) -> CliResult<i32> {
                 "Frozen Batch resume cannot use preview or interactive mode".into(),
             ));
         }
-        return provider_batch::resume(cli, conversion_config(cli, overrides)?);
+        let cfg = conversion_config(cli, overrides)?;
+        start_update_check(cli, &cfg, false);
+        return provider_batch::resume(cli, cfg);
     }
     if cli.input.is_none() && !cli.interactive {
+        start_update_check(cli, &notice_config(cli), true);
         print_root_help();
         return Ok(0);
     }
     let cfg = conversion_config(cli, overrides)?;
-    start_update_check(cli, &cfg);
+    start_update_check(cli, &cfg, false);
     if cli.interactive {
         let Some(run) = guided::collect(cli, cfg)? else {
             say!(logging::Shape::verdict(Mark::Skip); "Cancelled.", "已取消。");
@@ -3177,6 +3282,7 @@ fn subcommand(cli: &Cli, command: &Command, overrides: Option<Value>) -> CliResu
                     no_auth: *no_auth,
                     allowed_host: allowed_host.clone(),
                     preflight: *preflight,
+                    quiet: cli.quiet,
                 },
             )
             .map_err(runtime)?;
@@ -3456,6 +3562,37 @@ fn write_config(path: &Path, value: &Value) -> CliResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn in_the_wheel_only_conversions_start_the_check_thread() {
+        use crate::update::{Runner, runner};
+        let cli = |arguments: &[&str]| {
+            cli_command()
+                .try_get_matches_from(arguments)
+                .and_then(|matches| Cli::from_arg_matches(&matches))
+                .unwrap()
+        };
+        for (arguments, brief, wheel) in [
+            (&["markitai", "a.txt"][..], false, Runner::Thread),
+            (&["markitai", "a.txt", "-o", "out"], false, Runner::Thread),
+            (
+                &["markitai", "--llm-batch-collect", "id"],
+                false,
+                Runner::Thread,
+            ),
+            (&["markitai", "--resume"], false, Runner::Thread),
+            // -V, -h and the root help.
+            (&["markitai"], true, Runner::None),
+            (&["markitai", "a.txt"], true, Runner::None),
+            (&["markitai", "config", "path"], false, Runner::None),
+            (&["markitai", "doctor"], false, Runner::None),
+            (&["markitai", "cache", "stats"], false, Runner::None),
+        ] {
+            let long = long_run(&cli(arguments), brief);
+            assert_eq!(runner(true, long), wheel, "{arguments:?} brief={brief}");
+            assert_eq!(runner(false, long), Runner::Process, "{arguments:?}");
+        }
+    }
 
     #[test]
     fn english_root_help_fits_40_columns_without_splitting_usage_tokens() {

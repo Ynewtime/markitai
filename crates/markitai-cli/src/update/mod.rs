@@ -5,8 +5,8 @@
 //! The check runs at most once a day (backing off from one hour to a day
 //! after failures), on a background thread, with a two-second cap, and keeps
 //! what it learnt in `MARKITAI_HOME/update-check.json`. It never runs and the
-//! notice never shows for JSON, stdout output, `--quiet`, a stderr that is not
-//! a terminal, CI, MCP, or a source build; `update.check: false` and
+//! notice never shows for JSON, `--quiet`, a stderr that is not a terminal, CI,
+//! MCP, or a source build; `update.check: false` and
 //! `MARKITAI_NO_UPDATE_CHECK=1` turn both off.
 pub(crate) mod check;
 pub(crate) mod control;
@@ -311,27 +311,30 @@ impl Background {
     }
 
     /// Start the check when this run may show the notice and a check is due.
-    pub(crate) fn start(shown: bool, cfg: Option<&Value>) -> Self {
+    /// In the Python wheel only a `long` run (a conversion) starts one: in
+    /// any other its thread would die at once, the attempt saved as a failure.
+    pub(crate) fn start(shown: bool, long: bool, cfg: Option<&Value>) -> Self {
         let current = current_release();
         if !shown || !enabled(cfg) || ci() || current.is_none() {
             return Self::none();
         }
         let home = markitai_core::config::home();
-        let due = Cache::load(&home).is_some_and(|cache| cache.due(now()));
         let background = Self { current };
-        if due {
-            let detected = method::detect(&method::Facts::current());
-            if method::in_python() {
-                if let Ok(base) = base_for(&detected) {
+        if !Cache::load(&home).is_some_and(|cache| cache.due(now())) {
+            return background;
+        }
+        match runner(method::in_python(), long) {
+            Runner::Process => spawn_check(),
+            Runner::Thread => {
+                if let Ok(base) = base_for(&method::detect(&method::Facts::current())) {
                     let _ = std::thread::Builder::new()
                         .name("markitai-update-check".into())
                         .spawn(move || {
                             refresh(&home, &base, check::NOTICE);
                         });
                 }
-            } else {
-                spawn_check();
             }
+            Runner::None => {}
         }
         background
     }
@@ -340,6 +343,23 @@ impl Background {
     /// day per version), recorded as shown. Nothing waits for a check.
     pub(crate) fn finish(self, lang: Lang, style: Style) -> Option<String> {
         take_notice(&self.current?, lang, style)
+    }
+}
+
+/// What runs a due check: a detached process in the markitai program, a
+/// thread in the Python wheel for a long run, none for any other there.
+#[derive(Debug, PartialEq)]
+pub(crate) enum Runner {
+    Process,
+    Thread,
+    None,
+}
+
+pub(crate) fn runner(in_python: bool, long: bool) -> Runner {
+    match (in_python, long) {
+        (false, _) => Runner::Process,
+        (true, true) => Runner::Thread,
+        (true, false) => Runner::None,
     }
 }
 
@@ -450,6 +470,14 @@ mod tests {
 
     fn v(text: &str) -> Version {
         Version::parse(text).unwrap()
+    }
+
+    #[test]
+    fn only_long_runs_start_a_check_thread_in_the_wheel() {
+        assert_eq!(runner(false, false), Runner::Process);
+        assert_eq!(runner(false, true), Runner::Process);
+        assert_eq!(runner(true, true), Runner::Thread);
+        assert_eq!(runner(true, false), Runner::None);
     }
 
     #[test]
