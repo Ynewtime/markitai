@@ -1,8 +1,11 @@
 // Conversion warnings, read as notices: one line per kind of problem with a
 // count, instead of one line per occurrence. Backends word warnings in free
-// English text, so kinds are recognized by shape; anything else is grouped by
-// its template (names, numbers and quoted values blanked out) and shown with
-// its first wording.
+// English text, so kinds are recognized by shape. A warning no shape claims is
+// grouped and titled by its stable code where the server sends one (contract
+// v1.26 `notices`); anything else is grouped by its template (names, numbers
+// and quoted values blanked out) and shown with its first wording.
+import type { ItemNotice } from "../api/types.ts";
+import { hasCodeTitle } from "../i18n/notice-codes.ts";
 
 export type NoticeKind =
   | "no_model"
@@ -21,12 +24,53 @@ export type NoticeKind =
   | "hidden_sheet"
   | "first_conversion"
   | "first_ocr"
+  /** v1.26: a warning titled by its stable code (`code:pdf.layout`). */
+  | `code:${string}`
   | "other";
 
 export interface NoticeEntry {
   itemKey: string;
   itemName: string;
   text: string;
+  /** v1.26: the warning's stable code, when the server sent one. */
+  code?: string;
+}
+
+/** Codes of the kinds the shapes above recognize, for a wording they do not know yet. */
+const CODE_KINDS: Record<string, NoticeKind> = {
+  "llm.no_model_succeeded": "no_model",
+  "llm.cost_incomplete": "cost_incomplete",
+  "llm.answer_rejected": "answer_rejected",
+  "pdf.images_after_text": "pdf_images_placed",
+  "word.picture_records": "word_picture_metadata",
+  "spreadsheet.hidden_sheet": "hidden_sheet",
+};
+
+/** The `notices` of an item payload, kept only when they pair one to one with its warnings. */
+export function noticeCodes(notices: ItemNotice[] | undefined, warnings: string[]): { code: string; items: string[] }[] {
+  if (!Array.isArray(notices) || notices.length !== warnings.length) return [];
+  if (!notices.every((notice) => notice !== null && typeof notice === "object" && typeof notice.code === "string")) return [];
+  return notices.map((notice) => ({ code: notice.code, items: Array.isArray(notice.items) ? notice.items.filter((item) => typeof item === "string") : [] }));
+}
+
+interface NoticeSource {
+  key: string;
+  name: string;
+  warnings: string[];
+  noticeCodes?: { code: string; items: string[] }[];
+}
+
+/** An item's warnings as notice entries, each with its code when the server sent codes. */
+export function noticeEntries(item: NoticeSource): NoticeEntry[] {
+  return item.warnings.map((text, index) => ({ itemKey: item.key, itemName: item.name, text, code: item.noticeCodes?.[index]?.code }));
+}
+
+/** [`rowWarnings`] as entries: what a row marks, in the workbench's words, with codes. */
+export function rowEntries(item: NoticeSource): NoticeEntry[] {
+  const kept = new Set(rowWarnings(item.warnings));
+  return noticeEntries(item)
+    .map((entry) => ({ ...entry, text: uiWording(entry.text) }))
+    .filter((entry) => kept.has(entry.text));
 }
 
 export interface NoticeGroup {
@@ -195,7 +239,7 @@ export function groupNotices(entries: NoticeEntry[]): NoticeGroup[] {
   const scannedItems = new Set(entries.filter((entry) => pdfPageNotice(entry.text.trim()) !== null || ocrBlankNotice(entry.text.trim()) !== null).map((entry) => entry.itemKey));
   for (const entry of entries) {
     const text = uiWording(entry.text.trim());
-    if (!text || isUsedRetry(text) || (scannedItems.has(entry.itemKey) && isPlacementNotice(text))) continue;
+    if (!text || isUsedRetry(text) || entry.code === "llm.answer_retried" || (scannedItems.has(entry.itemKey) && isPlacementNotice(text))) continue;
     const pages = pdfPageNotice(text);
     if (pages) {
       let document = pdf.get(entry.itemKey);
@@ -210,7 +254,9 @@ export function groupNotices(entries: NoticeEntry[]): NoticeGroup[] {
       continue;
     }
     const blank = ocrBlankNotice(text);
-    const kind = blank ? "ocr_blank" : kindOf(text);
+    let kind: NoticeKind = blank ? "ocr_blank" : kindOf(text);
+    const code = entry.code;
+    if (kind === "other" && code && code !== "other") kind = CODE_KINDS[code] ?? (hasCodeTitle(code) ? `code:${code}` : "other");
     // A recognized kind is one group whatever its details; others group by template.
     const key = kind === "other" ? `other:${template(text)}` : kind;
     let group = groups.get(key);

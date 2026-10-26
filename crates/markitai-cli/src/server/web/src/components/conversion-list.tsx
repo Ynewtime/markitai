@@ -19,7 +19,7 @@ import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { Dict, Locale } from "../i18n/index.ts";
 import { checkState, deletable, isGroup, jobKey, navigationOrder, presetOf, submissionLabel, type CheckState, type Submission } from "../lib/conversions.ts";
 import { fmtClock } from "../lib/format.ts";
-import { groupNotices, rowWarnings } from "../lib/notices.ts";
+import { groupNotices, rowWarnings, rowEntries } from "../lib/notices.ts";
 import type { SessionItem } from "../lib/session.ts";
 import { NameText } from "./file-name.tsx";
 import { Duration, glyphOf, StatusGlyph, statusWord, useElapsed } from "./item-bits.tsx";
@@ -63,7 +63,7 @@ export function SelectAll({ t, state, onToggle }: { t: Dict; state: CheckState; 
 
 /** What a row's warning mark says on hover, focus or tap: its notices, in the words of the details view. */
 function warningLines(t: Dict, item: SessionItem): string[] {
-  const entries = rowWarnings(item.warnings).map((text) => ({ itemKey: item.key, itemName: item.name, text }));
+  const entries = rowEntries(item);
   return groupNotices(entries).map((group) => t.noticeTitle(group.kind, group.count, group.models, group.sample, group.pages));
 }
 

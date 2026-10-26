@@ -1,6 +1,7 @@
 // English interface copy. Voice: short, verb first, sentence case, no hype;
 // "·" separates facts (never a dash); status words come from one family and are
 // reused by rows, marks and counters.
+import { codeTitle } from "./notice-codes.ts";
 
 const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
 
@@ -721,7 +722,7 @@ export const en = {
         }
         return `${count} PDFs have pages without readable text: turn on OCR and convert them again`;
       default:
-        return sample;
+        return (kind.startsWith("code:") ? codeTitle("en", kind.slice(5), count) : null) ?? sample;
     }
   },
   noticeIn: "In ",

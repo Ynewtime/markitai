@@ -1,6 +1,7 @@
 // Chinese interface copy: the same voice as English, technical terms stay in
 // English, the proper noun is always "LLM", and "·" separates facts.
 import type { Dict } from "./en.ts";
+import { codeTitle } from "./notice-codes.ts";
 
 /** A refused Moonshot model's key may be from the other region: the address each region's keys use. */
 const kimiKeyHint = (provider: string): string =>
@@ -675,7 +676,7 @@ export const zh: Dict = {
         if (count === 1 && pages) return `第 ${pages.ranges} 页${pages.total ? `（共 ${pages.total} 页中的 ${pages.count} 页）` : ""}没有可读文字：开启 OCR 后重新转换即可读取`;
         return `${count} 个 PDF 有页面没有可读文字：请开启 OCR 后重新转换`;
       default:
-        return sample;
+        return (kind.startsWith("code:") ? codeTitle("zh", kind.slice(5), count) : null) ?? sample;
     }
   },
   noticeIn: "位于 ",
