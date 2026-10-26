@@ -65,6 +65,7 @@ msg() {
             optional_failed) echo "可选组件未能全部准备好；稍后可再运行" ;;
             optional_headless) echo "没有终端，可选组件已跳过；要一并准备，设置此变量后重新运行安装脚本" ;;
             optional_later) echo "稍后准备可选组件" ;;
+            optional_declined) echo "之前选择了暂不准备可选组件；需要时运行" ;;
             warn_root) echo "正在以 root 身份运行" ;;
             warn_root_risk) echo "markitai 按用户安装，从不需要 root；以 root 运行会装进 root 的主目录" ;;
             confirm_root) echo "仍以 root 身份继续?" ;;
@@ -125,6 +126,7 @@ msg() {
         optional_failed) echo "Not every optional component could be prepared; run this again later" ;;
         optional_headless) echo "No terminal to ask, so optional components were skipped; to prepare them too, set this and run setup again" ;;
         optional_later) echo "Prepare optional components later" ;;
+        optional_declined) echo "Optional components were declined before; to prepare them, run" ;;
         warn_root) echo "Running as root" ;;
         warn_root_risk) echo "markitai installs per user and never needs root; as root it goes into root's home" ;;
         confirm_root) echo "Continue as root anyway?" ;;
@@ -403,6 +405,8 @@ install_release() {
             mv "$_unpacked" "$SHARE_ROOT/current.new" &&
             printf 'version=%s\ntarget=%s\nbin_dir=%s\nbase=%s\ninstaller=setup.sh\nformat=1\n' \
                 "$VERSION" "$TARGET" "$BIN_DIR" "$BASE" >"$SHARE_ROOT/current.new/receipt" &&
+            { [ -z "$PREVIOUS_OPTIONAL" ] ||
+                printf 'optional=%s\n' "$PREVIOUS_OPTIONAL" >>"$SHARE_ROOT/current.new/receipt"; } &&
             { [ ! -d "$SHARE_ROOT/current" ] || mv "$SHARE_ROOT/current" "$SHARE_ROOT/current.old"; } &&
             mv "$SHARE_ROOT/current.new" "$SHARE_ROOT/current" &&
             rm -rf "$SHARE_ROOT/current.old"
@@ -410,6 +414,35 @@ install_release() {
     info "$(msg notices): $(pretty "$SHARE_ROOT/current")"
 }
 
+# The answer to "prepare the optional components?" stays in the receipt
+# (optional=yes|no), so that an update does not ask again.
+record_optional() {
+    _receipt="$SHARE_ROOT/current/receipt"
+    { grep -v '^optional=' "$_receipt" >"$_receipt.new"; printf 'optional=%s\n' "$1" >>"$_receipt.new" &&
+        mv -f "$_receipt.new" "$_receipt"; } 2>/dev/null || rm -f "$_receipt.new"
+}
+
+# Whether `doctor --fix` has something to install or repair: doctor --json
+# says "fixable" on the checks it handles. Up to 2.2.0 it did not, so a
+# missing browser or OCR models not installed or damaged count instead. A
+# doctor that gives no report counts as missing.
+optional_missing() {
+    _report="$WORK/doctor.json"
+    "$BIN_DIR/markitai" doctor --json >"$_report" 2>/dev/null
+    grep -q '"status"' "$_report" 2>/dev/null || return 0
+    if grep -q '"fixable":' "$_report"; then
+        grep -q '"fixable": true' "$_report"
+        return
+    fi
+    awk '/^  "[^"]*": \{/ { check = $1 }
+        check == "\"playwright\":" && /"status": "missing"/ { found = 1 }
+        check == "\"rapidocr\":" && /"message":/ && /are not installed|damaged model/ { found = 1 }
+        END { exit !found }' "$_report"
+}
+
+# Components already there are kept without asking. A missing one is
+# prepared when the user agreed before, and asked about only if they never
+# declined.
 prepare_optional() {
     section "$(msg section_optional)"
     if falsy "${MARKITAI_INSTALL_OPTIONAL:-}"; then
@@ -417,16 +450,31 @@ prepare_optional() {
         return 0
     fi
     if ! truthy "${MARKITAI_INSTALL_OPTIONAL:-}"; then
-        if ! has_tty; then
-            skip "$(msg optional_headless)"
-            cmd "MARKITAI_INSTALL_OPTIONAL=1"
+        if ! optional_missing; then
+            ok "$(msg optional_ready)"
             return 0
         fi
-        if ! confirm "$(msg confirm_optional)" y; then
-            hint "$(msg optional_later)" "markitai doctor --fix"
-            return 0
-        fi
+        case "$PREVIOUS_OPTIONAL" in
+            yes) ;;
+            no)
+                hint "$(msg optional_declined)" "markitai doctor --fix"
+                return 0
+                ;;
+            *)
+                if ! has_tty; then
+                    skip "$(msg optional_headless)"
+                    cmd "MARKITAI_INSTALL_OPTIONAL=1"
+                    return 0
+                fi
+                if ! confirm "$(msg confirm_optional)" y; then
+                    record_optional no
+                    hint "$(msg optional_later)" "markitai doctor --fix"
+                    return 0
+                fi
+                ;;
+        esac
     fi
+    record_optional yes
     step "markitai doctor --fix"
     if "$BIN_DIR/markitai" doctor --fix >"$WORK/doctor.log" 2>&1; then
         ok "$(msg optional_ready)"
@@ -551,6 +599,10 @@ main() {
         BIN_DIR=$(sed -n 's/^bin_dir=//p' "$SHARE_ROOT/current/receipt" | head -n 1)
     fi
     [ -n "$BIN_DIR" ] || BIN_DIR=$HOME/.local/bin
+    PREVIOUS_OPTIONAL=""
+    if owned_current; then
+        PREVIOUS_OPTIONAL=$(sed -n -e 's/^optional=yes$/yes/p' -e 's/^optional=no$/no/p' "$SHARE_ROOT/current/receipt" | tail -n 1)
+    fi
     ORIGINAL_PATH=$PATH
     WARNINGS=false
     if [ "$MODE" = uninstall ]; then

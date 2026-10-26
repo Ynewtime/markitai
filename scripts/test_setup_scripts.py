@@ -12,6 +12,7 @@ import http.server
 import io
 import os
 import platform
+import pty
 import re
 import shutil
 import subprocess
@@ -31,9 +32,42 @@ FAKE_MARKITAI = """#!/bin/sh
 case "${1:-}" in
     --version) echo "markitai @VERSION@" ;;
     init) echo init >> "$HOME/calls" ;;
-    doctor) echo "doctor $*" >> "$HOME/calls" ;;
+    doctor)
+        if [ "${2:-}" = --json ]; then
+            cat "$HOME/doctor.json" 2>/dev/null
+        else
+            echo "doctor $*" >> "$HOME/calls"
+        fi ;;
 esac
 """
+
+# What `markitai doctor --json` says when every optional component is there,
+# and when `doctor --fix` has something to install; 2.2.0 and older said no
+# "fixable", so setup reads their statuses and messages.
+DOCTOR_READY = """{
+  "playwright": {
+    "status": "ok",
+    "fixable": false
+  },
+  "rapidocr": {
+    "status": "ok",
+    "fixable": false
+  }
+}
+"""
+DOCTOR_MISSING = DOCTOR_READY.replace('"status": "ok",\n    "fixable": false\n  }\n}',
+                                      '"status": "warning",\n    "fixable": true\n  }\n}')
+DOCTOR_OLD_READY = DOCTOR_READY.replace(',\n    "fixable": false', "")
+DOCTOR_OLD = {
+    "browser": DOCTOR_OLD_READY.replace('"status": "ok"', '"status": "missing"', 1),
+    "models": DOCTOR_OLD_READY.replace('"rapidocr": {\n    "status": "ok"',
+                                       '"rapidocr": {\n    "message": "Portable PaddleOCR engine (tract): 2 of the 3 '
+                                       'model files the configured ocr.lang needs (9.0 MB) are not installed; the '
+                                       'first OCR downloads them",\n    "status": "warning"'),
+    "damaged": DOCTOR_OLD_READY.replace('"rapidocr": {\n    "status": "ok"',
+                                        '"rapidocr": {\n    "message": "Portable PaddleOCR engine (tract): 1 damaged '
+                                        'model file(s); x",\n    "status": "warning"'),
+}
 
 
 def shell_target():
@@ -133,6 +167,82 @@ class SetupShTests(unittest.TestCase):
                "MARKITAI_DOWNLOAD_URL": self.releases.base, "TMPDIR": str(self.work), **environment}
         return subprocess.run([shell, str(SETUP_SH), *arguments], env=env, capture_output=True, text=True,
                               stdin=subprocess.DEVNULL, timeout=120)
+
+    def run_with_terminal(self, answer="", **environment):
+        """setup.sh with a terminal on stdin that has `answer` typed ahead."""
+        leader, follower = pty.openpty()
+        try:
+            os.write(leader, answer.encode())
+            env = {"HOME": str(self.home), "PATH": "/usr/bin:/bin", "LANG": "C.UTF-8", "NO_COLOR": "1",
+                   "MARKITAI_DOWNLOAD_URL": self.releases.base, "TMPDIR": str(self.work), **environment}
+            return subprocess.run(["sh", str(SETUP_SH)], env=env, capture_output=True, text=True,
+                                  stdin=follower, timeout=120, start_new_session=True)
+        finally:
+            os.close(follower)
+            os.close(leader)
+
+    def optional_state(self):
+        receipt = (self.home / ".local/share/markitai/current/receipt").read_text()
+        calls = (self.home / "calls").read_text() if (self.home / "calls").exists() else ""
+        return re.findall(r"^optional=(.*)$", receipt, re.M), calls.count("doctor --fix")
+
+    def test_an_update_asks_only_about_missing_components_never_declined(self):
+        question = "Prepare the optional components now?"
+        # 2.1.0 and 2.2.0 wrote no answer: components already there are kept without asking.
+        (self.home / "doctor.json").write_text(DOCTOR_READY)
+        kept = self.run_with_terminal()
+        self.assertEqual(kept.returncode, 0, kept.stdout + kept.stderr)
+        self.assertNotIn(question, kept.stdout)
+        self.assertIn("Optional components are ready", kept.stdout)
+        self.assertEqual(self.optional_state(), ([], 0))
+
+        # Something missing and never answered: asked; a "no" is remembered.
+        (self.home / "doctor.json").write_text(DOCTOR_MISSING)
+        declined = self.run_with_terminal("n\n")
+        self.assertIn(question, declined.stdout)
+        self.assertEqual(self.optional_state(), (["no"], 0))
+        again = self.run_with_terminal(MARKITAI_VERSION="2.0.1")
+        self.assertEqual(again.returncode, 0, again.stdout + again.stderr)
+        self.assertNotIn(question, again.stdout)
+        self.assertIn("declined before", again.stdout)
+        self.assertIn("markitai doctor --fix", again.stdout)
+        self.assertEqual(self.optional_state(), (["no"], 0))
+
+        # MARKITAI_INSTALL_OPTIONAL=1 prepares them anyway and turns the answer into yes;
+        # later updates then prepare what is missing without asking, headless too.
+        forced = self.run_setup(MARKITAI_INSTALL_OPTIONAL="1")
+        self.assertEqual(forced.returncode, 0, forced.stdout + forced.stderr)
+        self.assertEqual(self.optional_state(), (["yes"], 1))
+        refreshed = self.run_setup()
+        self.assertNotIn("MARKITAI_INSTALL_OPTIONAL=1", refreshed.stdout)
+        self.assertIn("Optional components are ready", refreshed.stdout)
+        self.assertEqual(self.optional_state(), (["yes"], 2))
+        (self.home / "doctor.json").write_text(DOCTOR_READY)
+        self.assertEqual(self.run_setup().returncode, 0)
+        self.assertEqual(self.optional_state(), (["yes"], 2))
+
+    def test_a_doctor_without_fixable_is_read_by_its_statuses(self):
+        cases = {"ready": (DOCTOR_OLD_READY, False), **{name: (report, True) for name, report in DOCTOR_OLD.items()}}
+        for name, (report, missing) in cases.items():
+            with self.subTest(name):
+                (self.home / "doctor.json").write_text(report)
+                result = self.run_setup()
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                # Missing and never answered, headless: skipped with the variable to set.
+                self.assertEqual("MARKITAI_INSTALL_OPTIONAL=1" in result.stdout, missing, result.stdout)
+                self.assertEqual("Optional components are ready" in result.stdout, not missing)
+
+    def test_a_yes_at_the_question_is_remembered(self):
+        (self.home / "doctor.json").write_text(DOCTOR_MISSING)
+        agreed = self.run_with_terminal("\n")
+        self.assertEqual(agreed.returncode, 0, agreed.stdout + agreed.stderr)
+        self.assertIn("Prepare the optional components now?", agreed.stdout)
+        self.assertEqual(self.optional_state(), (["yes"], 1))
+        # A doctor that gives no report counts as missing, and a "yes" needs no question.
+        (self.home / "doctor.json").unlink()
+        updated = self.run_with_terminal(MARKITAI_VERSION="2.0.1")
+        self.assertNotIn("Prepare the optional components now?", updated.stdout)
+        self.assertEqual(self.optional_state(), (["yes"], 2))
 
     def test_install_update_and_uninstall(self):
         result = self.run_setup()
@@ -431,6 +541,50 @@ Assert (-not (Test-Path (Join-Path $install "licenses"))) "the previous release'
 Assert (Test-Path (Join-Path $install "user-notes.txt")) "still kept"
 Assert ((Get-Content -Raw (Join-Path $install "NOTICE")).Trim() -eq "exe 2.0.2") "the new release's names come"
 
+# The answer about the optional components stays in the receipt; components
+# already there are kept, and only a missing one never declined is asked about.
+$fake = if ($IsWindows) { Join-Path $Work "fake-markitai.cmd" } else { Join-Path $Work "fake-markitai" }
+$doctorJson = Join-Path $Work "doctor.json"
+function Get-Fixes { $log = Join-Path $Work "fixes"; if (Test-Path $log) { @(Get-Content $log).Count } else { 0 } }
+$interactive = ${function:Test-InteractiveInput}
+function Test-InteractiveInput { $true }
+Remove-Item env:MARKITAI_INSTALL_OPTIONAL -ErrorAction SilentlyContinue
+Set-Content -LiteralPath $doctorJson -Value '{ "playwright": { "status": "ok" } }'
+$receipt = Install-Release $second $install @{ Version = "2.0.2" } "x86_64-pc-windows-msvc"
+function Read-Host { throw "asked" }
+$script:Shown.Clear()
+Assert (Invoke-OptionalComponents $fake $install $receipt) "present: ready"
+Assert (($script:Shown -join "`n") -match "Optional components are ready") "present: kept without asking"
+Assert ((Read-Receipt $install).Optional -eq "" -and (Get-Fixes) -eq 0) "present: nothing recorded or run"
+Set-Content -LiteralPath $doctorJson -Value '{ "rapidocr": { "status": "warning", "fixable": true } }'
+function Read-Host { "n" }
+Assert (Invoke-OptionalComponents $fake $install $receipt) "missing: declined"
+Assert ((Read-Receipt $install).Optional -eq "no" -and (Get-Fixes) -eq 0) "a no is remembered"
+$receipt = Install-Release $second $install @{ Version = "2.0.2" } "x86_64-pc-windows-msvc"
+Assert ($receipt.Optional -eq "no" -and (Read-Receipt $install).Optional -eq "no") "an update keeps the answer"
+function Read-Host { throw "asked" }
+$script:Shown.Clear()
+Assert (Invoke-OptionalComponents $fake $install $receipt) "declined: not asked"
+Assert (($script:Shown -join "`n") -match "declined before") "declined: says so"
+$env:MARKITAI_INSTALL_OPTIONAL = "1"
+Assert (Invoke-OptionalComponents $fake $install $receipt) "forced"
+Assert ((Read-Receipt $install).Optional -eq "yes" -and (Get-Fixes) -eq 1) "forced: prepared, answer yes"
+Remove-Item env:MARKITAI_INSTALL_OPTIONAL
+Assert (Invoke-OptionalComponents $fake $install $receipt) "agreed: prepared without asking"
+Assert ((Get-Fixes) -eq 2) "agreed: missing components prepared"
+Remove-Item function:Read-Host
+Set-Item function:Test-InteractiveInput $interactive
+# 2.2.0 and older said no "fixable": their statuses and messages are read.
+foreach ($case in @(@('{ "playwright": { "status": "missing" } }', $true),
+        @('{ "rapidocr": { "status": "warning", "message": "2 of the 3 model files are not installed" } }', $true),
+        @('{ "playwright": { "status": "ok" }, "rapidocr": { "status": "ok", "message": "installed" } }', $false),
+        @('{ "playwright": { "status": "missing", "fixable": false } }', $false))) {
+    Set-Content -LiteralPath $doctorJson -Value $case[0]
+    Assert ((Test-OptionalMissing $fake) -eq $case[1]) "doctor report $($case[0])"
+}
+Remove-Item -LiteralPath $doctorJson
+Assert (Test-OptionalMissing $fake) "no report counts as missing"
+
 Assert (Add-ToUserPath $install) "added"
 Assert ($script:FakeUserPath -eq "$install;%USERPROFILE%\bin;C:\Tools") "prepended, others kept unexpanded"
 Assert (-not (Add-ToUserPath ($install + "\"))) "not twice"
@@ -622,6 +776,13 @@ class SetupPs1Tests(unittest.TestCase):
             harness = work / "harness.ps1"
             harness.write_text(PS_HARNESS, encoding="utf-8")
             (work / "scratch").mkdir()
+            # Stand-ins for `markitai doctor`: --json prints doctor.json, --fix is counted.
+            fake = work / "scratch/fake-markitai"
+            fake.write_text('#!/bin/sh\nif [ "$2" = --json ]; then cat "$(dirname "$0")/doctor.json"; '
+                            'else echo fix >> "$(dirname "$0")/fixes"; fi\n')
+            fake.chmod(0o755)
+            (work / "scratch/fake-markitai.cmd").write_text(
+                '@echo off\r\nif "%2"=="--json" (type "%~dp0doctor.json") else (echo fix>>"%~dp0fixes")\r\n')
             home = work / "home"
             home.mkdir()
             env = {**os.environ, "HOME": str(home), "USERPROFILE": str(home), "TMPDIR": str(work / "scratch")}
