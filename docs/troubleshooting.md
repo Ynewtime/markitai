@@ -3,7 +3,8 @@
 Start with `markitai doctor`. It checks the browser, LibreOffice, local OCR,
 the built-in readers and service, and the configured models, without sending a
 model request or opening a remote page. `markitai doctor --json` prints the same
-checks for scripts. Add `-c FILE` to check a particular configuration.
+checks for scripts; on the browser and local OCR checks, `"fixable": true` says
+`markitai doctor --fix` would install or repair something there. Add `-c FILE` to check a particular configuration.
 
 ## Exit status
 

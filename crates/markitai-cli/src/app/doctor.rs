@@ -30,6 +30,11 @@ struct Check {
     /// configured route already serves).
     #[serde(skip_serializing_if = "Option::is_none")]
     unused_api_keys: Option<Vec<String>>,
+    /// On the checks `doctor --fix` handles (browser, local OCR): whether it
+    /// would install or repair something there (a missing browser, missing or
+    /// damaged OCR models). Setup reads it to ask only about what is missing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    fixable: Option<bool>,
     #[serde(skip)]
     required: bool,
     /// Not ready yet, but it sets itself up the first time it is used (the OCR
@@ -77,6 +82,7 @@ impl Check {
             path: None,
             models: None,
             unused_api_keys: None,
+            fixable: None,
             required: false,
             first_use: false,
             fix: Vec::new(),
@@ -541,6 +547,7 @@ fn local_ocr_check(available: bool, translated: bool) -> Check {
         hint,
     );
     check.optional = Some(true);
+    check.fixable = Some(false);
     check
 }
 
@@ -552,6 +559,7 @@ fn portable_ocr_check(
 ) -> Check {
     let mut fix = Vec::new();
     let mut first_use = false;
+    let mut fixable = false;
     let (status, message, hint, path) = match models {
         Err(error) => (
             "warning",
@@ -586,6 +594,7 @@ fn portable_ocr_check(
                 ("warning", format!("Portable PaddleOCR engine ({engine}): unsafe model path: {detail}"),
                     "Restore an ordinary owned private models directory/file; doctor --fix refuses unsafe paths before downloading".to_owned(), folder)
             } else if !corrupt.is_empty() {
+                fixable = true;
                 let detail = corrupt
                     .iter()
                     .map(|model| model.detail.as_deref().unwrap_or("damaged model file"))
@@ -601,6 +610,7 @@ fn portable_ocr_check(
                     "Run markitai doctor --fix to replace only damaged managed model files, after verifying each new size and SHA-256".to_owned(), folder)
             } else if !missing.is_empty() {
                 first_use = true;
+                fixable = true;
                 let bytes: u64 = missing.iter().map(|model| model.bytes).sum();
                 fix = vec![
                     Fix::text(
@@ -632,6 +642,7 @@ fn portable_ocr_check(
     );
     check.optional = Some(true);
     check.first_use = first_use;
+    check.fixable = Some(fixable);
     check.path = path;
     check.fix = fix;
     check
@@ -823,6 +834,7 @@ fn checks(
         }
         browser.install_hint = "MARKITAI_BROWSER_EXECUTABLE is set, so only that path is tried and doctor --fix will not replace it: point it at a working Chrome/Chromium executable, or unset it to use an installed browser or markitai doctor --fix".into();
     } else if browser.status != "ok" {
+        browser.fixable = Some(true);
         browser.fix = vec![
             Fix::text("Install the official headless shell:"),
             Fix::command("markitai doctor --fix"),
@@ -831,6 +843,7 @@ fn checks(
             ),
         ];
     }
+    browser.fixable.get_or_insert(false);
     result.insert("playwright", browser);
     let mut office = backend(
         "LibreOffice",
@@ -1295,6 +1308,11 @@ mod tests {
             "Run markitai doctor again in a minute"
         );
         assert!(!browser.failed());
+        assert_eq!(
+            browser.fixable,
+            Some(false),
+            "--fix installs nothing for a slow browser"
+        );
         assert_eq!(browser.fix.last(), Some(&Fix::command("markitai doctor")));
         assert!(super::doctor_zh::zh(&browser.message).starts_with("Chromium 已安装但启动缓慢"));
     }
@@ -1404,6 +1422,10 @@ mod tests {
         // Models that only download on first use are not an unavailable
         // capability; damaged files and a wrong language are.
         assert!(missing.first_use && !ready.first_use);
+        // Setup reads `fixable` to know whether `doctor --fix` has work to do.
+        let json = |check: &Check| serde_json::to_value(check).unwrap();
+        assert_eq!(json(&missing)["fixable"], json!(true));
+        assert_eq!(json(&ready)["fixable"], json!(false));
         let wrong = portable_ocr_check(
             "tract",
             Err(markitai_core::Error::Unsupported(
@@ -1412,6 +1434,7 @@ mod tests {
         );
         assert_eq!(wrong.status, "warning");
         assert!(wrong.message.contains("(xx)"));
+        assert_eq!(wrong.fixable, Some(false));
         for check in [ready, missing, wrong] {
             assert_eq!(check.optional, Some(true));
             assert!(!check.failed());
@@ -1436,6 +1459,7 @@ mod tests {
             corrupt.message.contains("damaged") && corrupt.message.contains("exact path reason")
         );
         assert!(corrupt.install_hint.contains("doctor --fix"));
+        assert_eq!(corrupt.fixable, Some(true));
         let unsafe_path = portable_ocr_check("tract", Ok(vec![model(State::Unsafe)]));
         assert!(
             unsafe_path.message.contains("unsafe model path")
@@ -1443,6 +1467,11 @@ mod tests {
         );
         assert!(!unsafe_path.install_hint.contains("ocr.lang"));
         assert!(unsafe_path.install_hint.contains("refuses unsafe paths"));
+        assert_eq!(
+            unsafe_path.fixable,
+            Some(false),
+            "--fix refuses unsafe paths"
+        );
     }
 
     fn checks_of(states: &[(&'static str, &'static str, bool)]) -> IndexMap<&'static str, Check> {
@@ -1944,6 +1973,12 @@ To fix
             Ok(None),
             Vec::new(),
         );
+        // --fix installs a missing browser, unless an explicit executable is set.
+        assert_eq!(
+            checks["playwright"].fixable,
+            Some(std::env::var_os("MARKITAI_BROWSER_EXECUTABLE").is_none())
+        );
+        assert_eq!(checks["libreoffice"].fixable, None);
         let office = &checks["libreoffice"];
         assert_eq!(office.status, "missing");
         assert!(!office.required);
