@@ -911,6 +911,11 @@ mod unix {
         let (first, code) = on_a_terminal(&mut convert(&[("TERM", "xterm")]));
         assert_eq!(code, 0, "{first}");
         wait_for_cache(&home, |cache| cache["latest"] == "2.2.0");
+        // Then it asks for the release's description (there is none here).
+        wait_for_requests(&releases, 2);
+        // A busy machine may end the first run after the check, which then
+        // names the release already; the next one is the run under test.
+        rearm_notice(&home);
         let (shown, code) = on_a_terminal(&mut convert(&[
             ("MARKITAI_LANG", "zh"),
             ("TERM", "xterm"),
@@ -1137,9 +1142,12 @@ mod unix {
         let version_line = format!("markitai {}\n", markitai_core::VERSION);
         let releases = Releases::start("2.2.0");
         *releases.stall.lock().unwrap() = u64::MAX;
-        let home = Home::plain();
-        seed_cache(&home, "2.2.0", true);
-        let mut baseline = home.command(
+        // A due check does not hold -V up. Its detached check saves the
+        // cache whenever it gets to run, so this home is used for the timing
+        // only and the notice's record is followed in one without a check.
+        let due = Home::plain();
+        seed_cache(&due, "2.2.0", true);
+        let mut baseline = due.command(
             &releases,
             &[
                 ("TERM", "xterm"),
@@ -1153,10 +1161,10 @@ mod unix {
         let baseline_time = started.elapsed();
         assert_eq!(code, 0);
         assert_eq!(stdout, version_line);
-        seed_cache(&home, "2.2.0", true);
+        seed_cache(&due, "2.2.0", true);
         let started = Instant::now();
         let (terminal, stdout, code) =
-            on_a_terminal_with_stdout(&mut terminal_command(&home, &releases, &["-V"]));
+            on_a_terminal_with_stdout(&mut terminal_command(&due, &releases, &["-V"]));
         let took = started.elapsed();
         assert_eq!(code, 0, "{terminal}");
         assert_eq!(stdout, version_line);
@@ -1168,6 +1176,13 @@ mod unix {
             took < baseline_time + Duration::from_millis(900),
             "{took:?} vs {baseline_time:?}"
         );
+        let home = Home::plain();
+        seed_cache(&home, "2.2.0", false);
+        let (terminal, stdout, code) =
+            on_a_terminal_with_stdout(&mut terminal_command(&home, &releases, &["-V"]));
+        assert_eq!(code, 0, "{terminal}");
+        assert_eq!(stdout, version_line);
+        assert!(terminal.contains("• New version 2.2.0"), "{terminal:?}");
         let (terminal, stdout, code) =
             on_a_terminal_with_stdout(&mut terminal_command(&home, &releases, &["-V"]));
         assert_eq!(code, 0, "{terminal}");
@@ -1320,6 +1335,20 @@ mod unix {
             assert!(
                 started.elapsed() < Duration::from_secs(20),
                 "the background check never wrote the cache"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
+    /// Once the release host has had `count` requests: a detached check
+    /// may still be asking after the cache shows its first answer.
+    fn wait_for_requests(releases: &Releases, count: usize) {
+        let started = std::time::Instant::now();
+        while releases.requests().len() < count {
+            assert!(
+                started.elapsed() < Duration::from_secs(20),
+                "the background check never asked: {:?}",
+                releases.requests()
             );
             std::thread::sleep(Duration::from_millis(50));
         }
