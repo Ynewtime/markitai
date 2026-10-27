@@ -59,18 +59,26 @@ def vendor_tree(root):
     return git(root, "rev-parse", "HEAD:vendor").strip()
 
 
+def cargo_metadata(root, *arguments):
+    """`cargo metadata --no-deps`: no dependency is resolved, so it needs no crate this host's build left out
+    (resolving every platform's dependencies offline fails on any runner)."""
+    command = ["cargo", "metadata", "--no-deps", "--format-version", "1", "--offline", *arguments]
+    run = subprocess.run(command, cwd=root, capture_output=True, text=True)
+    if run.returncode != 0:
+        sys.stderr.write(run.stderr)
+        raise SystemExit(f"ci_cache: {' '.join(command)} exited with {run.returncode}")
+    return json.loads(run.stdout)
+
+
 def crate_names(root):
-    """`(workspace, vendored)`: the names a crate's artifacts start with ('-' as '_'), from `cargo metadata`."""
-    metadata = json.loads(subprocess.run(["cargo", "metadata", "--format-version", "1", "--locked", "--offline"],
-                                         cwd=root, capture_output=True, text=True, check=True).stdout)
-    members = set(metadata["workspace_members"])
-    vendor = (root / "vendor").resolve()
+    """`(workspace, vendored)`: the names a crate's artifacts start with ('-' as '_'), from `cargo metadata`.
+    The vendored crates are outside the workspace, so each manifest is read on its own."""
     workspace, vendored = set(), set()
-    for package in metadata["packages"]:
-        if package["id"] in members:
-            names = [package["name"], *(target["name"] for target in package["targets"])]
-            workspace |= {name.replace("-", "_") for name in names}
-        elif Path(package["manifest_path"]).resolve().is_relative_to(vendor):
+    for package in cargo_metadata(root, "--locked")["packages"]:
+        names = [package["name"], *(target["name"] for target in package["targets"])]
+        workspace |= {name.replace("-", "_") for name in names}
+    for manifest in sorted((root / "vendor").glob("*/Cargo.toml")):
+        for package in cargo_metadata(root, "--manifest-path", str(manifest))["packages"]:
             # A dependency builds only its library and build script, named after it.
             names = [package["name"], *(target["name"] for target in package["targets"]
                                         if not {"bin", "example", "test", "bench"} & set(target["kind"]))]

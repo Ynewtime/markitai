@@ -109,10 +109,12 @@ jobs:
       - name: Formatting, tests, lint and harness tests
         run: python scripts/check.py
       # Only a passing check saves: a key is never saved twice, and a build
-      # stopped by an error or a cancel would leave crates out of it.
+      # stopped by an error or a cancel would leave crates out of it. A failed
+      # prune skips the save (its annotation stays) but does not fail the check.
       - name: Prune the Cargo cache
         id: prune
         if: (github.ref == 'refs/heads/main' || inputs.save_cache) && steps.cache.outputs.cache-hit != 'true'
+        continue-on-error: true
         run: python scripts/ci_cache.py prune
       - name: Save the Cargo cache
         if: steps.prune.outcome == 'success'

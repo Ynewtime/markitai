@@ -5,6 +5,7 @@ import contextlib
 import io
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 import time
@@ -22,6 +23,28 @@ class CrateOfTests(unittest.TestCase):
                              ("markitai_core-0123abcd.markitai_core.1.rcgu.o", "markitai_core"),
                              ("markitai-webp-sys-0123abcd", "markitai_webp_sys")]:
             self.assertEqual(ci_cache.crate_of(entry), crate, entry)
+
+
+class CrateNamesTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("cargo"), "Cargo is not installed")
+    def test_names_come_from_the_manifests_without_any_downloaded_crate(self):
+        # The cache's prune step runs offline with only this host's crates downloaded; resolving the
+        # dependencies there needs other platforms' crates and fails, so nothing may need a crate at all.
+        with tempfile.TemporaryDirectory() as home, mock.patch.dict(os.environ, {"CARGO_HOME": home}):
+            workspace, vendored = ci_cache.crate_names(Path(ci_cache.__file__).resolve().parents[1])
+            self.assertEqual([path for path in Path(home).rglob("*") if path.suffix == ".crate"], [])
+        self.assertLessEqual({"markitai", "markitai_core", "markitai_cli"}, workspace)
+        self.assertLessEqual({"pdf_inspector", "lopdf", "markitai_webp_sys", "build_script_build"}, vendored)
+        self.assertNotIn("pdf2md", vendored)
+
+    def test_a_cargo_failure_shows_cargos_message(self):
+        failed = subprocess.CompletedProcess([], 101, stdout="", stderr="error: failed to download `x v1.0.0`\n")
+        stderr = io.StringIO()
+        with mock.patch.object(ci_cache.subprocess, "run", return_value=failed), \
+                contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as raised:
+            ci_cache.crate_names(Path("."))
+        self.assertIn("failed to download `x v1.0.0`", stderr.getvalue())
+        self.assertIn("exited with 101", str(raised.exception))
 
 
 LOCK = """version = 4

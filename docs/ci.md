@@ -49,7 +49,8 @@ entries and the manifests (a release commit's version bump keeps the key), and
 the vendored crates are reused only when `vendor/` is the tree the cache was
 built from (`scripts/ci_cache.py`). `main` restores only a cache with its own
 dependencies, so a saved cache never carries dropped crates; a branch or tag
-falls back to the newest one. Only a passing check saves; `-f save_cache=true`
+falls back to the newest one. Only a passing check saves (a failed cache prune
+skips the save without failing the run); `-f save_cache=true`
 also saves on a branch, for that branch alone (to time a warm run before a merge).
 
 ## Running package acceptance
