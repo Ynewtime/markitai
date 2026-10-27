@@ -218,9 +218,11 @@ export function checkSuccess(answer: UpdateCheckResponse, now: number): { outcom
 }
 
 /** An automatic check the page watched (its spinner showed) ends: nothing new gets the
- * same 4 s "current" a click shows; news shows on the entry instead, nothing without a status. */
-export function autoCheckEnded(status: UpdateStatus | null, now: number): CheckOutcome | null {
-  if (!status || status.newer) return null;
+ * same 4 s "current" a click shows; news shows on the entry instead. Only a check that
+ * answered says so: `before` is the `checked_at` seen when the spinner showed, and a
+ * failed check (offline, rate-limited) records no new one. */
+export function autoCheckEnded(status: UpdateStatus | null, before: string | null, now: number): CheckOutcome | null {
+  if (!status || status.newer || !status.checked_at || status.checked_at === before) return null;
   return { kind: "current", version: status.current ?? status.latest ?? "", until: now + CHECK_CURRENT_MS };
 }
 

@@ -171,21 +171,24 @@ export function useUpdate({
 
   // The server's own check (the automatic one or another tab's click), watched here
   // as the spinner, ends with nothing new: the same 4 s "current" a click shows.
-  const autoChecking = useRef(false);
+  // Holds the `checked_at` seen when the spinner showed, so a check that failed
+  // (and so recorded no new time) says nothing.
+  const autoChecking = useRef<string | null | undefined>(undefined);
   useEffect(() => {
     if (localChecking) return;
     if (serverChecking) {
-      autoChecking.current = true;
+      if (autoChecking.current === undefined) autoChecking.current = serverCheckedAt;
       return;
     }
-    if (!autoChecking.current) return;
-    autoChecking.current = false;
-    const ended = autoCheckEnded(statusRef.current, Date.now());
+    if (autoChecking.current === undefined) return;
+    const before = autoChecking.current;
+    autoChecking.current = undefined;
+    const ended = autoCheckEnded(statusRef.current, before, Date.now());
     if (ended) {
       setOutcome(ended);
       setNow(Date.now());
     }
-  }, [serverChecking, localChecking, status]);
+  }, [serverChecking, localChecking, status, serverCheckedAt]);
 
   const day = new Date(now).toDateString();
   useEffect(() => {
