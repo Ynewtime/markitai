@@ -4,6 +4,7 @@
 import { codeTitle } from "./notice-codes.ts";
 
 const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
+const SHORT_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 /** A refused Moonshot model's key may be from the other region: the address each region's keys use. */
 const kimiKeyHint = (provider: string): string =>
@@ -1121,6 +1122,14 @@ export const en = {
   updDone: (version: string) => `Updated to ${version}`,
   updReload: "Reload",
   updHeld: "Updating",
+  updCheck: (last: string | null) => (last === null ? "Check for updates" : `Check for updates (last: ${last})`),
+  updCheckJustNow: "just now",
+  updCheckToday: (time: string) => `today ${time}`,
+  updCheckYesterday: (time: string) => `yesterday ${time}`,
+  updCheckOlder: (year: number, month: number, day: number, time: string, currentYear: number) => `${SHORT_MONTHS[month - 1]} ${day}${year === currentYear ? "" : `, ${year}`} ${time}`,
+  updChecking: "Checking…",
+  updLatest: (version: string) => `Already on the latest version ${version}`,
+  updRetryAt: (time: string, tomorrow: boolean) => `Retry after ${time}${tomorrow ? " tomorrow" : ""}`,
 };
 
 export type Dict = typeof en;

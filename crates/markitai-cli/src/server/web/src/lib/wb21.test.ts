@@ -62,7 +62,7 @@ test("the sidebar and the phone Settings list show the build's date and time in 
   const shell = readFileSync(new URL("../components/shell.tsx", import.meta.url), "utf8");
   const settings = readFileSync(new URL("../components/settings-page.tsx", import.meta.url), "utf8");
   // the sidebar: plain text "Build: 20261017 19:54" in every language (the label is not translated), not a row with an icon
-  assert.match(shell, /<p class="build-line" title=\{t\.buildTitle\(version\.parts\)\}>\s*Build: \{version\.parts\.date\}\s*<\/p>/);
+  assert.match(shell, /<p class="build-line" title=\{t\.buildTitle\(version\.parts\)\}>\s*<span class="build-copy">Build: \{version\.parts\.date\}<\/span>\s*\{updateCheck\}\s*<\/p>/);
   // the phone Settings page (2026-10-24): one line under the list, version · commit · build time
   assert.ok(settings.indexOf('class="build-line is-index"') > settings.indexOf("</ul>"));
   assert.match(settings, /\{version\.parts\.version\}[\s\S]*\{commit\}[\s\S]*\{version\.parts\.date\}\s*<\/>/);

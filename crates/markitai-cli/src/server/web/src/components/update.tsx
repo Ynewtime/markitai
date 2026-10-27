@@ -17,7 +17,7 @@ import type { UpdateControl } from "../hooks/use-update.ts";
 import { useModal } from "../hooks/use-modal.ts";
 import type { Dict } from "../i18n/index.ts";
 import { copyText } from "../lib/clipboard.ts";
-import { CANCELLABLE, failedStep, failureText, fraction, runningVersion, shownError, statusRow, stepOf } from "../lib/update.ts";
+import { CANCELLABLE, checkText, checkTitle, failedStep, failureText, fraction, runningVersion, shownError, statusRow, stepOf } from "../lib/update.ts";
 import { Icon } from "./icons.tsx";
 
 /** How long a press must last to show the version instead of opening the card. */
@@ -87,6 +87,77 @@ export function UpdateEntry({ t, update, place }: { t: Dict; update: UpdateContr
       {look === "busy" ? <span class="spinner" aria-hidden="true" /> : <Icon name={look === "failed" ? "WarningCircle" : "ArrowCircleUp"} size={size} />}
       {look === "available" && <span class="upd-dot" aria-hidden="true" />}
     </button>
+  );
+}
+
+/** The glyph before a check's status, which stands in for the version line's text (option A). */
+const CHECK_ICON = { current: "Check", offline: "WarningCircle", limited: "ClockCountdown" } as const;
+
+/** v1.28: the ↻ at the end of the version line, and while a check runs or just ran, its status in place of
+ * the line's text (`.build-line:has(.update-check-status)` hides it). The ↻ shows at rest, to retry after a
+ * failure, and greyed until a rate limit ends; not while checking or for the 4 s "up to date". */
+export function UpdateCheck({ t, update, place }: { t: Dict; update: UpdateControl; place: "sidebar" | "phone" }) {
+  const [tip, setTip] = useState(false);
+  const pressed = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const long = useRef(false);
+  useEffect(() => {
+    if (!tip) return;
+    const timer = setTimeout(() => setTip(false), TIP_MS);
+    return () => clearTimeout(timer);
+  }, [tip]);
+  const manual = update.manual;
+  if (manual === null) return null;
+  const { view } = manual;
+  const label = checkTitle(t, manual.checkedAt, manual.now);
+  const text = checkText(t, view);
+  const disabled = manual.disabled;
+  const release = () => {
+    if (pressed.current !== null) clearTimeout(pressed.current);
+    pressed.current = null;
+  };
+  return (
+    <>
+      {view.phase !== "rest" && (
+        <span class={`update-check-status is-${view.phase}`} role="status">
+          {view.phase === "checking" ? <span class="spinner" aria-hidden="true" /> : <Icon name={CHECK_ICON[view.phase]} size={14} />}
+          {text}
+        </span>
+      )}
+      {(view.phase === "rest" || view.phase === "offline" || view.phase === "limited") && (
+        <button
+          type="button"
+          class={`update-check${tip ? " is-tip" : ""}`}
+          aria-label={label}
+          title={place === "sidebar" ? label : undefined}
+          data-tip={place === "phone" ? label : undefined}
+          data-update-check={place}
+          disabled={disabled}
+          onPointerDown={(event) => {
+            if (place !== "phone" || event.pointerType === "mouse" || disabled) return;
+            long.current = false;
+            pressed.current = setTimeout(() => {
+              long.current = true;
+              setTip(true);
+            }, LONG_PRESS_MS);
+          }}
+          onPointerUp={release}
+          onPointerCancel={release}
+          onContextMenu={(event) => {
+            if (long.current) event.preventDefault();
+          }}
+          onClick={(event) => {
+            if (long.current) {
+              event.preventDefault();
+              long.current = false;
+              return;
+            }
+            manual.run();
+          }}
+        >
+          <Icon name="ArrowClockwise" size={14} />
+        </button>
+      )}
+    </>
   );
 }
 

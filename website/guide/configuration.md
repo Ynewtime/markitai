@@ -651,7 +651,7 @@ A searchable scan's OCR layer (invisible text over a picture covering the page) 
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `history.record` | `false` | Record CLI runs in the web workspace history (`--record-history`) |
-| `update.check` | `true` | Check for a newer release once a day and name it on the terminal ([`markitai update`](/guide/cli#markitai-update)); `MARKITAI_NO_UPDATE_CHECK=1` also turns it off |
+| `update.check` | `true` | Check for a newer release once a day and name it ([`markitai update`](/guide/cli#markitai-update)); `false` or `MARKITAI_NO_UPDATE_CHECK=1` stops only this automatic check and its notices, not the workbench's ↻ or `markitai update` |
 
 ## Settings Without Effect
 

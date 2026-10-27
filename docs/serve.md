@@ -19,9 +19,11 @@ settings writes unavailable until restart without those overrides.
 
 ## Updates
 
-The server checks for a new release once a day (`update.check`) and names it in
+The server checks for a new release once a day (`update.check`; CI never) and names it in
 its startup lines. One that listens on loopback also has `GET/POST/DELETE
-/api/update` and `Capabilities.update` (contract v1.24, admin only, never through
+/api/update`, `POST /api/update/check` (v1.28: ask now, 10 s cap, joining a check in
+flight; also with `update.check: false`, which only hides news until a manual check found it)
+and `Capabilities.update` (contract v1.24, admin only, never through
 a forwarding proxy); a server reachable from the network, or under another name
 (`--allowed-host`), has neither. `POST
 {"version"}` takes only the release the server found and updates a setup-script

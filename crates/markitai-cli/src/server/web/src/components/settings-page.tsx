@@ -3,6 +3,7 @@
 // settings-config); Access token and Edit config only for the admin token, Models
 // for a user token too (v1.15: its own models and the shared ones). On phones
 // `/settings` lists the sections, then one line with the version, the commit and the build time.
+import type { ComponentChildren } from "preact";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { createUserToken, fetchUserTokens, regenerateToken, revokeUserToken } from "../api/client.ts";
 import { hasToken, setToken } from "../api/token.ts";
@@ -473,7 +474,7 @@ function NewToken({ t, token, heading: title, onDone }: { t: Dict; token: Regene
 }
 
 /** Phones: the section list behind the tab bar's Settings. */
-export function SettingsIndex({ t, version, sourceUrl, sections, user = false, onNavigate }: { t: Dict; version: VersionLine | null; sourceUrl: string; sections: Section[]; user?: boolean; onNavigate: (route: Route) => void }) {
+export function SettingsIndex({ t, version, sourceUrl, sections, user = false, updateCheck, onNavigate }: { t: Dict; version: VersionLine | null; sourceUrl: string; sections: Section[]; user?: boolean; updateCheck?: ComponentChildren; onNavigate: (route: Route) => void }) {
   const entries: Record<Section, [IconName, string]> = {
     appearance: ["Palette", t.navAppearanceShort],
     models: ["Cpu", t.navModels],
@@ -510,22 +511,25 @@ export function SettingsIndex({ t, version, sourceUrl, sections, user = false, o
       {/* not a list item: one quiet line under the list, version · commit · build time (the commit opens GitHub) */}
       {version && (
         <p class="build-line is-index" title={t.buildTitle(version.parts)}>
-          {version.parts.version}
-          {commit && (
-            <>
-              <span aria-hidden="true"> · </span>
-              <a class="build-commit" href={sourceUrl} target="_blank" rel="noopener noreferrer">
-                {commit}
-                <span class="sr-only"> GitHub {t.opensNewTab}</span>
-              </a>
-            </>
-          )}
-          {version.parts.date && (
-            <>
-              <span aria-hidden="true"> · </span>
-              {version.parts.date}
-            </>
-          )}
+          <span class="build-copy">
+            {version.parts.version}
+            {commit && (
+              <>
+                <span aria-hidden="true"> · </span>
+                <a class="build-commit" href={sourceUrl} target="_blank" rel="noopener noreferrer">
+                  {commit}
+                  <span class="sr-only"> GitHub {t.opensNewTab}</span>
+                </a>
+              </>
+            )}
+            {version.parts.date && (
+              <>
+                <span aria-hidden="true"> · </span>
+                {version.parts.date}
+              </>
+            )}
+          </span>
+          {updateCheck}
         </p>
       )}
     </section>

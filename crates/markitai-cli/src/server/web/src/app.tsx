@@ -20,7 +20,7 @@ import { Shell, useSidebar } from "./components/shell.tsx";
 import type { PanelState } from "./components/conversions-page.tsx";
 import { StateBlock } from "./components/state-block.tsx";
 import { TokenDialog } from "./components/token-dialog.tsx";
-import { UpdateEntry, UpdatePanel } from "./components/update.tsx";
+import { UpdateCheck, UpdateEntry, UpdatePanel } from "./components/update.tsx";
 import { UrlInput } from "./components/url-input.tsx";
 import type { InspectorContext, ItemActionsApi, JobActionsApi } from "./components/inspector.tsx";
 import { useCloudflareConsent } from "./hooks/use-cloudflare-consent.ts";
@@ -983,7 +983,7 @@ export function App() {
     page =
       section === null ? (
         <div class="page">
-          <SettingsIndex t={t} version={versionInfo} sourceUrl={sourceUrl} sections={sections} user={role === "user"} onNavigate={navigate} />
+          <SettingsIndex t={t} version={versionInfo} sourceUrl={sourceUrl} sections={sections} user={role === "user"} updateCheck={caps?.update ? <UpdateCheck t={t} update={update} place="phone" /> : undefined} onNavigate={navigate} />
         </div>
       ) : caps === null && !unauthorized && ADMIN_SECTIONS.has(section) ? (
         // Who is asking is not known yet: an admin page waits rather than ask as the wrong one.
@@ -1077,6 +1077,7 @@ export function App() {
         onNavigate={navigate}
         sections={sections}
         updateEntry={(place) => <UpdateEntry t={t} update={update} place={place} />}
+        updateCheck={caps?.update ? <UpdateCheck t={t} update={update} place="sidebar" /> : undefined}
       >
         {page}
       </Shell>

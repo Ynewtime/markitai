@@ -194,7 +194,7 @@ MARKITAI_LANG=zh markitai doctor
 - 终端上的命令结束后（含输出到 stdout 的转换、`-h` 与 `-V`），上次检查发现新版本时每天最多在 stderr 提示一次：
   `• 有新版本 2.3.0（当前 2.2.0）：markitai update`；`serve` 写在启动信息里。
   检查在后台进行，每天最多一次，最多 2 秒，命令不等它；JSON 输出、`config get`、`-q`、预览、非终端、CI、MCP 与源码构建
-  不检查，`doctor` 在终端上自己写出新版本。用 `update.check: false` 或 `MARKITAI_NO_UPDATE_CHECK=1` 关闭。
+  不检查，`doctor` 在终端上自己写出新版本。用 `update.check: false` 或 `MARKITAI_NO_UPDATE_CHECK=1` 关闭（手动检查不受影响）。
 
 转换 `--json` 顶层为 `version`、`ok`、`error`、`batch`、`items`、`totals`。
 逐项读取 `items[].status`（completed/failed/skipped/pending）、`output`、`error`、

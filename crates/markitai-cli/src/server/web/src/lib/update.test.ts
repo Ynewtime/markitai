@@ -5,12 +5,13 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { ApiError, checkUpdate, NetworkError } from "../api/client.ts";
 import type { UpdateError, UpdateStatus, UpdateSummary } from "../api/types.ts";
 import { en } from "../i18n/en.ts";
 import { ja } from "../i18n/ja.ts";
 import { zh } from "../i18n/zh.ts";
 import { hasUnsaved, setUnsaved } from "./unsaved.ts";
-import { clock, downloaded, entryLook, errorKey, failedStep, failureText, fraction, HOLDING, notesFor, pollDelay, runningVersion, shownError, statusRow, stepOf } from "./update.ts";
+import { checkDisabled, checkError, checkSuccess, CHECK_CURRENT_MS, CHECK_TIMEOUT_MS, checkText, checkTitle, checkView, clock, downloaded, entryLook, errorKey, failedStep, failureText, fraction, HOLDING, notesFor, pollDelay, runningVersion, shownError, statusRow, stepOf } from "./update.ts";
 
 const read = (relative: string) => readFileSync(new URL(relative, import.meta.url), "utf8");
 
@@ -31,9 +32,12 @@ const status = (over: Partial<UpdateStatus> = {}): UpdateStatus => ({
   error: null,
   updated_from: null,
   by: null,
+  checked_at: null,
+  retry_at: null,
+  checking: false,
   ...over,
 });
-const summary = (over: Partial<UpdateSummary> = {}): UpdateSummary => ({ current: "2.1.0", latest: "2.2.0", newer: true, can_apply: true, method: "setup", state: "idle", ...over });
+const summary = (over: Partial<UpdateSummary> = {}): UpdateSummary => ({ current: "2.1.0", latest: "2.2.0", newer: true, can_apply: true, method: "setup", state: "idle", checked_at: null, retry_at: null, checking: false, ...over });
 const failure = (code: string, over: Partial<UpdateError> = {}): UpdateError => ({ code, reason: "", rolled_back: false, ...over });
 
 test("the entry shows only what the server reports: nothing without update, a dot, a spinner, red", () => {
@@ -92,6 +96,8 @@ test("the six failures say what happened and what they left", () => {
 test("the page asks often only while it matters", () => {
   assert.equal(pollDelay("idle", false), 30_000);
   assert.equal(pollDelay(null, false), 30_000);
+  assert.equal(pollDelay("idle", false, true), 1000);
+  assert.equal(pollDelay("idle", false, false), 30_000);
   // An open card follows another tab's start or failure.
   assert.equal(pollDelay("idle", true), 3000);
   assert.equal(pollDelay("failed", true), 3000);
@@ -134,7 +140,7 @@ test("E3 sits beside the sidebar toggle and before the phone's links; the card i
   assert.match(card, /class="menu upd-pop"/);
   assert.match(card, /dialog opts-dialog upd-sheet/);
   // No settings row and no tab dot (owner, E3).
-  assert.ok(!/upd/.test(read("../components/settings-page.tsx")));
+  assert.ok(!/UpdatePanel|UpdateCard|upd-card|updSteps/.test(read("../components/settings-page.tsx")));
   assert.ok(!/upd/.test(shell.slice(shell.indexOf('<nav class="tabbar"'))));
   const app = read("../app.tsx");
   assert.match(app, /held=\{update\.holding\}/, "Convert is held while the server updates");
@@ -175,4 +181,167 @@ test("on a phone the done notice's Release notes reads like the page's buttons, 
   assert.match(rule, /font-family: inherit;/);
   // After the one-line notice's own offset, so it wins on a phone.
   assert.ok(css.indexOf(rule) > css.indexOf(".toast.is-line .note-action {\n  position: relative;"));
+});
+
+test("manual check tooltips use local days and the exact translated copy", () => {
+  const now = new Date(2026, 9, 27, 10, 36).getTime();
+  const at = (year: number, month: number, day: number, hour: number, minute: number) => new Date(year, month, day, hour, minute).toISOString();
+  assert.equal(checkTitle(zh, null, now), "检查更新");
+  assert.equal(checkTitle(zh, new Date(now - 30_000).toISOString(), now), "检查更新（上次：刚刚）");
+  assert.equal(checkTitle(zh, at(2026, 9, 27, 10, 35), now), "检查更新（上次：今天 10:35）");
+  assert.equal(checkTitle(zh, at(2026, 9, 27, 9, 36), now), "检查更新（上次：今天 09:36）");
+  assert.equal(checkTitle(zh, at(2026, 9, 26, 9, 36), now), "检查更新（上次：昨天 09:36）");
+  assert.equal(checkTitle(zh, at(2026, 9, 25, 9, 36), now), "检查更新（上次：10月25日 09:36）");
+  assert.equal(checkTitle(zh, at(2025, 9, 25, 9, 36), now), "检查更新（上次：2025年10月25日 09:36）");
+  assert.equal(checkTitle(en, at(2026, 9, 27, 9, 36), now), "Check for updates (last: today 09:36)");
+  assert.equal(checkTitle(en, at(2026, 9, 25, 9, 36), now), "Check for updates (last: Oct 25 09:36)");
+  assert.equal(checkTitle(ja, at(2026, 9, 26, 9, 36), now), "更新を確認（前回：昨日 09:36）");
+  assert.equal(checkTitle(en, null, now), "Check for updates");
+  assert.equal(checkTitle(ja, null, now), "更新を確認");
+  assert.equal(zh.updChecking, "正在检查…");
+  assert.equal(zh.updLatest("2.3.0"), "已是最新版本 2.3.0");
+});
+
+test("manual check rest, checking, four-second current and newer states stay distinct", () => {
+  const now = Date.now();
+  const rest = checkView({ kind: "rest" }, false, null, now);
+  assert.deepEqual(rest, { phase: "rest" });
+  assert.equal(checkDisabled(rest), false);
+  assert.equal(checkText(zh, rest), null);
+  const checking = checkView({ kind: "rest" }, true, null, now);
+  assert.deepEqual(checking, { phase: "checking" });
+  assert.equal(checkDisabled(checking), true);
+  assert.equal(checkText(zh, checking), "正在检查…");
+  const current = checkSuccess({ fresh: true, checked_at: null, update: status({ current: "2.3.0", latest: "2.3.0", newer: false }) }, now);
+  assert.equal(current.open, false);
+  assert.deepEqual(current.outcome, { kind: "current", version: "2.3.0", until: now + CHECK_CURRENT_MS });
+  const shown = checkView(current.outcome, false, null, now + CHECK_CURRENT_MS - 1);
+  assert.equal(checkText(zh, shown), "已是最新版本 2.3.0");
+  assert.equal(checkDisabled(shown), false);
+  assert.deepEqual(checkView(current.outcome, false, null, now + CHECK_CURRENT_MS), { phase: "rest" });
+  const newerStatus = status({ current: "2.3.0", latest: "2.4.0", newer: true, can_apply: false });
+  const newer = checkSuccess({ fresh: true, checked_at: null, update: newerStatus }, now);
+  assert.equal(newer.open, true);
+  assert.deepEqual(newer.outcome, { kind: "rest" });
+  assert.equal(entryLook(summary({ can_apply: false }), newerStatus, null), "available");
+});
+
+test("manual check offline and rate-limit errors expose host and exact re-enable times", () => {
+  const now = new Date(2026, 9, 27, 10, 0).getTime();
+  assert.deepEqual(checkError(new ApiError(502, { error: { code: "offline", reason: "timeout", host: "mirror.example" } })), { kind: "offline", host: "mirror.example" });
+  assert.deepEqual(checkError(new ApiError(502, { error: { code: "offline", reason: "refused" } })), { kind: "offline", host: "github.com" });
+  assert.deepEqual(checkError(new NetworkError()), { kind: "offline", host: "github.com" });
+  assert.deepEqual(checkError(new DOMException("aborted", "AbortError")), { kind: "offline", host: "github.com" });
+  const offline = checkView({ kind: "offline", host: "github.com" }, false, null, now);
+  assert.equal(checkText(zh, offline), "无法连接 github.com");
+  assert.equal(checkDisabled(offline), false);
+  const retryAt = new Date(2026, 9, 27, 10, 36).toISOString();
+  const retryMs = Date.parse(retryAt);
+  assert.deepEqual(checkError(new ApiError(429, { error: { code: "rate_limited", retry_at: retryAt } })), { kind: "limited", retryAt });
+  const limited = checkView({ kind: "limited", retryAt }, false, null, now);
+  assert.deepEqual(limited, { phase: "limited", time: "10:36", tomorrow: false });
+  assert.equal(checkText(zh, limited), "10:36 后再试");
+  assert.equal(checkDisabled(limited), true);
+  assert.deepEqual(checkView({ kind: "rest" }, false, retryAt, now), limited);
+  assert.equal(checkDisabled(checkView({ kind: "limited", retryAt }, false, null, retryMs - 1)), true);
+  const enabled = checkView({ kind: "limited", retryAt }, false, null, retryMs);
+  assert.deepEqual(enabled, { phase: "rest" });
+  assert.equal(checkDisabled(enabled), false);
+  const tomorrow = checkView({ kind: "limited", retryAt: new Date(2026, 9, 28, 9, 0).toISOString() }, false, null, new Date(2026, 9, 27, 23, 0).getTime());
+  assert.equal(checkText(zh, tomorrow), "明天 09:00 后再试");
+  assert.deepEqual(checkError(new ApiError(409, { error: { code: "updating" } })), { kind: "updating" });
+  assert.deepEqual(checkError(new ApiError(500, null)), { kind: "unknown" });
+});
+
+test("manual check API posts no body, passes its signal and keeps nested error bodies", async () => {
+  const origin = "http://127.0.0.1:3600";
+  const originalFetch = globalThis.fetch;
+  const originalLocation = (globalThis as { location?: unknown }).location;
+  const checkedAt = new Date(2026, 9, 27, 10, 36).toISOString();
+  const seen: { url: string; init: RequestInit }[] = [];
+  const controller = new AbortController();
+  (globalThis as { location?: unknown }).location = { origin, href: `${origin}/` };
+  try {
+    globalThis.fetch = (async (url: string | URL, init?: RequestInit) => {
+      seen.push({ url: String(url), init: init ?? {} });
+      return new Response(JSON.stringify({ fresh: true, checked_at: checkedAt, update: status({ checked_at: checkedAt }) }), { status: 200, headers: { "content-type": "application/json" } });
+    }) as typeof fetch;
+    const answer = await checkUpdate(controller.signal);
+    assert.equal(answer.fresh, true);
+    assert.equal(answer.checked_at, checkedAt);
+    assert.equal(answer.update.checked_at, checkedAt);
+    const request = seen[0]!;
+    assert.equal(request.url, `${origin}/api/update/check`);
+    assert.equal(request.init.method, "POST");
+    assert.equal(request.init.body, undefined);
+    assert.equal(request.init.signal, controller.signal);
+    assert.equal(new Headers(request.init.headers).get("content-type"), null);
+    const refusals = [
+      [429, { error: { code: "rate_limited", retry_at: checkedAt } }],
+      [502, { error: { code: "offline", reason: "timeout", host: "github.com" } }],
+      [409, { error: { code: "updating" } }],
+    ] as const;
+    for (const [httpStatus, body] of refusals) {
+      globalThis.fetch = (async () => new Response(JSON.stringify(body), { status: httpStatus, headers: { "content-type": "application/json" } })) as typeof fetch;
+      await assert.rejects(checkUpdate(), (error: unknown) => {
+        assert.ok(error instanceof ApiError);
+        assert.equal(error.status, httpStatus);
+        assert.deepEqual(error.body, body);
+        return true;
+      });
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+    (globalThis as { location?: unknown }).location = originalLocation;
+  }
+});
+
+test("manual check placement, sizing, request guards and single detail UI stay intact", () => {
+  const component = read("../components/update.tsx");
+  const manual = component.slice(component.indexOf("export function UpdateCheck"), component.indexOf("function Row("));
+  assert.match(manual, /if \(manual === null\) return null/);
+  assert.match(manual, /Icon name="ArrowClockwise"/);
+  assert.ok(!/ArrowCounterClockwise|aria-haspopup|UpdatePanel|UpdateCard|upd-card|setOpen/.test(manual));
+  assert.match(manual, /if \(long\.current\)[\s\S]*event\.preventDefault\(\);[\s\S]*return;/);
+  for (const name of ["UpdateCard", "UpdatePanel", "UpdatePopover", "UpdateSheet"]) assert.equal(component.match(new RegExp(`function ${name}\\(`, "g"))?.length, 1);
+  const icons = read("../components/icon-paths.ts");
+  assert.match(icons, /ArrowClockwise: \["M240,56v48a8,8,0,0,1-8,8H184/);
+  const shell = read("../components/shell.tsx");
+  const buildStart = shell.indexOf('<p class="build-line"');
+  const build = shell.slice(buildStart, shell.indexOf("</p>", buildStart));
+  assert.ok(build.indexOf("Build:") < build.indexOf("{updateCheck}"));
+  const settings = read("../components/settings-page.tsx");
+  const indexStart = settings.indexOf('<p class="build-line is-index"');
+  const index = settings.slice(indexStart, settings.indexOf("</p>", indexStart));
+  assert.ok(index.indexOf("version.parts.version") < index.indexOf("{updateCheck}"));
+  assert.ok(index.indexOf("version.parts.date") < index.indexOf("{updateCheck}"));
+  assert.equal(settings.match(/<ul class="settings-index">/g)?.length, 1);
+  const app = read("../app.tsx");
+  assert.match(app, /updateCheck=\{caps\?\.update \? <UpdateCheck t=\{t\} update=\{update\} place="sidebar" \/> : undefined\}/);
+  assert.match(app, /updateCheck=\{caps\?\.update \? <UpdateCheck t=\{t\} update=\{update\} place="phone" \/> : undefined\}/);
+  assert.equal(app.match(/<UpdatePanel/g)?.length, 1);
+  const css = read("../styles/app.css");
+  const line = css.slice(css.indexOf(".build-line {"), css.indexOf("}", css.indexOf(".build-line {")));
+  assert.match(line, /display: flex;/);
+  assert.match(line, /align-items: center;/);
+  assert.match(line, /justify-content: center;/);
+  assert.match(line, /white-space: nowrap;/);
+  // a 28 px target everywhere, without making the 11 px line taller; the status hides the line's text
+  assert.match(css, /\.update-check \{[^}]*width: 28px;\s*height: 28px;\s*margin: -6px 0;/);
+  assert.match(css, /\.build-line:has\(\.update-check-status\) \.build-copy \{\s*display: none;/);
+  const hook = read("../hooks/use-update.ts");
+  assert.match(hook, /if \(!enabled \|\| disabled \|\| checkBusy\.current \|\| serverCheckingRef\.current\) return;\s*checkBusy\.current = true;/);
+  assert.match(hook, /checkEpoch\.current \+= 1/);
+  // Disabled while an update runs, never hidden by the server's `update.check` (only by no `Capabilities.update`).
+  assert.match(hook, /const disabled = checkDisabled\(view\) \|\| updating;/);
+  assert.ok(!/manual: [^\n]*(newer|automatic|check_enabled)/.test(hook));
+  assert.match(hook, /if \(checkBusy\.current \|\| checkEpoch\.current !== epoch\) return null/);
+  assert.match(hook, /reconnecting \|\| localChecking\) return/);
+  assert.match(hook, /next\?\.checking \?\? serverChecking/);
+  assert.match(hook, /setTimeout\(\(\) => controller\.abort\(\), CHECK_TIMEOUT_MS\)/);
+  assert.equal(CHECK_TIMEOUT_MS, 12_000);
+  assert.match(hook, /setStatus\(answer\.update\)/);
+  assert.match(hook, /if \(applied\.open\) \{[\s\S]*?setOpen\(true\)/);
+  assert.match(hook, /failure\.kind === "updating"[\s\S]*?refreshAfter = true/);
+  assert.match(hook, /manual: enabled \? \{ view, disabled, checkedAt, now, run \} : null/);
 });

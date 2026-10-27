@@ -124,7 +124,7 @@ stateDiagram-v2
 
 ## Updating
 
-The startup lines name a newer release. `markitai update` updates the program and offers to restart the server: it lets running and queued conversions finish, then comes back on the same address with the same token. If the new version does not start, the old one is put back.
+The startup lines name a newer release; the ↻ at the end of the workbench's Build line (on a phone, the version line in Settings) checks now. `markitai update` updates the program and offers to restart the server: it lets running and queued conversions finish, then comes back on the same address with the same token. If the new version does not start, the old one is put back.
 
 ## API
 

@@ -97,7 +97,7 @@ markitai config edit                 # 终端中的交互编辑器
 | `fetch.cloudflare.api_token` / `account_id` | `null` | `-s cloudflare` 与 `-b cloudflare` 使用的你自己的 Cloudflare 凭据，可写 `env:NAME`，否则读 `CLOUDFLARE_API_TOKEN`/`CLOUDFLARE_ACCOUNT_ID` |
 | `log.dir` / `log.level` | `null` / `INFO` | 文件日志目录与级别，默认不写日志 |
 | `history.record` | `false` | 记录供 `serve` 查看的历史，同 `--record-history` |
-| `update.check` | `true` | 每天检查一次新版本并在终端提示，见 [CLI](cli.md)；`MARKITAI_NO_UPDATE_CHECK=1` 同样关闭 |
+| `update.check` | `true` | 每天自动检查一次新版本并提示，见 [CLI](cli.md)；`false` 或 `MARKITAI_NO_UPDATE_CHECK=1` 只关自动检查和提示，工作台的 ↻ 与 `markitai update` 照常 |
 
 内建 preset：`minimal` 全部关闭；`standard` 开启 LLM、alt 和 desc；`rich` 再开启截图；都不开启 OCR。配置中的 `presets` 可以新增名称，也可以重新定义内建名称，CLI 与工作台都优先使用配置中的定义；名称不区分大小写。`markitai config list` 列出完整默认值。
 

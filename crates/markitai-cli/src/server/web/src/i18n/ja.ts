@@ -1080,4 +1080,12 @@ export const ja: Dict = {
   updDone: (version: string) => `${version} に更新しました`,
   updReload: "再読み込み",
   updHeld: "更新中",
+  updCheck: (last) => (last === null ? "更新を確認" : `更新を確認（前回：${last}）`),
+  updCheckJustNow: "たった今",
+  updCheckToday: (time) => `今日 ${time}`,
+  updCheckYesterday: (time) => `昨日 ${time}`,
+  updCheckOlder: (year, month, day, time, currentYear) => `${year === currentYear ? "" : `${year}年`}${month}月${day}日 ${time}`,
+  updChecking: "更新を確認中…",
+  updLatest: (version) => `すでに最新バージョン ${version} です`,
+  updRetryAt: (time, tomorrow) => `${tomorrow ? "明日 " : ""}${time} 以降に再試行`,
 };

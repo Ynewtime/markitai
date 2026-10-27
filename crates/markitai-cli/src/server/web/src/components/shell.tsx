@@ -102,6 +102,7 @@ export interface ShellProps {
   sections: Section[];
   /** v1.24: the update entry, beside the sidebar toggle or before the phone's links (`components/update.tsx`). */
   updateEntry?: (place: "sidebar" | "phone") => ComponentChildren;
+  updateCheck?: ComponentChildren;
   children: ComponentChildren;
 }
 
@@ -134,7 +135,7 @@ function useFinished(active: number): "none" | "shown" | "leaving" {
   return state;
 }
 
-export function Shell({ t, route, version, docsUrl, sourceUrl, active, total, collapsed, onToggle, onNavigate, sections, updateEntry, children }: ShellProps) {
+export function Shell({ t, route, version, docsUrl, sourceUrl, active, total, collapsed, onToggle, onNavigate, sections, updateEntry, updateCheck, children }: ShellProps) {
   const [mac] = useState(() => isMacPlatform(browserPlatform()));
   const shortcut = sidebarShortcut(mac);
   // Ctrl+B / ⌘B folds or unfolds the sidebar, as its toggle does: not while typing (a field or the
@@ -227,7 +228,8 @@ export function Shell({ t, route, version, docsUrl, sourceUrl, active, total, co
           <External href={sourceUrl} label="GitHub" icon="GithubLogo" note={t.opensNewTab} tag={version ? commitLabel(version) : null} tagTitle={version ? t.buildTitle(version.parts) : undefined} />
           {version?.parts.date && (
             <p class="build-line" title={t.buildTitle(version.parts)}>
-              Build: {version.parts.date}
+              <span class="build-copy">Build: {version.parts.date}</span>
+              {updateCheck}
             </p>
           )}
         </div>

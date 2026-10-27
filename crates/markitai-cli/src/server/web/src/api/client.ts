@@ -24,6 +24,7 @@ import type {
   ProviderCredentials,
   SettingsView,
   ShotBlocks,
+  UpdateCheckResponse,
   UpdateStatus,
   UserModelsView,
   UserToken,
@@ -450,6 +451,7 @@ export const fetchUpdate = () => json<UpdateStatus>("/api/update");
 /** Only the release the server found; another answers 409 `version_changed`. */
 export const startUpdate = (version: string) => json<UpdateStatus>("/api/update", { method: "POST", body: { version } });
 export const cancelUpdate = () => json<UpdateStatus>("/api/update", { method: "DELETE" });
+export const checkUpdate = (signal?: AbortSignal) => json<UpdateCheckResponse>("/api/update/check", { method: "POST", signal });
 
 /** Only a revision conflict keeps a settings draft for review; other 409s are plain errors. */
 export const isRevisionConflict = (error: unknown): boolean =>

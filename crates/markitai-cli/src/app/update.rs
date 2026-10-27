@@ -169,6 +169,10 @@ fn failure_text(failure: &Failure) -> (String, String) {
             format!("Can't reach {host}{}", offline_words(reason, Lang::En)),
             format!("无法连接 {host}{}", offline_words(reason, Lang::Zh)),
         ),
+        Failure::RateLimited { host, status, .. } => (
+            format!("{host} answered HTTP {status}"),
+            format!("{host} 返回 HTTP {status}"),
+        ),
         Failure::Status { host, code } => (
             format!("{host} answered HTTP {code}"),
             format!("{host} 返回 HTTP {code}"),

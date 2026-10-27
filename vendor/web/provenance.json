@@ -156,9 +156,9 @@
     "source": "https://registry.npmjs.org/@phosphor-icons/react/-/react-2.1.10.tgz",
     "package_integrity": "sha512-vt8Tvq8GLjheAZZYa+YG/pW7HDbov8El/MANW8pOAz4eGxrwhnbfrQZq0Cp4q8zBEu8NIhHdnr+r8thnfRSNYA==",
     "member": "package/dist/defs/*.es.js (path data of the listed icons)",
-    "bytes": 27101,
-    "sha256": "d3c006215104b817b6eeddb37e83d62c83721f79224091a8b1bcc5f1a4428203",
-    "obtained": "generated: the SVG path strings of 72 icons were extracted from the members below; bundled into dist/app.js",
+    "bytes": 27321,
+    "sha256": "040d7261b29ca3fca5b65b1702d9125d9af7b0b5553be84c778868caac9b137e",
+    "obtained": "generated: the SVG path strings of 73 icons were extracted from the members below; bundled into dist/app.js",
     "derived_from": [
       {
         "member": "package/dist/defs/FileText.es.js",
@@ -214,6 +214,11 @@
         "member": "package/dist/defs/ArrowCounterClockwise.es.js",
         "bytes": 2328,
         "sha256": "2c9bafbf5e351e74cb4610bb5a02755593dc93b7e5e0bfc934f3231e7cdf7ca1"
+      },
+      {
+        "member": "package/dist/defs/ArrowClockwise.es.js",
+        "bytes": 2243,
+        "sha256": "61059c23583e06910c592b098e9239c789c60a838d8e08ee410a747087d35a19"
       },
       {
         "member": "package/dist/defs/MagicWand.es.js",

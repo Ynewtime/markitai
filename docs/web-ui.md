@@ -580,6 +580,11 @@ and a busy note shows in every tab; after the restart the page reloads itself (a
 when the config editor or a dialog holds edits) and says the new version, with its release notes. Without
 `update` (an exposed server, a user token, Python markitai) nothing shows.
 
+With `update` (v1.28, also with `update.check: false`) a ↻ ends the sidebar's `Build:` line and the phone's
+version line in Settings; its tooltip or long press says when the last check was. A click checks now:
+「正在检查…」, then 「已是最新版本」 for 4 s, or the entry and its card open; 「无法连接 github.com」 retries
+at once, and after the release host's rate limit the ↻ waits until the time it shows.
+
 ## Job controls
 
 - **Uploads** use XMLHttpRequest so the page can show the percentage and bytes
@@ -845,7 +850,8 @@ and items, and v1.23 `markdown_lines` to a result, so the Details count the line
 an output whose start is an excerpt; v1.24 `Capabilities.update` and `/api/update`
 on a loopback server, see [service](serve.md#updates); v1.25 `regions` on a provider
 card; v1.26 `notices`, each warning's code and subjects in the order of `warnings`;
-v1.27 `endpoints` on a provider card, its documented addresses with their area and plan); a
+v1.27 `endpoints` on a provider card, its documented addresses with their area and plan; v1.28
+`checked_at`, `retry_at` and `checking` in `update` and `POST /api/update/check`); a
 missing feature hides its control instead of failing (no Stop
 remaining, no Compare, archives saved through the page, history read job by job,
 images read from the file route).

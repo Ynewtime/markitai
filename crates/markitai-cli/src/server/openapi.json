@@ -587,6 +587,24 @@
         }
       }
     },
+    "/api/update/check": {
+      "post": {
+        "tags": ["service"],
+        "operationId": "checkUpdate",
+        "summary": "v1.28: check now for a newer release",
+        "description": "No body. Asks the release host now, ignoring the daily schedule but joining a manual or automatic check already in flight. A successful answer writes the same cache as the daily check and resets failure backoff. The request is capped at 10 seconds (5 to connect). There is no floor between completed manual checks. After a release-host 403 or 429, nothing is asked until `retry_at` (its `Retry-After` or `X-RateLimit-Reset`, else one hour, capped at one day); a repeat before then answers 429 without a request. `update.check: false`, `MARKITAI_NO_UPDATE_CHECK=1` and CI stop automatic checks, not this route. Admin only on a direct loopback connection, as `GET /api/update`; exposed and source-build servers answer 404. `Cache-Control: no-store`.",
+        "security": [{ "bearerAuth": [] }, { "tokenQuery": [] }],
+        "responses": {
+          "200": { "description": "The fresh check and the resulting update state", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UpdateCheckResponse" } } } },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "409": { "description": "An update is running", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UpdateCheckError" } } } },
+          "429": { "description": "The release host asked for a delay", "headers": { "Retry-After": { "description": "Seconds until `retry_at`", "schema": { "type": "integer", "minimum": 0 } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UpdateCheckError" } } } },
+          "502": { "description": "The release host could not be reached or answered unsuccessfully", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UpdateCheckError" } } } }
+        }
+      }
+    },
     "/api/update/control": {
       "get": {
         "tags": ["service"],
@@ -1069,7 +1087,7 @@
           "access": { "type": "object", "required": ["role"], "description": "Who is asking: `admin` (the server token, or a loopback client with --no-auth) or `user` (a user token, with its `label`; an anonymous --no-auth client is a `user` without one)", "properties": { "role": { "type": "string", "enum": ["admin", "user"] }, "label": { "type": "string" } } },
           "ocr_languages": { "type": "array", "items": { "type": "string" }, "description": "v1.20, with `features.ocr_lang`: the `ocr_lang` values a job may choose, the automatic default `en` first; the configured `ocr.lang` is appended when it is none of them" },
           "ocr_lang": { "type": "string", "description": "v1.20, with `features.ocr_lang`: the configured `ocr.lang`, what a job without `ocr_lang` reads with" },
-          "update": { "type": "object", "description": "v1.24, only for the admin of a server that listens on loopback: the summary of `GET /api/update`", "required": ["current", "latest", "newer", "can_apply", "method", "state"], "properties": { "current": { "type": ["string", "null"] }, "latest": { "type": ["string", "null"] }, "newer": { "type": "boolean" }, "can_apply": { "type": "boolean" }, "method": { "type": "string" }, "state": { "type": "string" } } }
+          "update": { "type": "object", "description": "v1.24, only for the admin of a server that listens on loopback: the summary of `GET /api/update`; v1.28 adds the last-check fields", "required": ["current", "latest", "newer", "can_apply", "method", "state", "checked_at", "retry_at", "checking"], "properties": { "current": { "type": ["string", "null"] }, "latest": { "type": ["string", "null"] }, "newer": { "type": "boolean" }, "can_apply": { "type": "boolean" }, "method": { "type": "string" }, "state": { "type": "string" }, "checked_at": { "type": ["string", "null"], "format": "date-time", "description": "v1.28: the last successful check, RFC 3339" }, "retry_at": { "type": ["string", "null"], "format": "date-time", "description": "v1.28: when the release host allows the next ask after a 403 or 429; null otherwise" }, "checking": { "type": "boolean", "description": "v1.28: a manual or automatic check is in flight" } } }
         }
       },
       "BuildInfo": {
@@ -1206,14 +1224,41 @@
           "read_only": { "type": "boolean", "description": "Session model/provider overrides are active; saving is refused" }
         }
       },
+      "UpdateCheckResponse": {
+        "type": "object",
+        "description": "v1.28: a successful `POST /api/update/check`",
+        "required": ["fresh", "checked_at", "update"],
+        "properties": {
+          "fresh": { "type": "boolean", "const": true },
+          "checked_at": { "type": ["string", "null"], "format": "date-time", "description": "The successful check's time, RFC 3339; also `update.checked_at`" },
+          "update": { "$ref": "#/components/schemas/UpdateStatus" }
+        }
+      },
+      "UpdateCheckError": {
+        "type": "object",
+        "description": "v1.28: a manual check refusal, distinct from the ordinary API error envelope",
+        "required": ["error"],
+        "properties": {
+          "error": {
+            "type": "object",
+            "required": ["code"],
+            "properties": {
+              "code": { "type": "string", "enum": ["rate_limited", "offline", "updating"] },
+              "retry_at": { "type": ["string", "null"], "format": "date-time", "description": "With `rate_limited`: the earliest next ask, RFC 3339" },
+              "reason": { "type": "string", "enum": ["timeout", "refused", "unreachable", "status"], "description": "With `offline`" },
+              "host": { "type": "string", "description": "With `offline`: the release host, such as `github.com`" }
+            }
+          }
+        }
+      },
       "UpdateStatus": {
         "type": "object",
         "description": "v1.24: what `GET /api/update` says",
-        "required": ["state", "current", "latest", "newer", "notes_url", "lead", "lead_zh", "method", "command", "can_apply", "target", "progress", "waiting_jobs", "error", "updated_from", "by"],
+        "required": ["state", "current", "latest", "newer", "notes_url", "lead", "lead_zh", "method", "command", "can_apply", "target", "progress", "waiting_jobs", "error", "updated_from", "by", "checked_at", "retry_at", "checking"],
         "properties": {
           "state": { "type": "string", "enum": ["idle", "downloading", "verifying", "waiting", "installing", "restarting", "failed"] },
           "current": { "type": ["string", "null"] },
-          "latest": { "type": ["string", "null"], "description": "The newer release the daily check found; null when there is none" },
+          "latest": { "type": ["string", "null"], "description": "The newer release a daily or manual check found; null when there is none or automatic notices are off before any manual check" },
           "newer": { "type": "boolean" },
           "notes_url": { "type": ["string", "null"], "format": "uri", "description": "The release page" },
           "lead": { "type": ["string", "null"], "description": "The release's one-line description, when its RELEASE-NOTES.md has one" },
@@ -1226,7 +1271,10 @@
           "waiting_jobs": { "type": "integer", "description": "Conversions running or queued; a restart waits for them" },
           "error": { "type": ["object", "null"], "description": "Why the last update failed (also one the last start undid): `code` is `offline`, `checksum`, `disk_full`, `not_writable`, `file_busy`, `start_failed`, `install_failed`, `update_running` (`markitai update` was updating this install) or `cancelled`; `rolled_back` when files had been replaced and were put back (else nothing changed)", "properties": { "code": { "type": "string" }, "reason": { "type": "string" }, "rolled_back": { "type": "boolean" }, "version": { "type": "string" } } },
           "updated_from": { "type": ["string", "null"], "description": "The version this server ran before it restarted into this one" },
-          "by": { "type": ["string", "null"], "enum": ["web", "cli", null], "description": "Who started the update in progress: the page, or `markitai update`" }
+          "by": { "type": ["string", "null"], "enum": ["web", "cli", null], "description": "Who started the update in progress: the page, or `markitai update`" },
+          "checked_at": { "type": ["string", "null"], "format": "date-time", "description": "v1.28: the last successful check, RFC 3339; null if none" },
+          "retry_at": { "type": ["string", "null"], "format": "date-time", "description": "v1.28: the earliest ask the release host allowed after a 403 or 429; null otherwise, including ordinary failure backoff" },
+          "checking": { "type": "boolean", "description": "v1.28: a check is in flight from any tab or the automatic schedule" }
         }
       },
       "RegeneratedToken": {

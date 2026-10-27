@@ -2,8 +2,9 @@
 // v1.24, `GET /api/update`): the stepper's position, the status row's text
 // and value, a failure's words and what it left, and the entry icon's look.
 // Pure, so the rules are tested without a page.
+import { ApiError, isAbort, NetworkError } from "../api/client.ts";
 import type { Dict } from "../i18n/index.ts";
-import type { UpdateError, UpdateState, UpdateStatus, UpdateSummary } from "../api/types.ts";
+import type { UpdateCheckResponse, UpdateError, UpdateState, UpdateStatus, UpdateSummary } from "../api/types.ts";
 
 /** Download, verify, install, restart. */
 export const STEP_COUNT = 4;
@@ -150,8 +151,9 @@ export function entryLook(summary: UpdateSummary | undefined, status: UpdateStat
 
 /** How often to ask: every second while it works with the card open (or restarts), every 3 s while it
  * works or the card is open (another tab may start or fail it), else every 30 s. */
-export function pollDelay(state: UpdateState | null, open: boolean): number {
+export function pollDelay(state: UpdateState | null, open: boolean, checking = false): number {
   const busy = state !== null && BUSY.has(state);
+  if (checking) return 1000;
   if (busy && (open || state === "restarting")) return 1000;
   if (busy || open) return 3000;
   return 30_000;
@@ -166,4 +168,102 @@ export function runningVersion(running: string | null, status: Pick<UpdateStatus
 /** The release notes of a version, on the server's source repository. */
 export function notesFor(sourceUrl: string, version: string): string {
   return `${sourceUrl.replace(/\/+$/, "")}/releases/tag/v${version}`;
+}
+
+export const CHECK_TIMEOUT_MS = 12_000;
+export const CHECK_CURRENT_MS = 4000;
+
+export type CheckOutcome =
+  | { kind: "rest" }
+  | { kind: "current"; version: string; until: number }
+  | { kind: "offline"; host: string }
+  | { kind: "limited"; retryAt: string };
+
+export type CheckView =
+  | { phase: "rest" }
+  | { phase: "checking" }
+  | { phase: "current"; version: string }
+  | { phase: "offline"; host: string }
+  | { phase: "limited"; time: string; tomorrow: boolean };
+
+export type CheckFailure =
+  | { kind: "offline"; host: string }
+  | { kind: "limited"; retryAt: string }
+  | { kind: "updating" }
+  | { kind: "unknown" };
+
+const two = (value: number): string => String(value).padStart(2, "0");
+const clockTime = (date: Date): string => `${two(date.getHours())}:${two(date.getMinutes())}`;
+/** Whole local days since the epoch, so a difference of 1 is yesterday or tomorrow across DST too. */
+const dayNumber = (date: Date): number => Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / 86_400_000;
+
+export function checkTitle(t: Dict, checkedAt: string | null, now: number): string {
+  if (checkedAt === null) return t.updCheck(null);
+  const checked = new Date(checkedAt);
+  const ms = checked.getTime();
+  if (!Number.isFinite(ms)) return t.updCheck(null);
+  const time = clockTime(checked);
+  const age = now - ms;
+  if (age >= 0 && age < 60_000) return t.updCheck(t.updCheckJustNow);
+  const today = new Date(now);
+  const days = dayNumber(today) - dayNumber(checked);
+  if (days === 0) return t.updCheck(t.updCheckToday(time));
+  if (days === 1) return t.updCheck(t.updCheckYesterday(time));
+  return t.updCheck(t.updCheckOlder(checked.getFullYear(), checked.getMonth() + 1, checked.getDate(), time, today.getFullYear()));
+}
+
+export function checkSuccess(answer: UpdateCheckResponse, now: number): { outcome: CheckOutcome; open: boolean } {
+  if (answer.update.newer) return { outcome: { kind: "rest" }, open: true };
+  return { outcome: { kind: "current", version: answer.update.current ?? answer.update.latest ?? "", until: now + CHECK_CURRENT_MS }, open: false };
+}
+
+export function checkError(error: unknown): CheckFailure {
+  if (error instanceof ApiError) {
+    const body = error.body as { error?: { code?: unknown; retry_at?: unknown; host?: unknown } } | null;
+    const detail = body?.error;
+    if (error.status === 409 && detail?.code === "updating") return { kind: "updating" };
+    if (error.status === 429 && detail?.code === "rate_limited" && typeof detail.retry_at === "string") return { kind: "limited", retryAt: detail.retry_at };
+    if (error.status === 502) {
+      const host = typeof detail?.host === "string" && detail.host.trim() ? detail.host.trim() : "github.com";
+      return { kind: "offline", host };
+    }
+  }
+  if (error instanceof NetworkError || isAbort(error)) return { kind: "offline", host: "github.com" };
+  return { kind: "unknown" };
+}
+
+function retryView(retryAt: string | null, now: number): Extract<CheckView, { phase: "limited" }> | null {
+  if (retryAt === null) return null;
+  const ms = Date.parse(retryAt);
+  if (!Number.isFinite(ms) || ms <= now) return null;
+  const date = new Date(ms);
+  return { phase: "limited", time: clockTime(date), tomorrow: dayNumber(date) === dayNumber(new Date(now)) + 1 };
+}
+
+export function checkView(outcome: CheckOutcome, checking: boolean, serverRetryAt: string | null, now: number): CheckView {
+  if (checking) return { phase: "checking" };
+  const retry = retryView(outcome.kind === "limited" ? outcome.retryAt : serverRetryAt, now);
+  if (retry) return retry;
+  if (outcome.kind === "current" && outcome.until > now) return { phase: "current", version: outcome.version };
+  if (outcome.kind === "offline") return { phase: "offline", host: outcome.host };
+  return { phase: "rest" };
+}
+
+export function checkDisabled(view: CheckView): boolean {
+  return view.phase === "checking" || view.phase === "limited";
+}
+
+export function checkText(t: Dict, view: CheckView): string | null {
+  switch (view.phase) {
+    case "checking":
+      return t.updChecking;
+    case "current":
+      return t.updLatest(view.version);
+    case "offline":
+      return t.updErrOffline(view.host);
+    case "limited":
+      return t.updRetryAt(view.time, view.tomorrow);
+    default:
+      return null;
+  }
 }

@@ -651,7 +651,7 @@ markitai ./docs --no-cache-for "*.pdf"
 | 设置 | 默认值 | 说明 |
 |------|--------|------|
 | `history.record` | `false` | 把 CLI 运行记入网页工作台历史（`--record-history`） |
-| `update.check` | `true` | 每天检查一次新版本并在终端提示（[`markitai update`](/zh/guide/cli#markitai-update)）；`MARKITAI_NO_UPDATE_CHECK=1` 同样关闭 |
+| `update.check` | `true` | 每天自动检查一次新版本并提示（[`markitai update`](/zh/guide/cli#markitai-update)）；`false` 或 `MARKITAI_NO_UPDATE_CHECK=1` 只关自动检查和提示，工作台的 ↻ 与 `markitai update` 照常 |
 
 ## 不再生效的设置 {#settings-without-effect}
 

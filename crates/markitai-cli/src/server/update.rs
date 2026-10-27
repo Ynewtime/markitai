@@ -31,11 +31,23 @@ use serde_json::{Value, json};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs() as i64)
+}
+
+fn rfc3339(at: i64) -> Option<String> {
+    chrono::DateTime::<chrono::Utc>::from_timestamp(at, 0)
+        .map(|date| date.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
+}
 
 api_routes! {
     get "/api/update" => status;
     post "/api/update" => start;
+    post "/api/update/check" => check_now;
     delete "/api/update" => cancel;
 }
 
@@ -55,7 +67,7 @@ pub(super) fn control_path(path: &str) -> bool {
 
 /// The web update's admin-only paths.
 pub(super) fn update_path(path: &str) -> bool {
-    path == "/api/update"
+    matches!(path, "/api/update" | "/api/update/check")
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -113,6 +125,16 @@ struct Progress {
     by_cli: bool,
 }
 
+type CheckAnswer = Result<Cache, check::Failure>;
+
+/// How long a check may take, the release descriptions included.
+const CHECK_CAP: Duration = Duration::from_secs(10);
+
+struct CheckFlight {
+    id: usize,
+    receiver: tokio::sync::watch::Receiver<Option<CheckAnswer>>,
+}
+
 /// Why and into what the server restarts; read by `restart::relaunch`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Restart {
@@ -122,7 +144,7 @@ pub(crate) struct Restart {
 }
 
 pub(crate) struct Update {
-    /// The web update routes exist (a loopback server, checks on, a release build).
+    /// The web update routes exist (a loopback server and a release build).
     pub(super) web: bool,
     pub(super) current: Option<Version>,
     pub(super) method: Method,
@@ -138,6 +160,11 @@ pub(crate) struct Update {
     pub(super) undone: Option<control::Failed>,
     progress: Mutex<Progress>,
     cancel: AtomicBool,
+    automatic: bool,
+    manual_revealed: AtomicBool,
+    check: Mutex<Option<CheckFlight>>,
+    check_sequence: AtomicUsize,
+    rate_limit: Mutex<Option<i64>>,
     /// Requests admitted that may still start conversions.
     admitting: AtomicUsize,
     pub(super) restart: tokio::sync::watch::Sender<Option<Restart>>,
@@ -165,6 +192,11 @@ impl Default for Update {
                 by_cli: false,
             }),
             cancel: AtomicBool::new(false),
+            automatic: true,
+            manual_revealed: AtomicBool::new(false),
+            check: Mutex::new(None),
+            check_sequence: AtomicUsize::new(0),
+            rate_limit: Mutex::new(None),
             admitting: AtomicUsize::new(0),
             restart: tokio::sync::watch::channel(None).0,
             worker: Mutex::new(None),
@@ -190,7 +222,8 @@ impl Update {
         };
         let base = updates::base_for(&detected).ok();
         Self {
-            web: loopback && current.is_some() && updates::enabled(Some(cfg)),
+            web: loopback && current.is_some(),
+            automatic: updates::enabled(Some(cfg)) && !updates::ci(),
             current,
             method: detected,
             base,
@@ -224,9 +257,31 @@ impl Update {
         self.method.in_place() && self.latest().is_some() && !self.phase().busy()
     }
 
+    fn checking(&self) -> bool {
+        self.check
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .is_some()
+    }
+
+    fn retry_at(&self) -> Option<i64> {
+        let mut retry = self
+            .rate_limit
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if retry.is_some_and(|at| at <= unix_now()) {
+            *retry = None;
+        }
+        *retry
+    }
+
     /// `GET /api/update` and `Capabilities.update`.
     fn view(&self, waiting: u64) -> Value {
-        let latest = self.latest();
+        let visible = self.automatic || self.manual_revealed.load(Ordering::SeqCst);
+        let latest = self.latest().filter(|_| visible);
+        let checked_at = Cache::load(&self.home).and_then(|cache| cache.checked_at);
+        let retry_at = self.retry_at();
+        let checking = self.checking();
         let progress = self.lock();
         let notes_url = latest
             .as_ref()
@@ -254,6 +309,9 @@ impl Update {
             "error": error.or(if progress.phase == Phase::Idle { undone } else { None }),
             "updated_from": self.updated_from,
             "by": progress.phase.busy().then_some(if progress.by_cli { "cli" } else { "web" }),
+            "checked_at": checked_at.and_then(rfc3339),
+            "retry_at": retry_at.and_then(rfc3339),
+            "checking": checking,
         })
     }
 
@@ -325,6 +383,9 @@ pub(super) fn capability(state: &State, admin: bool) -> Option<Value> {
         "can_apply": view["can_apply"],
         "method": view["method"],
         "state": view["state"],
+        "checked_at": view["checked_at"],
+        "retry_at": view["retry_at"],
+        "checking": view["checking"],
     }))
 }
 
@@ -398,6 +459,198 @@ pub(super) async fn status(
 ) -> ApiResult<Response> {
     admin(&request)?;
     Ok(no_store(state.update.view(active_conversions(&state))))
+}
+
+fn check_json(status: axum::http::StatusCode, value: Value) -> Response {
+    let mut response = no_store(value);
+    *response.status_mut() = status;
+    response
+}
+
+fn rate_answer(update: &Update, retry_at: i64) -> Response {
+    let seconds = retry_at.saturating_sub(unix_now()).max(0);
+    let mut response = check_json(
+        axum::http::StatusCode::TOO_MANY_REQUESTS,
+        json!({"error": {"code": "rate_limited", "retry_at": rfc3339(retry_at)}}),
+    );
+    response.headers_mut().insert(
+        axum::http::header::RETRY_AFTER,
+        seconds.to_string().parse().unwrap(),
+    );
+    *update
+        .rate_limit
+        .lock()
+        .unwrap_or_else(|error| error.into_inner()) = Some(retry_at);
+    response
+}
+
+fn check_failure(update: &Update, failure: check::Failure) -> Response {
+    if let check::Failure::RateLimited { retry_at, .. } = &failure {
+        return rate_answer(update, *retry_at);
+    }
+    let (host, reason) = match failure {
+        check::Failure::Offline { host, reason } => (host, reason),
+        check::Failure::Status { host, .. } => (host, "status"),
+        _ => (
+            update
+                .base
+                .as_ref()
+                .map_or_else(|| "github.com".into(), check::Base::host),
+            "status",
+        ),
+    };
+    check_json(
+        axum::http::StatusCode::BAD_GATEWAY,
+        json!({"error": {"code": "offline", "reason": reason, "host": host}}),
+    )
+}
+
+/// One check, manual or automatic: its answer goes to every request that
+/// joined it, and the next ask after it starts another.
+async fn run_check(
+    state: Arc<State>,
+    id: usize,
+    sender: tokio::sync::watch::Sender<Option<CheckAnswer>>,
+) {
+    let update = &state.update;
+    let host = update
+        .base
+        .as_ref()
+        .map_or_else(|| "github.com".into(), check::Base::host);
+    let outcome = if let Some(base) = update.base.clone() {
+        let home = update.home.clone();
+        // The automatic check has the manual one's cap: a click that joins it
+        // must not wait longer than one of its own.
+        let deadline = Instant::now() + CHECK_CAP;
+        crate::task::blocking(move || {
+            updates::refresh_result(&home, &base, check::MANUAL, Some(deadline))
+        })
+        .await
+        .unwrap_or_else(|error| Err(check::Failure::Setup(error.to_string())))
+    } else {
+        Err(check::Failure::Offline {
+            host,
+            reason: "status",
+        })
+    };
+    if let Err(check::Failure::RateLimited { retry_at, .. }) = &outcome {
+        *update
+            .rate_limit
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = Some(*retry_at);
+    } else if outcome.is_ok() {
+        *update
+            .rate_limit
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = None;
+    }
+    {
+        let mut flight = update
+            .check
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if flight.as_ref().is_some_and(|flight| flight.id == id) {
+            *flight = None;
+        }
+    }
+    sender.send_replace(Some(outcome));
+}
+
+/// Ask for the latest release now: joins a check in flight (another tab's,
+/// the automatic one) rather than start a second, and asks nothing before a
+/// rate limit's `retry_at`. A manual ask waits at most `CHECK_CAP`.
+async fn ask(state: &Arc<State>, manual: bool) -> CheckAnswer {
+    let host = state
+        .update
+        .base
+        .as_ref()
+        .map_or_else(|| "github.com".into(), check::Base::host);
+    if let Some(retry_at) = state.update.retry_at() {
+        return Err(check::Failure::RateLimited {
+            host,
+            retry_at,
+            status: 429,
+        });
+    }
+    let (mut receiver, start) = {
+        let mut current = state
+            .update
+            .check
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if let Some(flight) = current.as_ref() {
+            (flight.receiver.clone(), None)
+        } else {
+            let (sender, receiver) = tokio::sync::watch::channel(None);
+            let id = state.update.check_sequence.fetch_add(1, Ordering::SeqCst) + 1;
+            *current = Some(CheckFlight {
+                id,
+                receiver: receiver.clone(),
+            });
+            (receiver, Some((id, sender)))
+        }
+    };
+    if let Some((id, sender)) = start {
+        let task_state = state.clone();
+        crate::task::spawn(async move {
+            run_check(task_state, id, sender).await;
+        });
+    }
+    let wait = async move {
+        loop {
+            if let Some(answer) = receiver.borrow().clone() {
+                return answer;
+            }
+            if receiver.changed().await.is_err() {
+                return Err(check::Failure::Offline {
+                    host,
+                    reason: "status",
+                });
+            }
+        }
+    };
+    if manual {
+        tokio::time::timeout(CHECK_CAP, wait)
+            .await
+            .unwrap_or_else(|_| {
+                Err(check::Failure::Offline {
+                    host: state
+                        .update
+                        .base
+                        .as_ref()
+                        .map_or_else(|| "github.com".into(), check::Base::host),
+                    reason: "timeout",
+                })
+            })
+    } else {
+        wait.await
+    }
+}
+
+/// `POST /api/update/check`: the workbench's ↻, also with `update.check: false`.
+pub(super) async fn check_now(
+    ExtractState(state): ExtractState<Arc<State>>,
+    request: Request,
+) -> ApiResult<Response> {
+    admin(&request)?;
+    if state.update.phase().busy() {
+        return Ok(check_json(
+            axum::http::StatusCode::CONFLICT,
+            json!({"error": {"code": "updating"}}),
+        ));
+    }
+    match ask(&state, true).await {
+        Ok(_) => {
+            state.update.manual_revealed.store(true, Ordering::SeqCst);
+            let update = state.update.view(active_conversions(&state));
+            Ok(no_store(json!({
+                "fresh": true,
+                "checked_at": update["checked_at"],
+                "update": update,
+            })))
+        }
+        Err(failure) => Ok(check_failure(&state.update, failure)),
+    }
 }
 
 /// `POST /api/update {"version": "<the latest the server knows>"}`.
@@ -810,26 +1063,16 @@ pub(super) fn start_checks(state: &Arc<State>, cfg: &Value) {
     if state.update.current.is_none() || !updates::enabled(Some(cfg)) || updates::ci() {
         return;
     }
-    let Some(base) = state.update.base.clone() else {
+    if state.update.base.is_none() {
         return;
-    };
-    let home = state.update.home.clone();
+    }
+    let server = state.clone();
     let mut shutdown = state.shutdown.subscribe();
     let task = crate::task::spawn(async move {
         loop {
-            let due = Cache::load(&home).is_some_and(|cache| {
-                cache.due(
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map_or(0, |elapsed| elapsed.as_secs() as i64),
-                )
-            });
+            let due = Cache::load(&server.update.home).is_some_and(|cache| cache.due(unix_now()));
             if due {
-                let (home, base) = (home.clone(), base.clone());
-                let _ = crate::task::blocking(move || {
-                    updates::refresh(&home, &base, check::COMMAND);
-                })
-                .await;
+                let _ = ask(&server, false).await;
             }
             tokio::select! {
                 changed = shutdown.changed() => if changed.is_err() || *shutdown.borrow() { break },
@@ -989,6 +1232,15 @@ pub(super) mod tests {
             assert_eq!(status, 404, "{method}: {value}");
             assert_eq!(value["reason"], "route_not_found");
         }
+        let (status, value, _) = answer(
+            &state,
+            request("POST", "/api/update/check", LOCAL, &auth, ""),
+        )
+        .await;
+        assert_eq!(
+            (status, value["reason"].as_str()),
+            (404, Some("route_not_found"))
+        );
         let (status, capabilities, _) = answer(
             &state,
             request("GET", "/api/capabilities", LOCAL, &auth, ""),
@@ -996,6 +1248,33 @@ pub(super) mod tests {
         .await;
         assert_eq!(status, 200);
         assert!(capabilities.get("update").is_none(), "{capabilities}");
+    }
+
+    #[tokio::test]
+    async fn a_source_build_has_no_manual_update_check() {
+        let root = tempfile::tempdir().unwrap();
+        let source = Update {
+            web: false,
+            current: None,
+            ..Update::for_test(root.path(), None)
+        };
+        let state = state(root.path(), Some(ADMIN), source);
+        let bearer = format!("Bearer {ADMIN}");
+        let (status, value, _) = answer(
+            &state,
+            request(
+                "POST",
+                "/api/update/check",
+                LOCAL,
+                &[("authorization", bearer.as_str())],
+                "",
+            ),
+        )
+        .await;
+        assert_eq!(
+            (status, value["reason"].as_str()),
+            (404, Some("route_not_found"))
+        );
     }
 
     #[test]
@@ -1112,6 +1391,9 @@ pub(super) mod tests {
         // Without the token, through a proxy, or from a user token: refused.
         let (status, _, _) = answer(&state, request("GET", "/api/update", LOCAL, &[], "")).await;
         assert_eq!(status, 401);
+        let (status, _, _) =
+            answer(&state, request("POST", "/api/update/check", LOCAL, &[], "")).await;
+        assert_eq!(status, 401);
         let (status, value, _) = answer(
             &state,
             request(
@@ -1138,6 +1420,18 @@ pub(super) mod tests {
         )
         .await;
         assert_eq!(status, 403);
+        let (status, _, _) = answer(
+            &state,
+            request(
+                "POST",
+                "/api/update/check",
+                LOCAL,
+                &[("authorization", &user)],
+                "",
+            ),
+        )
+        .await;
+        assert_eq!(status, 403);
         let (_, capabilities, _) = answer(
             &state,
             request(
@@ -1150,6 +1444,239 @@ pub(super) mod tests {
         )
         .await;
         assert!(capabilities.get("update").is_none());
+    }
+
+    #[tokio::test]
+    async fn manual_checks_are_fresh_have_no_floor_and_publish_their_cache_times() {
+        let root = tempfile::tempdir().unwrap();
+        let (base, seen) = check::tests::serve(vec![(
+            "/releases/latest/download/SHA256SUMS",
+            302,
+            vec![(
+                "location",
+                "https://github.com/Ynewtime/markitai/releases/download/v2.2.0/SHA256SUMS".into(),
+            )],
+            Vec::new(),
+        )]);
+        let update = Update {
+            base: Base::parse(&base).ok(),
+            ..Update::for_test(root.path(), None)
+        };
+        let state = state(root.path(), None, update);
+        for expected in [1, 2] {
+            let (status, value, headers) =
+                answer(&state, request("POST", "/api/update/check", LOCAL, &[], "")).await;
+            assert_eq!(status, 200, "{value}");
+            assert_eq!(value["fresh"], true);
+            assert_eq!(value["update"]["newer"], true);
+            assert_eq!(value["update"]["latest"], "2.2.0");
+            assert_eq!(value["update"]["checking"], false);
+            assert_eq!(value["update"]["retry_at"], Value::Null);
+            assert_eq!(value["checked_at"], value["update"]["checked_at"]);
+            assert!(
+                value["checked_at"]
+                    .as_str()
+                    .is_some_and(|at| { chrono::DateTime::parse_from_rfc3339(at).is_ok() })
+            );
+            assert_eq!(headers.get("cache-control").unwrap(), "no-store");
+            let requests = seen.lock().unwrap();
+            assert_eq!(
+                requests
+                    .iter()
+                    .filter(|(line, _)| line.contains("/latest/download/SHA256SUMS"))
+                    .count(),
+                expected
+            );
+        }
+        let (_, view, _) = answer(&state, request("GET", "/api/update", LOCAL, &[], "")).await;
+        assert_eq!(view["newer"], true);
+        assert_eq!(view["can_apply"], true);
+        assert!(view["checked_at"].is_string());
+        let (_, capabilities, _) =
+            answer(&state, request("GET", "/api/capabilities", LOCAL, &[], "")).await;
+        assert_eq!(capabilities["update"]["checking"], false);
+        assert_eq!(capabilities["update"]["checked_at"], view["checked_at"]);
+    }
+
+    #[tokio::test]
+    async fn simultaneous_manual_checks_join_one_release_request() {
+        let root = tempfile::tempdir().unwrap();
+        let (base, seen) = check::tests::serve_delayed(
+            vec![(
+                "/releases/latest/download/SHA256SUMS",
+                302,
+                vec![(
+                    "location",
+                    "https://github.com/Ynewtime/markitai/releases/download/v2.2.0/SHA256SUMS"
+                        .into(),
+                )],
+                Vec::new(),
+            )],
+            Duration::from_millis(400),
+        );
+        let update = Update {
+            base: Base::parse(&base).ok(),
+            ..Update::for_test(root.path(), Some("2.2.0"))
+        };
+        let state = state(root.path(), None, update);
+        let first = answer(&state, request("POST", "/api/update/check", LOCAL, &[], ""));
+        let second = answer(&state, request("POST", "/api/update/check", LOCAL, &[], ""));
+        let ((first_status, first, _), (second_status, second, _)) = tokio::join!(first, second);
+        assert_eq!((first_status, second_status), (200, 200));
+        assert_eq!(first["checked_at"], second["checked_at"]);
+        assert_eq!(seen.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_manual_check_joins_the_automatic_one() {
+        let root = tempfile::tempdir().unwrap();
+        let (base, seen) = check::tests::serve_delayed(
+            vec![(
+                "/releases/latest/download/SHA256SUMS",
+                302,
+                vec![(
+                    "location",
+                    "https://github.com/Ynewtime/markitai/releases/download/v2.2.0/SHA256SUMS"
+                        .into(),
+                )],
+                Vec::new(),
+            )],
+            Duration::from_millis(400),
+        );
+        let update = Update {
+            base: Base::parse(&base).ok(),
+            ..Update::for_test(root.path(), Some("2.2.0"))
+        };
+        let state = state(root.path(), None, update);
+        let automatic = ask(&state, false);
+        let manual = answer(&state, request("POST", "/api/update/check", LOCAL, &[], ""));
+        let (automatic, (status, value, _)) = tokio::join!(automatic, manual);
+        assert!(automatic.is_ok());
+        assert_eq!(status, 200, "{value}");
+        assert_eq!(value["fresh"], true);
+        assert_eq!(seen.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn github_rate_limits_block_every_check_until_retry_at() {
+        let root = tempfile::tempdir().unwrap();
+        let (base, seen) = check::tests::serve(vec![(
+            "/releases/latest/download/SHA256SUMS",
+            429,
+            vec![("retry-after", "7200".into())],
+            Vec::new(),
+        )]);
+        let update = Update {
+            base: Base::parse(&base).ok(),
+            ..Update::for_test(root.path(), None)
+        };
+        let state = state(root.path(), None, update);
+        for expected in [1, 1] {
+            let (status, value, headers) =
+                answer(&state, request("POST", "/api/update/check", LOCAL, &[], "")).await;
+            assert_eq!(status, 429, "{value}");
+            assert_eq!(value["error"]["code"], "rate_limited");
+            assert!(value["error"]["retry_at"].is_string());
+            assert!(headers.contains_key("retry-after"));
+            assert_eq!(seen.lock().unwrap().len(), expected);
+        }
+        let (_, view, _) = answer(&state, request("GET", "/api/update", LOCAL, &[], "")).await;
+        assert!(view["retry_at"].is_string());
+        assert_eq!(view["checking"], false);
+        assert_eq!(view["checked_at"], Value::Null);
+        // The CLI's daily check holds back too: two hours, beyond the one-hour
+        // failure backoff.
+        let cache = Cache::load(root.path()).unwrap();
+        assert!(
+            cache.retry_at.is_some_and(|at| at >= unix_now() + 7190),
+            "{cache:?}"
+        );
+        assert!(!cache.due(unix_now() + 3700));
+        // The automatic check asks nothing either.
+        assert!(matches!(
+            ask(&state, false).await,
+            Err(check::Failure::RateLimited { .. })
+        ));
+        assert_eq!(seen.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn an_unreachable_release_host_is_a_structured_bad_gateway() {
+        let root = tempfile::tempdir().unwrap();
+        let (base, _) = check::tests::serve(vec![(
+            "/releases/latest/download/SHA256SUMS",
+            500,
+            Vec::new(),
+            Vec::new(),
+        )]);
+        let update = Update {
+            base: Base::parse(&base).ok(),
+            ..Update::for_test(root.path(), None)
+        };
+        let state = state(root.path(), None, update);
+        let (status, value, headers) =
+            answer(&state, request("POST", "/api/update/check", LOCAL, &[], "")).await;
+        assert_eq!(status, 502, "{value}");
+        assert_eq!(value["error"]["code"], "offline");
+        assert_eq!(value["error"]["reason"], "status");
+        assert_eq!(value["error"]["host"], "127.0.0.1");
+        assert!(!headers.contains_key("retry-after"));
+    }
+
+    #[tokio::test]
+    async fn disabled_automation_keeps_manual_check_and_apply_but_no_notice_or_daily_task() {
+        let root = tempfile::tempdir().unwrap();
+        let (base, seen) = check::tests::serve(vec![(
+            "/releases/latest/download/SHA256SUMS",
+            302,
+            vec![(
+                "location",
+                "https://github.com/Ynewtime/markitai/releases/download/v2.2.0/SHA256SUMS".into(),
+            )],
+            Vec::new(),
+        )]);
+        let update = Update {
+            automatic: false,
+            base: Base::parse(&base).ok(),
+            ..Update::for_test(root.path(), Some("2.2.0"))
+        };
+        let state = state(root.path(), None, update);
+        start_checks(&state, &json!({"update": {"check": false}}));
+        assert!(state.tasks.lock().unwrap().is_empty());
+        assert!(seen.lock().unwrap().is_empty());
+        let (_, before, _) = answer(&state, request("GET", "/api/update", LOCAL, &[], "")).await;
+        assert_eq!(before["newer"], false);
+        assert_eq!(before["can_apply"], false);
+        let (status, value, _) =
+            answer(&state, request("POST", "/api/update/check", LOCAL, &[], "")).await;
+        assert_eq!(status, 200, "{value}");
+        assert_eq!(value["update"]["newer"], true);
+        assert_eq!(value["update"]["can_apply"], true);
+        let (_, after, _) = answer(&state, request("GET", "/api/update", LOCAL, &[], "")).await;
+        assert_eq!(after["newer"], true);
+        assert_eq!(after["can_apply"], true);
+        let (status, value, _) = answer(
+            &state,
+            request("POST", "/api/update", LOCAL, &[], r#"{"version":"2.2.0"}"#),
+        )
+        .await;
+        assert_eq!(status, 202, "{value}");
+        join_worker(&state);
+    }
+
+    #[tokio::test]
+    async fn a_manual_check_does_not_run_while_an_update_is_busy() {
+        let root = tempfile::tempdir().unwrap();
+        let state = state(
+            root.path(),
+            None,
+            Update::for_test(root.path(), Some("2.2.0")),
+        );
+        state.update.set(Phase::Downloading);
+        let (status, value, _) =
+            answer(&state, request("POST", "/api/update/check", LOCAL, &[], "")).await;
+        assert_eq!(status, 409, "{value}");
+        assert_eq!(value, json!({"error": {"code": "updating"}}));
     }
 
     #[tokio::test]

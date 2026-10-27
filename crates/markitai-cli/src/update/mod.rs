@@ -287,14 +287,43 @@ pub(crate) fn described(
 /// Ask for the latest release and record the answer, then (for a release not
 /// described yet) its description. Returns the cache as saved.
 pub(crate) fn refresh(home: &Path, base: &check::Base, timeouts: check::Timeouts) -> Option<Cache> {
-    let before = attempting(home)?;
-    let latest = check::latest(base, timeouts).ok()?;
-    let cache = learned(home, &latest)?;
+    refresh_result(home, base, timeouts, None).ok()
+}
+
+/// `refresh`, saying why it failed and giving up at `deadline`.
+pub(crate) fn refresh_result(
+    home: &Path,
+    base: &check::Base,
+    timeouts: check::Timeouts,
+    deadline: Option<std::time::Instant>,
+) -> Result<Cache, check::Failure> {
+    let before = attempting(home).ok_or_else(|| check::Failure::Malformed {
+        what: "update cache".into(),
+    })?;
+    let latest = match check::latest_within(base, timeouts, deadline) {
+        Ok(latest) => latest,
+        Err(failure) => {
+            // A rate limit holds every check back, the CLI's daily one too.
+            if let check::Failure::RateLimited { retry_at, .. } = &failure {
+                let mut cache = before;
+                cache.retry_at = cache.retry_at.max(Some(*retry_at));
+                let _ = cache.save(home);
+            }
+            return Err(failure);
+        }
+    };
+    let cache = learned(home, &latest).ok_or_else(|| check::Failure::Malformed {
+        what: "update cache".into(),
+    })?;
     let known = before.latest.as_deref() == Some(&latest.to_string()) && before.lead.is_some();
     if !known {
-        described(home, &latest, check::leads(base, &latest, timeouts));
+        described(
+            home,
+            &latest,
+            check::leads_within(base, &latest, timeouts, deadline),
+        );
     }
-    Cache::load(home).or(Some(cache))
+    Ok(Cache::load(home).unwrap_or(cache))
 }
 
 /// The daily check of a run. The run never waits for it: the markitai

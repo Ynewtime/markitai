@@ -161,6 +161,9 @@ pub(crate) fn fetch_reason(failure: &Failure) -> String {
                 _ => "no connection",
             }
         ),
+        Failure::RateLimited { host, status, .. } => {
+            format!("{host} answered HTTP {status}")
+        }
         Failure::Status { host, code } => format!("{host} answered HTTP {code}"),
         Failure::Missing { what } => format!("No such release: {what}"),
         Failure::Malformed { what } => format!("Unreadable answer: {what}"),

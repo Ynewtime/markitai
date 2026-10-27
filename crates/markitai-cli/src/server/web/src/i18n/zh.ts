@@ -1059,4 +1059,12 @@ export const zh: Dict = {
   updDone: (version: string) => `已更新到 ${version}`,
   updReload: "刷新",
   updHeld: "更新中",
+  updCheck: (last) => (last === null ? "检查更新" : `检查更新（上次：${last}）`),
+  updCheckJustNow: "刚刚",
+  updCheckToday: (time) => `今天 ${time}`,
+  updCheckYesterday: (time) => `昨天 ${time}`,
+  updCheckOlder: (year, month, day, time, currentYear) => `${year === currentYear ? "" : `${year}年`}${month}月${day}日 ${time}`,
+  updChecking: "正在检查…",
+  updLatest: (version) => `已是最新版本 ${version}`,
+  updRetryAt: (time, tomorrow) => `${tomorrow ? "明天 " : ""}${time} 后再试`,
 };

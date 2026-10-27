@@ -11,7 +11,7 @@
 use super::version::Version;
 use reqwest::blocking::{Client, Response};
 use std::io::Read;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use url::Url;
 
 pub(crate) const DEFAULT_BASE: &str = "https://github.com/Ynewtime/markitai/releases";
@@ -36,6 +36,12 @@ pub(crate) const NOTICE: Timeouts = Timeouts {
 pub(crate) const COMMAND: Timeouts = Timeouts {
     connect: Duration::from_secs(10),
     idle: Duration::from_secs(30),
+};
+/// A check the workbench waits for (the server's own daily one too, so a
+/// manual check that joins it ends as soon): 10 s in all, see `latest_within`.
+pub(crate) const MANUAL: Timeouts = Timeouts {
+    connect: Duration::from_secs(5),
+    idle: Duration::from_secs(10),
 };
 
 /// Where releases come from: `<base>/latest/download/…`,
@@ -111,6 +117,13 @@ fn loopback(url: &Url) -> bool {
 pub(crate) enum Failure {
     /// No answer: `reason` is `timeout`, `refused` or `unreachable`.
     Offline { host: String, reason: &'static str },
+    /// The host answered 403/429: nothing is asked again before `retry_at`
+    /// (Unix seconds).
+    RateLimited {
+        host: String,
+        retry_at: i64,
+        status: u16,
+    },
     /// An answer that is not the file.
     Status { host: String, code: u16 },
     /// The release does not exist (or has no such asset).
@@ -151,6 +164,58 @@ fn error_chain_mentions(error: &(dyn std::error::Error + 'static), word: &str) -
         current = error.source();
     }
     false
+}
+
+fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs() as i64)
+}
+
+/// When a release host that answered 403/429 allows the next ask: its
+/// `Retry-After` (seconds or a date), else `X-RateLimit-Reset`, else in an
+/// hour; never in the past, never more than a day away.
+fn rate_limit(headers: &reqwest::header::HeaderMap, now: i64) -> i64 {
+    let retry_after = headers
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| {
+            value
+                .trim()
+                .parse::<i64>()
+                .ok()
+                .map(|seconds| now.saturating_add(seconds.max(0)))
+                .or_else(|| {
+                    chrono::DateTime::parse_from_rfc2822(value.trim())
+                        .ok()
+                        .map(|date| date.timestamp())
+                })
+        });
+    let reset = headers
+        .get("x-ratelimit-reset")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.trim().parse::<i64>().ok());
+    retry_after
+        .or(reset)
+        .unwrap_or_else(|| now.saturating_add(3600))
+        .clamp(now, now.saturating_add(24 * 3600))
+}
+
+fn budget(timeouts: Timeouts, deadline: Option<Instant>, host: &str) -> Result<Timeouts, Failure> {
+    let Some(deadline) = deadline else {
+        return Ok(timeouts);
+    };
+    let remaining = deadline
+        .checked_duration_since(Instant::now())
+        .filter(|remaining| !remaining.is_zero())
+        .ok_or_else(|| Failure::Offline {
+            host: host.to_owned(),
+            reason: "timeout",
+        })?;
+    Ok(Timeouts {
+        connect: timeouts.connect.min(remaining),
+        idle: timeouts.idle.min(remaining),
+    })
 }
 
 /// A client with these timeouts. `follow` follows up to five redirects that
@@ -208,10 +273,26 @@ fn read_limited(response: Response, limit: u64, host: &str) -> Result<Vec<u8>, F
 
 /// The latest release's version.
 pub(crate) fn latest(base: &Base, timeouts: Timeouts) -> Result<Version, Failure> {
+    latest_within(base, timeouts, None)
+}
+
+/// `latest`, giving up at `deadline`; the descriptions asked for next share it.
+pub(crate) fn latest_within(
+    base: &Base,
+    timeouts: Timeouts,
+    deadline: Option<Instant>,
+) -> Result<Version, Failure> {
     let host = base.host();
-    let client = client(timeouts, false)?;
+    let client = client(budget(timeouts, deadline, &host)?, false)?;
     let response = get(&client, &base.latest_sums(), &host)?;
     let status = response.status();
+    if matches!(status.as_u16(), 403 | 429) {
+        return Err(Failure::RateLimited {
+            host,
+            retry_at: rate_limit(response.headers(), unix_now()),
+            status: status.as_u16(),
+        });
+    }
     if status.is_redirection() {
         let location = response
             .headers()
@@ -313,7 +394,17 @@ pub(crate) fn archive_line(
 /// `RELEASE-NOTES.zh.md`); `None` for a release without one (the link alone
 /// is shown).
 pub(crate) fn lead(base: &Base, version: &Version, timeouts: Timeouts, zh: bool) -> Option<String> {
-    let client = client(timeouts, true).ok()?;
+    lead_within(base, version, timeouts, zh, None)
+}
+
+fn lead_within(
+    base: &Base,
+    version: &Version,
+    timeouts: Timeouts,
+    zh: bool,
+    deadline: Option<Instant>,
+) -> Option<String> {
+    let client = client(budget(timeouts, deadline, &base.host()).ok()?, true).ok()?;
     let name = if zh {
         "RELEASE-NOTES.zh.md"
     } else {
@@ -339,10 +430,19 @@ pub(crate) fn leads(
     version: &Version,
     timeouts: Timeouts,
 ) -> (Option<String>, Option<String>) {
-    let lead = lead(base, version, timeouts, false);
+    leads_within(base, version, timeouts, None)
+}
+
+pub(crate) fn leads_within(
+    base: &Base,
+    version: &Version,
+    timeouts: Timeouts,
+    deadline: Option<Instant>,
+) -> (Option<String>, Option<String>) {
+    let lead = lead_within(base, version, timeouts, false, deadline);
     let zh = lead
         .as_ref()
-        .and_then(|_| self::lead(base, version, timeouts, true));
+        .and_then(|_| lead_within(base, version, timeouts, true, deadline));
     (lead, zh)
 }
 
@@ -374,6 +474,10 @@ pub(crate) mod tests {
 
     /// A tiny HTTP server answering each path with a status, headers and body.
     pub(crate) fn serve(routes: Vec<Route>) -> (String, Seen) {
+        serve_delayed(routes, Duration::ZERO)
+    }
+
+    pub(crate) fn serve_delayed(routes: Vec<Route>, delay: Duration) -> (String, Seen) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         let seen: Seen = Arc::default();
@@ -381,6 +485,7 @@ pub(crate) mod tests {
         std::thread::spawn(move || {
             for stream in listener.incoming() {
                 let Ok(mut stream) = stream else { break };
+                std::thread::sleep(delay);
                 let mut reader = BufReader::new(stream.try_clone().unwrap());
                 let mut line = String::new();
                 if reader.read_line(&mut line).is_err() {
@@ -523,6 +628,19 @@ pub(crate) mod tests {
             "{:?}",
             started.elapsed()
         );
+        let started = Instant::now();
+        assert!(matches!(
+            latest_within(
+                &base,
+                MANUAL,
+                Some(Instant::now() + Duration::from_millis(300))
+            ),
+            Err(Failure::Offline {
+                reason: "timeout",
+                ..
+            })
+        ));
+        assert!(started.elapsed() < Duration::from_secs(2));
         // Nothing listens: refused, not a timeout.
         let closed = TcpListener::bind("127.0.0.1:0")
             .unwrap()
@@ -530,6 +648,35 @@ pub(crate) mod tests {
             .unwrap();
         let base = Base::parse(&format!("http://{closed}/releases")).unwrap();
         assert!(matches!(latest(&base, quick), Err(Failure::Offline { .. })));
+    }
+
+    #[test]
+    fn rate_limits_use_the_release_host_answer_and_never_exceed_a_day() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(reqwest::header::RETRY_AFTER, "120".parse().unwrap());
+        headers.insert("x-ratelimit-reset", "5000".parse().unwrap());
+        assert_eq!(rate_limit(&headers, 1000), 1120);
+        headers.insert(reqwest::header::RETRY_AFTER, "invalid".parse().unwrap());
+        assert_eq!(rate_limit(&headers, 1000), 5000);
+        headers.remove("x-ratelimit-reset");
+        assert_eq!(rate_limit(&headers, 1000), 4600);
+        headers.insert(reqwest::header::RETRY_AFTER, "999999".parse().unwrap());
+        assert_eq!(rate_limit(&headers, 1000), 1000 + 24 * 3600);
+        let (base, _) = serve(vec![(
+            "/releases/latest/download/SHA256SUMS",
+            403,
+            vec![("retry-after", "120".into())],
+            Vec::new(),
+        )]);
+        let before = unix_now();
+        assert!(matches!(
+            latest(&Base::parse(&base).unwrap(), NOTICE),
+            Err(Failure::RateLimited {
+                status: 403,
+                retry_at,
+                ..
+            }) if retry_at >= before + 119 && retry_at <= before + 121
+        ));
     }
 
     #[test]

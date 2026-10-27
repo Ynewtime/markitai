@@ -254,6 +254,9 @@ export interface UpdateSummary {
   can_apply: boolean;
   method: string;
   state: UpdateState;
+  checked_at: string | null;
+  retry_at: string | null;
+  checking: boolean;
 }
 
 /** v1.24: why an update failed (also one the last start undid), and whether files were put back. */
@@ -283,6 +286,15 @@ export interface UpdateStatus {
   error: UpdateError | null;
   updated_from: string | null;
   by: "web" | "cli" | null;
+  checked_at: string | null;
+  retry_at: string | null;
+  checking: boolean;
+}
+
+export interface UpdateCheckResponse {
+  fresh: true;
+  checked_at: string | null;
+  update: UpdateStatus;
 }
 
 /** v1.16: the backend's build: its version, the commit it was built from and when. */
