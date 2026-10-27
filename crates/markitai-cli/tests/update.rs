@@ -369,7 +369,6 @@ fn text(output: &Output) -> (String, String, i32) {
     )
 }
 
-#[cfg(unix)]
 fn unix_now() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
