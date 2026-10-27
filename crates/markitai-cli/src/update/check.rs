@@ -117,8 +117,8 @@ fn loopback(url: &Url) -> bool {
 pub(crate) enum Failure {
     /// No answer: `reason` is `timeout`, `refused` or `unreachable`.
     Offline { host: String, reason: &'static str },
-    /// The host answered 403/429: nothing is asked again before `retry_at`
-    /// (Unix seconds).
+    /// The host answered 429, or GitHub's rate-limit 403: nothing is asked
+    /// again before `retry_at` (Unix seconds).
     RateLimited {
         host: String,
         retry_at: i64,
@@ -199,6 +199,16 @@ fn rate_limit(headers: &reqwest::header::HeaderMap, now: i64) -> i64 {
         .or(reset)
         .unwrap_or_else(|| now.saturating_add(3600))
         .clamp(now, now.saturating_add(24 * 3600))
+}
+
+/// Whether a 403's headers are GitHub's rate limit: its quota is spent
+/// (`X-RateLimit-Remaining: 0`) or it says when to ask again (`Retry-After`).
+fn github_limit(headers: &reqwest::header::HeaderMap) -> bool {
+    headers.contains_key(reqwest::header::RETRY_AFTER)
+        || headers
+            .get("x-ratelimit-remaining")
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| value.trim() == "0")
 }
 
 fn budget(timeouts: Timeouts, deadline: Option<Instant>, host: &str) -> Result<Timeouts, Failure> {
@@ -286,12 +296,30 @@ pub(crate) fn latest_within(
     let client = client(budget(timeouts, deadline, &host)?, false)?;
     let response = get(&client, &base.latest_sums(), &host)?;
     let status = response.status();
-    if matches!(status.as_u16(), 403 | 429) {
+    if status.as_u16() == 429 || (status.as_u16() == 403 && github_limit(response.headers())) {
         return Err(Failure::RateLimited {
             host,
             retry_at: rate_limit(response.headers(), unix_now()),
             status: status.as_u16(),
         });
+    }
+    if status.as_u16() == 403 {
+        // GitHub may say so in the body alone; any other 403 (a proxy's
+        // refusal) is an ordinary failure.
+        let headers = response.headers().clone();
+        let mut body = Vec::new();
+        let _ = response.take(4096).read_to_end(&mut body);
+        if String::from_utf8_lossy(&body)
+            .to_ascii_lowercase()
+            .contains("rate limit")
+        {
+            return Err(Failure::RateLimited {
+                host,
+                retry_at: rate_limit(&headers, unix_now()),
+                status: 403,
+            });
+        }
+        return Err(Failure::Status { host, code: 403 });
     }
     if status.is_redirection() {
         let location = response
@@ -662,12 +690,35 @@ pub(crate) mod tests {
         assert_eq!(rate_limit(&headers, 1000), 4600);
         headers.insert(reqwest::header::RETRY_AFTER, "999999".parse().unwrap());
         assert_eq!(rate_limit(&headers, 1000), 1000 + 24 * 3600);
-        let (base, _) = serve(vec![(
-            "/releases/latest/download/SHA256SUMS",
-            403,
-            vec![("retry-after", "120".into())],
-            Vec::new(),
-        )]);
+        let (base, _) = serve(vec![
+            (
+                "/releases/latest/download/SHA256SUMS",
+                403,
+                vec![("retry-after", "120".into())],
+                Vec::new(),
+            ),
+            (
+                "/spent/latest/download/SHA256SUMS",
+                403,
+                vec![
+                    ("x-ratelimit-remaining", "0".into()),
+                    ("x-ratelimit-reset", (unix_now() + 600).to_string()),
+                ],
+                Vec::new(),
+            ),
+            (
+                "/body/latest/download/SHA256SUMS",
+                403,
+                vec![],
+                b"{\"message\":\"API rate limit exceeded for 203.0.113.9.\"}".to_vec(),
+            ),
+            (
+                "/proxy/latest/download/SHA256SUMS",
+                403,
+                vec![("x-ratelimit-remaining", "42".into())],
+                b"Access denied by policy".to_vec(),
+            ),
+        ]);
         let before = unix_now();
         assert!(matches!(
             latest(&Base::parse(&base).unwrap(), NOTICE),
@@ -677,6 +728,25 @@ pub(crate) mod tests {
                 ..
             }) if retry_at >= before + 119 && retry_at <= before + 121
         ));
+        let at = |path: &str| Base::parse(&base.replace("/releases", path)).unwrap();
+        assert!(matches!(
+            latest(&at("/spent"), NOTICE),
+            Err(Failure::RateLimited { status: 403, retry_at, .. })
+                if retry_at >= before + 599 && retry_at <= before + 601
+        ));
+        assert!(matches!(
+            latest(&at("/body"), NOTICE),
+            Err(Failure::RateLimited { status: 403, retry_at, .. })
+                if retry_at >= before + 3599 && retry_at <= before + 3601
+        ));
+        // Another 403 (a proxy's refusal) is an ordinary failure.
+        assert_eq!(
+            latest(&at("/proxy"), NOTICE),
+            Err(Failure::Status {
+                host: "127.0.0.1".into(),
+                code: 403
+            })
+        );
     }
 
     #[test]
