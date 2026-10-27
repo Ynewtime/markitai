@@ -217,6 +217,13 @@ export function checkSuccess(answer: UpdateCheckResponse, now: number): { outcom
   return { outcome: { kind: "current", version: answer.update.current ?? answer.update.latest ?? "", until: now + CHECK_CURRENT_MS }, open: false };
 }
 
+/** An automatic check the page watched (its spinner showed) ends: nothing new gets the
+ * same 4 s "current" a click shows; news shows on the entry instead, nothing without a status. */
+export function autoCheckEnded(status: UpdateStatus | null, now: number): CheckOutcome | null {
+  if (!status || status.newer) return null;
+  return { kind: "current", version: status.current ?? status.latest ?? "", until: now + CHECK_CURRENT_MS };
+}
+
 export function checkError(error: unknown): CheckFailure {
   if (error instanceof ApiError) {
     const body = error.body as { error?: { code?: unknown; retry_at?: unknown; host?: unknown } } | null;

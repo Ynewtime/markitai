@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { cancelUpdate, checkUpdate, fetchCapabilities, fetchUpdate, NetworkError, startUpdate } from "../api/client.ts";
 import type { Capabilities, UpdateStatus } from "../api/types.ts";
-import { BUSY, checkDisabled, checkError, checkSuccess, CHECK_TIMEOUT_MS, checkView, entryLook, errorKey, HOLDING, pollDelay, shownError, type CheckOutcome, type CheckView, type EntryLook } from "../lib/update.ts";
+import { autoCheckEnded, BUSY, checkDisabled, checkError, checkSuccess, CHECK_TIMEOUT_MS, checkView, entryLook, errorKey, HOLDING, pollDelay, shownError, type CheckOutcome, type CheckView, type EntryLook } from "../lib/update.ts";
 
 /** This tab reloaded into a new version: said once after the reload. */
 export const DONE_KEY = "markitai.update.done";
@@ -168,6 +168,24 @@ export function useUpdate({
     setOutcome({ kind: "rest" });
     setCheckedOverride(undefined);
   }, [serverChecking, localChecking]);
+
+  // The server's own check (the automatic one or another tab's click), watched here
+  // as the spinner, ends with nothing new: the same 4 s "current" a click shows.
+  const autoChecking = useRef(false);
+  useEffect(() => {
+    if (localChecking) return;
+    if (serverChecking) {
+      autoChecking.current = true;
+      return;
+    }
+    if (!autoChecking.current) return;
+    autoChecking.current = false;
+    const ended = autoCheckEnded(statusRef.current, Date.now());
+    if (ended) {
+      setOutcome(ended);
+      setNow(Date.now());
+    }
+  }, [serverChecking, localChecking, status]);
 
   const day = new Date(now).toDateString();
   useEffect(() => {

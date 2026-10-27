@@ -11,7 +11,7 @@ import { en } from "../i18n/en.ts";
 import { ja } from "../i18n/ja.ts";
 import { zh } from "../i18n/zh.ts";
 import { hasUnsaved, setUnsaved } from "./unsaved.ts";
-import { checkDisabled, checkError, checkSuccess, CHECK_CURRENT_MS, CHECK_TIMEOUT_MS, checkText, checkTitle, checkView, clock, downloaded, entryLook, errorKey, failedStep, failureText, fraction, HOLDING, notesFor, pollDelay, runningVersion, shownError, statusRow, stepOf } from "./update.ts";
+import { autoCheckEnded, checkDisabled, checkError, checkSuccess, CHECK_CURRENT_MS, CHECK_TIMEOUT_MS, checkText, checkTitle, checkView, clock, downloaded, entryLook, errorKey, failedStep, failureText, fraction, HOLDING, notesFor, pollDelay, runningVersion, shownError, statusRow, stepOf } from "./update.ts";
 
 const read = (relative: string) => readFileSync(new URL(relative, import.meta.url), "utf8");
 
@@ -224,6 +224,23 @@ test("manual check rest, checking, four-second current and newer states stay dis
   assert.equal(newer.open, true);
   assert.deepEqual(newer.outcome, { kind: "rest" });
   assert.equal(entryLook(summary({ can_apply: false }), newerStatus, null), "available");
+});
+
+test("an automatic check the page watched ends with the click's four-second current, news with none", () => {
+  const now = Date.now();
+  const ended = autoCheckEnded(status({ current: "2.3.0", latest: "2.3.0", newer: false }), now);
+  assert.deepEqual(ended, { kind: "current", version: "2.3.0", until: now + CHECK_CURRENT_MS });
+  assert.equal(checkText(zh, checkView(ended!, false, null, now + CHECK_CURRENT_MS - 1)), "已是最新版本 2.3.0");
+  assert.deepEqual(checkView(ended!, false, null, now + CHECK_CURRENT_MS), { phase: "rest" });
+  // News shows on the entry instead; without a status there is nothing to say.
+  assert.equal(autoCheckEnded(status({ newer: true }), now), null);
+  assert.equal(autoCheckEnded(null, now), null);
+  // The hook watches the server's checking (never its own click's), and only a
+  // check it showed the spinner for ends in the toast.
+  const hook = read("../hooks/use-update.ts");
+  assert.match(hook, /const autoChecking = useRef\(false\);/);
+  assert.match(hook, /if \(localChecking\) return;\s*if \(serverChecking\) \{\s*autoChecking\.current = true;/);
+  assert.match(hook, /if \(!autoChecking\.current\) return;\s*autoChecking\.current = false;\s*const ended = autoCheckEnded\(statusRef\.current, Date\.now\(\)\);/);
 });
 
 test("manual check offline and rate-limit errors expose host and exact re-enable times", () => {
