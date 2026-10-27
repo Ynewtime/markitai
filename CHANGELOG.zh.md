@@ -8,6 +8,17 @@
 1.x 版本是 Python 实现，其说明见
 [1.2.0 更新日志](https://github.com/Ynewtime/markitai/blob/v1.2.0/CHANGELOG.zh.md)。
 
+## [2.3.2] - 2026-10-27
+
+修复工作台的更新检查：重启后仍记得 GitHub 的频率限制，代理的拒绝也不再被当作频率限制。获取 2.3.2 请运行 `markitai update`（2.2.0 及以后），或按原来的安装方式更新：重新运行安装命令，或执行 `uv tool upgrade markitai` / `pip install -U markitai`。
+
+### 修复
+
+- 重启之后，或 `markitai update` 遇到频率限制之后，工作台的 ↻ 仍会说明何时能再向 GitHub 检查，不再立即重新请求。
+- 代理或镜像返回的 403 按普通检查失败处理，不再显示为频率限制和再试时间。
+- 工作台显示进行中的自动更新检查若没有新版本，结束时与点击一样显示 4 秒“已是最新版本”。
+- `update.check: false` 时，工作台只会更新到手动检查发现的版本。
+
 ## [2.3.1] - 2026-10-27
 
 工作台可以手动检查更新，任何命令之后都会提示新版本，并修复了 TUN 代理后抓取 URL 的问题。获取 2.3.1 请运行 `markitai update`（2.2.0 及以后），或按原来的安装方式更新：重新运行安装命令，或执行 `uv tool upgrade markitai` / `pip install -U markitai`。

@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Releases 1.x were the Python implementation; their notes are in the
 [1.2.0 changelog](https://github.com/Ynewtime/markitai/blob/v1.2.0/CHANGELOG.md).
 
+## [2.3.2] - 2026-10-27
+
+Fixes in the workbench's update check: GitHub's rate limit is remembered across restarts, and a proxy's refusal no longer reads as one. To get 2.3.2, run `markitai update` (2.2.0 and later) or update the way you installed: run the setup command again, or `uv tool upgrade markitai` / `pip install -U markitai`.
+
+### Fixed
+
+- After a restart, or after `markitai update` was rate-limited, the workbench's ↻ still says when GitHub lets it check again instead of asking at once.
+- A 403 from a proxy or mirror is an ordinary failed check, no longer shown as a rate limit with a time to try again.
+- An automatic update check the workbench showed in progress ends with "Already on the latest version" for 4 s when it finds nothing new, as a click does.
+- With `update.check: false`, the workbench updates only to a release a manual check found.
+
 ## [2.3.1] - 2026-10-27
 
 Adds a check for updates in the workbench, names a new version after any command, and fixes URL fetching behind TUN proxies. To get 2.3.1, run `markitai update` (2.2.0 and later) or update the way you installed: run the setup command again, or `uv tool upgrade markitai` / `pip install -U markitai`.
