@@ -7703,17 +7703,18 @@ input[type="password"],
   content: attr(data-tip);
   position: absolute;
   bottom: calc(100% + 6px);
-  left: 50%;
+  /* ends at the ↻'s right edge: centred, it would run off a phone's screen */
+  right: -4px;
   z-index: 60;
   padding: 4px 8px;
   border-radius: var(--r-xs);
   background: var(--accent);
+  font-family: var(--font-sans);
   font-size: var(--text-xs);
   font-weight: 500;
   line-height: 1.4;
   color: var(--accent-contrast);
   white-space: nowrap;
-  transform: translateX(-50%);
   pointer-events: none;
 }
 
