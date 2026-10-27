@@ -264,15 +264,19 @@ impl Update {
             .is_some()
     }
 
+    /// The rate limit in force: this server's own, or one the cache holds
+    /// (the CLI's, or this server's before a restart).
     fn retry_at(&self) -> Option<i64> {
+        let now = unix_now();
         let mut retry = self
             .rate_limit
             .lock()
             .unwrap_or_else(|error| error.into_inner());
-        if retry.is_some_and(|at| at <= unix_now()) {
+        if retry.is_some_and(|at| at <= now) {
             *retry = None;
         }
-        *retry
+        let cached = Cache::load(&self.home).and_then(|cache| cache.rate_limit_at(now));
+        (*retry).max(cached)
     }
 
     /// `GET /api/update` and `Capabilities.update`.
@@ -1592,12 +1596,71 @@ pub(super) mod tests {
             "{cache:?}"
         );
         assert!(!cache.due(unix_now() + 3700));
+        assert!(
+            cache
+                .rate_limit_at(unix_now())
+                .is_some_and(|at| at >= unix_now() + 7190),
+            "{cache:?}"
+        );
         // The automatic check asks nothing either.
         assert!(matches!(
             ask(&state, false).await,
             Err(check::Failure::RateLimited { .. })
         ));
         assert_eq!(seen.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_restarted_server_keeps_the_cached_rate_limit_but_not_the_failure_backoff() {
+        let root = tempfile::tempdir().unwrap();
+        let (base, seen) = check::tests::serve(vec![(
+            "/releases/latest/download/SHA256SUMS",
+            302,
+            vec![(
+                "location",
+                "https://github.com/Ynewtime/markitai/releases/download/v2.2.0/SHA256SUMS".into(),
+            )],
+            Vec::new(),
+        )]);
+        let update = Update {
+            base: Base::parse(&base).ok(),
+            ..Update::for_test(root.path(), None)
+        };
+        // A rate limit the CLI (or this server before a restart) met.
+        let until = unix_now() + 1800;
+        updates::rate_limited(root.path(), until);
+        let state = state(root.path(), None, update);
+        let (_, view, _) = answer(&state, request("GET", "/api/update", LOCAL, &[], "")).await;
+        assert_eq!(view["retry_at"], json!(rfc3339(until)));
+        let (status, value, headers) =
+            answer(&state, request("POST", "/api/update/check", LOCAL, &[], "")).await;
+        assert_eq!(status, 429, "{value}");
+        assert_eq!(value["error"]["retry_at"], json!(rfc3339(until)));
+        assert!(headers.contains_key("retry-after"));
+        assert!(seen.lock().unwrap().is_empty());
+        // Once it has passed, only the failure backoff is left: it never holds
+        // a manual check back.
+        let mut cache = Cache::load(root.path()).unwrap();
+        cache.rate_limited_until = Some(unix_now() - 1);
+        cache.failed(unix_now());
+        cache.save(root.path()).unwrap();
+        *state.update.rate_limit.lock().unwrap() = Some(unix_now() - 1);
+        let (_, view, _) = answer(&state, request("GET", "/api/update", LOCAL, &[], "")).await;
+        assert_eq!(view["retry_at"], Value::Null);
+        let (status, value, _) =
+            answer(&state, request("POST", "/api/update/check", LOCAL, &[], "")).await;
+        assert_eq!(status, 200, "{value}");
+        assert_eq!(value["update"]["latest"], "2.2.0");
+        assert_eq!(
+            seen.lock()
+                .unwrap()
+                .iter()
+                .filter(|(line, _)| line.contains("/latest/download/SHA256SUMS"))
+                .count(),
+            1
+        );
+        let cache = Cache::load(root.path()).unwrap();
+        assert_eq!((cache.retry_at, cache.rate_limited_until), (None, None));
     }
 
     #[tokio::test]

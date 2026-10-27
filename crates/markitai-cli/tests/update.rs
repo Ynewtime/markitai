@@ -182,7 +182,13 @@ fn answer(
     let path = line.split_whitespace().nth(1).unwrap_or("").to_owned();
     seen.lock().unwrap().push(format!("{path} ({agent})"));
     let mut stream = stream;
-    let (head, body) = if let Some(asset) = path.strip_prefix("/releases/latest/download/") {
+    let (head, body) = if path.starts_with("/limited/") {
+        // GitHub's rate limit.
+        (
+            "HTTP/1.1 429 Too Many Requests\r\nretry-after: 1800\r\ncontent-length: 0\r\n".into(),
+            Arc::default(),
+        )
+    } else if let Some(asset) = path.strip_prefix("/releases/latest/download/") {
         let version = latest.lock().unwrap().clone();
         (
             format!(
@@ -630,6 +636,7 @@ fn a_failed_check_is_exit_one_and_a_source_build_never_asks() {
     assert!(stderr.contains("Can't reach 127.0.0.1"), "{stderr}");
     // The failure starts the backoff.
     assert_eq!(home.cache()["failures"], 1);
+    assert_eq!(home.cache()["rate_limited_until"], Value::Null);
     let (_, stderr, code) = text(&home.run(
         &releases,
         &["update"],
@@ -656,6 +663,21 @@ fn a_failed_check_is_exit_one_and_a_source_build_never_asks() {
     ));
     assert_eq!(code, 1);
     assert!(stderr.contains("not HTTPS"), "{stderr}");
+    // A rate limit is recorded apart from it, for the workbench's ↻ too.
+    let limited = releases.base().replace("/releases", "/limited");
+    let before = unix_now();
+    let (_, stderr, code) = text(&home.run(
+        &releases,
+        &["update", "--check"],
+        &[("MARKITAI_DOWNLOAD_URL", &limited)],
+    ));
+    assert_eq!(code, 1, "{stderr}");
+    let until = home.cache()["rate_limited_until"].as_i64().unwrap();
+    assert!(
+        (before + 1799..=unix_now() + 1800).contains(&until),
+        "{until}"
+    );
+    assert!(home.cache()["retry_at"].as_i64().unwrap() >= until);
 }
 
 #[test]

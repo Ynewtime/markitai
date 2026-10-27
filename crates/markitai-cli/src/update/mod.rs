@@ -153,6 +153,9 @@ pub(crate) struct Cache {
     /// Failed checks in a row, and when the next may run.
     pub(crate) failures: u32,
     pub(crate) retry_at: Option<i64>,
+    /// When the release host's rate limit ends: unlike the failure backoff
+    /// above, it holds manual checks back too (the workbench's ↻).
+    pub(crate) rate_limited_until: Option<i64>,
     /// The last notice shown: once a day per version.
     pub(crate) notified: Option<Notified>,
 }
@@ -212,6 +215,19 @@ impl Cache {
         self.checked_at = Some(now);
         self.failures = 0;
         self.retry_at = None;
+        self.rate_limited_until = None;
+    }
+
+    /// The release host rate-limited a check until `until`: no check runs
+    /// before then, manual ones included.
+    pub(crate) fn rate_limited(&mut self, until: i64) {
+        self.retry_at = self.retry_at.max(Some(until));
+        self.rate_limited_until = self.rate_limited_until.max(Some(until));
+    }
+
+    /// The rate limit still in force at `now`, if any.
+    pub(crate) fn rate_limit_at(&self, now: i64) -> Option<i64> {
+        self.rate_limited_until.filter(|until| *until > now)
     }
 
     /// One hour after the first failure, doubling up to a day. A check
@@ -284,6 +300,14 @@ pub(crate) fn described(
     }
 }
 
+/// Record the release host's rate limit, for the CLI and the server alike.
+pub(crate) fn rate_limited(home: &Path, until: i64) {
+    if let Some(mut cache) = Cache::load(home) {
+        cache.rate_limited(until);
+        let _ = cache.save(home);
+    }
+}
+
 /// Ask for the latest release and record the answer, then (for a release not
 /// described yet) its description. Returns the cache as saved.
 pub(crate) fn refresh(home: &Path, base: &check::Base, timeouts: check::Timeouts) -> Option<Cache> {
@@ -305,9 +329,7 @@ pub(crate) fn refresh_result(
         Err(failure) => {
             // A rate limit holds every check back, the CLI's daily one too.
             if let check::Failure::RateLimited { retry_at, .. } = &failure {
-                let mut cache = before;
-                cache.retry_at = cache.retry_at.max(Some(*retry_at));
-                let _ = cache.save(home);
+                rate_limited(home, *retry_at);
             }
             return Err(failure);
         }
@@ -538,6 +560,29 @@ mod tests {
         assert_eq!(cache.lead_zh.as_deref(), Some("说明。"));
         cache.succeeded(start, &v("2.3.0"), None);
         assert_eq!((cache.lead, cache.lead_zh), (None, None));
+    }
+
+    #[test]
+    fn a_rate_limit_is_kept_apart_from_the_failure_backoff() {
+        let mut cache = Cache::default();
+        cache.failed(1000);
+        assert_eq!(cache.rate_limit_at(1000), None);
+        cache.rate_limited(1000 + 2 * HOUR);
+        assert_eq!(cache.retry_at, Some(1000 + 2 * HOUR));
+        assert_eq!(cache.rate_limit_at(1000), Some(1000 + 2 * HOUR));
+        assert_eq!(cache.rate_limit_at(1000 + 2 * HOUR), None);
+        // A shorter limit never shortens the backoff already recorded.
+        cache.failed(1000);
+        cache.failed(1000);
+        cache.rate_limited(1000 + 60);
+        assert_eq!(cache.retry_at, Some(1000 + 4 * HOUR));
+        assert_eq!(cache.rate_limit_at(1000), Some(1000 + 2 * HOUR));
+        cache.succeeded(2000, &v("2.2.0"), None);
+        assert_eq!((cache.retry_at, cache.rate_limited_until), (None, None));
+        // A cache written before the field existed reads as no rate limit.
+        let old: Cache =
+            serde_json::from_str(r#"{"format":1,"failures":1,"retry_at":5000}"#).unwrap();
+        assert_eq!((old.retry_at, old.rate_limit_at(0)), (Some(5000), None));
     }
 
     #[test]

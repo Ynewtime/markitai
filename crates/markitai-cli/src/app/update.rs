@@ -312,6 +312,9 @@ pub(super) fn run(options: &Options) -> CliResult<i32> {
         }
         Ok(latest) => latest,
         Err(failure) => {
+            if let Failure::RateLimited { retry_at, .. } = &failure {
+                updates::rate_limited(&home, *retry_at);
+            }
             let (english, chinese) = failure_text(&failure);
             report.error = Some((failure.code().into(), english.clone()));
             if options.check {
