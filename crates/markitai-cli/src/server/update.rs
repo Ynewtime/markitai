@@ -279,10 +279,15 @@ impl Update {
         (*retry).max(cached)
     }
 
+    /// Whether the page may see the release the cache knows of: always with
+    /// the automatic check, else only after a manual check.
+    fn visible(&self) -> bool {
+        self.automatic || self.manual_revealed.load(Ordering::SeqCst)
+    }
+
     /// `GET /api/update` and `Capabilities.update`.
     fn view(&self, waiting: u64) -> Value {
-        let visible = self.automatic || self.manual_revealed.load(Ordering::SeqCst);
-        let latest = self.latest().filter(|_| visible);
+        let latest = self.latest().filter(|_| self.visible());
         let checked_at = Cache::load(&self.home).and_then(|cache| cache.checked_at);
         let retry_at = self.retry_at();
         let checking = self.checking();
@@ -684,7 +689,8 @@ pub(super) async fn start(
             "an update is already running",
         ));
     }
-    let Some((latest, ..)) = update.latest() else {
+    // With `update.check: false`, only a release a manual check revealed.
+    let Some((latest, ..)) = update.latest().filter(|_| update.visible()) else {
         return Err(ApiError::new(
             409,
             "version_changed",
@@ -1710,6 +1716,17 @@ pub(super) mod tests {
         let (_, before, _) = answer(&state, request("GET", "/api/update", LOCAL, &[], "")).await;
         assert_eq!(before["newer"], false);
         assert_eq!(before["can_apply"], false);
+        // The cached release is not offered before a manual check reveals it.
+        let (status, value, _) = answer(
+            &state,
+            request("POST", "/api/update", LOCAL, &[], r#"{"version":"2.2.0"}"#),
+        )
+        .await;
+        assert_eq!(
+            (status, value["reason"].as_str()),
+            (409, Some("version_changed"))
+        );
+        assert_eq!(state.update.phase(), Phase::Idle);
         let (status, value, _) =
             answer(&state, request("POST", "/api/update/check", LOCAL, &[], "")).await;
         assert_eq!(status, 200, "{value}");
