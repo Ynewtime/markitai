@@ -5,7 +5,7 @@ default-members = ["crates/markitai-core", "crates/markitai-cli", "crates/markit
 resolver = "2"
 
 [workspace.package]
-version = "2.3.0"
+version = "2.3.1"
 edition = "2024"
 rust-version = "1.92"
 license = "MIT"

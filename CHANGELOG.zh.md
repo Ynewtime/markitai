@@ -8,6 +8,25 @@
 1.x 版本是 Python 实现，其说明见
 [1.2.0 更新日志](https://github.com/Ynewtime/markitai/blob/v1.2.0/CHANGELOG.zh.md)。
 
+## [2.3.1] - 2026-10-27
+
+工作台可以手动检查更新，任何命令之后都会提示新版本，并修复了 TUN 代理后抓取 URL 的问题。获取 2.3.1 请运行 `markitai update`（2.2.0 及以后），或按原来的安装方式更新：重新运行安装命令，或执行 `uv tool upgrade markitai` / `pip install -U markitai`。
+
+### 新增
+
+- 工作台可以手动检查更新：Build 行末的 ↻（手机上在设置的版本行）。
+
+### 变更
+
+- `update.check: false` 与 `MARKITAI_NO_UPDATE_CHECK=1` 只关闭自动检查和提示，工作台里照常可以检查和更新。
+- 重新运行安装脚本时，若有可选组件缺失会再次询问，不再沿用之前的回答。
+- 新版本提示现在出现在终端上的任何命令之后（不再只是输出到文件的转换），也出现在 `markitai -V` 之后。
+
+### 修复
+
+- X 帖子的评论按 x.com 显示的顺序列出（作者本人的回复在前），不再按发布时间重新排序。
+- 在 Clash、Surge 等 TUN 代理（Fake-IP 地址）后面也能抓取 URL，浏览器策略也一样；连接超时会说明是否经过代理，以及如何设置代理。
+
 ## [2.3.0] - 2026-10-26
 
 工作台为更多服务商列出已知 API 地址并识别密钥所属区域，文档菜单更简洁，并修复了更新和上传的问题。获取 2.3.0 请运行 `markitai update`（2.2.0 及以后），或按原来的安装方式更新：重新运行安装命令，或执行 `uv tool upgrade markitai` / `pip install -U markitai`。

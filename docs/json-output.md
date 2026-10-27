@@ -138,7 +138,7 @@ keeps the others.
 ```json
 {
   "schema_version": "1.0",
-  "tool": {"name": "markitai", "version": "2.3.0", "commit": "3efaa92"},
+  "tool": {"name": "markitai", "version": "2.3.1", "commit": "3efaa92"},
   "items": [
     {"source": "a.pdf", "status": "completed", "document": "a.pdf.json",
      "markdown": "a.pdf.md", "error": null, "skip_reason": null}
@@ -161,7 +161,7 @@ keeps the others.
 ```json
 {
   "schema_version": "1.0",
-  "tool": {"name": "markitai", "version": "2.3.0", "commit": "3efaa92"},
+  "tool": {"name": "markitai", "version": "2.3.1", "commit": "3efaa92"},
   "source": {"kind": "file", "path": "report.pdf", "url": null, "name": "report.pdf",
              "type": "pdf", "size": 50024, "sha256": "d2275bf8…"},
   "status": "completed",

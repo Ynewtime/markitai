@@ -8,6 +8,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Releases 1.x were the Python implementation; their notes are in the
 [1.2.0 changelog](https://github.com/Ynewtime/markitai/blob/v1.2.0/CHANGELOG.md).
 
+## [2.3.1] - 2026-10-27
+
+Adds a check for updates in the workbench, names a new version after any command, and fixes URL fetching behind TUN proxies. To get 2.3.1, run `markitai update` (2.2.0 and later) or update the way you installed: run the setup command again, or `uv tool upgrade markitai` / `pip install -U markitai`.
+
+### Added
+
+- The workbench can check for updates on demand: the ↻ at the end of the build line (on a phone, the version line in Settings).
+
+### Changed
+
+- `update.check: false` and `MARKITAI_NO_UPDATE_CHECK=1` turn off only the automatic check and its notices; checking and updating from the workbench still work.
+- Re-running the setup script asks about missing optional components again instead of remembering an earlier answer.
+- The new-version notice now follows any command on a terminal, not only conversions to files, and `markitai -V`.
+
+### Fixed
+
+- An X post's comments are in the order x.com shows them (the author's own reply first), no longer re-sorted by posting time.
+- URLs fetch behind TUN proxies such as Clash or Surge (Fake-IP addresses), in the browser too, and a connection timeout says whether a proxy was used and how to set one.
+
 ## [2.3.0] - 2026-10-26
 
 Adds known API addresses and key regions for more providers in the workbench, simpler document menus, and fixes for updates and uploads. To get 2.3.0, run `markitai update` (2.2.0 and later) or update the way you installed: run the setup command again, or `uv tool upgrade markitai` / `pip install -U markitai`.

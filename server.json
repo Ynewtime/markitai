@@ -8,13 +8,13 @@
     "source": "github"
   },
   "websiteUrl": "https://markitai.dev/guide/mcp",
-  "version": "2.3.0",
+  "version": "2.3.1",
   "packages": [
     {
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "markitai",
-      "version": "2.3.0",
+      "version": "2.3.1",
       "runtimeHint": "uvx",
       "transport": {
         "type": "stdio"
@@ -23,7 +23,7 @@
         {
           "type": "named",
           "name": "--from",
-          "value": "markitai==2.3.0",
+          "value": "markitai==2.3.1",
           "description": "Run this markitai release",
           "isRequired": true
         }
