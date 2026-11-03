@@ -233,22 +233,28 @@ def isolated_env(state):
 
 
 def run_tests(dll, state):
-    """Builds with the developer's environment (NuGet cache and all), then runs with the isolated one."""
-    project = str(TESTS / "Markitai.Core.Tests.csproj")
-    run(["dotnet", "build", project, "-c", "Release"], cwd=HERE)
+    """Builds with the developer's environment (NuGet cache and all), then runs with the isolated one.
+
+    The xunit.v3 test assembly is its own runner. `dotnet test` on a hosted Windows
+    runner exited 0 without running a test or writing a result, so it is not used.
+    """
+    project = TESTS / "Markitai.Core.Tests.csproj"
+    run(["dotnet", "build", str(project), "-c", "Release"], cwd=HERE)
     env = isolated_env(state)
     env["MARKITAI_APP_LIBRARY"] = str(dll)
     results = state / "results"
     shutil.rmtree(results, ignore_errors=True)
-    run(["dotnet", "test", project, "-c", "Release", "--no-build", "--logger", "console;verbosity=normal",
-         "--logger", "trx;LogFileName=Markitai.Core.Tests.trx", "--results-directory", str(results)], cwd=HERE, env=env)
-    check_results(results / "Markitai.Core.Tests.trx")
+    results.mkdir(parents=True)
+    trx = results / "Markitai.Core.Tests.trx"
+    assembly = TESTS / "bin" / "Release" / "net10.0" / "Markitai.Core.Tests.dll"
+    run(["dotnet", str(assembly), "-noLogo", "-noColor", "-trx", str(trx)], cwd=HERE, env=env)
+    check_results(trx)
 
 
 def check_results(trx):
     """A passing run proves something only if its tests ran: every one of them passes, none is skipped."""
     if not trx.exists():
-        raise SystemExit(f"dotnet test wrote no results at {trx}")
+        raise SystemExit(f"the test run wrote no results at {trx}")
     counters = ElementTree.parse(trx).getroot().find(".//{http://microsoft.com/schemas/VisualStudio/TeamTest/2010}Counters")
     total, passed = int(counters.get("total")), int(counters.get("passed"))
     print(f"Markitai.Core.Tests: {passed} of {total} passed ({trx})")
