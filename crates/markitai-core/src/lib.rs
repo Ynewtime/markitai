@@ -1326,6 +1326,13 @@ pub fn is_url(source: &str) -> bool {
 
 /// Shared native adapter protocol. Errors are values; no host stdout is used.
 pub fn convert_json(request: &str) -> String {
+    convert_json_as(request, ConversionFailure::code)
+}
+
+/// [`convert_json`] with `code` naming a failure's error code: the native
+/// apps' core tells an image without text apart from other failures.
+#[doc(hidden)]
+pub fn convert_json_as(request: &str, code: impl Fn(&ConversionFailure) -> &'static str) -> String {
     let result = serde_json::from_str::<Request>(request)
         .map_err(|error| ConversionFailure::from(Error::from(error)))
         .and_then(|r| {
@@ -1338,7 +1345,7 @@ pub fn convert_json(request: &str) -> String {
     match result {
         Ok(result) => json!({"ok":true,"result":result}).to_string(),
         Err(failure) => {
-            let mut error = json!({"code":failure.code(),"message":failure.to_string()});
+            let mut error = json!({"code":code(&failure),"message":failure.to_string()});
             if failure.usage.requests > 0
                 || failure.usage.input_tokens > 0
                 || failure.usage.output_tokens > 0

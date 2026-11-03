@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="MarkitaiApp.Views.HistoryList"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:m="using:MarkitaiApp"
+    xmlns:core="using:Markitai.Core">
+    <Grid Padding="24,0,12,0" RowSpacing="8">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+        <Grid Margin="0,8,0,8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="{m:S Key=nav.history}" Style="{StaticResource TitleTextBlockStyle}" VerticalAlignment="Center" />
+            <CommandBar Grid.Column="1" DefaultLabelPosition="Right" Background="Transparent" OverflowButtonVisibility="Collapsed">
+                <AppBarButton x:Name="ClearHistory" Label="{m:S Key=history.clear}" Click="ClearHistory_Click">
+                    <AppBarButton.Icon>
+                        <FontIcon Glyph="&#xE74D;" />
+                    </AppBarButton.Icon>
+                </AppBarButton>
+            </CommandBar>
+        </Grid>
+        <AutoSuggestBox
+            x:Name="Search"
+            Grid.Row="1"
+            PlaceholderText="{m:S Key=history.search}"
+            AutomationProperties.Name="{m:S Key=history.search}"
+            QueryIcon="Find"
+            TextChanged="Search_TextChanged" />
+        <TextBlock x:Name="NoResults" Grid.Row="2" TextWrapping="Wrap" Visibility="Collapsed" Margin="0,8,0,0" />
+        <ListView
+            x:Name="List"
+            Grid.Row="3"
+            Margin="-12,0,-4,0"
+            SelectionMode="Single"
+            IsItemClickEnabled="True"
+            AutomationProperties.Name="{m:S Key=nav.history}"
+            SelectionChanged="List_SelectionChanged"
+            ItemClick="List_ItemClick"
+            ContainerContentChanging="List_ContainerContentChanging"
+            ContextRequested="List_ContextRequested">
+            <ListView.ItemTemplate>
+                <DataTemplate x:DataType="core:HistoryEntry">
+                    <Grid Height="60" ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <FontIcon Glyph="{x:Bind m:Ui.KindGlyphOf(Kind)}" FontSize="16" VerticalAlignment="Center" />
+                        <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                            <TextBlock Text="{x:Bind Title}" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" />
+                            <TextBlock
+                                Text="{x:Bind m:Ui.HistorySubtitle(FinishedAt, Warnings)}"
+                                Style="{StaticResource CaptionTextBlockStyle}"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                TextTrimming="CharacterEllipsis"
+                                TextWrapping="NoWrap" />
+                        </StackPanel>
+                        <FontIcon
+                            Grid.Column="2"
+                            Glyph="&#xE7BA;"
+                            FontSize="16"
+                            VerticalAlignment="Center"
+                            Foreground="{ThemeResource SystemFillColorCautionBrush}"
+                            Visibility="{x:Bind m:Ui.WarningsVisible(Warnings)}" />
+                    </Grid>
+                </DataTemplate>
+            </ListView.ItemTemplate>
+        </ListView>
+    </Grid>
+</UserControl>

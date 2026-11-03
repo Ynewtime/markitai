@@ -1,0 +1,93 @@
+import AppKit
+import MarkitaiKit
+import SwiftUI
+
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    private var pendingFiles: [URL] = []
+    private var launched = false
+    private var keyMonitor: Any?
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        launched = true
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            MainActor.assumeIsolated { Self.textFieldKeys(event) }
+        }
+        if !pendingFiles.isEmpty {
+            AppModel.shared.add(pendingFiles.map(Input.file))
+            pendingFiles = []
+        }
+    }
+
+    /// Files dropped on the Dock icon or opened with the app.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        let files = urls.filter(\.isFileURL)
+        guard launched else {
+            pendingFiles += files
+            return
+        }
+        AppModel.shared.add(files.map(Input.file))
+        AppModel.shared.showWindow()
+    }
+
+    /// Paste with no text field focused adds the clipboard's files or web
+    /// address (DESIGN.md 11). The application delegate is the last responder
+    /// that sees `paste:`; a focused field takes it before.
+    @objc func paste(_ sender: Any?) {
+        AppModel.shared.pasteFromClipboard()
+    }
+
+    /// ⌘⌫ is Remove (DESIGN.md 11) except while a text field is being edited,
+    /// where it deletes to the start of the line, as in Finder. Menu key
+    /// equivalents run before the field sees a key, so the field gets this one
+    /// here first.
+    private static func textFieldKeys(_ event: NSEvent) -> NSEvent? {
+        guard event.keyCode == 51,
+              event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
+              let editor = event.window?.firstResponder as? NSTextView, editor.isEditable
+        else { return event }
+        editor.deleteToBeginningOfLine(nil)
+        return nil
+    }
+
+    /// Closing the window keeps conversions running; the Dock icon reopens it.
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        false
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
+        if !hasVisibleWindows {
+            AppModel.shared.showWindow()
+        }
+        return true
+    }
+
+    /// Every quit path asks first while a conversion runs (DESIGN.md 6.7, 7.3).
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        let workbench = AppModel.shared.workbench
+        let running = workbench.convertingCount
+        guard running > 0 else { return .terminateNow }
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = L["quit.title"]
+        var body = L.plural("quit.body", count: running)
+        if workbench.queuedCount > 0 {
+            body += " " + L["quit.body.queued"]
+        }
+        alert.informativeText = body
+        let quit = alert.addButton(withTitle: L["quit.confirm"])
+        let cancel = alert.addButton(withTitle: L["common.cancel"])
+        quit.keyEquivalent = ""
+        cancel.keyEquivalent = "\r"
+        quit.hasDestructiveAction = true
+        let answer = { (response: NSApplication.ModalResponse) in
+            sender.reply(toApplicationShouldTerminate: response == .alertFirstButtonReturn)
+        }
+        if let window = NSApp.windows.first(where: { $0.isVisible && $0.canBecomeMain }) {
+            alert.beginSheetModal(for: window, completionHandler: answer)
+        } else {
+            answer(alert.runModal())
+        }
+        return .terminateLater
+    }
+}

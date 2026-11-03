@@ -1,0 +1,5 @@
+bin/
+obj/
+*.user
+.vs/
+Markitai.App/Assets/Markitai.ico
