@@ -74,6 +74,36 @@ jobs:
       - name: Drive the app on the desktop
         shell: powershell
         run: native\windows\smoke.ps1 -State "$env:RUNNER_TEMP\markitai-smoke" -Out "$env:RUNNER_TEMP\markitai-evidence"
+      # Temporary: `dotnet test` exited 0 here without running a test. Each probe runs it
+      # with one part of build.py's isolated environment, with VSTest diagnostics.
+      - name: Diagnose dotnet test (temporary)
+        if: always()
+        continue-on-error: true
+        run: |
+          $project = 'native\windows\Markitai.Core.Tests\Markitai.Core.Tests.csproj'
+          $diag = Join-Path $env:RUNNER_TEMP 'dotnet-test-diag'
+          $iso = Join-Path $env:RUNNER_TEMP 'dotnet-test-home'
+          New-Item -ItemType Directory -Force $diag, "$iso\AppData\Local", "$iso\AppData\Roaming", "$iso\temp" | Out-Null
+          Get-Command dotnet -All | ForEach-Object { "dotnet on PATH: $($_.Source)" }
+          "DOTNET_ROOT=$env:DOTNET_ROOT"
+          dotnet --version
+          dotnet --list-sdks
+          function Probe([string]$name, [hashtable]$vars) {
+            $saved = @{}
+            foreach ($key in $vars.Keys) { $saved[$key] = [Environment]::GetEnvironmentVariable($key); [Environment]::SetEnvironmentVariable($key, $vars[$key]) }
+            $out = Join-Path $diag "$name.txt"
+            dotnet test $project -c Release --no-build -v n --diag (Join-Path $diag "$name.diag.log") *> $out
+            $code = $LASTEXITCODE
+            foreach ($key in $vars.Keys) { [Environment]::SetEnvironmentVariable($key, $saved[$key]) }
+            $lines = @(Get-Content $out)
+            "=== ${name}: exit $code, $($lines.Count) lines, summary: $(($lines | Select-String -Pattern 'Total tests|Passed!|Failed!|No test' | Select-Object -First 2) -join ' / ')"
+          }
+          Probe 'developer' @{}
+          Probe 'isolated' @{ HOME = $iso; USERPROFILE = $iso; LOCALAPPDATA = "$iso\AppData\Local"; APPDATA = "$iso\AppData\Roaming"; TEMP = "$iso\temp"; TMP = "$iso\temp" }
+          Probe 'profile' @{ HOME = $iso; USERPROFILE = $iso }
+          Probe 'appdata' @{ LOCALAPPDATA = "$iso\AppData\Local"; APPDATA = "$iso\AppData\Roaming" }
+          Probe 'temp' @{ TEMP = "$iso\temp"; TMP = "$iso\temp" }
+          Get-ChildItem $diag | ForEach-Object { "$($_.Length)`t$($_.Name)" }
       - name: Keep the screenshots, logs and test results
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -82,6 +112,7 @@ jobs:
           path: |
             ${{ runner.temp }}/markitai-evidence
             ${{ runner.temp }}/markitai-tests/results
+            ${{ runner.temp }}/dotnet-test-diag
           if-no-files-found: warn
           retention-days: 7
       - name: Keep the app folder

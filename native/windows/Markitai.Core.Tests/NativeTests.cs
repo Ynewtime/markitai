@@ -23,6 +23,10 @@ public sealed class NativeTests : IDisposable
     readonly string dir = Directory.CreateTempSubdirectory("markitai-native-").FullName;
     readonly ManualThread ui = new();
 
+    // prepare_environment makes the data folder the working directory on Windows, and
+    // Windows cannot delete a process's working directory.
+    readonly string workingDirectory = Directory.GetCurrentDirectory();
+
     static NativeTests()
     {
         if (!string.IsNullOrEmpty(Library))
@@ -43,6 +47,7 @@ public sealed class NativeTests : IDisposable
     {
         if (!string.IsNullOrEmpty(MarkitaiHome))
             File.Delete(ConfigPath);
+        Directory.SetCurrentDirectory(workingDirectory);
         Directory.Delete(dir, recursive: true);
     }
 
