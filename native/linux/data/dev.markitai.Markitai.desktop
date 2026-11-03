@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Markitai
+Comment=Convert documents and web pages to Markdown
+Comment[zh_CN]=把文档和网页转换为 Markdown
+Icon=dev.markitai.Markitai
+Exec=markitai-app %F
+Terminal=false
+Categories=Office;Utility;
+Keywords=Markdown;PDF;Word;PowerPoint;Excel;convert;
+StartupNotify=true
+StartupWMClass=dev.markitai.Markitai

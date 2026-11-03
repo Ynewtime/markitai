@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>dev.markitai.Markitai</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>Markitai</name>
+  <summary>Convert documents and web pages to Markdown</summary>
+  <summary xml:lang="zh-Hans">把文档和网页转换为 Markdown</summary>
+  <developer id="dev.markitai">
+    <name>Ynewtime</name>
+  </developer>
+  <description>
+    <p>
+      Markitai turns PDF, Word, PowerPoint, Excel, images, web pages and more
+      into Markdown on this computer. Each conversion gets its own folder with
+      the Markdown file and its images, and finished conversions stay in
+      History.
+    </p>
+  </description>
+  <launchable type="desktop-id">dev.markitai.Markitai.desktop</launchable>
+  <provides>
+    <binary>markitai-app</binary>
+  </provides>
+  <url type="homepage">https://github.com/Ynewtime/markitai</url>
+  <url type="bugtracker">https://github.com/Ynewtime/markitai/issues</url>
+  <content_rating type="oars-1.1"/>
+  <requires>
+    <display_length compare="ge">360</display_length>
+  </requires>
+  <supports>
+    <control>keyboard</control>
+    <control>pointing</control>
+  </supports>
+  <releases>
+    <release version="2.3.2" date="2026-10-27"/>
+  </releases>
+</component>
