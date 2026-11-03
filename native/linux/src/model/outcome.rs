@@ -47,6 +47,9 @@ pub struct Converted {
 pub struct Failure {
     pub code: String,
     pub message: String,
+    /// The output folder no folder could be claimed in, for
+    /// `output_unavailable`: the one at that moment, not the current one.
+    pub folder: Option<PathBuf>,
 }
 
 impl Failure {
@@ -54,6 +57,14 @@ impl Failure {
         Failure {
             code: code.to_owned(),
             message: message.into(),
+            folder: None,
+        }
+    }
+
+    pub fn output_unavailable(folder: PathBuf, message: impl Into<String>) -> Failure {
+        Failure {
+            folder: Some(folder),
+            ..Failure::new("output_unavailable", message)
         }
     }
 }
@@ -243,10 +254,10 @@ mod tests {
         assert_eq!(image.code, "image_only");
         let error = failed(json!({"ok": false, "error": {"code": "not_found", "message": "No such file"}}));
         assert_eq!(error, Failure::new("not_found", "No such file"));
-        assert_eq!(map_envelope("garbage"), Outcome::Failed(Failure {
-            code: "invalid_json".into(),
-            message: "expected value at line 1 column 1".into()
-        }));
+        assert_eq!(
+            map_envelope("garbage"),
+            Outcome::Failed(Failure::new("invalid_json", "expected value at line 1 column 1"))
+        );
     }
 
     #[test]

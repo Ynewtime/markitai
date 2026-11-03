@@ -73,6 +73,11 @@ pub struct Win {
     pub page: Cell<Page>,
     pub syncing: Cell<bool>,
     pub ticking: Cell<bool>,
+    /// The logout inhibitor held while items convert, and the count its
+    /// reason names.
+    pub inhibit: Cell<Option<(u32, usize)>>,
+    /// The quit dialog while it shows, so its count can follow the queue.
+    pub quit_dialog: RefCell<Option<adw::AlertDialog>>,
     pub default_output: PathBuf,
 }
 
@@ -470,6 +475,8 @@ impl Win {
             page: Cell::new(Page::Convert),
             syncing: Cell::new(false),
             ticking: Cell::new(false),
+            inhibit: Cell::new(None),
+            quit_dialog: RefCell::new(None),
             default_output,
         });
 
@@ -483,6 +490,9 @@ impl Win {
         win.refresh_convert();
         win.refresh_history();
         win.select_page(Page::Convert);
+        // The stack shows convert-empty from the start, so refresh_pages
+        // never switches to it here.
+        win.empty_choose.grab_focus();
 
         let weak = Rc::downgrade(&win);
         adw::StyleManager::default().connect_dark_notify(move |_| {
@@ -698,22 +708,14 @@ impl Win {
         {
             return;
         }
-        let (converting, queued) = {
-            let queue = self.queue.borrow();
-            (queue.converting(), queue.queued())
-        };
-        let mut body = crate::strings::plural("quit.body", converting);
-        if queued > 0 {
-            body.push(' ');
-            body.push_str(&tr("quit.body.queued"));
-        }
-        let dialog = adw::AlertDialog::new(Some(&tr("quit.title")), Some(&body));
+        let dialog = adw::AlertDialog::new(Some(&tr("quit.title")), None);
         dialog.add_responses(&[("cancel", &tr("common.cancel")), ("quit", &tr("quit.confirm"))]);
         dialog.set_response_appearance("quit", adw::ResponseAppearance::Destructive);
         dialog.set_default_response(Some("cancel"));
         dialog.set_close_response("cancel");
         let win = self.clone();
         dialog.connect_response(None, move |_, response| {
+            win.quit_dialog.replace(None);
             if response == "quit" {
                 // A conversion that finished while the dialog was up is
                 // already in History; only the unfinished ones are dropped.
@@ -723,6 +725,29 @@ impl Win {
             }
         });
         dialog.present(Some(&self.window));
+        self.quit_dialog.replace(Some(dialog));
+        self.follow_quit_dialog();
+    }
+
+    /// The quit dialog's count follows the queue; once nothing converts,
+    /// nothing would be lost, so the app quits (DESIGN.md 7.3).
+    pub fn follow_quit_dialog(&self) {
+        let (converting, queued) = {
+            let queue = self.queue.borrow();
+            (queue.converting(), queue.queued())
+        };
+        if converting > 0 {
+            if let Some(dialog) = self.quit_dialog.borrow().as_ref() {
+                dialog.set_body(&super::convert::quit_body(crate::strings::lang(), converting, queued));
+            }
+            return;
+        }
+        let Some(dialog) = self.quit_dialog.take() else {
+            return;
+        };
+        dialog.force_close();
+        self.save_window_state();
+        self.app.quit();
     }
 
     /// Delete the folders claimed for items still Converting (DESIGN.md

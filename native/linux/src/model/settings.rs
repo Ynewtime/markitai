@@ -139,6 +139,25 @@ mod tests {
     }
 
     #[test]
+    fn missing_keys_keep_their_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        for text in ["", "{}"] {
+            std::fs::write(&path, text).unwrap();
+            assert_eq!(Settings::load(&path), Settings::default(), "{text:?}");
+        }
+        std::fs::write(&path, r#"{"conversion.ocr": true}"#).unwrap();
+        let expected = Settings {
+            ocr: true,
+            ..Settings::default()
+        };
+        assert_eq!(Settings::load(&path), expected);
+        assert_eq!(expected.zoom, 1.0);
+        assert_eq!((expected.window_width, expected.window_height), (1200, 780));
+        assert_eq!(expected.config, ConfigSource::User);
+    }
+
+    #[test]
     fn settings_round_trip_as_one_flat_object() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("nested").join("settings.json");

@@ -154,15 +154,21 @@ pub fn install_window(win: &Rc<Win>) {
 
     // Keys a focused text field uses itself: these act only when it does
     // not (bubble phase, after the focus widget).
+    win.window.add_controller(list_keys(gtk::PropagationPhase::Bubble));
+}
+
+/// Delete removes the selected item and Ctrl+V adds what the clipboard
+/// holds (DESIGN.md 11), in `phase`.
+pub fn list_keys(phase: gtk::PropagationPhase) -> gtk::ShortcutController {
     let shortcuts = gtk::ShortcutController::new();
-    shortcuts.set_propagation_phase(gtk::PropagationPhase::Bubble);
+    shortcuts.set_propagation_phase(phase);
     for (trigger, action) in [("Delete|KP_Delete", "win.remove"), ("<Control>v", "win.paste")] {
         shortcuts.add_shortcut(gtk::Shortcut::new(
             gtk::ShortcutTrigger::parse_string(trigger),
             Some(gtk::NamedAction::new(action)),
         ));
     }
-    win.window.add_controller(shortcuts);
+    shortcuts
 }
 
 /// Right click, Shift+F10 or the Menu key on a row opens its menu.

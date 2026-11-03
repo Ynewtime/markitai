@@ -13,7 +13,6 @@ use uuid::Uuid;
 use webkit6::prelude::*;
 
 use crate::model::errors::{Second, error_copy, second_key};
-use crate::model::outcome::Failure;
 use crate::model::format;
 use crate::model::source::Kind;
 use crate::strings::{settings_name, tr, trf};
@@ -42,7 +41,7 @@ pub enum Body {
     Failed {
         code: String,
         message: String,
-        output_folder: String,
+        sentence: String,
     },
     /// `markdown` is None while History reads the file.
     Done {
@@ -274,6 +273,9 @@ impl Detail {
             .css_classes(["markdown-text", "monospace"])
             .build();
         text.update_property(&[gtk::accessible::Property::Label(&tr("a11y.markdown_text"))]);
+        // A text view's own bindings take Delete and Ctrl+V even when it is
+        // not editable, so the read-only Markdown hands them on first.
+        text.add_controller(super::actions::list_keys(gtk::PropagationPhase::Capture));
         let text_scroller = gtk::ScrolledWindow::builder().child(&text).vexpand(true).build();
 
         let note = gtk::Label::builder()
@@ -528,11 +530,9 @@ impl Detail {
         self.footer.set_label(shown.footer.as_deref().unwrap_or_default());
 
         match &shown.body {
-            Body::Failed { code, message, output_folder } => {
-                let failure = Failure::new(code, message.clone());
-                let sentence = super::convert::failure_sentence(&failure, output_folder);
+            Body::Failed { code, message, sentence } => {
                 let (_, second) = error_copy(code);
-                self.error_sentence.set_label(&sentence);
+                self.error_sentence.set_label(sentence);
                 self.error_message.set_label(message);
                 match second {
                     Some(second) => {

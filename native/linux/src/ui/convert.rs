@@ -1,7 +1,7 @@
 //! Convert (DESIGN.md 6.2, 6.3 and 7.1): adding sources, running two at a
 //! time, and the list column.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Instant, SystemTime};
 
@@ -20,15 +20,19 @@ use crate::model::outcome::{CostStatus, Failure, Outcome, convert_request, map_e
 use crate::model::queue::{Item, State};
 use crate::model::rfc3339_utc;
 use crate::model::source::{Added, Source, classify, parse_web_address};
-use crate::strings::{lang, plural, settings_name, tr, trf};
+use crate::strings::{Lang, lang, plural, plural_in, settings_name, text_in, tr, trf};
 
-/// The sentence for a failure, as the error block and the row say it.
-pub fn failure_sentence(failure: &Failure, output_folder: &str) -> String {
+/// The sentence for a failure, as the error block and the row say it, with
+/// paths written by `display`.
+pub fn failure_sentence(failure: &Failure, display: impl Fn(&Path) -> String) -> String {
     let (key, _) = error_copy(&failure.code);
     match key {
         "error.output_unavailable" => trf(
             "error.output_unavailable",
-            &[("folder", output_folder), ("settings", &settings_name())],
+            &[
+                ("folder", &failure.folder.as_deref().map(display).unwrap_or_default()),
+                ("settings", &settings_name()),
+            ],
         ),
         "error.skipped" => trf(
             "error.skipped",
@@ -57,6 +61,19 @@ pub fn footer_text(entry: &Entry) -> String {
         });
     }
     parts.join(" · ")
+}
+
+/// The quit dialog's body: how many conversions would stop, and that the
+/// queue would not run. zh-Hans joins sentences with no space.
+pub fn quit_body(lang: Lang, converting: usize, queued: usize) -> String {
+    let mut body = plural_in(lang, "quit.body", converting);
+    if queued > 0 {
+        if lang == Lang::En {
+            body.push(' ');
+        }
+        body.push_str(&text_in(lang, "quit.body.queued"));
+    }
+    body
 }
 
 fn with_warnings(text: String, warnings: usize) -> String {
@@ -189,7 +206,7 @@ impl Win {
                 let message = claim["error"]["message"].as_str().unwrap_or_default();
                 self.queue
                     .borrow_mut()
-                    .fail(id, Failure::new("output_unavailable", message));
+                    .fail(id, Failure::output_unavailable(parent, message));
                 self.announce_finished(id);
                 continue;
             };
@@ -214,6 +231,32 @@ impl Win {
         }
         self.refresh_convert();
         self.ensure_ticking();
+        self.hold_session();
+        self.follow_quit_dialog();
+    }
+
+    /// While items convert, ending the session asks first, as Quit does
+    /// (DESIGN.md 7.3): a logout inhibitor whose reason is the quit
+    /// dialog's sentence, renewed when the count changes.
+    fn hold_session(&self) {
+        let converting = self.queue.borrow().converting();
+        let held = self.inhibit.get();
+        if held.map_or(0, |(_, count)| count) == converting {
+            return;
+        }
+        let renewed = (converting > 0).then(|| {
+            let reason = plural("quit.body", converting);
+            let cookie = self.app.inhibit(
+                Some(&self.window),
+                gtk::ApplicationInhibitFlags::LOGOUT,
+                Some(&reason),
+            );
+            (cookie, converting)
+        });
+        if let Some((cookie, _)) = held.filter(|(cookie, _)| *cookie != 0) {
+            self.app.uninhibit(cookie);
+        }
+        self.inhibit.set(renewed);
     }
 
     fn finish(self: &Rc<Self>, id: Uuid, folder: PathBuf, outcome: Outcome) {
@@ -281,8 +324,7 @@ impl Win {
                 (with_warnings(done_status(entry), n), trailing)
             }
             State::Failed(failure) => {
-                let folder = self.display_path(&self.output_folder());
-                let reason = failure_sentence(failure, &folder);
+                let reason = failure_sentence(failure, |path| self.display_path(path));
                 (trf("row.failed", &[("reason", &reason)]), Trailing::Failed)
             }
         }
@@ -381,7 +423,7 @@ impl Win {
                 shown.body = Body::Failed {
                     code: failure.code.clone(),
                     message: failure.message.clone(),
-                    output_folder: self.display_path(&self.output_folder()),
+                    sentence: failure_sentence(failure, |path| self.display_path(path)),
                 };
             }
         }
@@ -394,6 +436,30 @@ mod tests {
     use super::*;
     use crate::model::history::sample;
     use crate::model::outcome::Usage;
+
+    #[test]
+    fn an_unavailable_folder_is_the_one_the_claim_failed_in() {
+        crate::strings::set_lang(crate::strings::Lang::En);
+        let failure = Failure::output_unavailable("/old/out".into(), "Permission denied");
+        let sentence = failure_sentence(&failure, |path| format!("<{}>", path.display()));
+        assert!(sentence.starts_with("Markitai couldn't create a folder in </old/out>."), "{sentence}");
+    }
+
+    #[test]
+    fn the_quit_body_counts_and_joins_sentences_per_language() {
+        assert_eq!(
+            quit_body(Lang::En, 2, 1),
+            "2 conversions are still running. If you quit now, they stop and their results are lost. Files waiting in the queue are not converted."
+        );
+        assert_eq!(
+            quit_body(Lang::En, 1, 0),
+            "1 conversion is still running. If you quit now, it stops and its result is lost."
+        );
+        assert_eq!(
+            quit_body(Lang::ZhHans, 2, 3),
+            "还有 2 个转换正在进行。现在退出会中止它们，结果将丢失。排队中的文件也不会被转换。"
+        );
+    }
 
     #[test]
     fn the_footer_names_duration_tokens_and_cost() {

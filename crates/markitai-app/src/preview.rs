@@ -1,7 +1,7 @@
 //! The Markdown preview every app shows (native/DESIGN.md, sections 3.3 and
 //! 15): one Rust function, so the three apps show the same bytes.
 
-use std::path::{Component, Path, PathBuf};
+use std::path::Path;
 
 use pulldown_cmark::{CowStr, Event, Options, Parser, Tag, TagEnd, html};
 
@@ -24,9 +24,9 @@ impl Theme {
 }
 
 /// One complete HTML document showing `markdown` in `theme`: no scripts,
-/// nothing loaded but `file:` and `data:` images, raw HTML shown as text.
-/// Relative images resolve inside `base_dir` (the conversion's folder);
-/// every other image is shown as its alt text.
+/// nothing loaded but `data:` images and files inside `base_dir` (the
+/// conversion's folder), raw HTML shown as text. Every other image is shown
+/// as its alt text.
 pub fn render(markdown: &str, theme: Theme, base_dir: Option<&Path>) -> String {
     let options = Options::ENABLE_TABLES
         | Options::ENABLE_STRIKETHROUGH
@@ -97,28 +97,70 @@ fn alt_text(parser: &mut Parser) -> String {
     alt
 }
 
-/// What the preview loads for an image source: `data:` and `file:` as
-/// written, a relative path as a `file://` URL inside `base_dir`, else none.
+/// What the preview loads for an image source: `data:` as written, and a
+/// `file:` or relative source as the `file://` URL of the file it names,
+/// if that file is inside `base_dir`. Anything else loads nothing.
 fn image_url<'a>(source: &CowStr<'a>, base_dir: Option<&Path>) -> Option<CowStr<'a>> {
-    let lower = source.trim_start().to_ascii_lowercase();
-    if lower.starts_with("data:") || lower.starts_with("file:") {
+    let trimmed = source.trim_start();
+    let scheme = |name: &str| {
+        trimmed
+            .get(..name.len())
+            .is_some_and(|head| head.eq_ignore_ascii_case(name))
+    };
+    if scheme("data:") {
         return Some(source.clone());
     }
-    if has_scheme(source) || source.starts_with("//") || source.starts_with(['/', '\\']) {
+    let base_url = file_url(base_dir?);
+    let base_url = base_url.strip_suffix('/').unwrap_or(&base_url);
+    let base = segments(Vec::new(), &base_url["file://".len()..]);
+    let named = if scheme("file:") {
+        segments(Vec::new(), local_path(&trimmed["file:".len()..])?)
+    } else if has_scheme(source) || source.starts_with("//") || source.starts_with(['/', '\\']) {
+        return None;
+    } else {
+        segments(
+            base.clone(),
+            source.split(['?', '#']).next().unwrap_or_default(),
+        )
+    };
+    let rest = named.strip_prefix(base.as_slice())?;
+    if rest.is_empty() || rest.iter().any(|segment| segment.contains(':')) {
         return None;
     }
-    let base = base_dir?;
-    let path = source.split(['?', '#']).next().unwrap_or_default();
-    let mut inside = PathBuf::new();
+    let mut url = base_url.to_owned();
+    for segment in rest {
+        url.push('/');
+        push_encoded(&mut url, segment);
+    }
+    Some(url.into())
+}
+
+/// The path of a `file:` URL (the text after `file:`) on this computer:
+/// no host or `localhost`, query and fragment dropped.
+fn local_path(url: &str) -> Option<&str> {
+    let url = url.split(['?', '#']).next().unwrap_or_default();
+    match url.strip_prefix("//") {
+        Some(rest) => {
+            let (host, path) = rest.split_at(rest.find('/')?);
+            (host.is_empty() || host.eq_ignore_ascii_case("localhost")).then_some(path)
+        }
+        None => url.starts_with('/').then_some(url),
+    }
+}
+
+/// `start` followed by the segments of a URL path, decoded, with `.` and
+/// `..` resolved as a browser resolves them.
+fn segments(mut start: Vec<String>, path: &str) -> Vec<String> {
     for part in percent_decode(path).split(['/', '\\']) {
-        match Path::new(part).components().next() {
-            None | Some(Component::CurDir) => {}
-            Some(Component::Normal(_)) if !part.contains(':') => inside.push(part),
-            Some(Component::ParentDir) if inside.pop() => {}
-            _ => return None,
+        match part {
+            "" | "." => {}
+            ".." => {
+                start.pop();
+            }
+            part => start.push(part.to_owned()),
         }
     }
-    Some(file_url(&base.join(inside)).into())
+    start
 }
 
 fn has_scheme(url: &str) -> bool {
@@ -142,6 +184,11 @@ pub fn file_url(path: &Path) -> String {
     if !text.starts_with('/') {
         url.push('/');
     }
+    push_encoded(&mut url, &text);
+    url
+}
+
+fn push_encoded(url: &mut String, text: &str) {
     for byte in text.bytes() {
         if byte.is_ascii_alphanumeric() || b"/-._~:!$&'()*+,;=@".contains(&byte) {
             url.push(byte as char);
@@ -149,7 +196,6 @@ pub fn file_url(path: &Path) -> String {
             url.push_str(&format!("%{byte:02X}"));
         }
     }
-    url
 }
 
 pub(crate) fn percent_decode(text: &str) -> String {
@@ -265,6 +311,95 @@ mod tests {
         let none = render("![a](assets/a.png)", Theme::Light, None);
         let none = &none[none.find("<main>").unwrap()..];
         assert!(none.contains("class=\"img-remote\""));
+    }
+
+    fn image(source: &str, base: Option<&Path>) -> String {
+        let html = render(&format!("![i]({source})"), Theme::Light, base);
+        body(&html).to_owned()
+    }
+
+    #[test]
+    fn file_images_load_only_from_inside_the_folder() {
+        let base = Some(Path::new("/out/Quarterly Report"));
+        for (source, loaded) in [
+            (
+                "file:///out/Quarterly%20Report/.markitai/assets/a%20b.png",
+                "file:///out/Quarterly%20Report/.markitai/assets/a%20b.png",
+            ),
+            (
+                "FILE://localhost/out/Quarterly%20Report/./x.png?v=1#top",
+                "file:///out/Quarterly%20Report/x.png",
+            ),
+            (
+                "file:/out/Quarterly%20Report/sub/../x.png",
+                "file:///out/Quarterly%20Report/x.png",
+            ),
+            (
+                "file:///out/Quarterly%20Report/%e6%8a%a5.png",
+                "file:///out/Quarterly%20Report/%E6%8A%A5.png",
+            ),
+            (
+                "../Quarterly%20Report/x.png",
+                "file:///out/Quarterly%20Report/x.png",
+            ),
+        ] {
+            let body = image(source, base);
+            assert!(
+                body.contains(&format!("src=\"{loaded}\"")),
+                "{source}: {body}"
+            );
+        }
+        for outside in [
+            "file:///etc/hosts.png",
+            "file:///out/Quarterly%20Report/../secret.png",
+            "file:///out/Quarterly%20Report/%2e%2E/secret.png",
+            "file:///out/Quarterly%20Report/..%2Fsecret.png",
+            r"file:///out/Quarterly%20Report/..\secret.png",
+            "file:///out/Quarterly%20Report%20Old/x.png",
+            "file:///out/Quarterly%20Report",
+            "file://example.com/out/Quarterly%20Report/x.png",
+            "file:x.png",
+            "file:///out/Quarterly%20Report/c:x.png",
+        ] {
+            let body = image(outside, base);
+            assert!(
+                body.contains(&format!("title=\"{outside}\"")),
+                "{outside}: {body}"
+            );
+            assert!(!body.contains("src="), "{outside}: {body}");
+        }
+        let body = image("file:///out/Quarterly%20Report/x.png", None);
+        assert!(body.contains("class=\"img-remote\""), "{body}");
+    }
+
+    #[test]
+    fn windows_drive_folders_hold_their_images() {
+        let base = Some(Path::new(r"C:\Users\example\Markitai\Report"));
+        for (source, loaded) in [
+            (
+                "file:///C:/Users/example/Markitai/Report/a.png",
+                "file:///C:/Users/example/Markitai/Report/a.png",
+            ),
+            (
+                r".markitai\assets\a.png",
+                "file:///C:/Users/example/Markitai/Report/.markitai/assets/a.png",
+            ),
+        ] {
+            let body = image(source, base);
+            assert!(
+                body.contains(&format!("src=\"{loaded}\"")),
+                "{source}: {body}"
+            );
+        }
+        for outside in [
+            "file:///C:/Users/example/Markitai/secret.png",
+            "file:///D:/Users/example/Markitai/Report/a.png",
+            "file:///C:/Users/example/Markitai/Report/../../secret.png",
+            r"..\\..\\secret.png",
+        ] {
+            let body = image(outside, base);
+            assert!(!body.contains("src="), "{outside}: {body}");
+        }
     }
 
     #[test]

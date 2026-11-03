@@ -5,9 +5,9 @@ use std::path::Path;
 
 use crate::strings::{Lang, fill, text_in};
 
-/// `18.6 s` below a minute, `2 min 5 s` from there.
+/// `18.6 s` below a minute, never less than `0.1 s`; `2 min 5 s` from there.
 pub fn duration(lang: Lang, seconds: f64) -> String {
-    let seconds = seconds.max(0.0);
+    let seconds = seconds.max(0.1);
     if seconds < 59.95 {
         let value = format!("{seconds:.1}");
         fill(&text_in(lang, "unit.seconds"), &[("value", &value)])
@@ -72,7 +72,10 @@ mod tests {
     fn durations_use_one_decimal_then_minutes() {
         assert_eq!(duration(Lang::En, 18.6), "18.6 s");
         assert_eq!(duration(Lang::ZhHans, 18.6), "18.6 秒");
-        assert_eq!(duration(Lang::En, 0.04), "0.0 s");
+        assert_eq!(duration(Lang::En, 0.04), "0.1 s");
+        assert_eq!(duration(Lang::En, 0.0), "0.1 s");
+        assert_eq!(duration(Lang::En, -1.0), "0.1 s");
+        assert_eq!(duration(Lang::En, 0.16), "0.2 s");
         assert_eq!(duration(Lang::En, 59.96), "1 min 0 s");
         assert_eq!(duration(Lang::En, 125.4), "2 min 5 s");
         assert_eq!(duration(Lang::ZhHans, 125.4), "2 分 5 秒");

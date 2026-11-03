@@ -48,12 +48,15 @@ pub fn run(args: &[String]) -> glib::ExitCode {
 
     let slot = window.clone();
     app.connect_activate(move |app| {
-        present(app, &slot);
+        win(app, &slot).window.present();
     });
     let slot = window.clone();
     app.connect_open(move |app, files, _hint| {
-        let win = present(app, &slot);
+        // Added before the window shows, so its first focus is not on the
+        // empty page the files replace.
+        let win = win(app, &slot);
         win.add_gfiles(files);
+        win.window.present();
     });
     let code = app.run_with_args(args);
     // Only a confirmed Quit leaves items Converting here (DESIGN.md 7.3).
@@ -63,13 +66,10 @@ pub fn run(args: &[String]) -> glib::ExitCode {
     code
 }
 
-fn present(app: &adw::Application, slot: &Rc<RefCell<Option<Rc<Win>>>>) -> Rc<Win> {
-    let win = slot
-        .borrow_mut()
+fn win(app: &adw::Application, slot: &Rc<RefCell<Option<Rc<Win>>>>) -> Rc<Win> {
+    slot.borrow_mut()
         .get_or_insert_with(|| Win::new(app))
-        .clone();
-    win.window.present();
-    win
+        .clone()
 }
 
 /// The ink accent (DESIGN.md 13.2), swapped with the appearance, and the

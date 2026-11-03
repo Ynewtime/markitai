@@ -164,7 +164,7 @@ Each C function is a thin wrapper over the Rust function of the same name.
 | Parser | `pulldown-cmark` with `ENABLE_TABLES`, `ENABLE_STRIKETHROUGH`, `ENABLE_TASKLISTS`, `ENABLE_FOOTNOTES`, `ENABLE_YAML_STYLE_METADATA_BLOCKS` |
 | Raw HTML | `Event::Html` and `Event::InlineHtml` become `Event::Text`, so the HTML shows escaped |
 | Front matter | The YAML block is left out of the preview. The Markdown tab shows it |
-| Images | `data:` sources stay. A `file:` source stays if its path is inside `base_dir`. A relative source resolves against `base_dir` into an absolute `file://` URL, if the result stays inside `base_dir`. Every other source (http, https, `//`, absolute paths, `file:` or `..` outside `base_dir`, any `base_dir` of null) becomes `<span class="img-remote" title="<source>"><alt or source></span>` |
+| Images | `data:` sources stay. A `file:` source (no host, or `localhost`) and a relative source (against `base_dir`) resolve to a path, decoding percent escapes and resolving `.` and `..`; if that path is inside `base_dir`, the image loads from its canonical `file://` URL, so the web view loads exactly the path that was checked. Every other source (http, https, `//`, absolute paths, `file:` or `..` outside `base_dir`, any `base_dir` of null) becomes `<span class="img-remote" title="<source>"><alt or source></span>` |
 | Links | Kept as written. The app decides what a click does (section 8) |
 | Base | No `<base>` element, so footnote links stay in the same document |
 | Output | Deterministic: the same request gives the same bytes on every platform |
