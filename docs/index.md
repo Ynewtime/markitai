@@ -93,6 +93,7 @@ full repository checkout; internal work records are not copied into packages.
 ## Services and bindings
 
 - [REST service](serve.md) and [browser workspace](web-ui.md).
+- [Desktop app](desktop.md): the workspace in a macOS window, built from a checkout.
 - [Service settings](service-settings.md) and
   [provider management](provider-management.md): saved connections, model
   discovery and connection tests.

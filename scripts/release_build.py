@@ -2,10 +2,12 @@
 
 `.github/workflows/release.yml` runs every subcommand; each also runs locally:
 
-  version   check the tag, Cargo, Python and server.json versions agree
+  version   check the tag, Cargo, Python, desktop app and server.json
+            versions agree
   prepare-version  set a release's version everywhere it is written, for the
-            release commit (Cargo, Cargo.lock, Python, npm, server.json, the
-            help snapshot), then list what still names the old version
+            release commit (Cargo, Cargo.lock, Python, npm, the desktop app's
+            mygo.json, server.json, the help snapshot), then list what still
+            names the old version
   notes     the GitHub Release notes: the tag's section of CHANGELOG.md
             (or its lead when long) and a link to the full changelog
   cli       build the CLI for one target and write its release archive
@@ -115,6 +117,9 @@ def check_versions(root, tag=None):
     if python != python_version(cargo):
         errors.append(f"bindings/python/pyproject.toml says {python}, Cargo.toml {cargo} "
                       f"(expected {python_version(cargo)})")
+    desktop = json.loads((root / "desktop/mygo.json").read_text(encoding="utf-8")).get("version")
+    if desktop != cargo:
+        errors.append(f"desktop/mygo.json says {desktop}, Cargo.toml {cargo}")
     server = json.loads((root / "server.json").read_text(encoding="utf-8"))
     errors.extend(server_errors(server, python_version(cargo) if tag else None))
     if tag is not None and tag != f"v{cargo}":
@@ -237,6 +242,7 @@ def set_versions(root, version):
     _replace_once(root / "bindings/python/pyproject.toml", r'(^\[project\][^\[]*?^version\s*=\s*")[^"]+(")',
                   rf"\g<1>{python_version(version)}\g<2>")
     _replace_once(root / "bindings/node/package.json", r'^(  "version": ")[^"]+(")', rf"\g<1>{npm_version(version)}\g<2>")
+    _replace_once(root / "desktop/mygo.json", r'^(  "version": ")[^"]+(")', rf"\g<1>{version}\g<2>")
     server_path = root / "server.json"
     server = json.loads(server_path.read_text(encoding="utf-8"))
     pinned = python_version(version)

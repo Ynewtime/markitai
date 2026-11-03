@@ -86,6 +86,40 @@ test runner must accept its location explicitly and record the reference SHA.
 See [native CI](ci.md) for the clean-checkout package driver and its actual
 installation checks. Configuring a runner is separate from executing it.
 
+## Desktop app
+
+`desktop/` is the [desktop app](desktop.md): a Go module (Go 1.27.3 or later,
+`desktop/go.mod`) on [mygo](https://github.com/egoist/mygo), a pure-Go
+toolkit for native windows, which comes in as a Go tool (`go tool mygo`). It
+packages a release CLI archive; its version is the workspace's, which
+`release_build.py prepare-version` writes to `desktop/mygo.json` and
+`release_build.py version` compares.
+
+```sh
+python3 scripts/desktop_build.py vet
+python3 scripts/desktop_build.py stage --archive markitai-v<version>-aarch64-apple-darwin.tar.gz [--sums SHA256SUMS]
+python3 scripts/desktop_build.py build --platform darwin/arm64 [--e2e]
+python3 scripts/desktop_e2e.py ROUND [--only NAME,...]
+```
+
+`vet` checks gofmt and runs `go vet` for darwin, linux and windows, and the Go
+tests on this system (compiling them for the others); the tests stand in for
+`markitai serve` with the test binary itself, so they need no markitai.
+`stage` replaces the Git-ignored `desktop/resources/` with the archive's
+`markitai` and the licences: the archive's, Go's, and those of every module
+`go list -deps` links (a module without one fails). `build` makes
+`desktop/build/darwin-arm64/Markitai.app` and
+`markitai-desktop-<version>-arm64.dmg`, the only platform this round; no
+artifact may be named like a CLI archive (`markitai-v…`). `--e2e` builds with
+the `e2e` tag, mygo's automation plugin and the web inspector, without a disk
+image, into `desktop/build/e2e/`. `desktop_e2e.py` drives that build over the
+automation socket through the scenarios its docstring lists, each with its own
+`HOME`, `MARKITAI_HOME` and app data, and keeps the evidence in
+`.local/desktop-e2e/ROUND/`; the bundled `markitai` must have `serve
+--supervised`. The native Save panel and quit question are answered by the
+e2e build's environment there, so check them by hand once.
+`scripts/test_desktop_build.py` runs with the helper tests.
+
 ## Website
 
 `website/` is markitai.dev (VitePress, English at the root, Chinese under

@@ -131,7 +131,7 @@ class PrepareVersionTests(unittest.TestCase):
     def copy(self, directory):
         root = Path(directory)
         for name in ["Cargo.toml", "bindings/python/pyproject.toml", "bindings/python/README.md",
-                     "bindings/node/package.json", "server.json"]:
+                     "bindings/node/package.json", "desktop/mygo.json", "server.json"]:
             (root / name).parent.mkdir(parents=True, exist_ok=True)
             (root / name).write_bytes((ROOT / name).read_bytes())
         (root / "docs").mkdir()
@@ -157,6 +157,8 @@ class PrepareVersionTests(unittest.TestCase):
             self.assertEqual(check_versions(root, "v9.8.7")["python_version"], "9.8.7")
             package = json.loads((root / "bindings/node/package.json").read_text(encoding="utf-8"))
             self.assertEqual(package["version"], "9.8.7")
+            desktop = json.loads((root / "desktop/mygo.json").read_text(encoding="utf-8"))
+            self.assertEqual(desktop["version"], "9.8.7")
             server = json.loads((root / "server.json").read_text(encoding="utf-8"))
             self.assertEqual((server["version"], server["packages"][0]["version"]), ("9.8.7", "9.8.7"))
             self.assertIn({"--from": "markitai==9.8.7"},
@@ -165,6 +167,15 @@ class PrepareVersionTests(unittest.TestCase):
             self.assertEqual(release_build.stale_versions(root, old), [])
             with self.assertRaises(SystemExit):
                 release_build.prepare_version(root, "9.8.7", run_cargo=False)
+
+    def test_the_desktop_app_must_carry_the_workspace_version(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root, old = self.copy(directory)
+            mygo = root / "desktop/mygo.json"
+            mygo.write_text(mygo.read_text(encoding="utf-8").replace(f'"version": "{old}"', '"version": "0.0.1"'),
+                            encoding="utf-8")
+            with self.assertRaisesRegex(SystemExit, f"desktop/mygo.json says 0.0.1, Cargo.toml {old}"):
+                check_versions(root)
 
     def test_refuses_development_versions(self):
         with self.assertRaises(SystemExit):
