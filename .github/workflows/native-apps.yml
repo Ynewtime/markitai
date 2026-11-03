@@ -42,6 +42,8 @@ jobs:
       - name: Install Rust
         run: rustup toolchain install ${{ env.RUSTUP_TOOLCHAIN }} --profile minimal
       # Dependency artifacts only; build.py builds the DLL in target/native-windows.
+      # Saved after a failed run too: the dependencies take about 20 minutes and do
+      # not depend on whether the app or its smoke test passed.
       - name: Restore Cargo dependencies
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
@@ -49,6 +51,7 @@ jobs:
           workspaces: '. -> target/native-windows'
           cache-bin: false
           cache-workspace-crates: false
+          cache-on-failure: true
       - name: Install the .NET SDK
         run: |
           $dir = Join-Path $env:RUNNER_TEMP 'dotnet'

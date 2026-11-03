@@ -33,9 +33,6 @@ ICON = APP / "Assets" / "Markitai.ico"
 ICON_SIZES = (256, 128, 64, 48, 32, 24, 16)
 TFM = "net10.0-windows10.0.26100.0"
 
-sys.path.insert(0, str(REPO / "scripts"))
-from executable_identity import windows_imports  # noqa: E402
-
 
 def run(command, **kwargs):
     print("+", " ".join(str(part) for part in command), flush=True)
@@ -56,14 +53,45 @@ def build_core():
     env["CARGO_ENCODED_RUSTFLAGS"] = "\x1f".join([*flags, "-Ctarget-feature=+crt-static"])
     run(["cargo", "rustc", "-p", "markitai-app", "--release", "--locked", "--lib", "--crate-type", "cdylib",
          "--target", TARGET, "--target-dir", str(target_dir)], cwd=REPO, env=env)
-    dll = target_dir / TARGET / "release" / "markitai_app.dll"
-    check_runtime(dll)
-    return dll
+    return target_dir / TARGET / "release" / "markitai_app.dll"
+
+
+def dll_imports(path):
+    """The DLLs a PE32+ image imports, normal and delay-loaded, in lower case.
+
+    scripts/executable_identity.py reads console executables only, so the DLL gets
+    this reader of the two import directories (PE/COFF specification).
+    """
+    data = Path(path).read_bytes()
+    pe = struct.unpack_from("<I", data, 0x3C)[0]
+    if data[:2] != b"MZ" or data[pe:pe + 4] != b"PE\0\0":
+        raise SystemExit(f"{path} is not a PE image")
+    sections, optional_size = struct.unpack_from("<H", data, pe + 6)[0], struct.unpack_from("<H", data, pe + 20)[0]
+    optional = pe + 24
+    if struct.unpack_from("<H", data, optional)[0] != 0x20B:
+        raise SystemExit(f"{path} is not PE32+")
+    table = [struct.unpack_from("<IIII", data, optional + optional_size + i * 40 + 8) for i in range(sections)]
+
+    def offset(rva):
+        for virtual_size, start, raw_size, raw in table:
+            if start <= rva < start + max(virtual_size, raw_size):
+                return raw + rva - start
+        raise SystemExit(f"{path}: RVA {rva:#x} lies outside every section")
+
+    names = []
+    # Data directory 1 holds 20-byte import descriptors, 13 holds 32-byte delay-load ones.
+    for directory, size, name_field in ((1, 20, 12), (13, 32, 4)):
+        rva = struct.unpack_from("<I", data, optional + 112 + directory * 8)[0]
+        at = offset(rva) if rva else len(data)
+        while any(entry := data[at:at + size]):
+            name = offset(struct.unpack_from("<I", entry, name_field)[0])
+            names.append(data[name:data.index(b"\0", name)].decode("ascii").lower())
+            at += size
+    return names
 
 
 def check_runtime(dll):
-    imports = windows_imports(dll)
-    names = sorted({name for group in imports.values() for name in group})
+    names = sorted(set(dll_imports(dll)))
     redistributable = [name for name in names if name.startswith(("vcruntime", "msvcp", "msvcr", "concrt", "vccorlib")) or name == "ucrtbased.dll"]
     print(f"{dll.name} imports: {', '.join(names)}")
     if redistributable:
@@ -173,11 +201,10 @@ def build_icon():
 
 # --- The app and the tests --------------------------------------------------
 
-def build_app(dll, configuration):
+def build_app(configuration):
     run(["dotnet", "build", str(APP / "Markitai.App.csproj"), "-c", configuration, "-p:Platform=x64",
          f"-p:Version={version()}"], cwd=HERE)
     folder = APP / "bin" / "x64" / configuration / TFM / "win-x64"
-    shutil.copy2(dll, folder / dll.name)
     exe = folder / "Markitai.exe"
     if not exe.exists():
         raise SystemExit(f"{exe} was not built")
@@ -222,11 +249,12 @@ def main():
     args = parser.parse_args()
     if sys.platform != "win32":
         raise SystemExit("build.py builds the Windows app and runs on Windows")
-    dll = args.core.resolve() if args.core else build_core()
-    if args.core:
-        check_runtime(dll)
+    # The app first: it builds in minutes, the core in many more.
     build_icon()
-    folder = build_app(dll, args.configuration)
+    folder = build_app(args.configuration)
+    dll = args.core.resolve() if args.core else build_core()
+    check_runtime(dll)
+    shutil.copy2(dll, folder / dll.name)
     print(f"app: {folder / 'Markitai.exe'}")
     if args.check:
         state = args.state or Path(tempfile.mkdtemp(prefix="markitai-tests-"))
