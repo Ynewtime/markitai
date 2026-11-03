@@ -33,6 +33,7 @@ public static class SmokeNative {
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr window, out RECT rect);
     [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr window, uint message, IntPtr w, IntPtr l);
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr window);
+    [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr window, IntPtr after, int x, int y, int cx, int cy, uint flags);
     public struct RECT { public int Left, Top, Right, Bottom; }
 }
 "@
@@ -168,9 +169,32 @@ function Pattern($element, $pattern) {
     throw "'$($element.Current.Name)' has no $($pattern.ProgrammaticName)"
 }
 
+# Selects the item named $name: through SelectionItemPattern on it or on an ancestor
+# (a list's data item can wrap the container that carries the name), else InvokePattern.
 function Choose([string]$name) {
-    (Pattern (Find $name $Types::ListItem) ([System.Windows.Automation.SelectionItemPattern]::Pattern)).Select()
-    Log "selected '$name'"
+    $null = Find $name
+    $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
+    $seen = @()
+    foreach ($candidate in (Root).FindAll($Scope::Descendants, (Condition $name))) {
+        $element = $candidate
+        for ($up = 0; $element -and $up -le 2; $up++) {
+            $found = $null
+            if ($element.TryGetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern, [ref]$found)) {
+                $found.Select(); Log "selected '$name' ($($element.Current.ControlType.ProgrammaticName), $up up)"; return
+            }
+            $element = $walker.GetParent($element)
+        }
+        $found = $null
+        if ($candidate.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$found)) {
+            $found.Invoke(); Log "invoked '$name' ($($candidate.Current.ControlType.ProgrammaticName))"; return
+        }
+        $seen += "$($candidate.Current.ControlType.ProgrammaticName) [$(Patterns $candidate)]"
+    }
+    throw "nothing named '$name' can be selected or invoked: $($seen -join '; ')"
+}
+
+function Patterns($element) {
+    return (@($element.GetSupportedPatterns() | ForEach-Object { $_.ProgrammaticName -replace 'PatternIdentifiers.Pattern', '' }) -join ',')
 }
 
 function Rows([string]$listName) {
@@ -190,6 +214,8 @@ function Dump([string]$path) {
         $flags = @()
         if ($current.IsOffscreen) { $flags += 'offscreen' }
         if (-not $current.IsEnabled) { $flags += 'disabled' }
+        $patterns = Patterns $element
+        if ($patterns) { $flags += $patterns }
         $lines.Add(('  ' * $depth) + "$($current.ControlType.ProgrammaticName -replace 'ControlType.', '') [$($current.Name)] $($flags -join ',')")
         $children = @()
         $child = $walker.GetFirstChild($element)
@@ -281,6 +307,13 @@ try {
         $script:markitai.Refresh()
         Log "window pid $($script:markitai.Id), session $($script:markitai.SessionId), title '$($script:markitai.MainWindowTitle)'"
         Check ($script:markitai.MainWindowTitle -eq (S 'app.name')) "window title is '$(S 'app.name')'"
+        # Windows places a new window down and to the right; the captures need all of it.
+        # SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE
+        [SmokeNative]::SetWindowPos($script:window, [IntPtr]::Zero, 0, 0, 0, 0, 0x0001 -bor 0x0004 -bor 0x0010) | Out-Null
+        $rect = New-Object SmokeNative+RECT
+        [SmokeNative]::GetWindowRect($script:window, [ref]$rect) | Out-Null
+        $size = "$($rect.Right - $rect.Left)x$($rect.Bottom - $rect.Top) at $($rect.Left),$($rect.Top)"
+        Check ($rect.Right -le $screen.Right -and $rect.Bottom -le $screen.Bottom) "the whole window is on screen ($size)"
     }
 
     Stage 'conversions from the command line' {
@@ -318,6 +351,8 @@ try {
         $page = Join-Path $data 'Preview\current.html'
         Wait-Until 'the preview page' { (Test-Path $page) -and ((Get-Content -Raw -Encoding UTF8 $page).Contains('Systems programming')) } 30 | Out-Null
         Check $true "'$(S 'a11y.preview')' is on screen and shows default-table.html"
+        Check (-not (Get-Content -Raw -Encoding UTF8 $page).Contains('zoom:')) 'the preview has no zoom at the default view.zoom'
+        Dump (Join-Path $Out 'uia-detail.txt')
         $document = $preview.FindFirst($Scope::Descendants, (New-Object System.Windows.Automation.PropertyCondition($AE::ControlTypeProperty, $Types::Document)))
         if ($document) { Log "preview document '$($document.Current.Name)'" } else { Log 'preview document not exposed to UI Automation' }
         Shot 'convert'

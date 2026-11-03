@@ -130,6 +130,12 @@ public sealed class StoreTests : IDisposable
 
         File.WriteAllText(path, "][");
         Assert.Equal(new AppSettings(), AppSettings.Load(path));
+
+        // A key the file leaves out keeps its default, however the serializer builds the record.
+        File.WriteAllText(path, "{}");
+        Assert.Equal(new AppSettings(), AppSettings.Load(path));
+        File.WriteAllText(path, """{"output.folder": null, "window.width": 1000}""");
+        Assert.Equal(new AppSettings { WindowWidth = 1000 }, AppSettings.Load(path));
     }
 
     [Fact]

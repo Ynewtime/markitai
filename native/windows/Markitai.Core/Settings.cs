@@ -27,10 +27,13 @@ public sealed record AppSettings
     {
         try
         {
+            // The source-generated reader sets every init-only property, so a key the file
+            // leaves out arrives as 0, not as the default above. Every other default is the
+            // type's own; these three take theirs back here.
             var read = JsonSerializer.Deserialize(File.ReadAllBytes(path), CoreJsonContext.Default.AppSettings) ?? new();
             return read with
             {
-                Zoom = double.IsFinite(read.Zoom) ? Math.Clamp(read.Zoom, MinZoom, MaxZoom) : 1.0,
+                Zoom = Math.Clamp(Positive(read.Zoom, 1.0), MinZoom, MaxZoom),
                 OutputFolder = read.OutputFolder is { } folder && Path.IsPathFullyQualified(folder) ? folder : null,
                 WindowWidth = Positive(read.WindowWidth, 1200),
                 WindowHeight = Positive(read.WindowHeight, 780),

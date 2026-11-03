@@ -74,8 +74,10 @@ jobs:
       - name: Drive the app on the desktop
         shell: powershell
         run: native\windows\smoke.ps1 -State "$env:RUNNER_TEMP\markitai-smoke" -Out "$env:RUNNER_TEMP\markitai-evidence"
-      # Temporary: `dotnet test` exited 0 here without running a test. Each probe runs it
-      # with one part of build.py's isolated environment, with VSTest diagnostics.
+      # Temporary: `dotnet test` exited 0 here without running a test. Run 41724739484
+      # showed it runs with the developer environment and runs nothing once HOME and
+      # USERPROFILE move. These probes separate the two and show which MSBuild
+      # properties change, with a detailed log of the failing case.
       - name: Diagnose dotnet test (temporary)
         if: always()
         continue-on-error: true
@@ -83,26 +85,26 @@ jobs:
           $project = 'native\windows\Markitai.Core.Tests\Markitai.Core.Tests.csproj'
           $diag = Join-Path $env:RUNNER_TEMP 'dotnet-test-diag'
           $iso = Join-Path $env:RUNNER_TEMP 'dotnet-test-home'
-          New-Item -ItemType Directory -Force $diag, "$iso\AppData\Local", "$iso\AppData\Roaming", "$iso\temp" | Out-Null
-          Get-Command dotnet -All | ForEach-Object { "dotnet on PATH: $($_.Source)" }
-          "DOTNET_ROOT=$env:DOTNET_ROOT"
-          dotnet --version
-          dotnet --list-sdks
-          function Probe([string]$name, [hashtable]$vars) {
+          New-Item -ItemType Directory -Force $diag, $iso | Out-Null
+          function With([hashtable]$vars, [scriptblock]$body) {
             $saved = @{}
             foreach ($key in $vars.Keys) { $saved[$key] = [Environment]::GetEnvironmentVariable($key); [Environment]::SetEnvironmentVariable($key, $vars[$key]) }
-            $out = Join-Path $diag "$name.txt"
-            dotnet test $project -c Release --no-build -v n --diag (Join-Path $diag "$name.diag.log") *> $out
-            $code = $LASTEXITCODE
-            foreach ($key in $vars.Keys) { [Environment]::SetEnvironmentVariable($key, $saved[$key]) }
-            $lines = @(Get-Content $out)
-            "=== ${name}: exit $code, $($lines.Count) lines, summary: $(($lines | Select-String -Pattern 'Total tests|Passed!|Failed!|No test' | Select-Object -First 2) -join ' / ')"
+            try { & $body } finally { foreach ($key in $vars.Keys) { [Environment]::SetEnvironmentVariable($key, $saved[$key]) } }
           }
-          Probe 'developer' @{}
-          Probe 'isolated' @{ HOME = $iso; USERPROFILE = $iso; LOCALAPPDATA = "$iso\AppData\Local"; APPDATA = "$iso\AppData\Roaming"; TEMP = "$iso\temp"; TMP = "$iso\temp" }
-          Probe 'profile' @{ HOME = $iso; USERPROFILE = $iso }
-          Probe 'appdata' @{ LOCALAPPDATA = "$iso\AppData\Local"; APPDATA = "$iso\AppData\Roaming" }
-          Probe 'temp' @{ TEMP = "$iso\temp"; TMP = "$iso\temp" }
+          function Probe([string]$name, [hashtable]$vars, [string]$verbosity = 'n') {
+            $out = Join-Path $diag "$name.txt"
+            With $vars { dotnet test $project -c Release --no-build -v $verbosity *> $out }
+            $lines = @(Get-Content $out)
+            "=== ${name}: $($lines.Count) lines, summary: $(($lines | Select-String -Pattern 'Total tests|Passed!|Failed!' | Select-Object -First 1) -join '')"
+          }
+          $properties = 'NuGetPackageRoot', 'IsTestProject', 'IsTestingPlatformApplication', 'TestingPlatformDotnetTestSupport', 'UserProfile', 'MSBuildUserExtensionsPath', 'NuGetPackageFolders'
+          foreach ($case in @(@{ name = 'developer'; vars = @{} }, @{ name = 'profile'; vars = @{ HOME = $iso; USERPROFILE = $iso } })) {
+            "--- MSBuild properties, $($case.name)"
+            With $case.vars { dotnet msbuild $project -nologo -p:Configuration=Release ($properties | ForEach-Object { "-getProperty:$_" }) }
+          }
+          Probe 'home-only' @{ HOME = $iso }
+          Probe 'userprofile-only' @{ USERPROFILE = $iso }
+          Probe 'profile-detailed' @{ HOME = $iso; USERPROFILE = $iso } 'd'
           Get-ChildItem $diag | ForEach-Object { "$($_.Length)`t$($_.Name)" }
       - name: Keep the screenshots, logs and test results
         if: always()
