@@ -357,6 +357,25 @@ func TestSidecarKeepsOneLogPerLaunch(t *testing.T) {
 	}
 }
 
+// A launch while a serve of the launch before still runs, as after a crash:
+// the earlier serve, still writing, writes to serve.previous.log, and
+// serve.log is this launch's alone, on Windows too.
+func TestALaunchMovesAsideTheLogOfAServeStillRunning(t *testing.T) {
+	earlier := newHarness(t, "stubborn")
+	earlier.ready()
+	later := startHarness(t, earlier.cfg)
+	later.ready()
+	earlier.sc.Stop(Now)
+	earlier.await("Stopped", is[Stopped])
+	previous := strings.TrimSuffix(earlier.cfg.LogPath, ".log") + ".previous.log"
+	for path, stopped := range map[string]bool{previous: true, earlier.cfg.LogPath: false} {
+		log, _ := os.ReadFile(path)
+		if strings.Count(string(log), "Access token") != 1 || strings.Contains(string(log), "now; stopped at once") != stopped {
+			t.Errorf("%s is not one serve's log, its last words there %v:\n%s", filepath.Base(path), stopped, log)
+		}
+	}
+}
+
 // Stop Now and Quit on the Stopping page: "now" follows "drain" on the
 // same stdin, and the child stops at once, long before killGrace.
 func TestSidecarStopsNowAChildThatWillNotDrain(t *testing.T) {

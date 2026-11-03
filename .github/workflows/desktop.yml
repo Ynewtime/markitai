@@ -1,0 +1,232 @@
+name: Desktop
+
+# The desktop app (docs/desktop.md) on Windows x86-64: the markitai archive
+# built as release.yml builds it, staged into the app; desktop_build.py vet;
+# the e2e build driven by desktop_e2e.py on the runner's desktop; the release
+# build's installer installed, the app run from it and uninstalled. The archive
+# is cached under a key of every tracked file but the desktop app's own, so a
+# change to the app alone does not build it again.
+
+on:
+  push:
+    paths:
+      - 'desktop/**'
+      - 'scripts/desktop_*.py'
+      - 'scripts/test_desktop_build.py'
+      - '.github/workflows/desktop.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push waits rather than cancels: a run may be building the archive
+# that later runs take from the cache.
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: never
+  RUSTUP_TOOLCHAIN: 1.99.1
+  CARGO_INCREMENTAL: '0'
+  TARGET: x86_64-pc-windows-msvc
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: '1.27.3'
+          cache-dependency-path: desktop/go.sum
+      - name: Version, and the key of the archive's sources
+        id: cli
+        run: |
+          python scripts/release_build.py version --github-output "$GITHUB_OUTPUT"
+          sources=$(git ls-tree -r HEAD \
+            | grep -Ev $'\t(desktop/|\\.github/|docs/desktop\\.md$|docs/development\\.md$|scripts/desktop_[^/]*\\.py$|scripts/test_desktop_build\\.py$)' \
+            | sha256sum | cut -c1-16)
+          echo "key=desktop-cli-$TARGET-$RUSTUP_TOOLCHAIN-$sources" >> "$GITHUB_OUTPUT"
+      - name: Restore the archive
+        id: archive
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: dist
+          key: ${{ steps.cli.outputs.key }}
+      - name: Install Rust
+        if: steps.archive.outputs.cache-hit != 'true'
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --target "$TARGET"
+      - name: Build the archive
+        if: steps.archive.outputs.cache-hit != 'true'
+        run: python scripts/release_build.py cli --target "$TARGET" --output dist
+      - name: Install and exercise the archive
+        if: steps.archive.outputs.cache-hit != 'true'
+        env:
+          VERSION: ${{ steps.cli.outputs.version }}
+        run: python scripts/release_build.py smoke --target "$TARGET" dist/markitai-v"$VERSION"-"$TARGET".*
+      - name: Keep the archive
+        if: steps.archive.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: dist
+          key: ${{ steps.cli.outputs.key }}
+      # Vet's failure fails the run but does not hold back the builds, the e2e and the install
+      # check, whose evidence says what else holds on this system.
+      - name: Stage the archive
+        id: stage
+        env:
+          VERSION: ${{ steps.cli.outputs.version }}
+        run: python scripts/desktop_build.py stage --archive dist/markitai-v"$VERSION"-"$TARGET".zip
+      - name: Vet and test
+        run: |
+          python scripts/desktop_build.py vet
+          cd scripts && python -m unittest test_desktop_build
+      - name: Build the e2e app
+        id: e2e
+        if: ${{ !cancelled() && steps.stage.outcome == 'success' }}
+        run: python scripts/desktop_build.py build --platform windows/amd64 --e2e
+      - name: Build the app and its installer
+        id: app
+        if: ${{ !cancelled() && steps.stage.outcome == 'success' }}
+        run: python scripts/desktop_build.py build --platform windows/amd64
+      - name: Record what was built
+        if: ${{ !cancelled() && steps.e2e.outcome == 'success' && steps.app.outcome == 'success' }}
+        run: |
+          mkdir -p .local/desktop-install
+          sha256sum dist/markitai-v*.zip desktop/build/windows-amd64/Markitai.exe desktop/build/windows-amd64/bin/markitai.exe \
+            desktop/build/windows-amd64/markitai-desktop-setup-*.exe desktop/build/e2e/windows-amd64/Markitai.exe \
+            | tee .local/desktop-install/sha256.txt
+          git rev-parse HEAD | tee .local/desktop-install/commit.txt
+          python -c "import winreg; print('WebView2 Runtime', winreg.QueryValueEx(winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r'SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'), 'pv')[0])" | tee .local/desktop-install/webview2.txt
+      - name: Drive the e2e app on the desktop
+        if: ${{ !cancelled() && steps.e2e.outcome == 'success' }}
+        timeout-minutes: 45
+        run: python scripts/desktop_e2e.py "windows-ci-${{ github.run_id }}-${{ github.run_attempt }}"
+      - name: Install the app, run it and uninstall it
+        if: ${{ !cancelled() && steps.app.outcome == 'success' }}
+        timeout-minutes: 10
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Add-Type -AssemblyName System.Drawing, System.Windows.Forms
+          Add-Type 'using System.Runtime.InteropServices; public static class Dpi { [DllImport("user32.dll")] public static extern bool SetProcessDPIAware(); }'
+          [Dpi]::SetProcessDPIAware() | Out-Null
+          $out = Join-Path $env:GITHUB_WORKSPACE '.local\desktop-install'
+          New-Item -ItemType Directory -Force $out | Out-Null
+          $log = Join-Path $out 'install.log'
+          function Log([string]$text) { Write-Host $text; Add-Content -Path $log -Value $text -Encoding UTF8 }
+          $failures = 0
+          function Check([bool]$ok, [string]$what) { if ($ok) { Log "ok   $what" } else { Log "FAIL $what"; $script:failures++ } }
+          function Shot([string]$name) {
+            $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+            $bitmap = New-Object System.Drawing.Bitmap $screen.Width, $screen.Height
+            $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+            $graphics.CopyFromScreen($screen.Location, [System.Drawing.Point]::Empty, $screen.Size)
+            $bitmap.Save((Join-Path $out "$name.png"), [System.Drawing.Imaging.ImageFormat]::Png)
+            $graphics.Dispose(); $bitmap.Dispose()
+          }
+          # Every listen is audited, and the firewall asks about new ones as on a desktop: the app's and
+          # its server's must be on loopback alone, or Windows Defender Firewall asks the user to let
+          # Markitai accept connections from the network.
+          auditpol /set /subcategory:'{0CCE9226-69AE-11D9-BED3-505054503030}' /success:enable /failure:enable | Out-Null
+          Set-NetFirewallProfile -All -Enabled True -NotifyOnListen True
+          Log ("firewall: " + ((Get-NetFirewallProfile | ForEach-Object { "$($_.Name)=$($_.Enabled)/notify=$($_.NotifyOnListen)" }) -join ' '))
+          $since = Get-Date
+
+          $setup = Get-Item desktop\build\windows-amd64\markitai-desktop-setup-*.exe
+          $installer = Start-Process $setup.FullName -ArgumentList '/S' -Wait -PassThru
+          Check ($installer.ExitCode -eq 0) "the installer exits 0 ($($installer.ExitCode))"
+          $dir = Join-Path $env:LOCALAPPDATA 'Programs\Markitai'
+          $exe = Join-Path $dir 'Markitai.exe'
+          $shortcut = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Markitai.lnk'
+          Check ((Test-Path $exe) -and (Test-Path "$dir\bin\markitai.exe") -and (Test-Path "$dir\licenses") -and (Test-Path "$dir\Uninstall.exe")) "the app is installed in $dir"
+          Check (Test-Path $shortcut) 'a Start menu shortcut'
+          Log ("installed: " + ((Get-ChildItem $dir | ForEach-Object Name) -join ', '))
+
+          $state = Join-Path $env:RUNNER_TEMP 'markitai-installed'
+          $userHome = Join-Path $state 'home'
+          $isolated = [ordered]@{
+            HOME = $userHome; USERPROFILE = $userHome
+            APPDATA = Join-Path $userHome 'AppData\Roaming'; LOCALAPPDATA = Join-Path $userHome 'AppData\Local'
+            TEMP = Join-Path $userHome 'AppData\Local\Temp'; TMP = Join-Path $userHome 'AppData\Local\Temp'
+            MARKITAI_HOME = Join-Path $state 'markitai-home'
+          }
+          foreach ($folder in $isolated.Values) { New-Item -ItemType Directory -Force $folder | Out-Null }
+          $start = New-Object System.Diagnostics.ProcessStartInfo $exe
+          $start.UseShellExecute = $false
+          foreach ($name in $isolated.Keys) { $start.EnvironmentVariables[$name] = $isolated[$name] }
+          $app = [System.Diagnostics.Process]::Start($start)
+          $serveLog = Join-Path $isolated.APPDATA 'Markitai\logs\serve.log'
+          $listening = $false
+          for ($i = 0; $i -lt 120 -and -not $listening; $i++) {
+            Start-Sleep -Milliseconds 500
+            $listening = (Test-Path $serveLog) -and ((Get-Content -Raw $serveLog) -match 'Markitai server listening on http://127\.0\.0\.1:')
+          }
+          Check $listening "the installed app's serve listens (serve.log in APPDATA\Markitai\logs)"
+          $serve = @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$($app.Id)" | Where-Object Name -eq 'markitai.exe')
+          Check ($serve.Count -eq 1 -and $serve[0].ExecutablePath -eq "$dir\bin\markitai.exe" -and $serve[0].CommandLine -match 'serve --supervised') "its child is the bundled markitai.exe serve --supervised"
+          Start-Sleep -Seconds 6
+          $app.Refresh()
+          Log "window: '$($app.MainWindowTitle)'"
+          $alerts = @(Get-Process | Where-Object { $_.MainWindowTitle -match 'Security Alert|Firewall' } | ForEach-Object { "$($_.ProcessName): $($_.MainWindowTitle)" })
+          Log ("firewall prompts: " + ($alerts -join '; '))
+          Shot 'installed-ready'
+          Check (Test-Path (Join-Path $isolated.LOCALAPPDATA 'Markitai\WebView2')) 'web view data in LOCALAPPDATA\Markitai\WebView2'
+          Check (Test-Path (Join-Path $isolated.APPDATA 'Markitai\desktop.json')) 'the port kept in APPDATA\Markitai\desktop.json'
+          Check ($app.CloseMainWindow()) 'closing the window asks the app to quit'
+          Check ($app.WaitForExit(30000) -and $app.ExitCode -eq 0) "the app quits with 0 ($($app.ExitCode))"
+          if ($serve.Count -eq 1) {
+            Check ($null -eq (Get-Process -Id $serve[0].ProcessId -ErrorAction SilentlyContinue)) 'its serve has ended'
+          }
+          Check ((Get-Content -Raw $serveLog) -match 'Server stopping: draining active conversions') 'serve drained'
+          Copy-Item $serveLog (Join-Path $out 'installed-serve.log')
+          $listens = @(Get-WinEvent -FilterHashtable @{ LogName = 'Security'; Id = 5154, 5155, 5031; StartTime = $since } -ErrorAction SilentlyContinue | ForEach-Object {
+            $data = @{}
+            foreach ($field in ([xml]$_.ToXml()).Event.EventData.Data) { $data[$field.Name] = $field.'#text' }
+            if ($data.Application -match 'markitai') {
+              # Markitai.exe, the app, or bin\markitai.exe, its server
+            [pscustomobject]@{ Id = $_.Id; Application = $data.Application -replace '^.*\\programs\\markitai\\', ''; Address = $data.SourceAddress; Port = $data.SourcePort }
+            }
+          })
+          foreach ($listen in $listens) { Log "listen event $($listen.Id): $($listen.Application) $($listen.Address):$($listen.Port)" }
+          Check ($listens.Count -gt 0) 'the listens are audited'
+          Check (@($listens | Where-Object { $_.Address -notin '127.0.0.1', '::1' }).Count -eq 0) 'the app and its server listen on loopback alone, so the firewall never asks'
+
+          Start-Process (Join-Path $dir 'Uninstall.exe') -ArgumentList '/S' -Wait
+          for ($i = 0; $i -lt 60 -and (Test-Path $dir); $i++) { Start-Sleep -Milliseconds 500 }
+          Check (-not (Test-Path $dir)) 'the uninstaller removes the app'
+          Check (-not (Test-Path $shortcut)) 'and its Start menu shortcut'
+          Check (Test-Path (Join-Path $isolated.APPDATA 'Markitai')) "and leaves the app's data"
+          if ($failures) { throw "$failures check(s) failed" }
+      - name: Keep the evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: desktop-windows-evidence
+          path: |
+            .local/desktop-e2e/
+            .local/desktop-install/
+            !.local/desktop-e2e/**/WebView2/
+            !.local/desktop-e2e/**/*.sock
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Keep the installer
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: markitai-desktop-windows-amd64
+          path: desktop/build/windows-amd64/markitai-desktop-setup-*.exe
+          if-no-files-found: warn
+          retention-days: 7

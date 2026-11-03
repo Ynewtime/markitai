@@ -5,24 +5,28 @@ of its own: open Markitai and convert, with no terminal and no browser tab. It
 runs the `markitai` program bundled inside it as a server for that window
 ([running under another app](serve.md#running-under-another-app)), so it
 converts exactly as the CLI of the same version does. It runs on macOS 13 or
-later on Apple silicon, and on Linux on x86-64 ([what it needs](#linux)).
+later on Apple silicon, on Linux on x86-64 ([what it needs](#linux)), and on
+Windows 10 or later on x86-64 ([what it needs](#windows)).
 
 No release publishes the app yet; build it from a checkout with Go 1.27.3 or
-later, [on a Mac](#building-from-source) or [on Linux](#linux).
+later, [on a Mac](#building-from-source), [on Linux](#linux) or
+[on Windows](#windows).
 
 ## What it shares with the CLI
 
 - The app uses the same `MARKITAI_HOME` as `markitai` in your terminal
   (`~/.markitai` unless your login shell sets another): configuration, keys,
   models, installed browsers and the workbench history are one.
-- It starts its server with your login shell's environment (the shell
-  `SHELL` names, csh and tcsh included), so programs on your `PATH`,
+- On macOS and Linux it starts its server with your login shell's
+  environment (the shell `SHELL` names, csh and tcsh included), so programs
+  on your `PATH`,
   exported keys and a `MARKITAI_HOME` set in your startup files work as they
   do in a terminal. It waits up to 10 seconds for the startup files; if the
   shell fails or takes longer, the server starts with the app's own
   environment and the first line of its log says why. Jobs the startup files
   leave running in the background end with that shell, as when a terminal
-  closes. The server's working directory is `MARKITAI_HOME`.
+  closes. [On Windows](#windows) it uses the environment the app starts
+  with. The server's working directory is `MARKITAI_HOME`.
 - One server runs per `MARKITAI_HOME`. While `markitai serve` runs with the
   same home, the app shows that its server stopped, with the reason from its
   log; stop the other server and choose Try Again. While the app runs,
@@ -61,7 +65,8 @@ later, [on a Mac](#building-from-source) or [on Linux](#linux).
   running conversions and exits by itself. A launch in the meantime shows that
   the server stopped; Try Again works once the old one is gone.
 - On macOS the server's log is `~/Library/Logs/Markitai/serve.log` (Show Log
-  on the error page; [on Linux](#linux) it is elsewhere): one file per launch
+  on the error page; [on Linux](#linux) and [on Windows](#windows) it is
+  elsewhere): one file per launch
   of the app, Try Again included. The previous launch's is
   `serve.previous.log`.
 
@@ -133,10 +138,50 @@ On Linux the server's log is `~/.config/Markitai/logs/serve.log` (under
 `~/.local/share/markitai-desktop` and `~/.cache/markitai-desktop`. There is no
 application menu: closing the window is how the app quits.
 
+## Windows
+
+The Windows app is for x86-64 and needs Windows 10 or later with the
+Microsoft Edge WebView2 Runtime, which Windows 11 includes. It has been
+tested on Windows Server 2025. Build it on Windows, with Python 3, from the
+`markitai` release archive for `x86_64-pc-windows-msvc` of the checkout's
+version (the GitHub release's, or one `release_build.py cli --target
+x86_64-pc-windows-msvc` builds), then run the installer:
+
+```sh
+python scripts/desktop_build.py stage --archive markitai-v<version>-x86_64-pc-windows-msvc.zip --sums SHA256SUMS
+python scripts/desktop_build.py build --platform windows/amd64
+desktop\build\windows-amd64\markitai-desktop-setup-<version>-amd64.exe
+```
+
+`build` writes to `desktop\build\windows-amd64\` the app (`Markitai.exe`,
+with `bin\markitai.exe` and `licenses\` beside it) and the installer
+`markitai-desktop-setup-<version>-amd64.exe`. The first build downloads NSIS,
+which makes the installer, into `%LOCALAPPDATA%\mygo`, unless NSIS is
+installed. The installer needs no administrator rights: it installs the app
+for your user in `%LOCALAPPDATA%\Programs\Markitai`, with a Start menu
+shortcut and an entry in Settings > Apps that uninstalls it and leaves its
+settings and data. To update, run a newer installer; it asks to close a
+running app, closes its window as you would, and stops what still runs 10
+seconds later, conversions included.
+
+Signing out, restarting or shutting down Windows does not wait for the app:
+unfinished conversions stop at once and the workbench shows them as
+interrupted when the app next starts.
+
+The installer and the app are not signed. SmartScreen may stop an installer
+that came through a browser with "Windows protected your PC": once you are
+sure where it came from, choose More info, then Run anyway.
+
+The app starts its server with the environment Windows gives the programs it
+starts: your user and system variables, as a new terminal has them.
+`MARKITAI_HOME` is `%USERPROFILE%\.markitai` unless one of them sets
+another. The server's log is `%APPDATA%\Markitai\logs\serve.log`, beside the
+app's settings in `%APPDATA%\Markitai`; the window's web data is in
+`%LOCALAPPDATA%\Markitai\WebView2`.
+
 ## Limits
 
-- macOS on Apple silicon and Linux on x86-64 only. The app's code builds for
-  Windows, but nothing packages it there yet.
+- macOS on Apple silicon, and Linux and Windows on x86-64, only.
 - No automatic updates: install a newer app. A `markitai` you installed
   separately is updated on its own and does not change the app's;
   `markitai update` leaves the app's server running as it is.

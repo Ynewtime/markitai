@@ -97,8 +97,8 @@ packages a release CLI archive; its version is the workspace's, which
 
 ```sh
 python3 scripts/desktop_build.py vet
-python3 scripts/desktop_build.py stage --archive markitai-v<version>-<target>.tar.gz [--sums SHA256SUMS]
-python3 scripts/desktop_build.py build --platform darwin/arm64|linux/amd64 [--e2e]
+python3 scripts/desktop_build.py stage --archive markitai-v<version>-<target>.tar.gz|.zip [--sums SHA256SUMS]
+python3 scripts/desktop_build.py build --platform darwin/arm64|linux/amd64|windows/amd64 [--e2e]
 python3 scripts/desktop_e2e.py ROUND [--only NAME,...]
 ```
 
@@ -112,22 +112,36 @@ its own system: `build` makes `desktop/build/darwin-arm64/Markitai.app` and
 `markitai-desktop-<version>-arm64.dmg` on an Apple silicon Mac, or the app,
 its `.tar.gz`, `.deb`, `PKGBUILD` and `install.sh` in
 `desktop/build/linux-amd64/` on x86-64 Linux ([Linux](desktop.md#linux)), from
-the `x86_64-unknown-linux-gnu` archive the manylinux_2_28 image builds. No
+the `x86_64-unknown-linux-gnu` archive the manylinux_2_28 image builds, or
+`Markitai.exe` and the installer `markitai-desktop-setup-<version>-amd64.exe`
+in `desktop/build/windows-amd64/` on x86-64 Windows
+([Windows](desktop.md#windows)). No
 artifact may be named like a CLI archive (`markitai-v…`). `--e2e` builds with
 the `e2e` tag, mygo's automation plugin and the web inspector, without
-packages, into `desktop/build/e2e/`, from a generated project
+packages or installer, into `desktop/build/e2e/`, from a generated project
 (`desktop/build/e2e-project/`) whose identifier is the app's plus `.e2e`: on
 macOS web data is kept by identifier outside `HOME`, and an e2e run must not
 share an installed app's. `desktop_e2e.py` drives that build over the
 automation socket through the scenarios its docstring lists, each with its own
-`HOME` (with the XDG directories on Linux), `MARKITAI_HOME` and app data, and
+`HOME` (with the XDG directories on Linux, and `USERPROFILE`, `APPDATA`,
+`LOCALAPPDATA` and `TEMP` on Windows), `MARKITAI_HOME` and app data, and
 keeps the evidence in `.local/desktop-e2e/ROUND/`; the bundled `markitai` must
 have `serve --supervised`. On Linux it runs in a Hyprland session and quits by
-closing the window with `hyprctl`, as there is no application menu. The native
-Save panel and quit question are answered by the e2e build's environment
-there, and a link it would open in the browser is recorded instead, so check
-them by hand once.
+closing the window with `hyprctl`, as there is no application menu; on
+Windows it runs in a desktop session and closes the window with `WM_CLOSE`
+(signals become window messages and `TerminateProcess`, the automation socket
+is Winsock's `AF_UNIX`). The native Save panel and quit question are answered
+by the e2e build's environment on both, and a link it would open in the
+browser is recorded instead, so check them by hand once. Building the e2e
+project without the symlink privilege links its resources with a junction.
 `scripts/test_desktop_build.py` runs with the helper tests.
+
+`.github/workflows/desktop.yml` builds the Windows app on a hosted
+`windows-2025` runner on a push to `desktop/**` or `scripts/desktop_*.py`, or
+by hand: it builds the CLI archive (cached by the tree it is built from), the
+e2e build and the installer, runs a full `desktop_e2e.py` round, installs,
+launches, closes and uninstalls the app, and keeps the evidence and the
+installer for 7 days.
 
 ## Website
 

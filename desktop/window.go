@@ -1,10 +1,13 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -74,16 +77,25 @@ func route(raw string) request {
 }
 
 // stays reports whether the main frame may go to raw in phase p: to the
-// page render shows for p, within the workbench of the ready child, or the
-// status page at about:blank, where paint loads it. mygo asks about the
-// app's own loads too when two overlap, as when serve fails at once and the
+// page render shows for p, within the workbench of the ready child, or a
+// status page where paint loads it (atStatusPage). mygo asks about the app's
+// own loads too when two overlap, as when serve fails at once and the
 // Failed page follows the Starting page: it marks only the first as the
 // app's.
 func stays(p Phase, raw string) bool {
 	if r, ok := p.(Ready); ok {
 		return origin(raw) == r.Child.origin()
 	}
-	return raw == "about:blank"
+	return atStatusPage(runtime.GOOS, raw)
+}
+
+// atStatusPage reports whether raw is where a status page loads on goos:
+// paint gives the web view its HTML with no base URL, at about:blank,
+// which WebView2 asks about as the data: URL it makes of the HTML. No page
+// can take the window to a data: URL itself there: Chromium refuses a
+// page's top-level navigation to one.
+func atStatusPage(goos, raw string) bool {
+	return raw == "about:blank" || goos == "windows" && strings.HasPrefix(raw, "data:text/html")
 }
 
 // origin is raw's scheme://host, that of the page that made it for a blob:
@@ -99,6 +111,28 @@ func origin(raw string) string {
 	return strings.ToLower(u.Scheme + "://" + u.Host)
 }
 
+// keepsDocuments is whether the window also keeps its document loads by
+// content rules (documentRules). WebView2 may send a navigation's GET while
+// the app is still deciding whether it goes, as the documentation of
+// NavigationStarting's Cancel says: willNavigate keeps the window where it
+// is, but the other site is asked all the same. Content rules match every
+// request before it is sent, so a document elsewhere is never asked for. The
+// web views of macOS and Linux ask before they request.
+var keepsDocuments = runtime.GOOS == "windows"
+
+// documentRules are content rules that let documents load from origin
+// alone: the first blocks every document, the second undoes that for
+// origin. Documents the app gives the window itself, at about: and data:
+// URLs, never reach content rules.
+func documentRules(origin string) string {
+	rules, _ := json.Marshal([]map[string]map[string]any{
+		{"trigger": {"url-filter": ".*", "resource-type": []string{"document"}}, "action": {"type": "block"}},
+		{"trigger": {"url-filter": "^" + regexp.QuoteMeta(origin) + "/", "resource-type": []string{"document"}},
+			"action": {"type": "ignore-previous-rules"}},
+	})
+	return string(rules)
+}
+
 // a4Margins are the workbench's @page margins, 14 mm by 12 mm, in inches.
 var a4Margins = mygo.Margins{Top: 14 / 25.4, Right: 12 / 25.4, Bottom: 14 / 25.4, Left: 12 / 25.4}
 
@@ -112,6 +146,7 @@ type window struct {
 
 	mu     sync.Mutex
 	phases chan Phase // the phase to show next; the newest replaces an unshown one
+	kept   string     // the origin whose documents the content rules keep; paint's alone
 }
 
 func openWindow(sc *Sidecar, t Texts, logPath, downloads string) *window {
@@ -152,11 +187,28 @@ func (w *window) paint() {
 	for p := range w.phases {
 		switch pg := render(p, w.texts); {
 		case pg.URL != "":
+			w.keepDocuments(origin(pg.URL))
 			_ = w.w.Page().LoadURL(pg.URL)
 		case pg.HTML != "":
 			w.w.Page().LoadHTML(pg.HTML, "")
 		}
 	}
+}
+
+// keepDocuments applies documentRules for o where keepsDocuments, before the
+// window loads the workbench there. The rules stay through the status pages
+// that follow, which they never see. If they cannot be compiled, willNavigate
+// alone keeps the window.
+func (w *window) keepDocuments(o string) {
+	if !keepsDocuments || o == w.kept {
+		return
+	}
+	rules, err := mygo.CompileContentRules("markitai-documents", documentRules(o))
+	if err != nil {
+		return
+	}
+	w.w.Page().SetContentRules(rules)
+	w.kept = o
 }
 
 // open answers every window.open; no request opens a window. A link the

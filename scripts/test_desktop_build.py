@@ -206,9 +206,16 @@ class RegistryTests(unittest.TestCase):
         check_artifacts([app, *packages])
         self.assertIn("markitai-desktop_2.4.0~rc.1_amd64.deb", layout("linux/amd64", "2.4.0-rc.1")[2])
 
+    def test_the_windows_installer_is_named_by_the_slug(self):
+        app, program, packages = layout("windows/amd64", "2.3.2")
+        self.assertEqual((app, program), ("Markitai.exe", "bin/markitai.exe"))
+        self.assertEqual(packages, {"markitai-desktop-setup-2.3.2-amd64.exe"})
+        check_artifacts([app, *packages])
+
     def test_the_e2e_build_keeps_the_inspector_and_its_own_directory(self):
         arguments, environment = mygo_build_command("darwin/arm64", e2e=True)
-        self.assertEqual(arguments[-5:], ["-debug", "-skip-dmg", "-o", "../e2e", desktop_build.E2E_PROJECT])
+        self.assertEqual(arguments[-6:], ["-debug", "-skip-dmg", "-skip-installer", "-o", "../e2e",
+                                          desktop_build.E2E_PROJECT])
         desktop = ROOT / "desktop"
         self.assertEqual(os.path.normpath(desktop / arguments[-1] / arguments[-2]), str(desktop / "build/e2e"))
         self.assertEqual(environment, {"GOFLAGS": "-tags=e2e"})
@@ -220,7 +227,6 @@ class RegistryTests(unittest.TestCase):
 
 
 class E2EProjectTests(unittest.TestCase):
-    @unittest.skipIf(os.name == "nt", "the e2e build runs on macOS and Linux; its project links the resources")
     def test_the_e2e_build_has_its_own_identifier_and_the_app_s_package_and_resources(self):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
@@ -229,6 +235,7 @@ class E2EProjectTests(unittest.TestCase):
         production = (desktop / "mygo.json").read_bytes()
         (desktop / "build/e2e-project").mkdir(parents=True)
         (desktop / "build/e2e-project/stale").write_bytes(b"x")
+        (desktop / "resources").mkdir()  # as stage leaves it
         project = e2e_project(repo.root)
         self.assertEqual(project, desktop / desktop_build.E2E_PROJECT)
         self.assertFalse((project / "stale").exists())
@@ -238,7 +245,8 @@ class E2EProjectTests(unittest.TestCase):
         self.assertEqual((project / config.pop("main")).resolve(), desktop.resolve())
         self.assertEqual((project / config.pop("icon")).resolve(), (desktop / expected.pop("icon")).resolve())
         self.assertEqual(config, expected)
-        self.assertEqual((project / "resources").resolve(), (desktop / "resources").resolve())
+        # The same directory, however the link names it (Windows: a junction, maybe in 8.3 names).
+        self.assertTrue(os.path.samefile(project / "resources", desktop / "resources"))
         self.assertEqual((desktop / "mygo.json").read_bytes(), production)
 
 

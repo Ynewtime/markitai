@@ -1,7 +1,10 @@
 package main
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"regexp"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -140,12 +143,40 @@ func TestStaysOnThePageItShows(t *testing.T) {
 	for _, p := range phases {
 		pg := render(p, en)
 		address := pg.URL
-		if pg.HTML != "" {
+		switch {
+		case pg.HTML != "" && runtime.GOOS == "windows":
+			// WebView2 asks about HTML it is given as a data: URL.
+			address = "data:text/html;charset=utf-8;base64," + base64.StdEncoding.EncodeToString([]byte(pg.HTML))
+		case pg.HTML != "":
 			// paint loads a status page with no base URL.
 			address = "about:blank"
 		}
 		if !stays(p, address) {
 			t.Errorf("%#v refuses its own page at %q", p, address)
+		}
+	}
+}
+
+// A status page loads at about:blank, which WebView2 asks about as a data:
+// URL of the page's HTML; elsewhere a data: URL is no status page.
+func TestAtStatusPage(t *testing.T) {
+	cases := []struct {
+		goos, url string
+		want      bool
+	}{
+		{"darwin", "about:blank", true},
+		{"linux", "about:blank", true},
+		{"windows", "about:blank", true},
+		{"windows", "data:text/html;charset=utf-8;base64,PCFkb2N0eXBlIGh0bWw+", true},
+		{"darwin", "data:text/html;charset=utf-8;base64,PCFkb2N0eXBlIGh0bWw+", false},
+		{"linux", "data:text/html,<p>x</p>", false},
+		{"windows", "data:image/svg+xml,<svg/>", false},
+		{"windows", "https://example.com/", false},
+		{"windows", "file:///C:/Windows/win.ini", false},
+	}
+	for _, tc := range cases {
+		if got := atStatusPage(tc.goos, tc.url); got != tc.want {
+			t.Errorf("atStatusPage(%q, %q) = %v; want %v", tc.goos, tc.url, got, tc.want)
 		}
 	}
 }
@@ -207,5 +238,61 @@ func TestFileName(t *testing.T) {
 	long := fileName(strings.Repeat("长", 160))
 	if len(long) > 200 || !strings.HasPrefix(long, "长") || strings.ToValidUTF8(long, "") != long {
 		t.Errorf("a long Chinese title gives %d bytes", len(long))
+	}
+}
+
+// On Windows the window's content rules let documents load from the
+// workbench alone: the first rule blocks every document, the second undoes
+// that for the workbench's origin. Go's regexp reads the WebKit subset they
+// use alike.
+func TestDocumentRules(t *testing.T) {
+	var rules []struct {
+		Trigger struct {
+			URLFilter    string   `json:"url-filter"`
+			ResourceType []string `json:"resource-type"`
+		} `json:"trigger"`
+		Action struct {
+			Type string `json:"type"`
+		} `json:"action"`
+	}
+	if err := json.Unmarshal([]byte(documentRules("http://127.0.0.1:23600")), &rules); err != nil {
+		t.Fatal(err)
+	}
+	if len(rules) != 2 || rules[0].Action.Type != "block" || rules[1].Action.Type != "ignore-previous-rules" {
+		t.Fatalf("rules %+v; want a block, then ignore-previous-rules", rules)
+	}
+	for _, r := range rules {
+		if !slices.Equal(r.Trigger.ResourceType, []string{"document"}) {
+			t.Errorf("rule %+v is not for documents alone", r)
+		}
+	}
+	matches := func(filter, url string) bool {
+		return regexp.MustCompile("(?i)" + filter).MatchString(url)
+	}
+	for _, url := range []string{"http://127.0.0.1:23600/", "http://127.0.0.1:57499/x", "https://example.com/"} {
+		if !matches(rules[0].Trigger.URLFilter, url) {
+			t.Errorf("the block misses %q", url)
+		}
+	}
+	cases := []struct {
+		url  string
+		kept bool
+	}{
+		{"http://127.0.0.1:23600/", true},
+		{"http://127.0.0.1:23600/#token=t", true},
+		{"http://127.0.0.1:23600/api/download?ticket=x", true},
+		{"http://127.0.0.1:57499/x", false},
+		{"http://127.0.0.1:236001/", false},
+		{"http://127.0.0.1:23600.example.com/", false},
+		{"http://127.0.0.1:23600@example.com/", false},
+		{"http://127.0.0.1:2360/", false},
+		{"http://127a0a0a1:23600/", false},
+		{"https://127.0.0.1:23600/", false},
+		{"https://example.com/?u=http://127.0.0.1:23600/", false},
+	}
+	for _, tc := range cases {
+		if got := matches(rules[1].Trigger.URLFilter, tc.url); got != tc.kept {
+			t.Errorf("%q kept: %v; want %v", tc.url, got, tc.kept)
+		}
 	}
 }

@@ -7,17 +7,19 @@
         archive's attribution under licenses/markitai/, Go's and every linked
         module's under licenses/go/. With --sums the archive's SHA-256 must
         be the one SHA256SUMS lists.
-  build --platform darwin/arm64|linux/amd64 [--e2e]
+  build --platform darwin/arm64|linux/amd64|windows/amd64 [--e2e]
         `go tool mygo build` of the staged app in desktop/build/<goos>-<goarch>/:
         Markitai.app and markitai-desktop-<version>-arm64.dmg for macOS; the
         markitai-desktop executable with bin/ and licenses/ beside it,
         markitai-desktop_<version>_amd64.deb and
-        markitai-desktop-<version>-linux-amd64.tar.gz for Linux. --e2e makes
-        the -debug build with the automation plugin, without the disk image,
-        in desktop/build/e2e/, for scripts/desktop_e2e.py: from the project
-        desktop/build/e2e-project/, desktop/mygo.json with its own identifier
-        (".e2e" added), so it keeps no web view data where an installed
-        Markitai does.
+        markitai-desktop-<version>-linux-amd64.tar.gz for Linux; Markitai.exe
+        with bin/ and licenses/ beside it and the installer
+        markitai-desktop-setup-<version>-amd64.exe for Windows. --e2e makes
+        the -debug build with the automation plugin, without the disk image or
+        the installer, in desktop/build/e2e/, for scripts/desktop_e2e.py: from
+        the project desktop/build/e2e-project/, desktop/mygo.json with its own
+        identifier (".e2e" added), so it keeps no web view data where an
+        installed Markitai does.
   vet   gofmt, go vet and go test of desktop/ for darwin, linux and windows;
         tests run on this system and compile for the others.
 
@@ -54,7 +56,7 @@ PLATFORMS = {
     "windows/arm64": "aarch64-pc-windows-msvc",
 }
 # Built and verified this round; the others stage and compile only.
-SHIPPED = {"darwin/arm64", "linux/amd64"}
+SHIPPED = {"darwin/arm64", "linux/amd64", "windows/amd64"}
 CLI_ASSET_PREFIX = "markitai-v"
 # Licence files at a Go module's root.
 LICENCE_PREFIXES = ("LICENSE", "LICENCE", "COPYING", "NOTICE", "PATENTS")
@@ -117,8 +119,8 @@ def host_platform():
 def probe_version(program, version):
     """`markitai --version` must name `version`; run with its own HOME and MARKITAI_HOME."""
     with tempfile.TemporaryDirectory() as work:
-        environment = dict(os.environ, HOME=work, USERPROFILE=work, MARKITAI_HOME=str(Path(work) / "state"),
-                           MARKITAI_LANG="en")
+        environment = dict(os.environ, HOME=work, USERPROFILE=work, APPDATA=work, LOCALAPPDATA=work, TEMP=work,
+                           TMP=work, MARKITAI_HOME=str(Path(work) / "state"), MARKITAI_LANG="en")
         try:
             result = subprocess.run([str(program), "--version"], capture_output=True, text=True, timeout=60,
                                     env=environment, cwd=work)
@@ -228,11 +230,11 @@ def check_artifacts(names):
 
 def mygo_build_command(platform, e2e, goflags=""):
     """`go tool mygo build` arguments, run in desktop/, and the extra environment; the e2e build of
-    E2E_PROJECT keeps the inspector the automation plugin needs, goes to build/e2e and adds its tag
-    to `goflags`: mygo build takes tags from GOFLAGS only."""
+    E2E_PROJECT keeps the inspector the automation plugin needs, makes no disk image or installer,
+    goes to build/e2e and adds its tag to `goflags`: mygo build takes tags from GOFLAGS only."""
     arguments = ["tool", "mygo", "build", "-platform", platform]
     if e2e:
-        return (arguments + ["-debug", "-skip-dmg", "-o", "../e2e", E2E_PROJECT],
+        return (arguments + ["-debug", "-skip-dmg", "-skip-installer", "-o", "../e2e", E2E_PROJECT],
                 {"GOFLAGS": f"{goflags} -tags=e2e".strip()})
     return arguments, {}
 
@@ -251,7 +253,14 @@ def e2e_project(root=ROOT):
     config.update(identifier=config["identifier"] + E2E_IDENTIFIER, main=back,
                   icon=os.path.join(back, config["icon"]))
     (project / "mygo.json").write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
-    (project / "resources").symlink_to(os.path.join(back, "resources"), target_is_directory=True)
+    try:
+        (project / "resources").symlink_to(os.path.join(back, "resources"), target_is_directory=True)
+    except OSError as error:
+        # Without Developer Mode or the symlink privilege, a junction, which mygo reads the same.
+        if os.name != "nt" or error.winerror != 1314:
+            raise
+        subprocess.run(["cmd.exe", "/d", "/c", "mklink", "/J", str(project / "resources"), str(desktop / "resources")],
+                       check=True, stdout=subprocess.DEVNULL)
     return project
 
 
@@ -273,6 +282,8 @@ def layout(platform, version):
         return "markitai-desktop", f"bin/{program}", {
             f"markitai-desktop_{deb_version(version)}_{goarch}.deb",
             f"markitai-desktop-{version}-linux-{goarch}.tar.gz"}
+    if goos == "windows":
+        return "Markitai.exe", f"bin/{program}", {f"markitai-desktop-setup-{version}-{goarch}.exe"}
     raise SystemExit(f"No app layout for {platform}")
 
 

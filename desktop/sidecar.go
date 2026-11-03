@@ -216,8 +216,9 @@ func (s *Sidecar) spawn() event {
 
 // openLog opens serve.log for a child to append to. The launch's first
 // child moves the previous launch's log aside; a retry's appends, so the log
-// is the launch's. A rename refused, as Windows refuses it while a serve of
-// an earlier launch still writes there, leaves both in one file.
+// is the launch's. A serve of an earlier launch still writing there, as
+// after a crash, writes on to the moved log (openAppend); a rename refused
+// all the same leaves both in one file.
 func (s *Sidecar) openLog() (*os.File, error) {
 	if err := os.MkdirAll(filepath.Dir(s.cfg.LogPath), 0o700); err != nil {
 		return nil, err
@@ -226,7 +227,7 @@ func (s *Sidecar) openLog() (*os.File, error) {
 		s.rotated = true
 		_ = os.Rename(s.cfg.LogPath, strings.TrimSuffix(s.cfg.LogPath, ".log")+".previous.log")
 	}
-	return os.OpenFile(s.cfg.LogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	return openAppend(s.cfg.LogPath)
 }
 
 // awaitReady posts evReady once the child answers its capabilities with the

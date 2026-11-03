@@ -3,13 +3,14 @@
 
     python3.13 scripts/desktop_e2e.py ROUND [--only NAME,...] [--app PATH]
 
-It runs on an Apple silicon Mac and on x86_64 Linux in a Hyprland session. Build the app first,
-around a markitai that has `serve --supervised`:
+It runs on an Apple silicon Mac, on x86_64 Linux in a Hyprland session, and on x86-64 Windows in a
+desktop session. Build the app first, around a markitai that has `serve --supervised`:
 
     python3.13 scripts/desktop_build.py stage --archive markitai-v<version>-aarch64-apple-darwin.tar.gz
     python3.13 scripts/desktop_build.py build --e2e --platform darwin/arm64
 
-and on Linux the same with x86_64-unknown-linux-gnu and linux/amd64.
+and on Linux the same with x86_64-unknown-linux-gnu and linux/amd64, on Windows with
+x86_64-pc-windows-msvc (a .zip) and windows/amd64.
 
 Scenarios (all by default):
 
@@ -23,8 +24,8 @@ Scenarios (all by default):
                nowhere; a stop-now link in the workbench does nothing
   convert      a synthetic DataTransfer drop and Convert: the job finishes with
                the expected Markdown
-  download     a blob download and a ticket download land where the save panel
-               answered, with the right content
+  download     a blob download, and in the next launch a ticket download, land
+               where the save panel answered, with the right content
   pdf          Download as > PDF... > Print... in the preview writes a %PDF file
                of A4 pages and the page receives afterprint; the bundled
                markitai reads the file as the page's text, without the
@@ -32,13 +33,13 @@ Scenarios (all by default):
   port         a second launch serves the same origin, the first launch's log
                moved to serve.previous.log; with that port taken, a third
                launch takes another from 23600 to 23699 and remembers it
-  quit-idle    SIGTERM to the app: the app exits 0, serve drains, its PID is
-               gone, its control file removed
+  quit-idle    SIGTERM to the app (on Windows, WM_CLOSE to its window): the app
+               exits 0, serve drains, its PID is gone, its control file removed
   quit-uncounted
-               SIGTERM while serve cannot answer (SIGSTOP): the app asks with
+               SIGTERM while serve cannot answer (suspended): the app asks with
                no count; Cancel keeps it working; with nothing unfinished,
-               Quit from the menu (on Linux, closing the window) then asks
-               nothing
+               Quit from the menu (on Linux and Windows, closing the window)
+               then asks nothing
   quit-busy-when-done, quit-busy-now, quit-busy-then-now
                SIGTERM while a URL conversion is held open by a local page: the
                question answers "Quit When Done" (the Stopping page offers Stop
@@ -47,7 +48,8 @@ Scenarios (all by default):
                conversion held; the next start says it was interrupted), or
                "Quit When Done" and then the Stopping page's Stop Now (serve
                drains, then stops at once; interrupted)
-  crash        SIGKILL to the app while a conversion is held: its input closed,
+  crash        SIGKILL to the app (on Windows, TerminateProcess) while a
+               conversion is held: its input closed,
                serve drains and keeps running the conversion; a launch
                meanwhile shows that the server stopped; once serve has
                finished and released the home, Try Again brings the workbench
@@ -56,9 +58,15 @@ Scenarios (all by default):
                why, with Try Again and Show Log; once it stops, Try Again
                brings the workbench, its serve's output after the failed one's
                in the launch's serve.log
+  logout       Windows only: signing out while a URL conversion is held, as
+               WM_QUERYENDSESSION and WM_ENDSESSION to the app's windows: no
+               window holds the session up, the app asks nothing, serve has
+               stopped at once by the time the app answers WM_ENDSESSION, after
+               which Windows ends the process (the next start says interrupted)
 
 Each scenario runs the app with its own HOME (on Linux with the XDG data,
-config, cache and state directories in it), MARKITAI_HOME and app data in
+config, cache and state directories in it, on Windows with APPDATA,
+LOCALAPPDATA and TEMP), MARKITAI_HOME and app data in
 .local/desktop-e2e/ROUND/<scenario>/ and leaves there result.json, the app's
 output, screenshots, and the app's data and serve logs. ROUND/run.json names
 the app, the bundled markitai, the staged archive and the commit. Save panels
@@ -71,6 +79,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 import argparse
 import base64
+import ctypes
 import datetime
 import hashlib
 import json
@@ -80,6 +89,7 @@ import plistlib
 import re
 import signal
 import socket
+import struct
 import subprocess
 import sys
 import threading
@@ -105,8 +115,8 @@ class Build(NamedTuple):
     variables: dict
     # Variables naming where the app and its web view keep data, each made a directory in the sandbox's HOME.
     data: dict
-    shell: str  # the login shell the app reads its environment from
-    quit: str  # how a user quits with nothing unfinished: "menu", or closing the window
+    shell: str  # the login shell the app reads its environment from; "" where it reads none
+    quit: str  # how a user quits with nothing unfinished: "menu", or closing the window with "hyprctl" or "close"
 
 
 BUILDS = {
@@ -117,7 +127,12 @@ BUILDS = {
     ("Linux", "x86_64"): Build("linux/amd64", "desktop/build/e2e/linux-amd64", "markitai-desktop", "bin/markitai", (),
                                {"LANGUAGE": "en"},
                                {"XDG_CONFIG_HOME": ".config", "XDG_DATA_HOME": ".local/share",
-                                "XDG_CACHE_HOME": ".cache", "XDG_STATE_HOME": ".local/state"}, "/bin/bash", "close"),
+                                "XDG_CACHE_HOME": ".cache", "XDG_STATE_HOME": ".local/state"}, "/bin/bash", "hyprctl"),
+    # The app takes Explorer's environment, as the process's own.
+    ("Windows", "AMD64"): Build("windows/amd64", "desktop/build/e2e/windows-amd64", "Markitai.exe", "bin/markitai.exe",
+                                (), {},
+                                {"APPDATA": "AppData/Roaming", "LOCALAPPDATA": "AppData/Local",
+                                 "TEMP": "AppData/Local/Temp", "TMP": "AppData/Local/Temp"}, "", "close"),
 }
 BUILD = BUILDS.get((platform.system(), platform.machine()))
 # Its real path: serve refuses a MARKITAI_HOME reached through a symbolic link (output.allow_symlinks).
@@ -184,19 +199,197 @@ def eventually(what, probe, timeout):
         return None
 
 
-def alive(pid):
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
+class Posix:
+    """Processes on macOS and Linux, through signals; the app quits on SIGTERM, as mygo takes it."""
+    request = "SIGTERM"
+
+    def alive(self, pid):
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
         return True
-    return True
+
+    def program(self, pid):
+        command = subprocess.run(["ps", "-o", "comm=", "-p", str(pid)], capture_output=True, text=True).stdout
+        return Path(command.strip()).name
+
+    def suspend(self, pid):
+        os.kill(pid, signal.SIGSTOP)
+
+    def resume(self, pid):
+        os.kill(pid, signal.SIGCONT)
+
+    def terminate(self, pid):
+        os.kill(pid, signal.SIGTERM)
+
+    def kill(self, pid):
+        os.kill(pid, signal.SIGKILL)
+
+    def request_quit(self, process):
+        process.send_signal(signal.SIGTERM)
+
+    def connect(self, path):
+        attempt = socket.socket(socket.AF_UNIX)
+        try:
+            attempt.connect(path)
+        except OSError:
+            attempt.close()
+            raise
+        return attempt
+
+
+class Windows:
+    """Processes on Windows, through the Win32 API: there are no signals, and os.kill would end the
+    process whatever it sends. The system asks an app to quit with WM_CLOSE to its windows, as taskkill
+    without /F does; Python has no AF_UNIX there, so the automation socket is opened through Winsock."""
+    request = "WM_CLOSE"
+    QUERY, SUSPEND_RESUME, TERMINATE = 0x1000, 0x0800, 0x0001
+    STILL_ACTIVE, ACCESS_DENIED = 259, 5
+    WM_CLOSE, WM_SYSCOMMAND, SC_CLOSE, GW_OWNER = 0x0010, 0x0112, 0xF060, 4
+    WM_QUERYENDSESSION, WM_ENDSESSION, ENDSESSION_LOGOFF, SMTO_BLOCK = 0x0011, 0x0016, 0x80000000, 0x0001
+    AF_UNIX, INVALID_SOCKET = 1, 2 ** (8 * struct.calcsize("P")) - 1
+
+    def __init__(self):
+        from ctypes import wintypes
+        self.kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        self.user32 = ctypes.WinDLL("user32", use_last_error=True)
+        self.ntdll = ctypes.WinDLL("ntdll")
+        self.ws2 = ctypes.WinDLL("ws2_32", use_last_error=True)
+        self.kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        self.kernel32.OpenProcess.restype = wintypes.HANDLE
+        self.kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        self.kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+        self.kernel32.QueryFullProcessImageNameW.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR,
+                                                            ctypes.POINTER(wintypes.DWORD)]
+        self.kernel32.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
+        self.ntdll.NtSuspendProcess.argtypes = self.ntdll.NtResumeProcess.argtypes = [wintypes.HANDLE]
+        self.each_window = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+        self.user32.EnumWindows.argtypes = [self.each_window, wintypes.LPARAM]
+        self.user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+        self.user32.IsWindowVisible.argtypes = [wintypes.HWND]
+        self.user32.GetWindow.argtypes = [wintypes.HWND, wintypes.UINT]
+        self.user32.GetWindow.restype = wintypes.HWND
+        self.user32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+        self.user32.SendMessageTimeoutW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM,
+                                                    wintypes.UINT, wintypes.UINT, ctypes.POINTER(ctypes.c_size_t)]
+        self.user32.SendMessageTimeoutW.restype = ctypes.c_ssize_t
+        self.ws2.socket.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_int]
+        self.ws2.socket.restype = ctypes.c_size_t
+        self.ws2.connect.argtypes = [ctypes.c_size_t, ctypes.c_void_p, ctypes.c_int]
+        self.ws2.closesocket.argtypes = [ctypes.c_size_t]
+        self.dword = wintypes.DWORD
+
+    def handle(self, pid, access):
+        """A handle to pid with `access`, or None and the Win32 error."""
+        handle = self.kernel32.OpenProcess(access, False, pid)
+        return (handle, 0) if handle else (None, ctypes.get_last_error())
+
+    def call(self, pid, access, act):
+        handle, error = self.handle(pid, access)
+        if handle is None:
+            raise ctypes.WinError(error)
+        try:
+            return act(handle)
+        finally:
+            self.kernel32.CloseHandle(handle)
+
+    def alive(self, pid):
+        handle, error = self.handle(pid, self.QUERY)
+        if handle is None:
+            return error == self.ACCESS_DENIED
+        try:
+            code = self.dword()
+            return bool(self.kernel32.GetExitCodeProcess(handle, ctypes.byref(code))) and code.value == self.STILL_ACTIVE
+        finally:
+            self.kernel32.CloseHandle(handle)
+
+    def program(self, pid):
+        def name(handle):
+            buffer, size = ctypes.create_unicode_buffer(1024), self.dword(1024)
+            return Path(buffer.value).stem if self.kernel32.QueryFullProcessImageNameW(
+                handle, 0, buffer, ctypes.byref(size)) else ""
+        try:
+            return self.call(pid, self.QUERY, name)
+        except OSError:
+            return ""
+
+    def suspend(self, pid):
+        self.call(pid, self.SUSPEND_RESUME, self.ntdll.NtSuspendProcess)
+
+    def resume(self, pid):
+        self.call(pid, self.SUSPEND_RESUME, self.ntdll.NtResumeProcess)
+
+    def terminate(self, pid):
+        self.call(pid, self.TERMINATE, lambda handle: self.kernel32.TerminateProcess(handle, 1))
+
+    kill = terminate
+
+    def windows(self, pid, hidden=False):
+        """pid's visible top-level windows that no other window owns: the app's, not mygo's hidden one;
+        with hidden, all its top-level windows, mygo's among them."""
+        found = []
+
+        def each(window, _):
+            owner = self.dword()
+            self.user32.GetWindowThreadProcessId(window, ctypes.byref(owner))
+            if owner.value == pid and (hidden or self.user32.IsWindowVisible(window) and not self.user32.GetWindow(
+                    window, self.GW_OWNER)):
+                found.append(window)
+            return True
+        self.user32.EnumWindows(self.each_window(each), 0)
+        if not found:
+            raise Failure(f"no window of pid {pid}")
+        return found
+
+    def request_quit(self, process):
+        for window in self.windows(process.pid):
+            self.user32.PostMessageW(window, self.WM_CLOSE, 0, 0)
+
+    def close(self, process):
+        """What the window's close button and Alt+F4 send."""
+        for window in self.windows(process.pid):
+            self.user32.PostMessageW(window, self.WM_SYSCOMMAND, self.SC_CLOSE, 0)
+
+    def end_session(self, process, timeout):
+        """What signing out sends each top-level window of the process, as Windows sends it: whether
+        the session may end, then that it ends. The answers to the question, None where unanswered."""
+        def send(window, message, wparam):
+            result = ctypes.c_size_t()
+            sent = self.user32.SendMessageTimeoutW(window, message, wparam, self.ENDSESSION_LOGOFF, self.SMTO_BLOCK,
+                                                   int(timeout * 1000), ctypes.byref(result))
+            return result.value if sent else None
+        windows = self.windows(process.pid, hidden=True)
+        answers = [send(window, self.WM_QUERYENDSESSION, 0) for window in windows]
+        for window in windows:
+            send(window, self.WM_ENDSESSION, 1)
+        return answers
+
+    def connect(self, path):
+        class Address(ctypes.Structure):
+            _fields_ = [("family", ctypes.c_ushort), ("path", ctypes.c_char * 108)]
+        handle = self.ws2.socket(self.AF_UNIX, socket.SOCK_STREAM, 0)
+        if handle == self.INVALID_SOCKET:
+            raise ctypes.WinError(ctypes.get_last_error())
+        address = Address(self.AF_UNIX, os.fsencode(path))
+        if self.ws2.connect(handle, ctypes.byref(address), ctypes.sizeof(address)):
+            error = ctypes.get_last_error()
+            self.ws2.closesocket(handle)
+            raise ctypes.WinError(error)
+        return socket.socket(self.AF_UNIX, socket.SOCK_STREAM, 0, fileno=handle)
+
+
+SYSTEM = Windows() if os.name == "nt" else Posix()
+
+
+def alive(pid):
+    return SYSTEM.alive(pid)
 
 
 def is_markitai(pid):
-    command = subprocess.run(["ps", "-o", "comm=", "-p", str(pid)], capture_output=True, text=True).stdout
-    return Path(command.strip()).name == "markitai"
+    return SYSTEM.program(pid) == "markitai"
 
 
 def free_port():
@@ -215,19 +408,21 @@ def http(url, token=None, timeout=10):
         return error.code, error.read()
 
 
+def sandbox(home, markitai_home):
+    """isolated_env's HOME and MARKITAI_HOME, with the build's data directories made in HOME."""
+    environment = isolated_env(home, markitai_home)
+    for name, relative in BUILD.data.items():
+        directory = Path(home).absolute() / relative
+        directory.mkdir(parents=True, exist_ok=True)
+        environment[name] = str(directory)
+    return environment
+
+
 class Automation:
     """mygo's automation plugin: newline-delimited JSON calls over a Unix socket."""
 
     def __init__(self, path, timeout=30):
-        def connect():
-            attempt = socket.socket(socket.AF_UNIX)
-            try:
-                attempt.connect(path)
-            except OSError:
-                attempt.close()
-                raise
-            return attempt
-        self.socket = wait_for("automation socket", connect, timeout, 0.1)
+        self.socket = wait_for("automation socket", lambda: SYSTEM.connect(path), timeout, 0.1)
         self.socket.settimeout(120)
         self.stream = self.socket.makefile("rw", encoding="utf-8", newline="\n")
         self.sent = 0
@@ -333,8 +528,9 @@ class App:
         except (AutomationError, KeyError, ValueError) as error:
             print(f"  (no {name} screenshot: {error})")
 
-    def signal(self, number):
-        self.process.send_signal(number)
+    def request_quit(self):
+        """The system's request to quit: SIGTERM, which mygo takes as Quit (as Cmd-Q), or WM_CLOSE."""
+        SYSTEM.request_quit(self.process)
 
     def exited(self, timeout):
         try:
@@ -343,8 +539,8 @@ class App:
             raise Failure(f"the app (pid {self.process.pid}) still runs {timeout} s later") from None
 
     def quit(self):
-        """SIGTERM, which mygo takes as Quit (as Cmd-Q), and the app's exit status."""
-        self.signal(signal.SIGTERM)
+        """The system's request to quit, and the app's exit status."""
+        self.request_quit()
         code = self.exited(30)
         self.close()
         return code
@@ -352,10 +548,13 @@ class App:
     def quit_as_user(self):
         """Quit as a user does, and the app's exit status: after one SIGTERM, mygo ends the app at
         once on the next. Quit from the application menu, as Cmd-Q does; on Linux, which has no
-        application menu, the compositor closes the window (Hyprland's close, as Super+W does)."""
+        application menu, the compositor closes the window (Hyprland's close, as Super+W does); on
+        Windows the window's close command, as its close button sends."""
         try:
             if BUILD.quit == "menu":
                 self.ui.call("menu", window=self.ui.window(), path=[APP_NAME, f"Quit {APP_NAME}"])
+            elif BUILD.quit == "close":
+                SYSTEM.close(self.process)
             else:
                 closed = subprocess.run(["hyprctl", "dispatch",
                                          f'hl.dsp.window.close({{ window = "pid:{self.process.pid}" }})'],
@@ -424,7 +623,9 @@ class HeldPage:
 
 class OtherSite:
     """A site on another loopback origin that a window allowed to go there would load: it lists the
-    paths asked of it."""
+    paths asked of it, each with the headers that say what kind of load asked."""
+
+    KINDS = ("Sec-Purpose", "Purpose", "Sec-Fetch-Mode", "Sec-Fetch-Dest", "Sec-Fetch-User")
 
     def __init__(self):
         self.asked = []
@@ -432,7 +633,8 @@ class OtherSite:
 
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self):
-                site.asked.append(self.path)
+                kind = ", ".join(f"{name}: {self.headers[name]}" for name in OtherSite.KINDS if self.headers[name])
+                site.asked.append(f"{self.path} ({kind})" if kind else self.path)
                 body = b"<!doctype html><html><head><title>Elsewhere</title></head><body>Elsewhere</body></html>"
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -459,7 +661,7 @@ class Scenario:
         self.dir = run.dir / name
         self.dir.mkdir(parents=True)
         self.home, self.markitai_home, self.app_data = self.dir / "home", self.dir / "markitai-home", self.dir / "app"
-        self.base = isolated_env(self.home, self.markitai_home)
+        self.base = sandbox(self.home, self.markitai_home)
         # A login shell in an empty HOME would start zsh's new-user setup.
         (self.home / ".zshrc").write_text("# desktop e2e\n", encoding="utf-8")
         self.checks, self.notes, self.apps, self.others, self.sites = [], [], [], [], []
@@ -471,9 +673,10 @@ class Scenario:
         environment = {key: value for key, value in self.base.items()
                        if not key.startswith(("MARKITAI_", "MYGO_")) and key.lower() not in PROXIES
                        and key not in {"TERM", "TERM_PROGRAM", "ZDOTDIR"}}
-        environment.update(MARKITAI_HOME=str(self.markitai_home), SHELL=BUILD.shell, LANG="en_US.UTF-8",
-                           MARKITAI_LANG="en", **BUILD.variables,
-                           **{name: str(self.home / relative) for name, relative in BUILD.data.items()}, **extra)
+        environment.update(MARKITAI_HOME=str(self.markitai_home), LANG="en_US.UTF-8", MARKITAI_LANG="en",
+                           **BUILD.variables, **extra)
+        if BUILD.shell:
+            environment["SHELL"] = BUILD.shell
         return environment
 
     def launch(self, **environment):
@@ -535,15 +738,17 @@ class Scenario:
                     process.wait(10)
                 except subprocess.TimeoutExpired:
                     process.kill()
+        for stale in self.dir.glob("*.sock"):
+            stale.unlink(missing_ok=True)  # a killed app's: on Windows a file that other programs cannot stat
         self.control()
         for pid in self.serve_pids:
             if alive(pid) and is_markitai(pid):
                 print(f"  stopping serve {pid}, still running after the scenario")
-                os.kill(pid, signal.SIGTERM)
+                SYSTEM.terminate(pid)
                 try:
                     wait_for(f"serve {pid} to end", lambda pid=pid: not alive(pid), 10)
                 except Failure:
-                    os.kill(pid, signal.SIGKILL)
+                    SYSTEM.kill(pid)
 
     def saved(self, suffix, timeout=30):
         """The file the save panel answered, once its size holds still."""
@@ -648,17 +853,19 @@ def ready(s):
         document.body.append(a); a.click(); a.remove(); return true;""")
     opened = eventually("the followed link in the browser", lambda: external.is_file() and external.read_text(), 10)
     time.sleep(2)
+    at = app.page()["url"]
     s.check("a link to another site the user follows opens in the browser; the window stays on the workbench",
-            opened == followed + "\n" and app.page()["url"].startswith(origin) and not elsewhere.asked,
-            f"browser: {opened!r}, the site was asked for {elsewhere.asked}")
+            opened == followed + "\n" and at.startswith(origin) and not elsewhere.asked,
+            f"browser: {opened!r}, the window at {at}, the site was asked for {elsewhere.asked}")
     # Past 1 s: WebKit counts a timer set within 1 s of a gesture (the eval) as that gesture.
     app.ui.eval(f"""setTimeout(() => {{ location.href = {json.dumps(elsewhere.origin + "/y")}; }}, 1500);
         return true;""")
     time.sleep(4)
     opened = external.read_text() if external.is_file() else ""
+    at = app.page()["url"]
     s.check("a page's own navigation elsewhere goes nowhere, not to the browser either",
-            opened == followed + "\n" and app.page()["url"].startswith(origin) and not elsewhere.asked,
-            f"browser: {opened!r}, the site was asked for {elsewhere.asked}")
+            opened == followed + "\n" and at.startswith(origin) and not elsewhere.asked,
+            f"browser: {opened!r}, the window at {at}, the site was asked for {elsewhere.asked}")
     pid = s.control()
     app.ui.eval("""const a = document.createElement("a");
         a.href = "markitai-desktop:stop-now"; a.target = "_blank";
@@ -695,6 +902,12 @@ def download(s):
     saved = s.saved(".md")
     s.check("the blob download is saved where the panel answered, with the Markdown",
             saved.read_text(encoding="utf-8") == markdown, saved.name)
+    # WebView2, as Chrome, asks before a page's second download with no input of the user's between
+    # (multiple automatic downloads). The workbench downloads once per click; a script run by the
+    # driver is no click, so the ticket download has a launch of its own.
+    app.quit()
+    app = s.launch()
+    app.ready()
     status = app.ui.eval(AUTH + f"""
         const r = await fetch("/api/download-tickets", {{method: "POST",
           headers: {{...H, "Content-Type": "application/json"}},
@@ -797,8 +1010,10 @@ def port(s):
             and DRAINING not in log, f"previous: {previous.count(LISTENING)} start(s), now: {log.count(LISTENING)}")
     second.quit()
     with socket.socket() as taken:
-        # The port's last connections may wait out TIME_WAIT; listening still holds it.
-        taken.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        # The port's last connections may wait out TIME_WAIT; listening still holds it. Windows binds
+        # past TIME_WAIT by itself, and its SO_REUSEADDR would let another listener in too.
+        if os.name != "nt":
+            taken.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         taken.bind(("127.0.0.1", chosen))
         taken.listen()
         third = s.launch()
@@ -814,7 +1029,7 @@ def quit_idle(s):
     app.ready()
     pid = s.control()
     s.require("serve wrote its control file", pid is not None and alive(pid), pid)
-    s.check("the app quits with 0 on SIGTERM", app.quit() == 0)
+    s.check(f"the app quits with 0 on {SYSTEM.request}", app.quit() == 0)
     s.check("serve ended and removed its control file", s.serve_ended(pid, 10), pid)
     s.check("serve's log ends with its drain, as a server that exits 0 leaves it", s.drained(),
             s.log().strip().splitlines()[-1:])
@@ -827,12 +1042,12 @@ def quit_uncounted(s):
     pid = s.control()
     s.require("serve wrote its control file", pid is not None and alive(pid), pid)
     asked = s.app_data / "asked"
-    os.kill(pid, signal.SIGSTOP)
+    SYSTEM.suspend(pid)
     try:
-        app.signal(signal.SIGTERM)
+        app.request_quit()
         answer = eventually("the quit question", lambda: asked.is_file() and asked.read_text(), 10)
     finally:
-        os.kill(pid, signal.SIGCONT)
+        SYSTEM.resume(pid)
     s.check("with serve unable to count, the app asks anyway, with no count", answer == "unknown", answer)
     time.sleep(1)
     s.check("Cancel keeps the app, serve and the workbench",
@@ -867,7 +1082,7 @@ def ask_to_quit(s, choice):
     origin = app.ready()
     held, job = hold_a_conversion(s, app, origin, app.token())
     pid = s.control()
-    app.signal(signal.SIGTERM)
+    app.request_quit()
     asked = s.app_data / "asked"
     answer = eventually("the quit question", lambda: asked.is_file() and asked.read_text(), 10)
     s.check("the app asked about the one unfinished conversion", answer == "1", answer)
@@ -937,7 +1152,7 @@ def crash(s):
     pid = s.control()
     s.require("serve wrote its control file", pid is not None and alive(pid), pid)
     held, job = hold_a_conversion(s, app, origin, app.token())
-    app.signal(signal.SIGKILL)
+    app.process.kill()
     app.exited(10)
     s.check("with the app killed, its input closed: serve drains, running its held conversion",
             eventually("serve's drain", lambda: DRAINING in s.log(), 10) and alive(pid), pid)
@@ -959,6 +1174,28 @@ def crash(s):
     s.require("the held conversion finished in the first serve (a restart reads a cut-off job as "
               "interrupted)", finished(origin, again.token(), job=job, timeout=10), job)
     again.quit()
+
+
+def logout(s):
+    app = s.launch()
+    origin = app.ready()
+    held, job = hold_a_conversion(s, app, origin, app.token())
+    pid = s.control()
+    answers = SYSTEM.end_session(app.process, 20)
+    s.check("every window of the app lets the session end", bool(answers) and all(answers), answers)
+    s.check("by the time the app has answered that the session ends, serve has ended, its conversion held",
+            not alive(pid), pid)
+    s.check("the app asked nothing", not (s.app_data / "asked").exists())
+    # Windows ends the process once the session ends, as it then does to every process of it.
+    s.note(f"the app's process {'still ran' if app.process.poll() is None else 'had exited'}; ended as the "
+           "session ends")
+    if app.process.poll() is None:
+        SYSTEM.terminate(app.process.pid)
+    app.exited(10)
+    log = s.log()
+    s.check("serve's log says it stopped at once, not that it drained", STOPPING_NOW in log and DRAINING not in log,
+            log.strip().splitlines()[-1:])
+    interrupted(s, origin, job)
 
 
 def home_busy(s):
@@ -995,6 +1232,8 @@ SCENARIOS = {
     "quit-busy-now": quit_busy_now, "quit-busy-then-now": quit_busy_then_now, "crash": crash,
     "home-busy": home_busy,
 }
+if os.name == "nt":
+    SCENARIOS["logout"] = logout
 
 
 class Run:
@@ -1013,7 +1252,7 @@ def identity(run, guard):
                                             capture_output=True, text=True).stdout.strip()
     with_home = run.dir / "version-home"
     version = subprocess.run([str(program), "--version"], capture_output=True, text=True, timeout=60,
-                             env=isolated_env(with_home / "home", with_home / "markitai-home")).stdout.strip()
+                             env=sandbox(with_home / "home", with_home / "markitai-home")).stdout.strip()
     return {
         "command": [Path(sys.executable).name, *sys.argv],
         "started": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
@@ -1065,7 +1304,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("round", help="evidence goes to .local/desktop-e2e/ROUND/")
     parser.add_argument("--only", help="comma-separated scenarios: " + ", ".join(SCENARIOS))
-    parser.add_argument("--app", type=Path, help="the e2e build: its Markitai.app, or its directory on Linux")
+    parser.add_argument("--app", type=Path, help="the e2e build: its Markitai.app, or its directory on Linux "
+                                                     "and Windows")
     args = parser.parse_args(argv)
     if not re.fullmatch(r"[A-Za-z0-9._-]+", args.round):
         parser.error("ROUND is a plain name: letters, digits, '.', '_' or '-'")
@@ -1074,8 +1314,8 @@ def main(argv=None):
     if unknown:
         parser.error(f"unknown scenarios: {', '.join(unknown)}")
     if BUILD is None:
-        raise SystemExit("The desktop e2e runs the darwin/arm64 build on an Apple silicon Mac, or the linux/amd64 "
-                         "build on x86_64 Linux")
+        raise SystemExit("The desktop e2e runs the darwin/arm64 build on an Apple silicon Mac, the linux/amd64 "
+                         "build on x86_64 Linux, or the windows/amd64 build on x86-64 Windows")
     app = (args.app or ROOT / BUILD.path).resolve()
     if not os.access(app / BUILD.executable, os.X_OK):
         raise SystemExit(f"No e2e build at {app}; run desktop_build.py stage, then build --e2e --platform "
