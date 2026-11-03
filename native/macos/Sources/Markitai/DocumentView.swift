@@ -149,7 +149,6 @@ struct DocumentToolbar: ViewModifier {
                     }
                     .pickerStyle(.segmented)
                     .labelsHidden()
-                    .accessibilityLabel(L["detail.view"])
                     .help(L["menu.toggle_view"])
                 }
                 ToolbarItemGroup(placement: .primaryAction) {
@@ -180,23 +179,33 @@ extension View {
 
 /// The core's preview document in a `WKWebView` (DESIGN.md section 8),
 /// rendered off the main thread whenever the Markdown or appearance changes.
+/// The web view exists only once the network rule list is compiled, so no
+/// document loads without it.
 struct PreviewPane: View {
     @Environment(\.colorScheme) private var colorScheme
     let markdown: String
     let baseDirectory: String
     let zoom: Double
     @ViewState private var html: String?
+    @ViewState private var rules: PreviewNetworkRules.Compiled?
 
     var body: some View {
-        PreviewWebView(html: html, baseDirectory: baseDirectory, zoom: zoom)
-            .task(id: RenderKey(markdown: markdown, dark: colorScheme == .dark, base: baseDirectory)) {
-                let dark = colorScheme == .dark
-                let markdown = markdown
-                let base = baseDirectory
-                html = await Task.detached(priority: .userInitiated) {
-                    Core.previewHTML(markdown: markdown, dark: dark, baseDirectory: base)
-                }.value
+        Group {
+            if let rules {
+                PreviewWebView(html: html, baseDirectory: baseDirectory, zoom: zoom, rules: rules)
+            } else {
+                Color.clear
             }
+        }
+        .task { rules = await PreviewNetworkRules.compiled() }
+        .task(id: RenderKey(markdown: markdown, dark: colorScheme == .dark, base: baseDirectory)) {
+            let dark = colorScheme == .dark
+            let markdown = markdown
+            let base = baseDirectory
+            html = await Task.detached(priority: .userInitiated) {
+                Core.previewHTML(markdown: markdown, dark: dark, baseDirectory: base)
+            }.value
+        }
     }
 
     private struct RenderKey: Hashable {
@@ -210,6 +219,7 @@ struct PreviewWebView: NSViewRepresentable {
     let html: String?
     let baseDirectory: String
     let zoom: Double
+    let rules: PreviewNetworkRules.Compiled
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -217,7 +227,9 @@ struct PreviewWebView: NSViewRepresentable {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
         configuration.defaultWebpagePreferences.allowsContentJavaScript = false
-        PreviewNetworkRules.apply(to: configuration.userContentController)
+        if let list = rules.list {
+            configuration.userContentController.add(list)
+        }
         let view = PreviewWKWebView(frame: .zero, configuration: configuration)
         view.navigationDelegate = context.coordinator
         view.setValue(false, forKey: "drawsBackground")
@@ -240,7 +252,7 @@ struct PreviewWebView: NSViewRepresentable {
 
         /// Allows the document's own load and same-document fragment links;
         /// opens http, https and mailto links in their apps; cancels the rest.
-        func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void) {
             if loading && action.navigationType == .other && action.targetFrame?.isMainFrame == true {
                 loading = false
                 return decisionHandler(.allow)
@@ -262,29 +274,26 @@ struct PreviewWebView: NSViewRepresentable {
 }
 
 /// A content rule list blocking every http(s) and ws(s) request, compiled
-/// once and added to each preview as soon as it is ready.
+/// once (the app starts it at launch) and added to every preview.
 @MainActor
 enum PreviewNetworkRules {
-    private static var list: WKContentRuleList?
-    private static var waiting: [WKUserContentController] = []
-    private static var compiling = false
+    /// The compiled list; nil only if WebKit refused it, and then the
+    /// document's own CSP still blocks the network.
+    struct Compiled {
+        let list: WKContentRuleList?
+    }
 
-    static func apply(to controller: WKUserContentController) {
-        if let list {
-            controller.add(list)
-            return
+    private static var compiling: Task<Compiled, Never>?
+
+    static func compiled() async -> Compiled {
+        if let compiling { return await compiling.value }
+        let task = Task {
+            let json = #"[{"trigger":{"url-filter":"^https?://"},"action":{"type":"block"}},{"trigger":{"url-filter":"^wss?://"},"action":{"type":"block"}}]"#
+            let list = try? await WKContentRuleListStore.default().compileContentRuleList(forIdentifier: "MarkitaiPreviewNetwork", encodedContentRuleList: json)
+            return Compiled(list: list)
         }
-        waiting.append(controller)
-        guard !compiling else { return }
-        compiling = true
-        let json = #"[{"trigger":{"url-filter":"^https?://"},"action":{"type":"block"}},{"trigger":{"url-filter":"^wss?://"},"action":{"type":"block"}}]"#
-        WKContentRuleListStore.default().compileContentRuleList(forIdentifier: "MarkitaiPreviewNetwork", encodedContentRuleList: json) { compiled, _ in
-            Task { @MainActor in
-                list = compiled
-                if let compiled { waiting.forEach { $0.add(compiled) } }
-                waiting = []
-            }
-        }
+        compiling = task
+        return await task.value
     }
 }
 

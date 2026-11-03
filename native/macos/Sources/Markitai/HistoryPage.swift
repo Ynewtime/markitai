@@ -85,6 +85,7 @@ struct HistoryListColumn: View {
                     }
                 }
                 .listStyle(.inset)
+                .rowHeight()
                 .scrollContentBackground(.hidden)
                 .accessibilityLabel(L["nav.history"])
                 .padding(.horizontal, -12)
@@ -117,8 +118,7 @@ struct HistoryRow: View {
             }
         }
         .frame(height: 44)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(entry.title), \(subtitle)")
+        .rowName("\(entry.title), \(subtitle)")
     }
 
     private var subtitle: String {

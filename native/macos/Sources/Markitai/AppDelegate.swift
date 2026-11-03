@@ -10,8 +10,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         launched = true
+        Task { _ = await PreviewNetworkRules.compiled() }
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            MainActor.assumeIsolated { Self.textFieldKeys(event) }
+            MainActor.assumeIsolated { Self.deletesLineInTextField(event) } ? nil : event
         }
         if !pendingFiles.isEmpty {
             AppModel.shared.add(pendingFiles.map(Input.file))
@@ -41,13 +42,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// where it deletes to the start of the line, as in Finder. Menu key
     /// equivalents run before the field sees a key, so the field gets this one
     /// here first.
-    private static func textFieldKeys(_ event: NSEvent) -> NSEvent? {
+    private static func deletesLineInTextField(_ event: NSEvent) -> Bool {
         guard event.keyCode == 51,
               event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
               let editor = event.window?.firstResponder as? NSTextView, editor.isEditable
-        else { return event }
+        else { return false }
         editor.deleteToBeginningOfLine(nil)
-        return nil
+        return true
     }
 
     /// Closing the window keeps conversions running; the Dock icon reopens it.
@@ -81,7 +82,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         cancel.keyEquivalent = "\r"
         quit.hasDestructiveAction = true
         let answer = { (response: NSApplication.ModalResponse) in
-            sender.reply(toApplicationShouldTerminate: response == .alertFirstButtonReturn)
+            let quit = response == .alertFirstButtonReturn
+            if quit {
+                workbench.discardConverting()
+            }
+            sender.reply(toApplicationShouldTerminate: quit)
         }
         if let window = NSApp.windows.first(where: { $0.isVisible && $0.canBecomeMain }) {
             alert.beginSheetModal(for: window, completionHandler: answer)

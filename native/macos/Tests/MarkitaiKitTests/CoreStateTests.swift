@@ -134,25 +134,33 @@ struct CoreStateTests {
         #expect(item.failure?.code == expected, "\(String(describing: item.state))")
         #expect(item.failure?.folderWasClaimed == true)
         #expect(folders().isEmpty, "a failed conversion leaves no folder")
-        #expect(!ErrorSentence.text(for: item.failure!, outputFolder: output.path).isEmpty)
+        #expect(!ErrorSentence.text(for: item.failure!).isEmpty)
     }
 
     @Test func anUnwritableOutputFolderIsOutputUnavailable() async throws {
         let blocker = try authored("not-a-folder")
+        let unwritable = blocker.appendingPathComponent("Markitai").path
         let settings = UserSettings(store: MemoryStore())
-        settings.outputFolder = blocker.appendingPathComponent("Markitai").path
+        settings.outputFolder = unwritable
         let workbench = Workbench(settings: settings, history: History(file: inputs.appendingPathComponent("h.json")))
         workbench.add([.file(try authored("x.md"))])
         try await eventually(60, "failed") { workbench.items[0].failure != nil }
         #expect(workbench.items[0].failure?.code == "output_unavailable")
         #expect(workbench.items[0].failure?.folderWasClaimed == false)
         #expect(ErrorSentence.of("output_unavailable").action == .openSettings)
+
+        settings.outputFolder = output.path
+        let sentence = L["error.output_unavailable", ["folder": Format.path(unwritable), "settings": L["nav.settings"]]]
+        #expect(ErrorSentence.text(for: try #require(workbench.items[0].failure)) == sentence, "the sentence names the folder the run used")
+        #expect(workbench.items[0].subtitle == L["row.failed", ["reason": sentence]])
     }
 
     @Test func aFolderThatCannotBeWrittenIsIOError() throws {
         let source = Source.file(try authored("io.md").path)
-        let result = Job.run(source: source, options: Options(config: .builtin), outputFolder: output.path, claimed: { folder in
-            chmod(folder, 0o500)
+        let result = Job.run(source: source, options: Options(config: .builtin), outputFolder: output.path, claim: { make in
+            let claimed = make()
+            if case .success(let folder) = claimed { chmod(folder, 0o500) }
+            return claimed
         }, convert: Core.convert)
         guard case .failure(let failure) = result else { Issue.record("converted into a read-only folder"); return }
         #expect(failure.code == "io_error", "\(failure)")
@@ -162,14 +170,14 @@ struct CoreStateTests {
     @Test func aDirectorySourceIsIsDirectory() throws {
         let directory = inputs.appendingPathComponent("Plain Folder")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let result = Job.run(source: .file(directory.path), options: Options(config: .builtin), outputFolder: output.path, claimed: { _ in }, convert: Core.convert)
+        let result = Job.run(source: .file(directory.path), options: Options(config: .builtin), outputFolder: output.path, claim: { $0() }, convert: Core.convert)
         guard case .failure(let failure) = result else { Issue.record("a folder converted"); return }
         #expect(failure.code == "is_directory", "\(failure)")
         #expect(folders().isEmpty)
     }
 
     @Test func anEmptySourceIsInvalidInput() throws {
-        let result = Job.run(source: .file(""), options: Options(config: .builtin), outputFolder: output.path, claimed: { _ in }, convert: Core.convert)
+        let result = Job.run(source: .file(""), options: Options(config: .builtin), outputFolder: output.path, claim: { $0() }, convert: Core.convert)
         guard case .failure(let failure) = result else { Issue.record("an empty source converted"); return }
         #expect(failure.code == "invalid_input", "\(failure)")
         #expect(ErrorSentence.of(failure.code).key == "error.invalid_input")
@@ -179,12 +187,12 @@ struct CoreStateTests {
     /// Envelopes the core answers only in rare cases still map as section 9 says.
     @Test func rareEnvelopesMap() {
         let folder = output.path
-        let skipped = Job.parse(.ok(["skip_reason": "exists", "markdown": ""]), folder: folder)
-        #expect(skipped == .failure(Failure(code: "skipped", message: "exists", folderWasClaimed: true)))
-        let imageSkip = Job.parse(.ok(["skip_reason": "image_only", "markdown": ""]), folder: folder)
-        #expect(imageSkip == .failure(Failure(code: "skipped", message: "image_only", folderWasClaimed: true)), "any skip_reason is skipped")
+        let skipped = Job.parse(.ok(["skip_reason": "exists", "markdown": ""]), folder: folder + "/x", outputFolder: folder)
+        #expect(skipped == .failure(Failure(code: "skipped", message: "exists", folderWasClaimed: true, outputFolder: folder)))
+        let imageSkip = Job.parse(.ok(["skip_reason": "image_only", "markdown": ""]), folder: folder + "/x", outputFolder: folder)
+        #expect(imageSkip == .failure(Failure(code: "skipped", message: "image_only", folderWasClaimed: true, outputFolder: folder)), "any skip_reason is skipped")
         #expect(ErrorSentence.of("image_only") == ErrorSentence(key: "error.image_only", action: .openSettings))
-        #expect(ErrorSentence.text(for: Failure(code: "skipped", message: "exists", folderWasClaimed: true), outputFolder: folder) == L["error.skipped", ["reason": "exists"]])
+        #expect(ErrorSentence.text(for: Failure(code: "skipped", message: "exists", folderWasClaimed: true, outputFolder: folder)) == L["error.skipped", ["reason": "exists"]])
         #expect(ErrorSentence.of("invalid_json").key == "error.internal")
         #expect(ErrorSentence.of("internal_error").key == "error.internal")
         #expect(ErrorSentence.of("something_new").key == "error.unknown")

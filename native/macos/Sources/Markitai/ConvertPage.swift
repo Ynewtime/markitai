@@ -195,6 +195,7 @@ struct ConvertListColumn: View {
                 }
             }
             .listStyle(.inset)
+            .rowHeight()
             .scrollContentBackground(.hidden)
             .accessibilityLabel(L["a11y.conversions"])
             .padding(.horizontal, -12)
@@ -204,28 +205,11 @@ struct ConvertListColumn: View {
     }
 }
 
-/// The state text of a list row (DESIGN.md 4.1).
-func subtitle(of item: Item, outputFolder: String) -> String {
-    switch item.state {
-    case .queued: return L["state.queued"]
-    case .converting: return L["state.converting"]
-    case .done(let conversion):
-        var text = L["state.done", ["duration": Format.duration(conversion.duration)]]
-        if !conversion.warnings.isEmpty {
-            text += " · " + L.plural("state.warnings", count: conversion.warnings.count)
-        }
-        return text
-    case .failed(let failure):
-        return L["row.failed", ["reason": ErrorSentence.text(for: failure, outputFolder: outputFolder)]]
-    }
-}
-
 struct ItemRow: View {
-    @EnvironmentObject private var settings: UserSettings
     let item: Item
 
     var body: some View {
-        let subtitle = subtitle(of: item, outputFolder: settings.effectiveOutputFolder)
+        let subtitle = item.subtitle
         HStack(spacing: 10) {
             KindGlyph(kind: item.source.kind)
             VStack(alignment: .leading, spacing: 1) {
@@ -242,8 +226,7 @@ struct ItemRow: View {
             trailing
         }
         .frame(height: 44)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(item.title), \(subtitle)")
+        .rowName("\(item.title), \(subtitle)")
     }
 
     private var isFailed: Bool {
@@ -264,6 +247,27 @@ struct ItemRow: View {
         case .failed:
             Image(systemName: "xmark.octagon.fill").foregroundStyle(.red)
         }
+    }
+}
+
+extension View {
+    /// A row is 52 pt: its 44 pt content (DESIGN.md 13.4) and the inset
+    /// style's 4 pt above and below. The List measures a row it inserts
+    /// without animation (any change outside `withAnimation`, such as a
+    /// History entry added when a conversion finishes) before the row has
+    /// content, and keeps its estimate, this minimum (by default 24 pt): the
+    /// estimate is the real height.
+    func rowHeight() -> some View {
+        environment(\.defaultMinListRowHeight, 52)
+    }
+
+    /// A row is one element named `<title>, <subtitle>` (DESIGN.md 12), exposed
+    /// as text, as the sidebar's rows are: with the name alone, its role is
+    /// AXUnknown, without a role description.
+    func rowName(_ name: String) -> some View {
+        accessibilityElement(children: .ignore)
+            .accessibilityLabel(name)
+            .accessibilityAddTraits(.isStaticText)
     }
 }
 
@@ -376,7 +380,7 @@ struct StatusLine: View {
         switch state {
         case .queued:
             Label { Text(L["state.queued"]) } icon: { Image(systemName: "hourglass").foregroundStyle(.secondary) }
-        case .converting(let started, _):
+        case .converting(let started):
             HStack(spacing: 6) {
                 ProgressView().controlSize(.mini)
                 TimelineView(.periodic(from: started, by: 1)) { context in
@@ -397,13 +401,12 @@ struct StatusLine: View {
 struct ErrorBlock: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var workbench: Workbench
-    @EnvironmentObject private var settings: UserSettings
     let item: Item
     let failure: Failure
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(ErrorSentence.text(for: failure, outputFolder: settings.effectiveOutputFolder))
+            Text(ErrorSentence.text(for: failure))
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
             HStack(spacing: 8) {

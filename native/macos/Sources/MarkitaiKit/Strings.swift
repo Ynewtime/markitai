@@ -1,6 +1,6 @@
 import Foundation
 
-public enum AppLanguage: String {
+public enum AppLanguage: String, Sendable {
     case english = "en"
     case simplifiedChinese = "zh-Hans"
 
@@ -22,7 +22,7 @@ public enum AppLanguage: String {
 
 /// Every user-visible string, from `native/strings.json` (DESIGN.md section 10),
 /// embedded in the binary.
-public struct Strings {
+public struct Strings: Sendable {
     public let language: AppLanguage
     private let table: [String: [String: String]]
 

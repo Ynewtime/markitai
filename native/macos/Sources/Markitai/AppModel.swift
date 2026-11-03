@@ -123,8 +123,10 @@ final class AppModel: ObservableObject {
             urlInvalid = true
             return
         }
-        add([.web(address)])
+        // Cleared before the add: a change after it would replace the add's
+        // animated transaction, and the List would insert the row unanimated.
         urlText = ""
+        add([.web(address)])
     }
 
     func focusWebAddress() {

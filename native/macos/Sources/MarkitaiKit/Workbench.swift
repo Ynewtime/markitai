@@ -42,6 +42,7 @@ public final class Workbench: ObservableObject {
     public var announce: (String) -> Void = { _ in }
 
     private let run: Job.Run
+    private let claims = Claims()
     private var nextTurn = 0
     private var noticeExpiry: Task<Void, Never>?
     private let strings: Strings
@@ -154,7 +155,7 @@ public final class Workbench: ObservableObject {
     }
 
     private func pump() {
-        while convertingCount < Workbench.concurrency,
+        while !claims.isQuitting, convertingCount < Workbench.concurrency,
               let index = items.indices.filter({ items[$0].state == .queued }).min(by: { items[$0].turn < items[$1].turn }) {
             start(index)
         }
@@ -162,25 +163,18 @@ public final class Workbench: ObservableObject {
 
     private func start(_ index: Int) {
         let item = items[index]
-        items[index].state = .converting(startedAt: Date(), folder: "")
+        items[index].state = .converting(startedAt: Date())
         let run = self.run
+        let claims = self.claims
         let outputFolder = settings.effectiveOutputFolder
         DispatchQueue.global(qos: .userInitiated).async { [self] in
-            let result = run(item.source, item.options, outputFolder) { folder in
-                Task { @MainActor in self.claimed(item.id, folder) }
-            }
+            guard let result = run(item.source, item.options, outputFolder, { claims.claim(item.id, $0) }) else { return }
             Task { @MainActor in self.finish(item.id, result) }
         }
     }
 
-    private func claimed(_ id: UUID, _ folder: String) {
-        guard let index = items.firstIndex(where: { $0.id == id }),
-              case .converting(let started, _) = items[index].state else { return }
-        items[index].state = .converting(startedAt: started, folder: folder)
-    }
-
     private func finish(_ id: UUID, _ result: Result<Conversion, Failure>) {
-        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+        guard claims.finish(id), let index = items.firstIndex(where: { $0.id == id }) else { return }
         switch result {
         case .success(let conversion):
             if case .url = items[index].source, let title = conversion.urlTitle {
@@ -194,6 +188,15 @@ public final class Workbench: ObservableObject {
             announce(strings["a11y.failed", ["title": items[index].title]])
         }
         pump()
+    }
+
+    /// The user confirmed Quit (DESIGN.md 7.3): deletes the folders claimed for
+    /// items still Converting, whose conversions end with the process. After
+    /// this nothing is claimed or started, and results change nothing.
+    public func discardConverting() {
+        for folder in claims.quit() {
+            try? FileManager.default.removeItem(atPath: folder)
+        }
     }
 
     /// Notices stay 8 s, or until the next add.
@@ -210,5 +213,43 @@ public final class Workbench: ObservableObject {
 
     public func clearNotices() {
         show([])
+    }
+}
+
+/// The folders claimed for items still Converting. Workers claim under its
+/// lock and Quit takes the same lock, so every folder is either claimed before
+/// Quit, which deletes it, or never claimed.
+private final class Claims: @unchecked Sendable {
+    private let lock = NSLock()
+    private var quitting = false
+    private var folders: [UUID: String] = [:]
+
+    var isQuitting: Bool { lock.withLock { quitting } }
+
+    func claim(_ id: UUID, _ make: () -> Result<String, Failure>) -> Result<String, Failure>? {
+        lock.withLock {
+            guard !quitting else { return nil }
+            let result = make()
+            if case .success(let folder) = result {
+                folders[id] = folder
+            }
+            return result
+        }
+    }
+
+    /// The item's result reached the list; false once quitting.
+    func finish(_ id: UUID) -> Bool {
+        lock.withLock {
+            folders[id] = nil
+            return !quitting
+        }
+    }
+
+    /// The folders to delete. Nothing is claimed after this.
+    func quit() -> [String] {
+        lock.withLock {
+            quitting = true
+            return Array(folders.values)
+        }
     }
 }

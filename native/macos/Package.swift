@@ -3,6 +3,8 @@ import PackageDescription
 
 let repository = Context.packageDirectory + "/../.."
 let coreLibrary = repository + "/target/release/libmarkitai_app.a"
+// Complete concurrency checking; `build.py --check` turns its warnings into errors.
+let strict: [SwiftSetting] = [.enableExperimentalFeature("StrictConcurrency")]
 
 let package = Package(
     name: "Markitai",
@@ -13,6 +15,7 @@ let package = Package(
             name: "MarkitaiKit",
             dependencies: ["CMarkitaiApp"],
             resources: [.embedInCode("strings.json")],
+            swiftSettings: strict,
             linkerSettings: [
                 .unsafeFlags([coreLibrary]),
                 .linkedFramework("Vision"),
@@ -24,7 +27,7 @@ let package = Package(
                 .linkedLibrary("iconv"),
             ]
         ),
-        .executableTarget(name: "Markitai", dependencies: ["MarkitaiKit"]),
-        .testTarget(name: "MarkitaiKitTests", dependencies: ["MarkitaiKit"]),
+        .executableTarget(name: "Markitai", dependencies: ["MarkitaiKit"], swiftSettings: strict),
+        .testTarget(name: "MarkitaiKitTests", dependencies: ["MarkitaiKit"], swiftSettings: strict),
     ]
 )

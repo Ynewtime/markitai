@@ -1,8 +1,12 @@
 import Foundation
 
 /// Where settings persist: `UserDefaults` in the app, a dictionary in tests.
+/// Flags and numbers are read with `UserDefaults`' conversions: the argument
+/// domain (`-conversion.llm YES`) holds them as text.
 public protocol SettingsStorage: AnyObject {
     func object(forKey key: String) -> Any?
+    func bool(forKey key: String) -> Bool
+    func double(forKey key: String) -> Double
     func set(_ value: Any?, forKey key: String)
 }
 
@@ -25,16 +29,15 @@ public final class UserSettings: ObservableObject {
 
     public init(store: SettingsStorage) {
         self.store = store
-        let bool = { (key: String) in store.object(forKey: key) as? Bool ?? false }
-        llm = bool("conversion.llm")
-        ocr = bool("conversion.ocr")
-        screenshot = bool("conversion.screenshot")
-        desc = bool("conversion.desc")
-        alt = bool("conversion.alt")
+        llm = store.bool(forKey: "conversion.llm")
+        ocr = store.bool(forKey: "conversion.ocr")
+        screenshot = store.bool(forKey: "conversion.screenshot")
+        desc = store.bool(forKey: "conversion.desc")
+        alt = store.bool(forKey: "conversion.alt")
         let folder = store.object(forKey: "output.folder") as? String
         outputFolder = folder.flatMap { $0.hasPrefix("/") ? $0 : nil }
         configSource = (store.object(forKey: "configuration.source") as? String).flatMap(ConfigSource.init(rawValue:)) ?? .user
-        let zoom = (store.object(forKey: "view.zoom") as? NSNumber)?.doubleValue ?? 1
+        let zoom = store.double(forKey: "view.zoom")
         self.zoom = UserSettings.zoomRange.contains(zoom) ? zoom : 1
     }
 

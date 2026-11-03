@@ -15,6 +15,8 @@ struct AppCommands: Commands {
                 ])
             }
         }
+        // No help book: the default item would say Help isn't available.
+        CommandGroup(replacing: .help) {}
         CommandGroup(replacing: .newItem) {
             Button(L["convert.choose"]) { model.chooseFiles() }
                 .keyboardShortcut("o")

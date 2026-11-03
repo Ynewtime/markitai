@@ -129,17 +129,21 @@ public struct Failure: Error, Equatable, Sendable {
     public var code: String
     public var message: String
     public var folderWasClaimed: Bool
+    /// The output folder the run used, which the sentence names as `{folder}`:
+    /// a later change in Settings does not rewrite why an earlier run failed.
+    public var outputFolder: String
 
-    public init(code: String, message: String, folderWasClaimed: Bool) {
+    public init(code: String, message: String, folderWasClaimed: Bool, outputFolder: String) {
         self.code = code
         self.message = message
         self.folderWasClaimed = folderWasClaimed
+        self.outputFolder = outputFolder
     }
 }
 
 public enum ItemState: Equatable, Sendable {
     case queued
-    case converting(startedAt: Date, folder: String)
+    case converting(startedAt: Date)
     case done(Conversion)
     case failed(Failure)
 
@@ -170,6 +174,22 @@ public struct Item: Identifiable, Equatable, Sendable {
         self.options = options
         self.state = .queued
         self.turn = turn
+    }
+
+    /// The state text of its list row (DESIGN.md 4.1).
+    public var subtitle: String {
+        switch state {
+        case .queued: return L["state.queued"]
+        case .converting: return L["state.converting"]
+        case .done(let conversion):
+            var text = L["state.done", ["duration": Format.duration(conversion.duration)]]
+            if !conversion.warnings.isEmpty {
+                text += " · " + L.plural("state.warnings", count: conversion.warnings.count)
+            }
+            return text
+        case .failed(let failure):
+            return L["row.failed", ["reason": ErrorSentence.text(for: failure)]]
+        }
     }
 }
 
@@ -205,10 +225,10 @@ public struct ErrorSentence: Equatable {
     }
 
     /// The sentence with its placeholders filled.
-    public static func text(for failure: Failure, outputFolder: String, strings: Strings = L) -> String {
+    public static func text(for failure: Failure, strings: Strings = L) -> String {
         strings[of(failure.code).key, [
             "settings": strings["nav.settings"],
-            "folder": Format.path(outputFolder),
+            "folder": Format.path(failure.outputFolder),
             "reason": failure.message,
         ]]
     }

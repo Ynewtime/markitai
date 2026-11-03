@@ -2,39 +2,67 @@ import Foundation
 import Testing
 @testable import MarkitaiKit
 
-/// A conversion runner the test finishes by hand, recording what it was given.
+/// A conversion runner that claims real folders through the core and holds
+/// each conversion until the test finishes it, recording what it was given.
 final class Gate: @unchecked Sendable {
     private let lock = NSLock()
+    private let holdsClaims: Bool
+    private var permits: [String: DispatchSemaphore] = [:]
     private var waiting: [String: DispatchSemaphore] = [:]
-    private var outcomes: [String: Result<Conversion, Failure>] = [:]
+    private var outcomes: [String: Envelope] = [:]
+    private var converting: [String] = []
+    private var ended: [String] = []
     private(set) var started: [String] = []
     private(set) var options: [String: Options] = [:]
 
+    /// `holdingClaims`: each run waits for `permitClaim` before it claims its folder.
+    init(holdingClaims: Bool = false) {
+        holdsClaims = holdingClaims
+    }
+
     var run: Job.Run {
-        { source, options, _, claimed in
+        { source, options, outputFolder, claim in
+            let permit = DispatchSemaphore(value: 0)
             let semaphore = DispatchSemaphore(value: 0)
             self.lock.withLock {
+                self.permits[source.raw] = permit
                 self.waiting[source.raw] = semaphore
                 self.started.append(source.raw)
                 self.options[source.raw] = options
             }
-            claimed("/claimed/" + source.defaultTitle)
-            semaphore.wait()
-            return self.lock.withLock { self.outcomes.removeValue(forKey: source.raw)! }
+            if self.holdsClaims { permit.wait() }
+            let result = Job.run(source: source, options: options, outputFolder: outputFolder, claim: claim) { _ in
+                self.lock.withLock { self.converting.append(source.raw) }
+                semaphore.wait()
+                return self.lock.withLock { self.outcomes.removeValue(forKey: source.raw)! }
+            }
+            self.lock.withLock { self.ended.append(source.raw) }
+            return result
         }
     }
 
     func startedSources() -> [String] { lock.withLock { started } }
+    /// Sources whose folder is claimed and whose conversion is held.
+    func convertingSources() -> [String] { lock.withLock { converting } }
+    func endedSources() -> [String] { lock.withLock { ended } }
 
-    func finish(_ raw: String, _ outcome: Result<Conversion, Failure>) {
+    func permitClaim(_ raw: String) {
+        lock.withLock { _ = permits[raw]?.signal() }
+    }
+
+    func finish(_ raw: String, _ outcome: Envelope) {
         lock.withLock {
             outcomes[raw] = outcome
             waiting.removeValue(forKey: raw)?.signal()
         }
     }
 
-    static func done(_ raw: String, warnings: [String] = []) -> Result<Conversion, Failure> {
-        .success(Conversion(folder: "/out/x", markdown: "# \(raw)", markdownPath: "/out/x/x.md", duration: 1.5, warnings: warnings, usage: nil, urlTitle: nil))
+    static func done(_ raw: String, warnings: [String] = []) -> Envelope {
+        .ok(["markdown": "# \(raw)", "output_path": "", "duration": 1.5, "warnings": warnings])
+    }
+
+    static func failed(_ code: String, _ message: String = "") -> Envelope {
+        .failure(code: code, message: message)
     }
 }
 
@@ -42,9 +70,16 @@ final class Gate: @unchecked Sendable {
 struct QueueTests {
     let history: History
     let settings = UserSettings(store: MemoryStore())
+    let output: URL
 
     init() throws {
         history = History(file: try temporaryFolder("queue").appendingPathComponent("history.json"))
+        output = try temporaryFolder("output")
+        settings.outputFolder = output.path
+    }
+
+    func folders() -> [String] {
+        ((try? FileManager.default.contentsOfDirectory(atPath: output.path)) ?? []).filter { !$0.hasPrefix(".") }.sorted()
     }
 
     func files(_ names: String...) throws -> [Input] {
@@ -151,7 +186,7 @@ struct QueueTests {
         let raw = gate.startedSources()[0]
         #expect(gate.options[raw]?.llm == false)
         settings.llm = true
-        gate.finish(raw, .failure(Failure(code: "fetch_error", message: "offline", folderWasClaimed: true)))
+        gate.finish(raw, Gate.failed("fetch_error", "offline"))
         try await eventually(5, "failed") { workbench.items[0].failure != nil }
         #expect(workbench.items[0].options.llm == false, "an item keeps what it captured")
         workbench.retry(workbench.items[0].id)
@@ -169,9 +204,66 @@ struct QueueTests {
         workbench.add(try files("ok.md", "bad.md"))
         try await eventually(5, "both started") { gate.startedSources().count == 2 }
         gate.finish(gate.startedSources()[0], Gate.done("ok"))
-        gate.finish(gate.startedSources()[1], .failure(Failure(code: "unsupported", message: "", folderWasClaimed: true)))
+        gate.finish(gate.startedSources()[1], Gate.failed("unsupported"))
         try await eventually(5, "both finished") { !workbench.anyConverting }
         #expect(Set(spoken) == [L["a11y.done", ["title": "ok.md"]], L["a11y.failed", ["title": "bad.md"]]])
+    }
+
+    /// DESIGN.md 7.3: Quit deletes what the Converting items claimed, keeps
+    /// what finished before it, and nothing changes after it.
+    @Test func quitDeletesTheFoldersOfConvertingItemsAndKeepsFinishedOnes() async throws {
+        let gate = Gate()
+        let workbench = Workbench(settings: settings, history: history, run: gate.run)
+        workbench.add(try files("a.md", "b.md", "c.md", "d.md"))
+        try await eventually(5, "a and b claimed") { gate.convertingSources().count == 2 }
+        let a = gate.startedSources()[0]
+        gate.finish(a, Gate.done("a"))
+        try await eventually(5, "a done") { workbench.items.first { $0.title == "a.md" }?.conversion != nil }
+        try await eventually(5, "c claimed") { gate.convertingSources().count == 3 }
+        #expect(folders() == ["a", "b", "c"])
+
+        workbench.discardConverting()
+        #expect(folders() == ["a"], "the folders of b and c are gone, a's is kept")
+        #expect(history.entries.map(\.title) == ["a.md"])
+
+        for raw in gate.convertingSources() where raw != a { gate.finish(raw, Gate.done(raw)) }
+        try await eventually(5, "b and c ended") { gate.endedSources().count == 3 }
+        workbench.add(try files("e.md"))
+        try await Task.sleep(nanoseconds: 300_000_000)
+        #expect(workbench.items.filter(\.isConverting).map(\.title).sorted() == ["b.md", "c.md"], "results after Quit change nothing")
+        #expect(workbench.items.filter { $0.state == .queued }.map(\.title).sorted() == ["d.md", "e.md"], "nothing starts after Quit")
+        #expect(gate.startedSources().count == 3)
+        #expect(history.entries.map(\.title) == ["a.md"])
+        #expect(folders() == ["a"])
+    }
+
+    /// A run that reaches its claim after Quit makes no folder.
+    @Test func aClaimAfterQuitMakesNoFolder() async throws {
+        let gate = Gate(holdingClaims: true)
+        let workbench = Workbench(settings: settings, history: history, run: gate.run)
+        workbench.add(try files("late.md"))
+        try await eventually(5, "started") { gate.startedSources().count == 1 }
+        workbench.discardConverting()
+        let raw = gate.startedSources()[0]
+        gate.permitClaim(raw)
+        try await eventually(5, "the run ended or claimed") { gate.endedSources().count == 1 || gate.convertingSources().count == 1 }
+        #expect(gate.convertingSources().isEmpty, "no conversion ran")
+        #expect(folders().isEmpty)
+        gate.finish(raw, Gate.done(raw))
+    }
+
+    /// Without Quit the same held claim converts as usual.
+    @Test func aHeldClaimConvertsWithoutQuit() async throws {
+        let gate = Gate(holdingClaims: true)
+        let workbench = Workbench(settings: settings, history: history, run: gate.run)
+        workbench.add(try files("held.md"))
+        try await eventually(5, "started") { gate.startedSources().count == 1 }
+        gate.permitClaim(gate.startedSources()[0])
+        try await eventually(5, "claimed") { gate.convertingSources().count == 1 }
+        #expect(folders() == ["held"])
+        gate.finish(gate.startedSources()[0], Gate.done("held"))
+        try await eventually(5, "done") { workbench.items[0].conversion != nil }
+        #expect(workbench.items[0].conversion?.folder == output.appendingPathComponent("held").path)
     }
 
     @Test(arguments: [

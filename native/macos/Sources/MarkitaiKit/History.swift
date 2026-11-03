@@ -25,13 +25,10 @@ public struct HistoryEntry: Codable, Identifiable, Equatable {
 
     public var sourceValue: Source { Source(raw: source, kind: kind) }
 
-    public var finishedDate: Date? { HistoryEntry.timestamp.date(from: finishedAt) }
+    public var finishedDate: Date? { try? HistoryEntry.timestamp.parse(finishedAt) }
 
-    static let timestamp: ISO8601DateFormatter = {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime]
-        return formatter
-    }()
+    /// UTC, RFC 3339, seconds (DESIGN.md 4.4).
+    static let timestamp = Date.ISO8601FormatStyle()
 
     public init(item: Item, conversion: Conversion, finished: Date, version: String = Core.version) {
         id = item.id.uuidString.lowercased()
@@ -40,7 +37,7 @@ public struct HistoryEntry: Codable, Identifiable, Equatable {
         title = item.title
         folder = conversion.folder
         markdownPath = conversion.markdownPath
-        finishedAt = HistoryEntry.timestamp.string(from: finished)
+        finishedAt = HistoryEntry.timestamp.format(finished)
         duration = conversion.duration
         warnings = conversion.warnings
         usage = conversion.usage

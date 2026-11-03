@@ -145,10 +145,12 @@ def check():
     and no provider keys or model from this shell. They compile with this
     shell's HOME, where the compiler finds the Testing macros. Swift Build's
     explicit module scan intermittently leaves out the Command Line Tools'
-    Testing macro plugin, so the build names its folder."""
+    Testing macro plugin, so the build names its folder. Every target builds
+    with complete concurrency checking (Package.swift), and here a Swift
+    warning fails the check."""
     run(sys.executable, REPOSITORY / "native" / "scripts" / "strings.py", "--check")
     plugins = Path(output("xcrun", "--find", "swift")).parents[1] / "lib" / "swift" / "host" / "plugins" / "testing"
-    run("swift", "build", "--build-tests", "-Xswiftc", "-plugin-path", "-Xswiftc", plugins)
+    run("swift", "build", "--build-tests", "-Xswiftc", "-plugin-path", "-Xswiftc", plugins, "-Xswiftc", "-warnings-as-errors")
     with tempfile.TemporaryDirectory(prefix="markitai-macos-check-") as root:
         root = Path(root).resolve()
         home, markitai, temporary = root / "home", root / "markitai-home", root / "tmp"

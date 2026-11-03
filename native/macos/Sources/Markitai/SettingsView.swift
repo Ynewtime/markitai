@@ -3,6 +3,7 @@ import MarkitaiKit
 import SwiftUI
 
 /// The markitai configuration file: open it, or create it as `{}`.
+@MainActor
 enum ConfigurationFile {
     static func open() {
         guard let file = Core.configFile() else { return }

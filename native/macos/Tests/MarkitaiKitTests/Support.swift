@@ -47,6 +47,8 @@ func temporaryFolder(_ name: String = "case") throws -> URL {
 final class MemoryStore: SettingsStorage {
     var values: [String: Any] = [:]
     func object(forKey key: String) -> Any? { values[key] }
+    func bool(forKey key: String) -> Bool { values[key] as? Bool ?? false }
+    func double(forKey key: String) -> Double { (values[key] as? NSNumber)?.doubleValue ?? 0 }
     func set(_ value: Any?, forKey key: String) { values[key] = value }
 }
 
