@@ -8,19 +8,26 @@ MARKITAI_HOME, TEMP and TMP all inside -State) and repository fixtures as argume
 hands one more file to it through a second launch (the single-instance redirect),
 waits for every conversion to finish, then reads the window through UI Automation
 patterns only: rows and their states, the detail's preview and Markdown text,
-History, and a Settings toggle that must reach settings.json. It takes screenshots
-of Convert, History and Settings, closes the window with WM_CLOSE, and exits 1 if any
-piece of evidence is missing. Evidence goes to -Out; summary.txt lists every check.
+History, and a Settings toggle that must reach settings.json. It captures Convert,
+History, Settings and the quit dialog, keeps one item Converting while the window is
+closed (Cancel, then Quit), and exits 1 if any piece of evidence is missing. Evidence
+goes to -Out; summary.txt lists every check.
 
-Runs in Windows PowerShell 5.1 or later, in an interactive session with the display on:
+Runs in Windows PowerShell 5.1 or later, in an interactive session:
 
     powershell -File native\windows\smoke.ps1 -State $env:RUNNER_TEMP\markitai-smoke -Out $env:RUNNER_TEMP\markitai-evidence
+
+-Capture screen (the default, for a disposable runner with the display on) brings the
+window forward and copies it from the screen. -Capture window, for a desktop someone
+uses, leaves focus alone and asks the window to draw itself (PrintWindow with
+PW_RENDERFULLCONTENT).
 #>
 param(
     [Parameter(Mandatory = $true)][string]$State,
     [Parameter(Mandatory = $true)][string]$Out,
     [string]$App = (Join-Path $PSScriptRoot 'Markitai.App\bin\x64\Release\net10.0-windows10.0.26100.0\win-x64'),
-    [int]$TimeoutSec = 300
+    [int]$TimeoutSec = 300,
+    [ValidateSet('screen', 'window')][string]$Capture = 'screen'
 )
 $ErrorActionPreference = 'Stop'
 
@@ -33,6 +40,7 @@ public static class SmokeNative {
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr window, out RECT rect);
     [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr window, uint message, IntPtr w, IntPtr l);
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr window);
+    [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr window, IntPtr dc, uint flags);
     [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr window, IntPtr after, int x, int y, int cx, int cy, uint flags);
     public struct RECT { public int Left, Top, Right, Bottom; }
 }
@@ -227,17 +235,30 @@ function Dump([string]$path) {
 }
 
 function Shot([string]$name) {
-    try { (Root).SetFocus() } catch { }
-    [SmokeNative]::SetForegroundWindow($script:window) | Out-Null
-    Start-Sleep -Milliseconds 800
     $rect = New-Object SmokeNative+RECT
-    [SmokeNative]::GetWindowRect($script:window, [ref]$rect) | Out-Null
-    $area = [System.Drawing.Rectangle]::Intersect($screen, [System.Drawing.Rectangle]::FromLTRB($rect.Left, $rect.Top, $rect.Right, $rect.Bottom))
-    if ($area.Width -le 0 -or $area.Height -le 0) { throw "the window is off screen ($($rect.Left),$($rect.Top),$($rect.Right),$($rect.Bottom))" }
-    $bitmap = New-Object System.Drawing.Bitmap $area.Width, $area.Height
-    $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
-    $graphics.CopyFromScreen($area.Location, [System.Drawing.Point]::Empty, $area.Size)
-    $graphics.Dispose()
+    if ($Capture -eq 'window') {
+        Start-Sleep -Milliseconds 800
+        [SmokeNative]::GetWindowRect($script:window, [ref]$rect) | Out-Null
+        $area = [System.Drawing.Rectangle]::FromLTRB(0, 0, $rect.Right - $rect.Left, $rect.Bottom - $rect.Top)
+        $bitmap = New-Object System.Drawing.Bitmap $area.Width, $area.Height
+        $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+        $dc = $graphics.GetHdc()
+        $drawn = [SmokeNative]::PrintWindow($script:window, $dc, 2)
+        $graphics.ReleaseHdc($dc)
+        $graphics.Dispose()
+        if (-not $drawn) { $bitmap.Dispose(); throw "PrintWindow could not draw the window for $name" }
+    } else {
+        try { (Root).SetFocus() } catch { }
+        [SmokeNative]::SetForegroundWindow($script:window) | Out-Null
+        Start-Sleep -Milliseconds 800
+        [SmokeNative]::GetWindowRect($script:window, [ref]$rect) | Out-Null
+        $area = [System.Drawing.Rectangle]::Intersect($screen, [System.Drawing.Rectangle]::FromLTRB($rect.Left, $rect.Top, $rect.Right, $rect.Bottom))
+        if ($area.Width -le 0 -or $area.Height -le 0) { throw "the window is off screen ($($rect.Left),$($rect.Top),$($rect.Right),$($rect.Bottom))" }
+        $bitmap = New-Object System.Drawing.Bitmap $area.Width, $area.Height
+        $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+        $graphics.CopyFromScreen($area.Location, [System.Drawing.Point]::Empty, $area.Size)
+        $graphics.Dispose()
+    }
     # A blank or black capture has a handful of colours; a rendered window has many.
     $colours = New-Object System.Collections.Generic.HashSet[int]
     for ($y = 0; $y -lt $area.Height; $y += [Math]::Max(1, [int]($area.Height / 40))) {
@@ -313,7 +334,8 @@ try {
         $rect = New-Object SmokeNative+RECT
         [SmokeNative]::GetWindowRect($script:window, [ref]$rect) | Out-Null
         $size = "$($rect.Right - $rect.Left)x$($rect.Bottom - $rect.Top) at $($rect.Left),$($rect.Top)"
-        Check ($rect.Right -le $screen.Right -and $rect.Bottom -le $screen.Bottom) "the whole window is on screen ($size)"
+        if ($Capture -eq 'screen') { Check ($rect.Right -le $screen.Right -and $rect.Bottom -le $screen.Bottom) "the whole window is on screen ($size)" }
+        else { Log "window $size" }
     }
 
     Stage 'conversions from the command line' {
@@ -383,23 +405,63 @@ try {
         Log "toggled '$(S 'settings.ocr')' to $($toggle.Current.ToggleState)"
         Wait-Until 'conversion.ocr in settings.json' { (Read-Json (Join-Path $data 'settings.json')).'conversion.ocr' -eq $true } 10 | Out-Null
         Check $true 'the OCR switch persists to settings.json'
+        Dump (Join-Path $Out 'uia-tree.txt')
+    }
+
+    # DESIGN.md 7.3 and 16, Quit: a page served by a listener that never answers keeps
+    # one item Converting while the window is closed twice.
+    Stage 'quit while converting' {
+        $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+        $listener.Start()
+        try {
+            $url = "http://127.0.0.1:$($listener.LocalEndpoint.Port)/slow-page"
+            $converting = "$($url.Substring(7)), $(S 'state.converting')"
+            $before = @(Get-ChildItem -Directory $output | ForEach-Object { $_.Name })
+            Choose (S 'nav.convert')
+            (Pattern (Find (S 'convert.url.label') $Types::Edit) ([System.Windows.Automation.ValuePattern]::Pattern)).SetValue($url)
+            (Pattern (Find (S 'convert.url.add') $Types::Button) ([System.Windows.Automation.InvokePattern]::Pattern)).Invoke()
+            Wait-Until "the row '$converting'" { (Rows (S 'a11y.conversions')) -contains $converting } 20 | Out-Null
+            $claimed = Wait-Until 'its claimed folder' { Get-ChildItem -Directory $output | ForEach-Object { $_.Name } | Where-Object { $before -notcontains $_ } | Select-Object -First 1 } 20
+            Check $true "'$converting' is Converting in its folder '$claimed'"
+
+            [SmokeNative]::PostMessage($script:window, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
+            $null = Find (S 'quit.title') $null 15
+            $null = Find (S 'quit.body.one') $null 5
+            Check $true "WM_CLOSE with a conversion running shows '$(S 'quit.title')'"
+            Shot 'quit-dialog'
+            (Pattern (Find (S 'common.cancel') $Types::Button) ([System.Windows.Automation.InvokePattern]::Pattern)).Invoke()
+            Wait-Until 'the dialog to close' { -not (Root).FindFirst($Scope::Descendants, (Condition (S 'quit.title'))) } 10 | Out-Null
+            Start-Sleep -Seconds 1
+            Check ((-not $script:markitai.HasExited) -and ((Rows (S 'a11y.conversions')) -contains $converting)) 'Cancel keeps the app and the conversion running'
+
+            $closer = $null
+            if ((Root).TryGetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern, [ref]$closer)) {
+                $closer.Close(); Log 'closed through WindowPattern'
+            } else {
+                [SmokeNative]::PostMessage($script:window, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null; Log 'closed through WM_CLOSE'
+            }
+            (Pattern (Find (S 'quit.confirm') $Types::Button 15) ([System.Windows.Automation.InvokePattern]::Pattern)).Invoke()
+            Check ($script:markitai.WaitForExit(30000)) 'Quit in the dialog quits the app'
+            Check (-not (Test-Path -LiteralPath (Join-Path $output $claimed))) "Quit deletes the folder '$claimed' of the stopped conversion"
+            $history = Read-Json (Join-Path $data 'history.json')
+            Check (@($history.entries | Where-Object { $_.source -eq $url }).Count -eq 0 -and @($history.entries).Count -eq $expectedFolders.Count) 'History keeps the finished conversions and not the stopped one'
+            $settings = Read-Json (Join-Path $data 'settings.json')
+            Check (($settings.'output.folder' -eq $output) -and ($settings.'conversion.ocr' -eq $true)) 'settings.json keeps the output folder and OCR after quitting'
+        }
+        finally { $listener.Stop() }
     }
 }
 finally {
     if ($script:window -ne [IntPtr]::Zero -and $script:markitai -and -not $script:markitai.HasExited) {
         try { Dump (Join-Path $Out 'uia-tree.txt') } catch { Log "UI Automation dump failed: $($_.Exception.Message)" }
-        Stage 'quit' {
-            [SmokeNative]::PostMessage($script:window, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
-            Check ($script:markitai.WaitForExit(30000)) 'WM_CLOSE quits the app'
-            $settings = Read-Json (Join-Path $data 'settings.json')
-            Check (($settings.'output.folder' -eq $output) -and ($settings.'conversion.ocr' -eq $true)) 'settings.json keeps the output folder and OCR after quitting'
-        }
+        [SmokeNative]::PostMessage($script:window, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
+        if (-not $script:markitai.WaitForExit(15000)) { Log 'WM_CLOSE did not quit the app' }
     }
     if ($script:markitai -and -not $script:markitai.HasExited) {
         try { $script:markitai.Kill() } catch { Log "kill failed: $($_.Exception.Message)" }
         Check $false 'Markitai quit on its own'
     }
-    if (-not $script:markitai -or $script:failures.Count -gt 0) {
+    if ($Capture -eq 'screen' -and (-not $script:markitai -or $script:failures.Count -gt 0)) {
         $bounds = $screen
         $bitmap = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
         $graphics = [System.Drawing.Graphics]::FromImage($bitmap)

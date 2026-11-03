@@ -235,8 +235,10 @@ def isolated_env(state):
 def run_tests(dll, state):
     """Builds with the developer's environment (NuGet cache and all), then runs with the isolated one.
 
-    The xunit.v3 test assembly is its own runner. `dotnet test` on a hosted Windows
-    runner exited 0 without running a test or writing a result, so it is not used.
+    The xunit.v3 test assembly is its own runner, so no MSBuild runs under the isolated
+    profile. `dotnet test` would: on Windows nuget.g.props finds packages under
+    $(UserProfile), the moved USERPROFILE hides them, IsTestProject goes unset, and it
+    exits 0 having run nothing.
     """
     project = TESTS / "Markitai.Core.Tests.csproj"
     run(["dotnet", "build", str(project), "-c", "Release"], cwd=HERE)

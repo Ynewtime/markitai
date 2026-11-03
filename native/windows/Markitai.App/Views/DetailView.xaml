@@ -5,6 +5,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:m="using:MarkitaiApp"
     xmlns:toolkit="using:CommunityToolkit.WinUI.Controls"
+    xmlns:views="using:MarkitaiApp.Views"
     ActualThemeChanged="DetailView_ActualThemeChanged">
     <Grid RowSpacing="0">
         <Grid.RowDefinitions>
@@ -21,7 +22,7 @@
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
-            <toolkit:Segmented
+            <views:ViewSwitch
                 x:Name="ViewSwitch"
                 VerticalAlignment="Center"
                 SelectedIndex="0"
@@ -29,10 +30,10 @@
                 SelectionChanged="ViewSwitch_SelectionChanged">
                 <toolkit:SegmentedItem Content="{m:S Key=detail.preview}" />
                 <toolkit:SegmentedItem Content="{m:S Key=detail.markdown}" />
-                <toolkit:Segmented.KeyboardAccelerators>
+                <views:ViewSwitch.KeyboardAccelerators>
                     <KeyboardAccelerator Modifiers="Control,Shift" Key="M" Invoked="SwitchView_Invoked" />
-                </toolkit:Segmented.KeyboardAccelerators>
-            </toolkit:Segmented>
+                </views:ViewSwitch.KeyboardAccelerators>
+            </views:ViewSwitch>
             <CommandBar
                 Grid.Column="1"
                 HorizontalAlignment="Right"
