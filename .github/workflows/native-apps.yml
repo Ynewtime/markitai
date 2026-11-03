@@ -74,12 +74,14 @@ jobs:
       - name: Drive the app on the desktop
         shell: powershell
         run: native\windows\smoke.ps1 -State "$env:RUNNER_TEMP\markitai-smoke" -Out "$env:RUNNER_TEMP\markitai-evidence"
-      - name: Keep the screenshots and logs
+      - name: Keep the screenshots, logs and test results
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: native-windows-smoke
-          path: ${{ runner.temp }}/markitai-evidence
+          path: |
+            ${{ runner.temp }}/markitai-evidence
+            ${{ runner.temp }}/markitai-tests/results
           if-no-files-found: warn
           retention-days: 7
       - name: Keep the app folder

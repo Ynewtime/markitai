@@ -22,6 +22,7 @@ import tempfile
 import tomllib
 import zlib
 from pathlib import Path
+from xml.etree import ElementTree
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
@@ -237,7 +238,22 @@ def run_tests(dll, state):
     run(["dotnet", "build", project, "-c", "Release"], cwd=HERE)
     env = isolated_env(state)
     env["MARKITAI_APP_LIBRARY"] = str(dll)
-    run(["dotnet", "test", project, "-c", "Release", "--no-build"], cwd=HERE, env=env)
+    results = state / "results"
+    shutil.rmtree(results, ignore_errors=True)
+    run(["dotnet", "test", project, "-c", "Release", "--no-build", "--logger", "console;verbosity=normal",
+         "--logger", "trx;LogFileName=Markitai.Core.Tests.trx", "--results-directory", str(results)], cwd=HERE, env=env)
+    check_results(results / "Markitai.Core.Tests.trx")
+
+
+def check_results(trx):
+    """A passing run proves something only if its tests ran: every one of them passes, none is skipped."""
+    if not trx.exists():
+        raise SystemExit(f"dotnet test wrote no results at {trx}")
+    counters = ElementTree.parse(trx).getroot().find(".//{http://microsoft.com/schemas/VisualStudio/TeamTest/2010}Counters")
+    total, passed = int(counters.get("total")), int(counters.get("passed"))
+    print(f"Markitai.Core.Tests: {passed} of {total} passed ({trx})")
+    if total == 0 or passed != total:
+        raise SystemExit(f"Markitai.Core.Tests: {total - passed} of {total} did not pass")
 
 
 def main():

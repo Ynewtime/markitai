@@ -228,7 +228,7 @@ function Shot([string]$name) {
 function Wait-Until([string]$what, [scriptblock]$test, [int]$seconds = $TimeoutSec) {
     $deadline = (Get-Date).AddSeconds($seconds)
     while ((Get-Date) -lt $deadline) {
-        if ($script:app -and $script:app.HasExited) { throw "Markitai exited with code $($script:app.ExitCode) while waiting for $what" }
+        if ($script:markitai -and $script:markitai.HasExited) { throw "Markitai exited with code $($script:markitai.ExitCode) while waiting for $what" }
         $value = & $test
         if ($value) { return $value }
         Start-Sleep -Milliseconds 500
@@ -270,15 +270,17 @@ function Read-Json([string]$path) { return (Get-Content -Raw -Encoding UTF8 $pat
 
 # --- The run -----------------------------------------------------------------
 
-$script:app = $null
+# The Markitai process. Not $app: PowerShell names are case-insensitive, and the
+# [string]$App parameter would turn the process into its name.
+$script:markitai = $null
 $started = Get-Date
 try {
     Stage 'launch with fixtures' {
-        $script:app = Start-Markitai ($fixtures | ForEach-Object { $_.Path })
-        $script:window = Wait-Until 'the main window' { $script:app.Refresh(); if ($script:app.MainWindowHandle -ne [IntPtr]::Zero) { $script:app.MainWindowHandle } } 90
-        $script:app.Refresh()
-        Log "window pid $($script:app.Id), session $($script:app.SessionId), title '$($script:app.MainWindowTitle)'"
-        Check ($script:app.MainWindowTitle -eq (S 'app.name')) "window title is '$(S 'app.name')'"
+        $script:markitai = Start-Markitai ($fixtures | ForEach-Object { $_.Path })
+        $script:window = Wait-Until 'the main window' { $script:markitai.Refresh(); if ($script:markitai.MainWindowHandle -ne [IntPtr]::Zero) { $script:markitai.MainWindowHandle } } 90
+        $script:markitai.Refresh()
+        Log "window pid $($script:markitai.Id), session $($script:markitai.SessionId), title '$($script:markitai.MainWindowTitle)'"
+        Check ($script:markitai.MainWindowTitle -eq (S 'app.name')) "window title is '$(S 'app.name')'"
     }
 
     Stage 'conversions from the command line' {
@@ -290,8 +292,8 @@ try {
         $second = Start-Markitai @($redirected.Path)
         Check ($second.WaitForExit(30000)) "the second launch hands over and exits"
         if ($second.HasExited) { Check ($second.ExitCode -eq 0) "the second launch exits 0 (got $($second.ExitCode))" }
-        $script:app.Refresh()
-        Check (-not $script:app.HasExited) "the first instance keeps running"
+        $script:markitai.Refresh()
+        Check (-not $script:markitai.HasExited) "the first instance keeps running"
         $rows = Finished-Rows ($fixtures.Count + 1)
         Check-Row $rows $redirected
         [IO.File]::WriteAllLines((Join-Path $Out 'convert-rows.txt'), [string[]]$rows, $utf8)
@@ -349,17 +351,20 @@ try {
     }
 }
 finally {
-    if ($script:window -ne [IntPtr]::Zero -and $script:app -and -not $script:app.HasExited) {
+    if ($script:window -ne [IntPtr]::Zero -and $script:markitai -and -not $script:markitai.HasExited) {
         try { Dump (Join-Path $Out 'uia-tree.txt') } catch { Log "UI Automation dump failed: $($_.Exception.Message)" }
         Stage 'quit' {
             [SmokeNative]::PostMessage($script:window, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
-            Check ($script:app.WaitForExit(30000)) 'WM_CLOSE quits the app'
+            Check ($script:markitai.WaitForExit(30000)) 'WM_CLOSE quits the app'
             $settings = Read-Json (Join-Path $data 'settings.json')
             Check (($settings.'output.folder' -eq $output) -and ($settings.'conversion.ocr' -eq $true)) 'settings.json keeps the output folder and OCR after quitting'
         }
     }
-    if ($script:app -and -not $script:app.HasExited) { $script:app.Kill(); Check $false 'Markitai had to be killed' }
-    if (-not $script:app -or $script:failures.Count -gt 0) {
+    if ($script:markitai -and -not $script:markitai.HasExited) {
+        try { $script:markitai.Kill() } catch { Log "kill failed: $($_.Exception.Message)" }
+        Check $false 'Markitai quit on its own'
+    }
+    if (-not $script:markitai -or $script:failures.Count -gt 0) {
         $bounds = $screen
         $bitmap = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
         $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
