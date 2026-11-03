@@ -4,33 +4,41 @@ package main
 // writer, through next; the window shows the phase published last.
 type Phase interface{ isPhase() }
 
-// Starting lasts from launch until our child answers as a supervised server.
-// Child is zero until the child is spawned.
+// Preparing lasts until a child can start: at launch, until the login
+// environment is known; on a retry, until Dying, the child that failed, has
+// exited. Dying is 0 when no child of ours runs.
+type Preparing struct{ Dying int }
+
+// Starting: Child runs and has not yet answered as a supervised server.
 type Starting struct{ Child child }
 
 // Ready: Child answers on its port; the window shows the workbench.
 type Ready struct{ Child child }
 
-// Failed: no server of ours runs. Tail is the end of serve.log.
+// Failed: no server of ours answers. Tail is the end of what the child wrote
+// to serve.log. Dying is the child that never answered, told to stop and
+// not yet exited; 0 when no child of ours runs.
 type Failed struct {
 	Cause Cause
 	Tail  string
+	Dying int
 }
 
-// Stopping: Child was asked to stop and has not exited yet.
+// Stopping: the child PID was asked to stop and has not exited yet.
 type Stopping struct {
-	Mode  Mode
-	Child child
+	Mode Mode
+	PID  int
 }
 
 // Stopped is terminal: no child of ours runs and the app may quit.
 type Stopped struct{}
 
-func (Starting) isPhase() {}
-func (Ready) isPhase()    {}
-func (Failed) isPhase()   {}
-func (Stopping) isPhase() {}
-func (Stopped) isPhase()  {}
+func (Preparing) isPhase() {}
+func (Starting) isPhase()  {}
+func (Ready) isPhase()     {}
+func (Failed) isPhase()    {}
+func (Stopping) isPhase()  {}
+func (Stopped) isPhase()   {}
 
 // URL is the only address the window loads: the server's own origin, which
 // the server's Origin guard and the workbench's location.origin both need,
@@ -62,10 +70,11 @@ func (SpawnFailed) isCause() {}
 type Mode int
 
 const (
-	// WhenDone closes the child's stdin: serve refuses new work, ends queued
-	// items, finishes running conversions and exits.
+	// WhenDone: serve refuses new work, ends queued items, finishes running
+	// conversions and exits.
 	WhenDone Mode = iota
-	// Now ends the child at once; running conversions are lost.
+	// Now ends the child at once, its runtimes (Chromium, LibreOffice) with
+	// it; running conversions are lost.
 	Now
 )
 
@@ -129,39 +138,45 @@ func (doStop) isEffect()     {}
 func (doRemember) isEffect() {}
 
 // start is where every launch begins.
-func start() (Phase, []effect) { return Starting{}, []effect{doPrepare{}} }
+func start() (Phase, []effect) { return Preparing{}, []effect{doPrepare{}} }
 
 // next is the whole lifecycle; anything it does not list leaves the phase as
-// it is, with no effect.
+// it is, with no effect. d is a child still exiting, c the current one.
 //
-//	from                   event                  to                     effects
-//	Starting{}             evPrepared             Starting{}             doSpawn
-//	Starting{}             evSpawned{c}           Starting{c}
-//	Starting{}             evSpawnFailed{cause}   Failed{cause}
-//	Starting{c}            evReady{c}             Ready{c}               doRemember{port}
-//	Starting{c}            evNotReady{c}          Failed{NotReady}       doStop{c, Now}
-//	Starting{c}, Ready{c}  evExited{c}            Failed{Exited}
-//	Failed                 evRetry                Starting{}             doSpawn
-//	Starting{}, Failed     evStop                 Stopped
-//	Starting{c}, Ready{c}  evStop{mode}           Stopping{mode, c}      doStop{c, mode}
-//	Stopping{WhenDone, c}  evStop{Now}            Stopping{Now, c}       doStop{c, Now}
-//	Stopping{c}            evExited{c}            Stopped
+//	from                     event                  to                       effects
+//	Preparing{}              evPrepared             Preparing{}              doSpawn
+//	Preparing{d}             evExited{d}            Preparing{}              doSpawn
+//	Preparing                evSpawned{c}           Starting{c}
+//	Preparing                evSpawnFailed{cause}   Failed{cause}
+//	Starting{c}              evReady{c}             Ready{c}                 doRemember{port}
+//	Starting{c}              evNotReady{c}          Failed{NotReady, d: c}   doStop{c, Now}
+//	Starting{c}, Ready{c}    evExited{c}            Failed{Exited}
+//	Starting{c}, Ready{c}    evStop{mode}           Stopping{mode, c}        doStop{c, mode}
+//	Failed{d}                evExited{d}            Failed{}
+//	Failed{}                 evRetry                Preparing{}              doSpawn
+//	Failed{d}                evRetry                Preparing{d}
+//	Preparing{}, Failed{}    evStop                 Stopped
+//	Preparing{d}, Failed{d}  evStop                 Stopping{Now, d}
+//	Stopping{WhenDone, c}    evStop{Now}            Stopping{Now, c}         doStop{c, Now}
+//	Stopping{c}              evExited{c}            Stopped
 func next(p Phase, e event) (Phase, []effect) {
 	switch p := p.(type) {
-	case Starting:
-		if p.Child.PID == 0 {
-			switch e := e.(type) {
-			case evPrepared:
-				return p, []effect{doSpawn{}}
-			case evSpawned:
-				return Starting{Child: e.Child}, nil
-			case evSpawnFailed:
-				return Failed{Cause: e.Cause}, nil
-			case evStop:
-				return Stopped{}, nil
+	case Preparing:
+		switch e := e.(type) {
+		case evPrepared:
+			return p, []effect{doSpawn{}}
+		case evExited:
+			if e.PID == p.Dying {
+				return Preparing{}, []effect{doSpawn{}}
 			}
-			return p, nil
+		case evSpawned:
+			return Starting{Child: e.Child}, nil
+		case evSpawnFailed:
+			return Failed{Cause: e.Cause}, nil
+		case evStop:
+			return stopped(p.Dying), nil
 		}
+	case Starting:
 		c := p.Child
 		switch e := e.(type) {
 		case evReady:
@@ -170,14 +185,14 @@ func next(p Phase, e event) (Phase, []effect) {
 			}
 		case evNotReady:
 			if e.PID == c.PID {
-				return Failed{Cause: NotReady{}, Tail: e.Tail}, []effect{doStop{PID: c.PID, Mode: Now}}
+				return Failed{Cause: NotReady{}, Tail: e.Tail, Dying: c.PID}, []effect{doStop{PID: c.PID, Mode: Now}}
 			}
 		case evExited:
 			if e.PID == c.PID {
 				return Failed{Cause: Exited{Code: e.Code}, Tail: e.Tail}, nil
 			}
 		case evStop:
-			return Stopping{Mode: e.Mode, Child: c}, []effect{doStop{PID: c.PID, Mode: e.Mode}}
+			return Stopping{Mode: e.Mode, PID: c.PID}, []effect{doStop{PID: c.PID, Mode: e.Mode}}
 		}
 	case Ready:
 		c := p.Child
@@ -187,26 +202,42 @@ func next(p Phase, e event) (Phase, []effect) {
 				return Failed{Cause: Exited{Code: e.Code}, Tail: e.Tail}, nil
 			}
 		case evStop:
-			return Stopping{Mode: e.Mode, Child: c}, []effect{doStop{PID: c.PID, Mode: e.Mode}}
+			return Stopping{Mode: e.Mode, PID: c.PID}, []effect{doStop{PID: c.PID, Mode: e.Mode}}
 		}
 	case Failed:
-		switch e.(type) {
+		switch e := e.(type) {
+		case evExited:
+			if e.PID == p.Dying {
+				return Failed{Cause: p.Cause, Tail: p.Tail}, nil
+			}
 		case evRetry:
-			return Starting{}, []effect{doSpawn{}}
+			if p.Dying == 0 {
+				return Preparing{}, []effect{doSpawn{}}
+			}
+			return Preparing{Dying: p.Dying}, nil
 		case evStop:
-			return Stopped{}, nil
+			return stopped(p.Dying), nil
 		}
 	case Stopping:
 		switch e := e.(type) {
 		case evExited:
-			if e.PID == p.Child.PID {
+			if e.PID == p.PID {
 				return Stopped{}, nil
 			}
 		case evStop:
 			if p.Mode == WhenDone && e.Mode == Now {
-				return Stopping{Mode: Now, Child: p.Child}, []effect{doStop{PID: p.Child.PID, Mode: Now}}
+				return Stopping{Mode: Now, PID: p.PID}, []effect{doStop{PID: p.PID, Mode: Now}}
 			}
 		}
 	}
 	return p, nil
+}
+
+// stopped is where a stop leads with no live child but perhaps dying, one
+// already told to stop now: Stopped once it has exited.
+func stopped(dying int) Phase {
+	if dying == 0 {
+		return Stopped{}
+	}
+	return Stopping{Mode: Now, PID: dying}
 }

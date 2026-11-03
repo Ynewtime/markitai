@@ -71,12 +71,28 @@ func (m Memory) save(path string) error {
 	return os.Rename(tmp, path)
 }
 
-// pickPort keeps the remembered port while it is free, else takes one the
-// kernel hands out. Another program may still take it before the child
-// binds; the child then exits with serve's message and Retry picks again.
+// firstPorts is where the app looks for a port it has none: 23600 and the
+// 99 after it, below the ephemeral ranges from which macOS and Windows
+// (49152-65535) and Linux (32768-60999) hand ports to outgoing connections
+// and Listen(":0"), so no other program's connection holds it by chance
+// while the app is closed. The first free one is the same on every launch.
+const (
+	firstPort  Port = 23600
+	firstPorts      = 100
+)
+
+// pickPort keeps the remembered port while it is free, else takes the first
+// free one of firstPorts, else one the kernel hands out. Another program may
+// still take it before the child binds; the child then exits with serve's
+// message and Retry picks again.
 func pickPort(remembered Port) (Port, error) {
 	if remembered != 0 && remembered != cliPort && free(remembered) {
 		return remembered, nil
+	}
+	for p := firstPort; p < firstPort+firstPorts; p++ {
+		if free(p) {
+			return p, nil
+		}
 	}
 	for range 8 {
 		l, err := net.Listen("tcp", "127.0.0.1:0")

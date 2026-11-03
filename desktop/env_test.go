@@ -80,6 +80,12 @@ func TestParseLoginEnv(t *testing.T) {
 	if err != nil || !slices.Equal(env, []string{"PATH=/opt/homebrew/bin:/usr/bin", "HOME=/u", "MULTI=a\nb"}) {
 		t.Errorf("parseLoginEnv = %q, %v", env, err)
 	}
+	// dash -i sets $_ to the last word of the command before env -0: the
+	// marker printf printed.
+	underscore := []byte("MK" + "HOME=/u\x00_=MK\x00PATH=/bin\x00" + "MK")
+	if env, err := parseLoginEnv(underscore, "MK"); err != nil || !slices.Equal(env, []string{"HOME=/u", "_=MK", "PATH=/bin"}) {
+		t.Errorf("parseLoginEnv with $_ the marker = %q, %v", env, err)
+	}
 	for _, bad := range []string{"no markers", "MKPATH=/bin\x00", "MKHOME=/u\x00MK"} {
 		if _, err := parseLoginEnv([]byte(bad), "MK"); err == nil {
 			t.Errorf("parseLoginEnv(%q) accepted", bad)

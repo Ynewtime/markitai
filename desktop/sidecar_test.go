@@ -1,13 +1,15 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -18,8 +20,12 @@ import (
 
 // fakeServeMode makes the test binary stand in for `markitai serve
 // --supervised`: ready serves capabilities with the token check and
-// supervised true, and exits 0 once stdin closes; exit fails at once;
-// unsupervised never says supervised; stubborn ignores stdin's end.
+// supervised true; on stdin, "drain" or its end make it exit 0, "now" exit
+// 129 at once. exit fails at once; unsupervised never says supervised;
+// stubborn ignores drain and stdin's end, as a serve with long conversions
+// would; deaf ignores stdin, as a hung serve would. Modes combine with
+// commas. sleep stands in for a login shell whose startup files take a
+// minute.
 const fakeServeMode = "MARKITAI_DESKTOP_FAKE_SERVE"
 
 func TestMain(m *testing.M) {
@@ -30,6 +36,10 @@ func TestMain(m *testing.M) {
 }
 
 func fakeServe(mode string, args []string) int {
+	if mode == "sleep" {
+		time.Sleep(time.Minute)
+		return 0
+	}
 	i := slices.Index(args, "--port")
 	if len(args) == 0 || args[0] != "serve" || !slices.Contains(args, "--supervised") || i < 0 || i+1 >= len(args) {
 		fmt.Fprintln(os.Stderr, "fake serve: unexpected arguments", args)
@@ -47,6 +57,7 @@ func fakeServe(mode string, args []string) int {
 	}
 	token := os.Getenv("MARKITAI_SERVE_TOKEN")
 	fmt.Fprintf(os.Stderr, "  • Access token: %s\n", token)
+	modes := strings.Split(mode, ",")
 	if mode == "exit" {
 		fmt.Fprintln(os.Stderr, "fake serve: another serve instance is using this MARKITAI_HOME")
 		return 1
@@ -63,7 +74,7 @@ func fakeServe(mode string, args []string) int {
 	}
 	mux := http.NewServeMux()
 	mux.Handle("/api/capabilities", authed(func() any {
-		return map[string]any{"version": "test", "supervised": mode != "unsupervised"}
+		return map[string]any{"version": "test", "supervised": !slices.Contains(modes, "unsupervised")}
 	}))
 	secret := "fake-control-secret"
 	mux.HandleFunc("/api/update/control", func(w http.ResponseWriter, r *http.Request) {
@@ -84,10 +95,25 @@ func fakeServe(mode string, args []string) int {
 		fmt.Fprintln(os.Stderr, "fake serve: cannot write the control file")
 		return 1
 	}
-	if mode == "stubborn" {
+	if slices.Contains(modes, "deaf") {
 		select {}
 	}
-	_, _ = io.Copy(io.Discard, os.Stdin)
+	stubborn := slices.Contains(modes, "stubborn")
+	for lines := bufio.NewScanner(os.Stdin); lines.Scan(); {
+		switch lines.Text() {
+		case "now":
+			fmt.Fprintln(os.Stderr, "fake serve: now; stopped at once")
+			return 129
+		case "drain":
+			if !stubborn {
+				fmt.Fprintln(os.Stderr, "fake serve: drain; drained")
+				return 0
+			}
+		}
+	}
+	if stubborn {
+		select {}
+	}
 	fmt.Fprintln(os.Stderr, "fake serve: stdin closed; drained")
 	return 0
 }
@@ -119,8 +145,8 @@ func harnessConfig(t *testing.T, mode string, extra ...string) Config {
 		Program:      os.Args[0],
 		LogPath:      filepath.Join(dir, "logs", "serve.log"),
 		MemoryPath:   filepath.Join(dir, "data", "desktop.json"),
-		Lang:         "en",
-		Env:          func(context.Context) []string { return env },
+		Texts:        en,
+		Env:          func(context.Context) ([]string, error) { return env, nil },
 		ReadyTimeout: 3 * time.Second,
 	}
 }
@@ -172,7 +198,7 @@ func TestSidecarStartsAndDrains(t *testing.T) {
 		}
 	}
 	h.sc.Stop(WhenDone)
-	h.await("Stopping", func(p Phase) bool { return p == Stopping{Mode: WhenDone, Child: r.Child} })
+	h.await("Stopping", func(p Phase) bool { return p == Stopping{Mode: WhenDone, PID: r.Child.PID} })
 	h.await("Stopped", is[Stopped])
 	if m := loadMemory(h.cfg.MemoryPath); m.Port != r.Child.Port {
 		t.Errorf("remembered %v; ready on %d", m, r.Child.Port)
@@ -180,8 +206,8 @@ func TestSidecarStartsAndDrains(t *testing.T) {
 	if !h.sc.Wait(time.Second) {
 		t.Error("Done is open after Stopped")
 	}
-	if log, _ := os.ReadFile(h.cfg.LogPath); !strings.Contains(string(log), "stdin closed; drained") {
-		t.Errorf("the child did not drain on stdin's end:\n%s", log)
+	if log, _ := os.ReadFile(h.cfg.LogPath); !strings.Contains(string(log), "drain; drained") {
+		t.Errorf("the child did not hear drain on stdin:\n%s", log)
 	}
 }
 
@@ -198,7 +224,7 @@ func TestSidecarKeepsThePortAcrossLaunches(t *testing.T) {
 
 func TestSidecarEarlyExitShowsTheLogTail(t *testing.T) {
 	h := newHarness(t, "exit")
-	starting := h.await("Starting with a child", func(p Phase) bool { s, ok := p.(Starting); return ok && s.Child.PID != 0 })
+	starting := h.await("Starting", is[Starting])
 	f := h.await("Failed", is[Failed]).(Failed)
 	if f.Cause != (Exited{Code: 1}) || !strings.Contains(f.Tail, "another serve instance is using this MARKITAI_HOME") {
 		t.Errorf("failed %#v", f)
@@ -207,7 +233,7 @@ func TestSidecarEarlyExitShowsTheLogTail(t *testing.T) {
 		t.Errorf("the tail shows the token:\n%s", f.Tail)
 	}
 	h.sc.Retry()
-	again := h.await("Starting with a new child", func(p Phase) bool { s, ok := p.(Starting); return ok && s.Child.PID != 0 })
+	again := h.await("Starting again", is[Starting])
 	if again.(Starting).Child.PID == starting.(Starting).Child.PID {
 		t.Error("retry reused the child")
 	}
@@ -216,7 +242,7 @@ func TestSidecarEarlyExitShowsTheLogTail(t *testing.T) {
 
 func TestSidecarStopsAChildThatNeverAnswers(t *testing.T) {
 	h := newHarness(t, "unsupervised")
-	s := h.await("Starting with a child", func(p Phase) bool { s, ok := p.(Starting); return ok && s.Child.PID != 0 }).(Starting)
+	s := h.await("Starting", is[Starting]).(Starting)
 	f := h.await("Failed", is[Failed]).(Failed)
 	if f.Cause != (NotReady{}) {
 		t.Errorf("failed %#v", f)
@@ -230,24 +256,144 @@ func TestSidecarStopsAChildThatNeverAnswers(t *testing.T) {
 	}
 }
 
+func TestSidecarStopsOnlyOnceTheFailedChildIsGone(t *testing.T) {
+	h := newHarness(t, "unsupervised,deaf")
+	s := h.await("Starting", is[Starting]).(Starting)
+	h.await("Failed", is[Failed])
+	h.sc.Stop(WhenDone)
+	h.await("Stopped", is[Stopped])
+	if alive(s.Child.PID) {
+		t.Errorf("Stopped while child %d still runs", s.Child.PID)
+	}
+}
+
+func TestSidecarRetriesOnceTheFailedChildIsGone(t *testing.T) {
+	h := newHarness(t, "unsupervised,deaf")
+	old := h.await("Starting", is[Starting]).(Starting)
+	h.await("Failed", is[Failed])
+	h.sc.Retry()
+	again := h.await("Starting with a new child", func(p Phase) bool {
+		s, ok := p.(Starting)
+		return ok && s.Child.PID != old.Child.PID
+	}).(Starting)
+	if alive(old.Child.PID) {
+		t.Errorf("retry spawned %d while %d still runs", again.Child.PID, old.Child.PID)
+	}
+}
+
+// A stop now is the line "now"; serve's exit 129 after it is the stop, not
+// a failure.
+func TestSidecarStopsNowThroughStdin(t *testing.T) {
+	h := newHarness(t, "ready")
+	h.ready()
+	h.sc.Stop(Now)
+	if p := h.await("the end of the stop", func(p Phase) bool { return is[Stopped](p) || is[Failed](p) }); !is[Stopped](p) {
+		t.Errorf("a stop now ended in %#v", p)
+	}
+	if log, _ := os.ReadFile(h.cfg.LogPath); !strings.Contains(string(log), "now; stopped at once") {
+		t.Errorf("the child did not hear now on stdin:\n%s", log)
+	}
+}
+
+func TestSidecarStoppedWhilePreparingLeavesNoShell(t *testing.T) {
+	cfg := harnessConfig(t, "ready")
+	shell := make(chan int, 1)
+	cfg.Env = func(ctx context.Context) ([]string, error) {
+		cmd := exec.CommandContext(ctx, os.Args[0])
+		cmd.Env = append(os.Environ(), fakeServeMode+"=sleep")
+		if err := cmd.Start(); err != nil {
+			shell <- 0
+			return nil, err
+		}
+		shell <- cmd.Process.Pid
+		return nil, cmd.Wait()
+	}
+	h := startHarness(t, cfg)
+	pid := <-shell
+	if pid == 0 {
+		t.Fatal("the stand-in login shell did not start")
+	}
+	h.sc.Stop(WhenDone)
+	h.await("Stopped", is[Stopped])
+	deadline := time.Now().Add(2 * time.Second)
+	for alive(pid) {
+		if time.Now().After(deadline) {
+			t.Fatalf("the login shell %d outlived the stop", pid)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func TestSidecarSaysWhyTheLoginEnvironmentFailed(t *testing.T) {
+	cfg := harnessConfig(t, "exit")
+	login := cfg.Env
+	cfg.Env = func(ctx context.Context) ([]string, error) {
+		env, _ := login(ctx)
+		return env, errors.New("/bin/tcsh: exit status 1: Unknown option")
+	}
+	f := startHarness(t, cfg).await("Failed", is[Failed]).(Failed)
+	said := "could not read your login shell's environment (/bin/tcsh: exit status 1: Unknown option)"
+	if !strings.Contains(f.Tail, said) || !strings.Contains(f.Tail, "another serve instance") {
+		t.Errorf("the Failed page's tail does not say why:\n%s", f.Tail)
+	}
+	if log, _ := os.ReadFile(cfg.LogPath); !strings.Contains(string(log), said) {
+		t.Errorf("serve.log does not say why:\n%s", log)
+	}
+}
+
+func TestSidecarKeepsOneLogPerLaunch(t *testing.T) {
+	h := newHarness(t, "exit")
+	h.await("Failed", is[Failed])
+	h.sc.Retry()
+	h.await("Starting", is[Starting])
+	h.await("Failed again", is[Failed])
+	previous := strings.TrimSuffix(h.cfg.LogPath, ".log") + ".previous.log"
+	if _, err := os.Stat(previous); err == nil {
+		t.Errorf("a retry rotated this launch's log into %s", previous)
+	}
+	log, _ := os.ReadFile(h.cfg.LogPath)
+	if n := strings.Count(string(log), "another serve instance"); n != 2 {
+		t.Errorf("serve.log holds %d of this launch's 2 attempts:\n%s", n, log)
+	}
+}
+
+// Stop Now and Quit on the Stopping page: "now" follows "drain" on the
+// same stdin, and the child stops at once, long before killGrace.
 func TestSidecarStopsNowAChildThatWillNotDrain(t *testing.T) {
 	h := newHarness(t, "stubborn")
 	r := h.ready()
 	h.sc.Stop(WhenDone)
 	h.await("Stopping", is[Stopping])
 	if h.sc.Wait(500 * time.Millisecond) {
-		t.Fatal("a child ignoring stdin's end stopped by itself")
+		t.Fatal("a child ignoring drain stopped by itself")
 	}
 	h.sc.Stop(Now)
-	h.await("Stopping now", func(p Phase) bool { return p == Stopping{Mode: Now, Child: r.Child} })
-	h.await("Stopped", is[Stopped])
+	h.await("Stopping now", func(p Phase) bool { return p == Stopping{Mode: Now, PID: r.Child.PID} })
+	if !h.sc.Wait(killGrace / 2) {
+		t.Fatal("the child did not stop at once after drain")
+	}
+	if log, _ := os.ReadFile(h.cfg.LogPath); !strings.Contains(string(log), "now; stopped at once") {
+		t.Errorf("the child did not hear now after drain:\n%s", log)
+	}
 }
 
-func TestSidecarCountsRunningConversions(t *testing.T) {
+func TestSidecarCountsUnfinishedConversions(t *testing.T) {
 	h := newHarness(t, "ready", "MARKITAI_DESKTOP_FAKE_RUNNING=2")
 	h.ready()
-	if n := h.sc.Running(context.Background()); n != 2 {
-		t.Errorf("Running = %d; want 2", n)
+	if n, err := h.sc.Unfinished(context.Background()); n != 2 || err != nil {
+		t.Errorf("Unfinished = %d, %v; want 2", n, err)
+	}
+}
+
+func TestQuitAsksWhenTheCountFails(t *testing.T) {
+	h := newHarness(t, "ready", "MARKITAI_DESKTOP_FAKE_RUNNING=2")
+	r := h.ready()
+	if err := os.Remove(filepath.Join(r.Child.Home, "serve", "control")); err != nil {
+		t.Fatal(err)
+	}
+	g, b := quitGate(h.sc.Phase(), false, func() (int, error) { return h.sc.Unfinished(context.Background()) })
+	if g != gateAsk || b.Known {
+		t.Errorf("with the count unknown, the quit gate is %v, %+v; want gateAsk, unknown", g, b)
 	}
 }
 
@@ -259,8 +405,8 @@ func TestSidecarAsksOnlyItsOwnServer(t *testing.T) {
 	if err := os.WriteFile(path, other, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if n := h.sc.Running(context.Background()); n != 0 {
-		t.Errorf("Running = %d from another server's control file; want 0", n)
+	if n, err := h.sc.Unfinished(context.Background()); err == nil {
+		t.Errorf("Unfinished = %d from another server's control file; want an error", n)
 	}
 }
 
@@ -277,7 +423,7 @@ func TestSidecarStoppedBeforeTheEnvironmentSpawnsNothing(t *testing.T) {
 	release := make(chan struct{})
 	cfg := harnessConfig(t, "ready")
 	login := cfg.Env
-	cfg.Env = func(ctx context.Context) []string { <-release; return login(ctx) }
+	cfg.Env = func(ctx context.Context) ([]string, error) { <-release; return login(ctx) }
 	late := startHarness(t, cfg)
 	late.sc.Stop(WhenDone)
 	late.await("Stopped", is[Stopped])

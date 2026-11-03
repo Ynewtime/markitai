@@ -65,7 +65,8 @@ pub struct ServeOptions {
     /// binding: the dry start of a downloaded update.
     pub preflight: bool,
     /// Run for the app that started this server: it holds the token and
-    /// updates the program, and closing standard input stops the server.
+    /// updates the program, and stops the server through standard input
+    /// ([`app_requests`]).
     pub supervised: bool,
     pub quiet: bool,
 }
@@ -337,8 +338,14 @@ pub(crate) fn run(cfg: Value, source: SettingsSource, options: ServeOptions) -> 
 /// `serve --supervised`: the app that started it updates the program, so this
 /// server takes no part in an update of the home's install (no update marker,
 /// no handover, no watchdog). It is never relaunched: `control_restart`
-/// refuses it and it has no web update.
+/// refuses it and it has no web update. Its token is the app's, so it never
+/// makes one of its own (`--no-auth` is refused by the command line).
 fn supervised(cfg: Value, source: SettingsSource, options: &ServeOptions) -> Result<(), String> {
+    if configured_token().is_none() {
+        return Err(crate::app::i18n::text!(crate::app::i18n::lang() =>
+            "serve --supervised needs the access token of the app that starts it in MARKITAI_SERVE_TOKEN",
+            "serve --supervised 需要启动它的应用在 MARKITAI_SERVE_TOKEN 中提供访问令牌"));
+    }
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -356,38 +363,79 @@ fn supervised(cfg: Value, source: SettingsSource, options: &ServeOptions) -> Res
         .map_err(|failure| failure.message)
 }
 
+/// The access token `MARKITAI_SERVE_TOKEN` sets, unless it is blank.
+fn configured_token() -> Option<String> {
+    std::env::var("MARKITAI_SERVE_TOKEN")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+}
+
 /// What stops the server as Ctrl-C does: the shutdown signals and, for a
-/// supervised server, its standard input closing (the app that started it
-/// closed it, or exited).
+/// supervised server, what the app that started it asks on standard input.
 fn stop_requests(supervised: bool) -> std::io::Result<impl std::future::Future<Output = ()>> {
     let signals = shutdown_signals()?;
-    let closed = if supervised {
-        Some(stdin_closed()?)
+    let drain = if supervised {
+        Some(app_requests()?)
     } else {
         None
     };
     Ok(async move {
-        match closed {
-            Some(closed) => tokio::select! { _ = signals => {}, _ = closed => {} },
+        match drain {
+            Some(drain) => tokio::select! { _ = signals => {}, _ = drain => {} },
             None => signals.await,
         }
     })
 }
 
-/// Ends when standard input reaches its end or cannot be read. Read on a
-/// thread of its own: a read in progress cannot be cancelled, and as a
-/// runtime's blocking task it would hold up the runtime's shutdown.
-fn stdin_closed() -> std::io::Result<impl std::future::Future<Output = ()>> {
-    let (closed, receiver) = tokio::sync::oneshot::channel::<()>();
+/// The exit status after `now`: 128 + SIGHUP, the status of the hang-up that
+/// stops a server the same way, on every system.
+const STOPPED_NOW: i32 = 129;
+
+/// A supervised server's standard input, one request per line from the app
+/// that started it. `drain`, or the input's end (the app closed it, or
+/// exited), ends the returned future: the server stops as on SIGTERM, and
+/// with the input still open the app can ask `now` later. `now` stops it at
+/// once from here, as SIGHUP does. Other lines are ignored. Read on a thread
+/// of its own: a read in progress cannot be cancelled, and as a runtime's
+/// blocking task it would hold up the runtime's shutdown.
+fn app_requests() -> std::io::Result<impl std::future::Future<Output = ()>> {
+    use std::io::BufRead;
+    let (drain, receiver) = tokio::sync::oneshot::channel::<()>();
     std::thread::Builder::new()
         .name("markitai-stdin".into())
         .spawn(move || {
-            let _ = std::io::copy(&mut std::io::stdin().lock(), &mut std::io::sink());
-            let _ = closed.send(());
+            let mut drain = Some(drain);
+            for line in std::io::stdin().lock().split(b'\n') {
+                let Ok(line) = line else { break };
+                match line.strip_suffix(b"\r").unwrap_or(&line) {
+                    b"now" => stop_now(),
+                    b"drain" => {
+                        if let Some(drain) = drain.take() {
+                            let _ = drain.send(());
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if let Some(drain) = drain {
+                let _ = drain.send(());
+            }
         })?;
     Ok(async move {
         let _ = receiver.await;
     })
+}
+
+/// End running conversions where they are, with their runtimes, and exit:
+/// their jobs are saved as running and the next start marks them interrupted.
+fn stop_now() -> ! {
+    crate::app::logging::shaped(
+        crate::app::logging::Shape::item(crate::term::Mark::Action),
+        "Server stopping now: running conversions are abandoned; the next start marks them interrupted.",
+        (crate::app::i18n::lang() == crate::app::i18n::Lang::Zh)
+            .then_some("正在立即停止服务：进行中的转换被放弃，下次启动时会标记为已中断。"),
+    );
+    crate::signals::exit_now(STOPPED_NOW)
 }
 
 /// Ctrl-C (and SIGTERM on Unix), registered now: the returned future ends
@@ -477,9 +525,7 @@ async fn serve(
     let service_lock = store::service_lock(&root).map_err(|e| e.to_string())?;
     store::clean_uploads(&root, &service_lock).map_err(|e| e.to_string())?;
     let (shutdown, _) = watch::channel(false);
-    let configured = std::env::var("MARKITAI_SERVE_TOKEN")
-        .ok()
-        .filter(|s| !s.trim().is_empty());
+    let configured = configured_token();
     let token_from_environment = !options.no_auth
         && configured.is_some()
         && (handover.token.is_none() || handover.token == configured);
@@ -762,6 +808,7 @@ fn print_startup(
             }),
             failed_update: failed,
             current: crate::update::current_identity().0,
+            supervised: state.supervised,
         },
     ) {
         // As written: redaction would drop the token from the addresses.

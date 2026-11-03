@@ -12,8 +12,8 @@ A **sidebar** frames every view: Convert and Conversions (with the number of
 conversions and a grey pulsing dot while something converts, which turns green and still once
 everything is done and fades six seconds later), the Settings sections
 (Appearance, Models, Access token, Edit config; a user token sees Appearance,
-its own Models and Edit config for them, and a supervised server has no Access token,
-see [Access token](#access-token)), and Docs and GitHub at the bottom, with the version
+its own Models and Edit config for them, a supervised server has no Access token, and until the
+capabilities say who is asking only Appearance shows, see [Access token](#access-token)), and Docs and GitHub at the bottom, with the version
 (`2.3.2`) in small muted text beside Docs and the commit it was built from beside GitHub (`-dirty` after
 it when built with uncommitted changes), and under them, as small muted text centred rather than a row,
 `Build: 20261017 19:54`, the build's date and time in the viewer's time zone (the label stays `Build:` in every
@@ -721,7 +721,9 @@ stores a typed token for the tab. Settings → Access token shows
 whether the tab is signed in and signs this tab out (another token then signs in
 from the sign-in screen). A [supervised](serve.md#running-under-another-app) server
 (`Capabilities.supervised`, contract v1.29) belongs to the app that started it, which holds its token: the sidebar and
-the phone's settings list leave Access token out and `/settings/access` is not found.
+the phone's settings list leave Access token out and `/settings/access` is not found. Until the capabilities
+arrive the settings list Appearance alone, so no entry shows and then vanishes; a token the server refused keeps
+Access token there, to enter another.
 **Regenerate token** (on servers that offer it) asks first, then replaces the
 server's token: every other tab and device is signed out at once (open event
 streams end, unused download tickets stop working) and must sign in again,

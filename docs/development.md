@@ -117,7 +117,8 @@ automation socket through the scenarios its docstring lists, each with its own
 `HOME`, `MARKITAI_HOME` and app data, and keeps the evidence in
 `.local/desktop-e2e/ROUND/`; the bundled `markitai` must have `serve
 --supervised`. The native Save panel and quit question are answered by the
-e2e build's environment there, so check them by hand once.
+e2e build's environment there, and a link it would open in the browser is
+recorded instead, so check them by hand once.
 `scripts/test_desktop_build.py` runs with the helper tests.
 
 ## Website

@@ -4,6 +4,7 @@ import contextlib
 import hashlib
 import io
 import json
+import os
 import shutil
 import stat
 import tarfile
@@ -93,7 +94,8 @@ class StageTests(unittest.TestCase):
     def test_stage_places_the_program_and_every_licence(self):
         stamp = self.repo.stage(self.archive())
         program = self.repo.resources / "darwin-arm64/bin/markitai"
-        self.assertEqual(stat.S_IMODE(program.stat().st_mode), 0o755)
+        if os.name != "nt":  # Windows files have no executable bit
+            self.assertEqual(stat.S_IMODE(program.stat().st_mode), 0o755)
         files = sorted(path.relative_to(self.repo.resources).as_posix()
                        for path in self.repo.resources.rglob("*") if path.is_file())
         self.assertEqual(files, [
@@ -162,6 +164,18 @@ class StageTests(unittest.TestCase):
         with self.assertRaisesRegex(SystemExit, "example.com/bare v1.0.0: no licence file"):
             self.repo.stage(self.archive(), modules=[*self.repo.modules, ("example.com/bare", "v1.0.0", str(bare))])
 
+    def test_a_module_without_a_directory_fails(self):
+        with self.assertRaisesRegex(SystemExit, "example.com/vendored v1.0.0: go list gave no module directory"):
+            self.repo.stage(self.archive(), modules=[*self.repo.modules, ("example.com/vendored", "v1.0.0", "")])
+
+    def test_a_failed_stage_keeps_the_resources_staged_before(self):
+        before = self.repo.stage(self.archive())
+        with self.assertRaises(SystemExit):
+            self.repo.stage(zip_archive(self.repo.archives / archive_name(VERSION, "x86_64-pc-windows-msvc")),
+                            modules=[*self.repo.modules, ("example.com/vendored", "v1.0.0", "")])
+        self.assertEqual(json.loads((self.repo.resources / ".stage.json").read_text()), before)
+        self.assertTrue((self.repo.resources / "darwin-arm64/bin/markitai").is_file())
+
 
 class RegistryTests(unittest.TestCase):
     def test_platforms_are_the_release_targets(self):
@@ -187,6 +201,8 @@ class RegistryTests(unittest.TestCase):
         arguments, environment = mygo_build_command("darwin/arm64", e2e=True)
         self.assertEqual(arguments[-4:], ["-debug", "-skip-dmg", "-o", "build/e2e"])
         self.assertEqual(environment, {"GOFLAGS": "-tags=e2e"})
+        _, environment = mygo_build_command("darwin/arm64", e2e=True, goflags="-mod=mod")
+        self.assertEqual(environment, {"GOFLAGS": "-mod=mod -tags=e2e"})
         arguments, environment = mygo_build_command("darwin/arm64", e2e=False)
         self.assertNotIn("-debug", arguments)
         self.assertEqual(environment, {})

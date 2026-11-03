@@ -53,14 +53,8 @@ func (d *desktop) start() {
 		Program:    programPath(resources, mygo.App.IsPackaged()),
 		LogPath:    logPath,
 		MemoryPath: filepath.Join(data, "desktop.json"),
-		Lang:       d.texts.Lang,
-		Env: func(ctx context.Context) []string {
-			env, err := loginEnv(ctx)
-			if err != nil {
-				log.Printf("markitai desktop: login environment: %v", err)
-			}
-			return env
-		},
+		Texts:      d.texts,
+		Env:        loginEnv,
 	}, func(p Phase) { d.win.Show(p) })
 	d.win = openWindow(d.sc, d.texts, logPath, downloads)
 	d.win.w.OnClose(d.close)
@@ -86,45 +80,59 @@ type gate int
 
 const (
 	gateLeave gate = iota // no child of ours: quit
-	gateDrain             // nothing running: stop the child here, then quit
-	gateAsk               // conversions running: ask first; this quit is canceled
+	gateDrain             // nothing unfinished: stop the child here, then quit
+	gateAsk               // conversions unfinished, or no count: ask first; this quit is canceled
 	gateFocus             // a stop or the question is under way: show the window
 )
 
-// quitGate decides from the sidecar's phase; running is asked only of a
-// ready child.
-func quitGate(p Phase, asking bool, running func() int) (gate, int) {
+// busy is how many conversions a stop would wait for, running or queued; not
+// Known when the server could not say.
+type busy struct {
+	N     int
+	Known bool
+}
+
+// quitGate decides from the sidecar's phase; unfinished is asked only of a
+// ready child. A count that fails asks too: conversions are never stopped
+// unasked.
+func quitGate(p Phase, asking bool, unfinished func() (int, error)) (gate, busy) {
 	switch p.(type) {
 	case Stopped:
-		return gateLeave, 0
+		return gateLeave, busy{}
 	case Stopping:
-		return gateFocus, 0
+		return gateFocus, busy{}
 	}
 	if asking {
-		return gateFocus, 0
+		return gateFocus, busy{}
 	}
 	if _, ok := p.(Ready); ok {
-		if n := running(); n > 0 {
-			return gateAsk, n
+		n, err := unfinished()
+		if err != nil {
+			return gateAsk, busy{}
+		}
+		if n > 0 {
+			return gateAsk, busy{N: n, Known: true}
 		}
 	}
-	return gateDrain, 0
+	return gateDrain, busy{}
 }
 
 // beforeQuit is the one gate for every way out: Cmd+Q and the Quit item,
-// closing the window (close), SIGINT and SIGTERM, logout. It runs before
-// mygo closes the window, so the window can show a long drain. An idle stop
-// completes here rather than canceling the quit: mygo answers a canceled
-// quit to the system as a refusal, which would also cancel a logout.
+// closing the window (close), SIGINT and SIGTERM, logout. It runs on the
+// main thread, which a drain here holds, so only an idle stop happens here,
+// bounded by idleStop; one that waits for conversions goes through the
+// question and the Stopping page. An idle stop completes here rather than
+// canceling the quit: mygo answers a canceled quit to the system as a
+// refusal, which would also cancel a logout.
 func (d *desktop) beforeQuit(e *mygo.QuitEvent) {
 	if d.leaving || d.sc == nil {
 		d.leaving = true
 		return
 	}
-	g, n := quitGate(d.sc.Phase(), d.asking.Load(), func() int {
+	g, b := quitGate(d.sc.Phase(), d.asking.Load(), func() (int, error) {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
-		return d.sc.Running(ctx)
+		return d.sc.Unfinished(ctx)
 	})
 	switch g {
 	case gateLeave:
@@ -139,7 +147,7 @@ func (d *desktop) beforeQuit(e *mygo.QuitEvent) {
 	case gateAsk:
 		e.PreventDefault()
 		d.asking.Store(true)
-		go d.askAndQuit(n)
+		go d.askAndQuit(b)
 	case gateFocus:
 		e.PreventDefault()
 		d.focus()
@@ -156,8 +164,8 @@ func (d *desktop) close(e *mygo.CloseEvent) {
 	mygo.App.Quit()
 }
 
-func (d *desktop) askAndQuit(n int) {
-	switch askQuit(d.win.w, d.texts, n) {
+func (d *desktop) askAndQuit(b busy) {
+	switch askQuit(d.win.w, d.texts, b) {
 	case quitCancel:
 		d.asking.Store(false)
 		return
@@ -178,13 +186,13 @@ const (
 	quitCancel
 )
 
-// askQuit asks what to do with n running conversions. A variable so the
+// askQuit asks what to do with unfinished conversions. A variable so the
 // e2e build can answer without a dialog.
-var askQuit = func(parent *mygo.Window, t Texts, n int) quitChoice {
+var askQuit = func(parent *mygo.Window, t Texts, b busy) quitChoice {
 	r, err := mygo.Dialog.Message(mygo.MessageOptions{
 		Parent:             parent,
 		Type:               mygo.MessageWarning,
-		Message:            t.StillRunning(n),
+		Message:            t.Unfinished(b),
 		Detail:             t.QuitDetail,
 		Buttons:            []string{t.QuitWhenDone, t.StopAndQuit, t.Cancel},
 		DefaultButton:      0,

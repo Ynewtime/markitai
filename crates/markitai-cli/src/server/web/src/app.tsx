@@ -141,7 +141,7 @@ export function App() {
   const role = caps?.access?.role ?? "admin";
   // v1.15: a user token also manages models of its own (and sees the ones the admin shares).
   const userModels = features?.user_models === true;
-  const sections = settingsSections(caps);
+  const sections = settingsSections(caps, unauthorized);
   const docsUrl = docsHome(caps?.docs_url && /^https:\/\//.test(caps.docs_url) ? caps.docs_url : DEFAULT_DOCS, locale);
   const sourceUrl = caps?.source_url && /^https:\/\//.test(caps.source_url) ? caps.source_url : DEFAULT_SOURCE;
 

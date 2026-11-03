@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"unicode/utf8"
@@ -13,8 +14,9 @@ import (
 )
 
 // A page reaches Go through one channel: window.open of a markitai-desktop:
-// URL, or a target="_blank" link to one, which SetWindowOpenHandler sees.
-// The app binds no Go service and trusts no origin.
+// URL, or a target="_blank" link to one, which SetWindowOpenHandler sees
+// without saying which frame asked. The app binds no Go service; it honors
+// a request only in a phase whose page offers it (offers in view.go).
 const (
 	openPrint   = "markitai-desktop:print"
 	openRetry   = "markitai-desktop:retry"
@@ -46,16 +48,49 @@ var requests = map[string]request{
 	openShowLog: reqShowLog,
 }
 
-// route classifies a window.open URL. Setting a handler replaces mygo's
-// default, which opened http(s) in the browser, so route keeps that.
+// route classifies a URL a page opens or navigates to. Setting a handler
+// replaces mygo's default, which opened http(s) in the browser, so route
+// keeps that, and hands mailto to the mail app.
 func route(raw string) request {
 	if r, ok := requests[raw]; ok {
 		return r
 	}
-	if u, err := url.Parse(raw); err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != "" {
+	u, err := url.Parse(raw)
+	switch {
+	case err != nil:
+		return reqDenied
+	case (u.Scheme == "http" || u.Scheme == "https") && u.Host != "":
+		return reqExternal
+	case u.Scheme == "mailto" && u.Opaque != "":
 		return reqExternal
 	}
 	return reqDenied
+}
+
+// stays reports whether the main frame may go to raw in phase p: to the
+// page render shows for p, within the workbench of the ready child, or the
+// status page at about:blank, where paint loads it. mygo asks about the
+// app's own loads too when two overlap, as when serve fails at once and the
+// Failed page follows the Starting page: it marks only the first as the
+// app's.
+func stays(p Phase, raw string) bool {
+	if r, ok := p.(Ready); ok {
+		return origin(raw) == r.Child.origin()
+	}
+	return raw == "about:blank"
+}
+
+// origin is raw's scheme://host, that of the page that made it for a blob:
+// URL.
+func origin(raw string) string {
+	u, err := url.Parse(raw)
+	if err == nil && strings.EqualFold(u.Scheme, "blob") {
+		u, err = url.Parse(u.Opaque)
+	}
+	if err != nil {
+		return ""
+	}
+	return strings.ToLower(u.Scheme + "://" + u.Host)
 }
 
 // a4Margins are the workbench's @page margins, 14 mm by 12 mm, in inches.
@@ -87,6 +122,7 @@ func openWindow(sc *Sidecar, t Texts, logPath, downloads string) *window {
 	})
 	page := w.w.Page()
 	page.SetWindowOpenHandler(w.open)
+	page.OnWillNavigate(w.willNavigate)
 	page.OnWillDownload(w.willDownload)
 	page.OnDownloadDone(w.downloadDone)
 	page.OnRenderProcessGone(func(string) { w.Show(sc.Phase()) })
@@ -117,15 +153,21 @@ func (w *window) paint() {
 	}
 }
 
-// open answers every window.open; no request opens a window.
+// open answers every window.open; no request opens a window. A link the
+// user followed opens in the browser or mail app; one a script opened by
+// itself, as a pop-up, opens nowhere.
 func (w *window) open(req mygo.WindowOpenRequest) *mygo.WindowOptions {
 	r := route(req.URL)
-	if r != reqExternal && r != reqDenied && !w.ownPage() {
+	if r == reqExternal {
+		if req.UserInitiated {
+			go openExternal(req.URL)
+		}
+		return nil
+	}
+	if !slices.Contains(offers(w.sc.Phase()), r) {
 		return nil
 	}
 	switch r {
-	case reqExternal:
-		go func() { _ = mygo.Shell.OpenExternal(req.URL) }()
 	case reqPrint:
 		go w.exportPDF()
 	case reqRetry:
@@ -138,16 +180,17 @@ func (w *window) open(req mygo.WindowOpenRequest) *mygo.WindowOptions {
 	return nil
 }
 
-// ownPage reports whether the window shows one of the app's pages: a status
-// page or the workbench of our ready child. A page the workbench navigated
-// to elsewhere asks nothing of the app.
-func (w *window) ownPage() bool {
-	at := w.w.Page().URL()
-	if at == "about:blank" {
-		return true
+// willNavigate keeps the main frame on the app's pages. Elsewhere, as a link
+// without a target or a URL dropped on the window would take it, it does
+// not go: what the user followed opens in the browser or mail app instead.
+func (w *window) willNavigate(e *mygo.NavigateEvent) {
+	if stays(w.sc.Phase(), e.URL) {
+		return
 	}
-	r, ok := w.sc.Phase().(Ready)
-	return ok && strings.HasPrefix(at, r.Child.origin()+"/")
+	e.PreventDefault()
+	if e.UserInitiated && route(e.URL) == reqExternal {
+		go openExternal(e.URL)
+	}
 }
 
 // exportPDF is the workbench's Export PDF: A4 with the workbench's margins
@@ -197,6 +240,10 @@ func (w *window) focus() {
 	w.w.Restore()
 	w.w.Show()
 }
+
+// openExternal hands url to the system's handler for its scheme. A
+// variable so the e2e build can record it instead.
+var openExternal = func(url string) { _ = mygo.Shell.OpenExternal(url) }
 
 // saveAs asks where to save, starting at suggested; "" when canceled. A
 // variable so the e2e build can answer without a panel.

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -60,39 +61,46 @@ func value(env []string, name string) string {
 // MARKITAI_HOME, ~ expanded and a relative one taken against the user's
 // home (where a login shell starts), else ~/.markitai. The app and the CLI
 // share it: configuration, keys, models, browsers and the workbench history.
+// As the CLI's path join does, a Windows path from the root without a drive
+// (\srv\markitai) stays on the drive of the folder it is taken against.
 func markitaiHome(env []string, userHome string) string {
 	home := value(env, "MARKITAI_HOME")
 	if home == "" {
 		return filepath.Join(userHome, ".markitai")
 	}
-	if rest, ok := strings.CutPrefix(home, "~"); ok && (rest == "" || rest[0] == '/' || rest[0] == filepath.Separator) {
+	if rest, ok := strings.CutPrefix(home, "~"); ok && (rest == "" || os.IsPathSeparator(rest[0])) {
 		return filepath.Join(userHome, rest)
 	}
-	if !filepath.IsAbs(home) {
-		return filepath.Join(userHome, home)
+	if filepath.IsAbs(home) {
+		return filepath.Clean(home)
 	}
-	return filepath.Clean(home)
+	if os.IsPathSeparator(home[0]) {
+		return filepath.Join(filepath.VolumeName(userHome), home)
+	}
+	return filepath.Join(userHome, home)
 }
 
 // parseLoginEnv reads `env -0` output that a login shell printed between two
-// markers, ignoring whatever its startup files printed around them.
+// markers, ignoring whatever its startup files printed around them. The end
+// marker is the first NUL-separated field that starts with it: a variable
+// holding the marker, as $_ holds the word before `env -0` in some shells,
+// is a field that starts with its name.
 func parseLoginEnv(out []byte, marker string) ([]string, error) {
 	_, rest, ok := bytes.Cut(out, []byte(marker))
 	if !ok {
 		return nil, errors.New("the login shell printed no environment")
 	}
-	body, _, ok := bytes.Cut(rest, []byte(marker))
-	if !ok {
-		return nil, errors.New("the login shell's environment was cut short")
-	}
 	var env []string
-	for _, kv := range bytes.Split(body, []byte{0}) {
+	for _, kv := range bytes.Split(rest, []byte{0}) {
+		if bytes.HasPrefix(kv, []byte(marker)) {
+			if value(env, "PATH") == "" {
+				return nil, errors.New("the login shell's environment has no PATH")
+			}
+			return env, nil
+		}
 		if bytes.IndexByte(kv, '=') > 0 {
 			env = append(env, string(kv))
 		}
 	}
-	if value(env, "PATH") == "" {
-		return nil, errors.New("the login shell's environment has no PATH")
-	}
-	return env, nil
+	return nil, errors.New("the login shell's environment was cut short")
 }

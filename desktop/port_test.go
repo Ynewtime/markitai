@@ -19,6 +19,21 @@ func TestPickPortKeepsAFreeRememberedPort(t *testing.T) {
 	}
 }
 
+// The ephemeral ranges the systems hand out for outgoing connections and
+// Listen(":0"): macOS and Windows 49152-65535, Linux 32768-60999.
+func ephemeral(p Port) bool { return p >= 32768 }
+
+func TestPickPortStartsOutsideEphemeralRanges(t *testing.T) {
+	p, err := pickPort(0)
+	if err != nil || p == 0 || ephemeral(p) || p == cliPort {
+		t.Errorf("pickPort(0) = %d, %v; want a port below 32768", p, err)
+	}
+	again, err := pickPort(0)
+	if err != nil || again != p {
+		t.Errorf("a second first launch takes %d, the first %d", again, p)
+	}
+}
+
 func TestPickPortLeavesATakenPort(t *testing.T) {
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -29,6 +44,21 @@ func TestPickPortLeavesATakenPort(t *testing.T) {
 	got, err := pickPort(taken)
 	if err != nil || got == taken || got == 0 || got == cliPort {
 		t.Errorf("pickPort(%d) = %d, %v", taken, got, err)
+	}
+}
+
+func TestPickPortTakesTheNextOfTheFirstPorts(t *testing.T) {
+	first, err := pickPort(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l, err := net.Listen("tcp", "127.0.0.1:"+first.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	if got, err := pickPort(0); err != nil || got == first || ephemeral(got) {
+		t.Errorf("with %d taken, pickPort(0) = %d, %v; want another port below 32768", first, got, err)
 	}
 }
 

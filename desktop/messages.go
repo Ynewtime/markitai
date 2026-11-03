@@ -6,7 +6,8 @@ import (
 )
 
 // Texts are the app's own words, in the workbench's two languages: the
-// status pages, the quit question and save errors.
+// status pages, the quit question, save errors and what the app writes to
+// serve.log.
 type Texts struct {
 	Lang string // "en" or "zh", the status page's lang and the child's LANG
 
@@ -27,7 +28,7 @@ type Texts struct {
 	ShowLog        string
 	StopNow        string
 
-	StillRunning func(n int) string
+	Unfinished   func(b busy) string
 	QuitDetail   string
 	QuitWhenDone string
 	StopAndQuit  string
@@ -35,6 +36,8 @@ type Texts struct {
 
 	SaveFailed     string
 	DownloadFailed string
+
+	LoginEnvFailed func(reason string) string
 }
 
 var en = Texts{
@@ -58,11 +61,14 @@ var en = Texts{
 	ShowLog:        "Show Log",
 	StopNow:        "Stop Now and Quit",
 
-	StillRunning: func(n int) string {
-		if n == 1 {
-			return "1 conversion is still running."
+	Unfinished: func(b busy) string {
+		switch {
+		case !b.Known:
+			return "Conversions may be unfinished; Markitai could not count them."
+		case b.N == 1:
+			return "1 conversion is unfinished."
 		}
-		return fmt.Sprintf("%d conversions are still running.", n)
+		return fmt.Sprintf("%d conversions are unfinished.", b.N)
 	},
 	QuitDetail:   "Quit When Done lets running conversions finish and cancels queued ones; Stop and Quit stops them all now.",
 	QuitWhenDone: "Quit When Done",
@@ -71,6 +77,12 @@ var en = Texts{
 
 	SaveFailed:     "The PDF could not be saved.",
 	DownloadFailed: "The download failed.",
+
+	LoginEnvFailed: func(reason string) string {
+		return "Markitai could not read your login shell's environment (" + reason + "). The server runs " +
+			"without it: programs on your PATH, exported keys and a MARKITAI_HOME set by your shell's startup " +
+			"files are missing."
+	},
 }
 
 var zh = Texts{
@@ -94,7 +106,12 @@ var zh = Texts{
 	ShowLog:        "显示日志",
 	StopNow:        "立即停止并退出",
 
-	StillRunning: func(n int) string { return fmt.Sprintf("还有 %d 个转换正在进行。", n) },
+	Unfinished: func(b busy) string {
+		if !b.Known {
+			return "可能还有未完成的转换，Markitai 无法统计数量。"
+		}
+		return fmt.Sprintf("还有 %d 个转换未完成。", b.N)
+	},
 	QuitDetail:   "“完成后退出”会让正在运行的转换完成，并取消排队中的转换；“停止并退出”会立即全部停止。",
 	QuitWhenDone: "完成后退出",
 	StopAndQuit:  "停止并退出",
@@ -102,6 +119,11 @@ var zh = Texts{
 
 	SaveFailed:     "无法保存 PDF。",
 	DownloadFailed: "下载失败。",
+
+	LoginEnvFailed: func(reason string) string {
+		return "Markitai 无法读取登录 shell 的环境（" + reason + "）。服务在没有它的情况下运行：" +
+			"PATH 中的程序、导出的密钥，以及 shell 启动文件设置的 MARKITAI_HOME 都不可用。"
+	},
 }
 
 // textsFor picks Chinese when the first preferred language is Chinese.

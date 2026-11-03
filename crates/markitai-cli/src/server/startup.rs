@@ -7,7 +7,9 @@
 //! title, which ends with `http://ADDRESS`, and the token line, which ends with
 //! the token, in every language. Each line has a [`Kind`] that decides how the
 //! terminal shows it: an address to open sits on a line of its own, never
-//! wrapped, so it copies back whole.
+//! wrapped, so it copies back whole. A supervised server's token belongs to
+//! the app that started it, which also stops it: its block names neither the
+//! token nor an address that carries it, and says how that app stops it.
 use super::launch;
 use crate::app::i18n::{Lang, text};
 use std::{
@@ -31,6 +33,9 @@ pub(super) struct Startup<'a> {
     pub failed_update: Option<String>,
     /// The version running.
     pub current: String,
+    /// Started by an app that holds the token and stops the server through
+    /// its standard input (`--supervised`).
+    pub supervised: bool,
 }
 
 /// Whether other machines can reach the listener. Loopback peers only are the
@@ -112,37 +117,40 @@ pub(super) fn lines(lang: Lang, startup: &Startup<'_>) -> Vec<(Kind, String)> {
                 "请去掉 --no-auth 以要求访问令牌，保持默认的 --host 127.0.0.1，或把服务放在带认证的代理之后。")));
         }
     }
-    if let Some(token) = token {
-        lines.push((
-            Kind::Token,
-            text!(lang => "Access token: {token}", "访问令牌：{token}"),
-        ));
-    }
-    // Every API client authenticates, including this computer's browser. A
-    // fragment keeps the token out of the initial HTTP request and access log.
-    let local = launch::browser_url(address, token);
-    lines.push((
-        Kind::Action,
-        text!(lang => "Open in your browser:", "在浏览器中打开："),
-    ));
-    lines.push((Kind::Address, local));
-    if address.ip().is_unspecified()
-        && let Some(ip) = network
-    {
-        let remote = launch::address_url(SocketAddr::new(ip, address.port()), token);
+    // The app that started a supervised server opens it with its own token.
+    if !startup.supervised {
+        if let Some(token) = token {
+            lines.push((
+                Kind::Token,
+                text!(lang => "Access token: {token}", "访问令牌：{token}"),
+            ));
+        }
+        // Every API client authenticates, including this computer's browser. A
+        // fragment keeps the token out of the initial HTTP request and access log.
+        let local = launch::browser_url(address, token);
         lines.push((
             Kind::Action,
-            if token.is_some() {
-                text!(lang =>
-                    "From another device on your network (this address contains the access token):",
-                    "从网络中的其他设备访问（该地址包含访问令牌）：")
-            } else {
-                text!(lang =>
-                    "From another device on your network:",
-                    "从网络中的其他设备访问：")
-            },
+            text!(lang => "Open in your browser:", "在浏览器中打开："),
         ));
-        lines.push((Kind::Address, remote));
+        lines.push((Kind::Address, local));
+        if address.ip().is_unspecified()
+            && let Some(ip) = network
+        {
+            let remote = launch::address_url(SocketAddr::new(ip, address.port()), token);
+            lines.push((
+                Kind::Action,
+                if token.is_some() {
+                    text!(lang =>
+                        "From another device on your network (this address contains the access token):",
+                        "从网络中的其他设备访问（该地址包含访问令牌）：")
+                } else {
+                    text!(lang =>
+                        "From another device on your network:",
+                        "从网络中的其他设备访问：")
+                },
+            ));
+            lines.push((Kind::Address, remote));
+        }
     }
     let data = data.display();
     lines.push((
@@ -165,9 +173,15 @@ pub(super) fn lines(lang: Lang, startup: &Startup<'_>) -> Vec<(Kind, String)> {
     }
     lines.push((
         Kind::Fact,
-        text!(lang =>
-            "Press Ctrl-C to stop; running conversions finish and history is saved first.",
-            "按 Ctrl-C 停止；正在转换的任务会先完成，历史也会先保存。"),
+        if startup.supervised {
+            text!(lang =>
+                "The app that started this server stops it through standard input.",
+                "启动这个服务的应用会通过标准输入停止它。")
+        } else {
+            text!(lang =>
+                "Press Ctrl-C to stop; running conversions finish and history is saved first.",
+                "按 Ctrl-C 停止；正在转换的任务会先完成，历史也会先保存。")
+        },
     ));
     lines
 }
@@ -245,6 +259,7 @@ mod tests {
             newer: None,
             failed_update: None,
             current: "2.1.0".into(),
+            supervised: false,
         }
     }
 
@@ -280,6 +295,32 @@ mod tests {
         );
         // No network warning.
         assert!(lines.iter().all(|(kind, _)| *kind != Kind::Warning));
+    }
+
+    #[test]
+    fn a_supervised_server_names_neither_its_token_nor_an_address_and_says_who_stops_it() {
+        let data = Path::new("/tmp/home/serve/jobs");
+        for (lang, stop) in [
+            (
+                Lang::En,
+                "The app that started this server stops it through standard input.",
+            ),
+            (Lang::Zh, "启动这个服务的应用会通过标准输入停止它。"),
+        ] {
+            for (address, network) in [("127.0.0.1:3600", None), ("0.0.0.0:3600", Some("10.0.0.5"))]
+            {
+                let mut supervised = startup(address, Some("secret"), network, data);
+                supervised.supervised = true;
+                let lines = lines(lang, &supervised);
+                assert!(
+                    lines.iter().all(|(kind, line)| !line.contains("secret")
+                        && !matches!(kind, Kind::Token | Kind::Address | Kind::Action)),
+                    "{lines:?}"
+                );
+                assert_eq!(lines.last(), Some(&(Kind::Fact, stop.into())));
+                assert!(lines[0].1.ends_with(&format!(" http://{address}")));
+            }
+        }
     }
 
     #[test]

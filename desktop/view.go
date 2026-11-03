@@ -38,26 +38,46 @@ type button struct {
 	Primary bool
 }
 
+// offers is what the page shown in phase p may ask of the app: the status
+// page's buttons, and Export PDF on the workbench. The window honors a
+// request only in a phase whose page offers it: a link in converted content,
+// which the workbench's snapshot frame lets reach window.open, then asks for
+// what the page in front offers at most.
+func offers(p Phase) []request {
+	switch p := p.(type) {
+	case Ready:
+		return []request{reqPrint}
+	case Failed:
+		switch p.Cause.(type) {
+		case Exited, NotReady:
+			return []request{reqRetry, reqShowLog}
+		}
+		return []request{reqRetry}
+	case Stopping:
+		if p.Mode == WhenDone {
+			return []request{reqStopNow}
+		}
+	}
+	return nil
+}
+
 // render maps a phase to what the window shows.
 func render(p Phase, t Texts) page {
 	s := status{Lang: "en"}
 	if t.Lang == "zh" {
 		s.Lang = "zh-CN"
 	}
-	retry := button{Label: t.Retry, Href: openRetry, Primary: true}
-	showLog := button{Label: t.ShowLog, Href: openShowLog}
 	switch p := p.(type) {
 	case Ready:
 		return page{URL: p.URL()}
 	case Stopped:
 		return page{}
-	case Starting:
+	case Preparing, Starting:
 		s.Phase, s.Title = "starting", t.Starting
 	case Stopping:
 		s.Phase, s.Title = "stopping", t.StoppingNow
 		if p.Mode == WhenDone {
 			s.Title, s.Body = t.StoppingTitle, []string{t.StoppingBody}
-			s.Buttons = []button{{Label: t.StopNow, Href: openStopNow}}
 		}
 	case Failed:
 		s.Phase, s.Tail = "failed", p.Tail
@@ -65,17 +85,23 @@ func render(p Phase, t Texts) page {
 		case Exited:
 			s.Cause, s.Title = "exited", t.ExitedTitle
 			s.Body = []string{t.ExitedBody(c.Code), t.ExitedHint}
-			s.Buttons = []button{retry, showLog}
 		case NotReady:
 			s.Cause, s.Title = "not-ready", t.NotReadyTitle
 			s.Body = []string{t.NotReadyBody(int(readyTimeout.Seconds()))}
-			s.Buttons = []button{retry, showLog}
 		case NoProgram:
 			s.Cause, s.Title, s.Body = "no-program", t.NoProgramTitle, []string{t.NoProgramBody(c.Path)}
-			s.Buttons = []button{retry}
 		case SpawnFailed:
 			s.Cause, s.Title, s.Body = "spawn-failed", t.SpawnTitle, []string{t.SpawnBody(c.Err)}
-			s.Buttons = []button{retry}
+		}
+	}
+	for _, r := range offers(p) {
+		switch r {
+		case reqRetry:
+			s.Buttons = append(s.Buttons, button{Label: t.Retry, Href: openRetry, Primary: true})
+		case reqShowLog:
+			s.Buttons = append(s.Buttons, button{Label: t.ShowLog, Href: openShowLog})
+		case reqStopNow:
+			s.Buttons = append(s.Buttons, button{Label: t.StopNow, Href: openStopNow})
 		}
 	}
 	var b strings.Builder

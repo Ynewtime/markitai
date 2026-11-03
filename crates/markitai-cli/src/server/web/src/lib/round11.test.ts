@@ -130,8 +130,14 @@ test("settings sections: Access token only where the server's token is its own (
     ...(supervised === undefined ? {} : { supervised }),
   });
   const rust = { config_edit: true, user_tokens: true, user_models: true, user_config: true };
-  // Before the capabilities arrive, and from a backend that does not report `supervised` (Python markitai).
-  assert.deepEqual(settingsSections(null), ["appearance", "models", "access"]);
+  // Before the capabilities arrive, only what every token has: nothing listed then disappears.
+  assert.deepEqual(settingsSections(null), ["appearance"]);
+  for (const known of [caps("admin", rust), caps("admin", { config_edit: true }, true), caps("user", rust), caps("user", { user_models: false })]) {
+    assert.ok(settingsSections(known).includes("appearance"));
+  }
+  // A refused token keeps Access token, where another one is entered.
+  assert.deepEqual(settingsSections(null, true), ["appearance", "models", "access"]);
+  // A backend that does not report `supervised` (Python markitai) keeps Access token.
   assert.deepEqual(settingsSections(caps("admin", rust)), ["appearance", "models", "access", "config"]);
   assert.deepEqual(settingsSections(caps("admin", rust, false)), ["appearance", "models", "access", "config"]);
   const supervised = settingsSections(caps("admin", { config_edit: true }, true));

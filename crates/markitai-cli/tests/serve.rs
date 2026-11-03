@@ -133,7 +133,13 @@ impl Server {
     /// A server that must refuse to start: its exit status and stderr. One
     /// still running after the wait is stopped, and the test fails.
     fn refused(root: &Path, variables: &[(&str, &std::ffi::OsStr)]) -> (Option<i32>, String) {
-        let mut child = Self::command(root, variables).spawn().unwrap();
+        Self::exited(Self::command(root, variables))
+    }
+    /// Runs `command` (one `command` made), which must exit by itself: its
+    /// exit status and stderr. One still running after the wait is stopped,
+    /// and the test fails.
+    fn exited(mut command: Command) -> (Option<i32>, String) {
+        let mut child = command.spawn().unwrap();
         let deadline = Instant::now() + WAIT;
         let status = loop {
             if let Some(status) = child.try_wait().unwrap() {

@@ -17,7 +17,8 @@ import (
 // logs and downloads. Save panels answer DIR/saved/<name>, or cancel when
 // MARKITAI_DESKTOP_E2E_SAVE=cancel; the busy-quit question answers
 // MARKITAI_DESKTOP_E2E_QUIT (when-done, the default; now; cancel) and
-// writes the count it was asked about to DIR/asked.
+// writes the count it was asked about, or "unknown", to DIR/asked. What
+// would open in the browser or mail app is appended to DIR/external.
 func init() {
 	dir := os.Getenv("MARKITAI_DESKTOP_E2E")
 	if dir == "" {
@@ -38,8 +39,18 @@ func init() {
 		}
 		return filepath.Join(saved, filepath.Base(suggested))
 	}
-	askQuit = func(_ *mygo.Window, _ Texts, n int) quitChoice {
-		_ = os.WriteFile(filepath.Join(dir, "asked"), []byte(strconv.Itoa(n)), 0o600)
+	openExternal = func(url string) {
+		if f, err := os.OpenFile(filepath.Join(dir, "external"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600); err == nil {
+			_, _ = f.WriteString(url + "\n")
+			_ = f.Close()
+		}
+	}
+	askQuit = func(_ *mygo.Window, _ Texts, b busy) quitChoice {
+		asked := "unknown"
+		if b.Known {
+			asked = strconv.Itoa(b.N)
+		}
+		_ = os.WriteFile(filepath.Join(dir, "asked"), []byte(asked), 0o600)
 		switch os.Getenv("MARKITAI_DESKTOP_E2E_QUIT") {
 		case "now":
 			return quitStopNow

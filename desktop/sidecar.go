@@ -20,8 +20,8 @@ import (
 const (
 	readyTimeout = 60 * time.Second
 	readyPoll    = 100 * time.Millisecond
-	// killGrace is how long a child stopped Now has to exit before it is
-	// killed outright.
+	// killGrace is how long a child told "now" has to exit before it is
+	// killed outright, as a hung one would not.
 	killGrace = 5 * time.Second
 	tailBytes = 4096
 )
@@ -30,15 +30,18 @@ const (
 type Config struct {
 	// Program is the bundled markitai.
 	Program string
-	// LogPath receives the child's stdout and stderr, a file per spawn: a
-	// pipe would turn serve's writes after the app quit into crashes.
+	// LogPath receives the children's stdout and stderr, a file rather than
+	// a pipe, which would turn serve's writes after the app quit into
+	// crashes. It holds one launch: the previous one's is beside it as
+	// serve.previous.log.
 	LogPath string
 	// MemoryPath is PathUserData/desktop.json.
 	MemoryPath string
-	// Lang is "en" or "zh", the child's LANG when the login environment has none.
-	Lang string
-	// Env returns the login environment; it may take seconds.
-	Env func(context.Context) []string
+	// Texts' Lang is the child's LANG when the login environment has none.
+	Texts Texts
+	// Env returns the login environment, or a fallback and why; it may take
+	// seconds, and ends early when its context does.
+	Env func(context.Context) ([]string, error)
 	// ReadyTimeout defaults to readyTimeout.
 	ReadyTimeout time.Duration
 }
@@ -53,17 +56,20 @@ type Sidecar struct {
 	done   chan struct{}
 	last   atomic.Pointer[Phase]
 
-	// Run's alone. env is written by the doPrepare goroutine before it posts
-	// evPrepared, the only event after which Run reads it.
-	phase  Phase
-	env    []string
-	memory Memory
-	procs  map[int]*proc
+	// Run's alone. env and envErr are written by the doPrepare goroutine
+	// before it posts evPrepared, the only event after which Run reads them.
+	ctx     context.Context // ends with Run
+	phase   Phase
+	env     []string
+	envErr  error
+	memory  Memory
+	procs   map[int]*proc
+	rotated bool // serve.log is this launch's
 }
 
 type proc struct {
 	cmd   *exec.Cmd
-	stdin io.Closer
+	stdin io.Writer
 }
 
 // NewSidecar returns a sidecar whose Run will call show with each new phase;
@@ -74,14 +80,17 @@ func NewSidecar(cfg Config, show func(Phase)) *Sidecar {
 	}
 	s := &Sidecar{cfg: cfg, show: show, events: make(chan event, 16), done: make(chan struct{}),
 		procs: map[int]*proc{}}
-	var p Phase = Starting{}
+	var p Phase = Preparing{}
 	s.last.Store(&p)
 	return s
 }
 
 // Run is the loop, the only writer of the phase and of Memory. It returns
-// once the phase is Stopped.
+// once the phase is Stopped, ending the login shell if it still runs.
 func (s *Sidecar) Run() {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s.ctx = ctx
 	s.memory = loadMemory(s.cfg.MemoryPath)
 	p, effects := start()
 	for _, e := range s.apply(p, effects) {
@@ -128,7 +137,7 @@ func (s *Sidecar) do(f effect) event {
 	switch f := f.(type) {
 	case doPrepare:
 		go func() {
-			s.env = s.cfg.Env(context.Background())
+			s.env, s.envErr = s.cfg.Env(s.ctx)
 			s.post(evPrepared{})
 		}()
 	case doSpawn:
@@ -146,7 +155,10 @@ func (s *Sidecar) do(f effect) event {
 
 // spawn starts `markitai serve --supervised` on a loopback port with a new
 // token, its working directory MARKITAI_HOME (serve reads ./markitai.json and
-// ./.env), and stdin a pipe whose closing asks it to finish and exit.
+// ./.env), and stdin a pipe that carries the app's requests (stop): the
+// pipe ends only with the app, and serve then drains by itself. A login
+// environment that failed is said first in the child's part of serve.log,
+// which the Failed page shows.
 func (s *Sidecar) spawn() event {
 	failed := func(err error) event { return evSpawnFailed{Cause: SpawnFailed{Err: err.Error()}} }
 	if _, err := os.Stat(s.cfg.Program); err != nil {
@@ -164,15 +176,23 @@ func (s *Sidecar) spawn() event {
 	if err != nil {
 		return failed(err)
 	}
-	logFile, err := rotateLog(s.cfg.LogPath)
+	logFile, err := s.openLog()
 	if err != nil {
 		return failed(err)
 	}
 	defer logFile.Close()
+	info, err := logFile.Stat()
+	if err != nil {
+		return failed(err)
+	}
+	from := info.Size()
+	if s.envErr != nil {
+		fmt.Fprintln(logFile, s.cfg.Texts.LoginEnvFailed(s.envErr.Error()))
+	}
 	token := newToken()
 	cmd := exec.Command(s.cfg.Program, "serve", "--supervised", "--host", "127.0.0.1", "--port", port.String())
 	cmd.Dir = home
-	cmd.Env = childEnv(s.env, token, s.cfg.Lang, home)
+	cmd.Env = childEnv(s.env, token, s.cfg.Texts.Lang, home)
 	cmd.Stdout, cmd.Stderr = logFile, logFile
 	cmd.SysProcAttr = procAttr()
 	stdin, err := cmd.StdinPipe()
@@ -184,20 +204,36 @@ func (s *Sidecar) spawn() event {
 	}
 	c := child{PID: cmd.Process.Pid, Port: port, Token: token, Home: home}
 	s.procs[c.PID] = &proc{cmd: cmd, stdin: stdin}
-	ctx, cancel := context.WithCancel(context.Background())
-	go s.awaitReady(ctx, c)
+	ctx, cancel := context.WithCancel(s.ctx)
+	go s.awaitReady(ctx, c, from)
 	go func() {
 		code := exitCode(cmd.Wait())
 		cancel()
-		s.post(evExited{PID: c.PID, Code: code, Tail: s.tail(token)})
+		s.post(evExited{PID: c.PID, Code: code, Tail: s.tail(token, from)})
 	}()
 	return evSpawned{Child: c}
 }
 
+// openLog opens serve.log for a child to append to. The launch's first
+// child moves the previous launch's log aside; a retry's appends, so the log
+// is the launch's. A rename refused, as Windows refuses it while a serve of
+// an earlier launch still writes there, leaves both in one file.
+func (s *Sidecar) openLog() (*os.File, error) {
+	if err := os.MkdirAll(filepath.Dir(s.cfg.LogPath), 0o700); err != nil {
+		return nil, err
+	}
+	if !s.rotated {
+		s.rotated = true
+		_ = os.Rename(s.cfg.LogPath, strings.TrimSuffix(s.cfg.LogPath, ".log")+".previous.log")
+	}
+	return os.OpenFile(s.cfg.LogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+}
+
 // awaitReady posts evReady once the child answers its capabilities with the
 // token and says it is supervised: only our child knows the token, so no
-// localized startup text is parsed. It posts evNotReady after ReadyTimeout.
-func (s *Sidecar) awaitReady(ctx context.Context, c child) {
+// localized startup text is parsed. It posts evNotReady after ReadyTimeout,
+// with the child's part of the log from offset from.
+func (s *Sidecar) awaitReady(ctx context.Context, c child, from int64) {
 	deadline := time.After(s.cfg.ReadyTimeout)
 	tick := time.NewTicker(readyPoll)
 	defer tick.Stop()
@@ -206,7 +242,7 @@ func (s *Sidecar) awaitReady(ctx context.Context, c child) {
 		case <-ctx.Done():
 			return
 		case <-deadline:
-			s.post(evNotReady{PID: c.PID, Tail: s.tail(c.Token)})
+			s.post(evNotReady{PID: c.PID, Tail: s.tail(c.Token, from)})
 			return
 		case <-tick.C:
 			var caps struct {
@@ -221,31 +257,39 @@ func (s *Sidecar) awaitReady(ctx context.Context, c child) {
 	}
 }
 
+// stop asks the child to stop with a line on its stdin, the same on every
+// system: "drain" to finish and exit, "now" to stop at once (serve exits
+// 129). A child stopped now that still runs killGrace later is killed.
 func (s *Sidecar) stop(pid int, mode Mode) {
 	p := s.procs[pid]
 	if p == nil {
 		return
 	}
-	_ = p.stdin.Close()
-	if mode == Now {
-		_ = stopNow(p.cmd.Process)
-		time.AfterFunc(killGrace, func() { _ = p.cmd.Process.Kill() })
+	if mode == WhenDone {
+		_, _ = io.WriteString(p.stdin, "drain\n")
+		return
 	}
+	_, _ = io.WriteString(p.stdin, "now\n")
+	time.AfterFunc(killGrace, func() { _ = p.cmd.Process.Kill() })
 }
 
-func (s *Sidecar) tail(token Token) string {
+// tail is the end of the log from offset from on, what one child wrote.
+func (s *Sidecar) tail(token Token, from int64) string {
 	f, err := os.Open(s.cfg.LogPath)
 	if err != nil {
 		return ""
 	}
 	defer f.Close()
-	cut := false
-	if info, err := f.Stat(); err == nil && info.Size() > tailBytes {
-		_, _ = f.Seek(-tailBytes, io.SeekEnd)
-		cut = true
+	info, err := f.Stat()
+	if err != nil {
+		return ""
+	}
+	start := max(from, info.Size()-tailBytes)
+	if _, err := f.Seek(start, io.SeekStart); err != nil {
+		return ""
 	}
 	b, _ := io.ReadAll(f)
-	return logTail(b, cut, token)
+	return logTail(b, start > from, token)
 }
 
 // logTail is the end of a log for the status page: whole lines only (cut: b
@@ -261,14 +305,6 @@ func logTail(b []byte, cut bool, token Token) string {
 		text = strings.ReplaceAll(text, string(token), token.String())
 	}
 	return text
-}
-
-func rotateLog(path string) (*os.File, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return nil, err
-	}
-	_ = os.Rename(path, strings.TrimSuffix(path, ".log")+".previous.log")
-	return os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 }
 
 func exitCode(err error) int {
@@ -292,7 +328,8 @@ func (s *Sidecar) post(e event) {
 // Retry starts a new child after a failure.
 func (s *Sidecar) Retry() { s.post(evRetry{}) }
 
-// Stop stops the child, or with none, ends the sidecar at once.
+// Stop stops the child, or with none, ends the sidecar at once; with a child
+// still exiting, once it has.
 func (s *Sidecar) Stop(m Mode) { s.post(evStop{Mode: m}) }
 
 // Phase is the phase published last.
@@ -311,18 +348,14 @@ func (s *Sidecar) Wait(d time.Duration) bool {
 	}
 }
 
-// Running counts the conversions our ready child has running or queued; 0
-// when it has none or does not answer.
-func (s *Sidecar) Running(ctx context.Context) int {
+// Unfinished counts the conversions our ready child has running or queued,
+// or says why it cannot; 0 without a ready child.
+func (s *Sidecar) Unfinished(ctx context.Context) (int, error) {
 	r, ok := s.Phase().(Ready)
 	if !ok {
-		return 0
+		return 0, nil
 	}
-	n, err := waiting(ctx, r.Child)
-	if err != nil {
-		log.Printf("markitai desktop: running conversions: %v", err)
-	}
-	return n
+	return waiting(ctx, r.Child)
 }
 
 // control is the part of MARKITAI_HOME/serve/control, written by serve for

@@ -39,13 +39,34 @@ connection that sends the secret.
 ## Running under another app
 
 An app that runs the server for its own window starts `markitai serve
---supervised` with the token in `MARKITAI_SERVE_TOKEN` and a pipe on standard
-input. The server opens no browser, and when standard input ends or cannot be
-read (the app closed it, or exited) it stops as SIGTERM stops it, draining
-conversions and saving history (see [history](#history-and-persistence)). The
-token is the app's: `token_regenerate`, `user_tokens`, `user_models` and
-`user_config` are false, their routes answer 409 `token_disabled`, and user
-tokens are not accepted. The app updates the program: the server never checks
+--supervised` with its token in `MARKITAI_SERVE_TOKEN` and, on standard input,
+a pipe it keeps open while the server runs. Without that token (unset or blank)
+the server does not start, and `--supervised` cannot be combined with
+`--no-auth`. The server opens no browser. Its startup lines name neither the
+token nor an address that carries it, and in place of the Ctrl-C hint say that
+the app that started it stops it through standard input.
+
+The app asks on standard input, one request per line (`\r\n` also ends a line):
+
+- `drain`, or the end of input (the app closed the pipe or exited, or it cannot
+  be read): stop as SIGTERM stops the server, draining conversions and saving
+  history (see [history](#history-and-persistence)). After `drain` the pipe stays
+  open, so the app can still ask `now`. Standard input that is already at its
+  end when the server starts (`/dev/null`, a closed pipe) stops it as soon as
+  it listens.
+- `now`: stop at once, as SIGHUP does, also during a drain. The external
+  runtimes it started (a browser, LibreOffice, a subscription model's program)
+  end with their process trees, nothing is drained, and the server exits with
+  status 129 (128 + SIGHUP) on every system. Running conversions are not saved;
+  the next start marks them `interrupted`.
+- Any other line is ignored.
+
+The token is the app's: `token_regenerate`, `user_tokens`, `user_models` and
+`user_config` are false, and the token routes (`POST
+/api/access-token/regenerate` and `/api/access-tokens`) answer 409
+`token_disabled`. User tokens are not accepted, and `/api/me/models` and
+`/api/me/config` answer the app's token 403 `user_token_required`, as they
+answer the admin of any server. The app updates the program: the server never checks
 for a release, has no web update routes or `Capabilities.update`, and refuses
 the restart `markitai update` asks for (409 `update_unavailable`).
 `Capabilities.supervised` is `true` (contract v1.29).
@@ -651,13 +672,14 @@ These are local private-state integrity measures, not authentication
 against a local actor able to forge both metadata and recovery files. A full process
 or machine failure during filesystem recovery can require another recovery attempt.
 
-SIGINT and SIGTERM (and a supervised server's standard input ending) stop
-admission and queued conversion dispatch, close event
+SIGINT and SIGTERM (and a supervised server's `drain` or the end of its standard
+input) stop admission and queued conversion dispatch, close event
 streams, and drain active blocking conversions before writing final metadata and
 exiting. Active native work is not forcibly interrupted. Pending items record a
 shutdown cancellation error. Queued reruns instead restore a prior successful result
 when one exists; active retries drain before the service exits. A second forceful process termination can still
-leave an incomplete job.
+leave an incomplete job, as a supervised server's `now` does on purpose
+([running under another app](#running-under-another-app)).
 
 ## Network and file boundaries
 
@@ -708,7 +730,7 @@ network address with the new token when the server listens on all interfaces;
 `Access token regenerated from the web workbench; other tabs and devices must
 sign in again.` The new token lives in memory: a restart uses
 `MARKITAI_SERVE_TOKEN` again, or makes a new one. User tokens are kept. With
-`--no-auth` it is 409 `token_disabled`.
+`--no-auth` or `--supervised` it is 409 `token_disabled`.
 
 ### Access levels and user tokens
 
@@ -728,8 +750,8 @@ deleted. The server prints `Access token "<label>" created from the web
 workbench.` or `… revoked …` (with `; its N models were deleted.` when it had
 any), never the token. These routes, `POST /api/access-token/regenerate` and every
 `/api/settings/` route are admin only: a user token gets 403
-`settings_forbidden`; with `--no-auth` there are no tokens and the token routes
-answer 409 `token_disabled`. All their answers carry `Cache-Control: no-store`.
+`settings_forbidden`; with `--no-auth` there are no tokens, and under `--supervised` the
+token is the app's: the token routes answer 409 `token_disabled`. All their answers carry `Cache-Control: no-store`.
 
 A user token reaches every other route, URL conversion included, but sees only
 the jobs it created: any other job is 404 `job_not_found` on every job route,
@@ -922,7 +944,9 @@ token (`  • Access token: …`); the address to open in a browser, on a line o
 own under `→ Open in your browser:` so it copies whole (with the token in its
 fragment for local and remote browsers alike, unless `--no-auth` was explicitly
 selected); the directory that holds jobs and history (`MARKITAI_HOME/serve/jobs`,
-shown absolute); and a Ctrl-C hint. In every language the title ends with
+shown absolute); and a Ctrl-C hint. A [supervised](#running-under-another-app) server prints
+neither the token nor an address to open, and in place of the hint says that the app that
+started it stops it through standard input. In every language the title ends with
 `http://ADDRESS` and the token line with the token, neither is wrapped and no
 colour code follows either value (also with `FORCE_COLOR`), so scripts can read
 them (`MARKITAI_SERVE_TOKEN` pins the token). When the listener is not

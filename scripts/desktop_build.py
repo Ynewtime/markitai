@@ -110,10 +110,16 @@ def probe_version(program, version):
     with tempfile.TemporaryDirectory() as work:
         environment = dict(os.environ, HOME=work, USERPROFILE=work, MARKITAI_HOME=str(Path(work) / "state"),
                            MARKITAI_LANG="en")
-        printed = subprocess.run([str(program), "--version"], capture_output=True, text=True, timeout=60,
-                                 env=environment, cwd=work).stdout.strip()
+        try:
+            result = subprocess.run([str(program), "--version"], capture_output=True, text=True, timeout=60,
+                                    env=environment, cwd=work)
+        except subprocess.TimeoutExpired:
+            raise SystemExit(f"{program} --version did not answer within 60 s") from None
+    printed = result.stdout.strip()
     if printed != f"markitai {version}":
-        raise SystemExit(f"{program} --version printed {printed!r}, not 'markitai {version}'")
+        stderr = result.stderr.strip()[-2000:]
+        raise SystemExit(f"{program} --version printed {printed!r} and exited {result.returncode}, "
+                         f"not 'markitai {version}'" + (f"\n{stderr}" if stderr else ""))
 
 
 def go(arguments, cwd, environment=None, capture=False):
@@ -152,6 +158,8 @@ def stage_go_licences(destination, modules, goroot):
     """Go's licence and each module's, with a README listing them; a module without one fails."""
     rows = []
     for owner, version, directory in [("Go", "", goroot), *modules]:
+        if not str(directory):
+            raise SystemExit(f"{owner} {version}: go list gave no module directory; run go mod download")
         found = licence_files(directory)
         if not found:
             raise SystemExit(f"{owner} {version}: no licence file in {directory}")
@@ -167,34 +175,37 @@ def stage_go_licences(destination, modules, goroot):
 
 
 def stage(archive, sums=None, *, root=ROOT, modules=None, goroot=None, host_system=None):
-    """Replace desktop/resources with the archive's program and the app's licences."""
+    """Replace desktop/resources with the archive's program and the app's licences. The new
+    resources are made apart and replace the old ones only once complete."""
     version = app_version(root)
     platform = archive_platform(archive, version)
     if sums is not None:
         check_sum(archive, sums)
     resources = root / "desktop/resources"
-    if resources.exists():
-        shutil.rmtree(resources)
     with tempfile.TemporaryDirectory() as work:
+        staged = Path(work) / "resources"
         extracted = Path(work) / "archive"
         extract_release_archive(archive, extracted)
         name = program_name(platform)
-        program = resources / resources_dir(platform) / "bin" / name
+        program = staged / resources_dir(platform) / "bin" / name
         program.parent.mkdir(parents=True)
         shutil.copyfile(extracted / name, program)
         program.chmod(0o755)
-    if (host_system or host_platform()) == platform:
-        probe_version(program, version)
-    for relative, data in archive_attribution(archive).items():
-        path = resources / "licenses/markitai" / relative
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(data)
-    stage_go_licences(resources / "licenses/go",
-                      go_modules(root, platform) if modules is None else modules,
-                      go_root() if goroot is None else goroot)
-    stamp = {"version": version, "platform": platform, "archive": archive.name,
-             "sha256": hashlib.sha256(archive.read_bytes()).hexdigest()}
-    (resources / STAMP).write_text(json.dumps(stamp, indent=2) + "\n", encoding="utf-8")
+        if (host_system or host_platform()) == platform:
+            probe_version(program, version)
+        for relative, data in archive_attribution(archive).items():
+            path = staged / "licenses/markitai" / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+        stage_go_licences(staged / "licenses/go",
+                          go_modules(root, platform) if modules is None else modules,
+                          go_root() if goroot is None else goroot)
+        stamp = {"version": version, "platform": platform, "archive": archive.name,
+                 "sha256": hashlib.sha256(archive.read_bytes()).hexdigest()}
+        (staged / STAMP).write_text(json.dumps(stamp, indent=2) + "\n", encoding="utf-8")
+        if resources.exists():
+            shutil.rmtree(resources)
+        shutil.move(staged, resources)
     print(f"Staged markitai {version} for {platform} in {resources.relative_to(root)}")
     return stamp
 
@@ -206,12 +217,13 @@ def check_artifacts(names):
                          + ", ".join(taken))
 
 
-def mygo_build_command(platform, e2e):
+def mygo_build_command(platform, e2e, goflags=""):
     """`go tool mygo build` arguments and the extra environment; the e2e build keeps the
-    inspector the automation plugin needs and goes to build/e2e."""
+    inspector the automation plugin needs, goes to build/e2e and adds its tag to `goflags`:
+    mygo build takes tags from GOFLAGS only."""
     arguments = ["tool", "mygo", "build", "-platform", platform]
     if e2e:
-        return arguments + ["-debug", "-skip-dmg", "-o", "build/e2e"], {"GOFLAGS": "-tags=e2e"}
+        return arguments + ["-debug", "-skip-dmg", "-o", "build/e2e"], {"GOFLAGS": f"{goflags} -tags=e2e".strip()}
     return arguments, {}
 
 
@@ -221,12 +233,12 @@ def build(platform, e2e=False, *, root=ROOT):
     version = app_version(root)
     resources = root / "desktop/resources"
     stamp_path = resources / STAMP
-    stamp = json.loads(stamp_path.read_text(encoding="utf-8")) if stamp_path.exists() else {}
-    if (stamp.get("version"), stamp.get("platform")) != (version, platform):
-        raise SystemExit(f"desktop/resources holds {stamp.get('platform')} {stamp.get('version')}, not "
-                         f"{platform} {version}; run: desktop_build.py stage --archive "
-                         f"{archive_name(version, PLATFORMS[platform])}")
-    arguments, extra = mygo_build_command(platform, e2e)
+    stamp = json.loads(stamp_path.read_text(encoding="utf-8")) if stamp_path.exists() else None
+    if stamp is None or (stamp.get("version"), stamp.get("platform")) != (version, platform):
+        held = "nothing staged" if stamp is None else f"{stamp.get('platform')} {stamp.get('version')}"
+        raise SystemExit(f"desktop/resources holds {held}, not {platform} {version}; run: desktop_build.py "
+                         f"stage --archive {archive_name(version, PLATFORMS[platform])}")
+    arguments, extra = mygo_build_command(platform, e2e, os.environ.get("GOFLAGS", ""))
     out = root / "desktop" / ("build/e2e" if e2e else "build") / resources_dir(platform)
     if out.exists():
         shutil.rmtree(out)

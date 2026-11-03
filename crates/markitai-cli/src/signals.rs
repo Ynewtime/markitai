@@ -20,7 +20,6 @@ static EXITING: AtomicI32 = AtomicI32::new(0);
 
 /// Record that this handler ends the process with `code`, before it kills
 /// anything. Async-signal-safe.
-#[cfg(any(unix, windows))]
 fn begin_exit(code: i32) {
     EXITING.store(code, Ordering::Release);
 }
@@ -97,6 +96,28 @@ extern "C" fn fatal(signal: libc::c_int) {
         // Delivered with the default action once this handler returns.
         libc::raise(signal);
     }
+}
+
+/// End the process at once with `code`, as a terminating signal without a
+/// command-specific policy does: kill the external runtime trees, erase the
+/// status line and exit, running no other cleanup. For a stop asked for
+/// without a signal (a supervised server's `now`).
+pub(crate) fn exit_now(code: i32) -> ! {
+    #[cfg(windows)]
+    console::exit_now(code);
+    #[cfg(not(windows))]
+    {
+        begin_exit(code);
+        markitai_core::terminate_child_process_groups();
+        erase_status_line();
+        #[cfg(unix)]
+        // SAFETY: _exit ends the process without running handlers or destructors.
+        unsafe {
+            libc::_exit(code);
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
+    std::process::exit(code)
 }
 
 /// Terminating signals that a command handles itself; the rest get cleanup.
@@ -360,7 +381,7 @@ mod console {
 
     /// Kill the external runtime trees, erase the status line and end the
     /// process at once, running no other cleanup (Unix `_exit`).
-    fn exit_now(code: i32) -> ! {
+    pub(super) fn exit_now(code: i32) -> ! {
         begin_exit(code);
         markitai_core::terminate_child_process_groups();
         super::erase_status_line();

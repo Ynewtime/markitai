@@ -462,8 +462,8 @@ enum Command {
         #[arg(long, hide = true)]
         /// Load the configuration and stored state, then exit without listening (an update's dry start).
         preflight: bool,
-        #[arg(long, hide = true)]
-        /// Run for the app that started this server: it holds the token and updates the program, and closing standard input stops the server as Ctrl-C does. Implies --no-open.
+        #[arg(long, hide = true, conflicts_with = "no_auth")]
+        /// Run for the app that started this server: it holds the token (MARKITAI_SERVE_TOKEN, required) and updates the program. On standard input, a line `drain` or the input's end stops the server as Ctrl-C does, and a line `now` stops it at once. Implies --no-open.
         supervised: bool,
     },
     /// Run the native MCP service over standard input/output.

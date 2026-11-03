@@ -11,8 +11,12 @@ export const ADMIN_SECTIONS: ReadonlySet<Section> = new Set(["models", "access",
 
 /** The settings sections the sidebar and the phone's index list, and the only ones a settings address opens.
  * v1.13: a user token's are Appearance, and with v1.15 its own Models and Edit config. v1.29: a supervised
- * server's token belongs to the app that started it, so there is no Access token. */
-export function settingsSections(caps: Pick<Capabilities, "access" | "features" | "supervised"> | null): Section[] {
+ * server's token belongs to the app that started it, so there is no Access token. Until the capabilities say
+ * who is asking, Appearance alone, which every token has: an entry listed sooner would vanish for some (the
+ * first frame paints before the capabilities are asked for). A token they refused (`refused`) keeps Access
+ * token, where another one is entered. */
+export function settingsSections(caps: Pick<Capabilities, "access" | "features" | "supervised"> | null, refused = false): Section[] {
+  if (caps === null && !refused) return ["appearance"];
   const features = caps?.features;
   if ((caps?.access?.role ?? "admin") === "admin") {
     return ["appearance", "models", ...(caps?.supervised === true ? [] : (["access"] as const)), ...(features?.config_edit === true ? (["config"] as const) : [])];
