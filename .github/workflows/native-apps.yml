@@ -7,9 +7,17 @@ name: Native apps
 on:
   push:
     branches: [native-apps]
+    # What the Windows job reads, so macOS and Linux commits do not restart it:
+    # the app, its strings and icon, the core with its fixtures, and the crates it builds.
     paths:
-      - 'native/**'
+      - 'native/windows/**'
+      - 'native/strings.json'
+      - 'desktop/icon.png'
       - 'crates/markitai-app/**'
+      - 'crates/markitai-core/**'
+      - 'vendor/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
       - '.github/workflows/native-apps.yml'
   workflow_dispatch:
 
@@ -47,7 +55,7 @@ jobs:
       - name: Restore Cargo dependencies
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
-          key: native-apps-windows-v1
+          key: native-apps-windows-v2
           workspaces: '. -> target/native-windows'
           cache-bin: false
           cache-workspace-crates: false
