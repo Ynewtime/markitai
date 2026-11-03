@@ -377,6 +377,24 @@ func TestSidecarStopsNowAChildThatWillNotDrain(t *testing.T) {
 	}
 }
 
+// A quit with nothing counted drains here; a child still draining after
+// the limit is finishing work the count did not see, such as a conversion
+// an upload started just after it, and is not told "now".
+func TestAnIdleQuitLeavesWorkTheCountMissedToFinish(t *testing.T) {
+	h := newHarness(t, "stubborn")
+	r := h.ready()
+	if drainHere(h.sc, 300*time.Millisecond) {
+		t.Fatal("drainHere took a child still draining for stopped")
+	}
+	time.Sleep(300 * time.Millisecond)
+	if p := h.sc.Phase(); p != (Stopping{Mode: WhenDone, PID: r.Child.PID}) || !alive(r.Child.PID) {
+		t.Errorf("after the idle drain, the phase is %#v and the child alive is %v; want it draining", p, alive(r.Child.PID))
+	}
+	if log, _ := os.ReadFile(h.cfg.LogPath); strings.Contains(string(log), "now; stopped at once") {
+		t.Errorf("the idle drain told the child to stop now:\n%s", log)
+	}
+}
+
 func TestSidecarCountsUnfinishedConversions(t *testing.T) {
 	h := newHarness(t, "ready", "MARKITAI_DESKTOP_FAKE_RUNNING=2")
 	h.ready()

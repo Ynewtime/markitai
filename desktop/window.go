@@ -18,16 +18,22 @@ import (
 // without saying which frame asked. The app binds no Go service; it honors
 // a request only in a phase whose page offers it (offers in view.go).
 const (
-	openPrint   = "markitai-desktop:print"
 	openRetry   = "markitai-desktop:retry"
 	openStopNow = "markitai-desktop:stop-now"
 	openShowLog = "markitai-desktop:show-log"
 )
 
+// openPrint is Export PDF's request, offered while the workbench shows,
+// beside converted content: a link in that content reaches window.open too
+// (the snapshot frame lets pop-ups out of its sandbox). It carries a key of
+// this launch that only the preload knows, which runs in the main frame
+// alone and before the workbench's scripts.
+var openPrint = "markitai-desktop:print?" + string(newToken())
+
 // preload replaces window.print, which the web view ignores (it returns at
 // once, with no panel and no afterprint), so the workbench's PDF export
 // reaches exportPDF.
-const preload = `window.print = () => { window.open("markitai-desktop:print"); };`
+var preload = `window.print = () => { window.open("` + openPrint + `"); };`
 
 // request is what a window.open asks of the app.
 type request int

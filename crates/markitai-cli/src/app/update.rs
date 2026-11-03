@@ -819,7 +819,9 @@ struct Restarted {
 }
 
 /// R2: a running server of this home is offered a restart into `target`;
-/// without a terminal, with `--yes` or `--json` only the hint.
+/// without a terminal, with `--yes` or `--json` only the hint. A supervised
+/// server is left alone: it runs the program of the app that started it,
+/// which updates and restarts it.
 fn offer_restart(
     out: &Out,
     install: &SetupInstall,
@@ -832,7 +834,8 @@ fn offer_restart(
         done: false,
         kept: false,
     });
-    let Some((control, status)) = control::running(home) else {
+    let Some((control, status)) = control::running(home).filter(|(_, status)| !status.supervised)
+    else {
         return none;
     };
     let hint = |out: &Out| {

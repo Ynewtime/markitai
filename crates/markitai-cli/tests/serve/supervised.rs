@@ -234,17 +234,19 @@ fn a_supervised_server_neither_checks_for_nor_offers_an_update() {
             "{method} {path}"
         );
     }
-    // `markitai update` finds the server, which refuses to restart.
+    // `markitai update` finds the server, which says it is supervised and
+    // refuses to restart.
     let control: Value =
         serde_json::from_slice(&std::fs::read(temp.path().join("home/serve/control")).unwrap())
             .unwrap();
     let secret = control["secret"].as_str().unwrap();
     let header = [("X-Markitai-Control", secret)];
+    let status = server.request("GET", "/api/update/control", &header, &[]);
     assert_eq!(
-        server
-            .request("GET", "/api/update/control", &header, &[])
-            .status,
-        200
+        (status.status, &status.json()["supervised"]),
+        (200, &json!(true)),
+        "{}",
+        status.text()
     );
     assert_eq!(
         reason(&server.request("POST", "/api/update/restart", &header, &[])),

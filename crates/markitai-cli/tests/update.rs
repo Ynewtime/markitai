@@ -440,17 +440,33 @@ impl Serve {
         port: Option<u16>,
     ) -> Self {
         let mut command = home.command(releases, extra);
+        command.args([
+            "serve",
+            "--port",
+            &port.unwrap_or(0).to_string(),
+            "--no-open",
+        ]);
+        Self::spawn(command, None)
+    }
+
+    /// `serve --supervised` from the install, as an app runs it: with the
+    /// app's token, which it does not print, and its standard input held open.
+    #[cfg(unix)]
+    fn supervised(home: &Home, releases: &Releases, extra: &[(&str, &str)]) -> Self {
+        let mut command = home.command(releases, extra);
+        command
+            .env("MARKITAI_SERVE_TOKEN", TOKEN)
+            .args(["serve", "--supervised", "--port", &free_port().to_string()])
+            .stdin(Stdio::piped());
+        Self::spawn(command, Some(TOKEN))
+    }
+
+    /// Runs `command`, reading the port, and the token unless given, from
+    /// what it prints.
+    fn spawn(mut command: Command, token: Option<&str>) -> Self {
         // Windows: a process group of its own on this console, for Ctrl-Break.
         interrupt::interruptible(&mut command);
-        command
-            .args([
-                "serve",
-                "--port",
-                &port.unwrap_or(0).to_string(),
-                "--no-open",
-            ])
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped());
+        command.stdout(Stdio::null()).stderr(Stdio::piped());
         let mut child = command.spawn().unwrap();
         let log = Arc::new(Mutex::new(String::new()));
         let (copy, stderr) = (log.clone(), child.stderr.take().unwrap());
@@ -472,7 +488,9 @@ impl Serve {
         let (port, token) = loop {
             let text = log.lock().unwrap().clone();
             let port = after(&text, "http://127.0.0.1:", |c| c.is_ascii_digit());
-            let token = after(&text, "Access token: ", |c| c.is_ascii_alphanumeric());
+            let token = token
+                .map(str::to_owned)
+                .or_else(|| after(&text, "Access token: ", |c| c.is_ascii_alphanumeric()));
             if let (Some(port), Some(token)) = (port, token) {
                 break (port.parse().unwrap(), token);
             }
@@ -1706,6 +1724,31 @@ mod restart_by_cli {
         // The same port and token answer, from the new version.
         let view = server.wait("the restart", |view| view["current"] == "2.2.0");
         assert_eq!(view["updated_from"], "2.1.1", "{view}");
+        assert!(!home.path("mh/update-pending.json").exists());
+    }
+
+    /// The app that runs a supervised server updates and restarts it:
+    /// `markitai update` neither offers a restart nor names one.
+    #[cfg(unix)]
+    #[test]
+    fn markitai_update_leaves_a_server_an_app_runs_to_that_app() {
+        let releases = Releases::start("2.2.0");
+        let home = installed(&releases, false);
+        let server = Serve::supervised(&home, &releases, OLD);
+        let (said, code) = update(&home, &releases);
+        assert_eq!(code, 0, "{said}");
+        assert!(said.contains("Installed:"), "{said}");
+        for offer in [
+            "markitai serve is running",
+            "Restart it now",
+            "didn't restart",
+            "Restart serve to use",
+        ] {
+            assert!(!said.contains(offer), "{offer}: {said}");
+        }
+        // The app's server runs on as it was.
+        let (status, capabilities) = server.call("GET", "/api/capabilities", None).unwrap();
+        assert_eq!((status, &capabilities["supervised"]), (200, &json!(true)));
         assert!(!home.path("mh/update-pending.json").exists());
     }
 

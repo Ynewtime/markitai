@@ -95,24 +95,30 @@ func pickPort(remembered Port) (Port, error) {
 		}
 	}
 	for range 8 {
-		l, err := net.Listen("tcp", "127.0.0.1:0")
+		l, err := net.Listen("tcp4", "127.0.0.1:0")
 		if err != nil {
 			return 0, err
 		}
 		p := Port(l.Addr().(*net.TCPAddr).Port)
 		l.Close()
-		if p != cliPort {
+		if p != cliPort && free(p) {
 			return p, nil
 		}
 	}
 	return 0, errors.New("no free loopback port")
 }
 
+// free reports whether no program listens on p, on loopback or on every
+// address. A listener on 0.0.0.0 or [::] does not keep serve from binding
+// 127.0.0.1 on macOS (SO_REUSEADDR), where serve would then take the
+// connections other programs make to that program on 127.0.0.1.
 func free(p Port) bool {
-	l, err := net.Listen("tcp", "127.0.0.1:"+p.String())
-	if err != nil {
-		return false
+	for _, a := range []struct{ network, host string }{{"tcp4", "127.0.0.1"}, {"tcp4", "0.0.0.0"}, {"tcp", ""}} {
+		l, err := net.Listen(a.network, net.JoinHostPort(a.host, p.String()))
+		if err != nil {
+			return false
+		}
+		l.Close()
 	}
-	l.Close()
 	return true
 }

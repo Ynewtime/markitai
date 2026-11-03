@@ -34,16 +34,23 @@ func TestPickPortStartsOutsideEphemeralRanges(t *testing.T) {
 	}
 }
 
+// Another program listening on loopback, or on every address as a dev
+// server on 0.0.0.0 or [::] does, keeps its port.
 func TestPickPortLeavesATakenPort(t *testing.T) {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer l.Close()
-	taken := Port(l.Addr().(*net.TCPAddr).Port)
-	got, err := pickPort(taken)
-	if err != nil || got == taken || got == 0 || got == cliPort {
-		t.Errorf("pickPort(%d) = %d, %v", taken, got, err)
+	for _, a := range []struct{ network, address string }{
+		{"tcp4", "127.0.0.1:0"}, {"tcp4", "0.0.0.0:0"}, {"tcp", ":0"}, {"tcp6", "[::]:0"},
+	} {
+		l, err := net.Listen(a.network, a.address)
+		if err != nil {
+			t.Logf("%s %s: %v", a.network, a.address, err)
+			continue
+		}
+		taken := Port(l.Addr().(*net.TCPAddr).Port)
+		got, err := pickPort(taken)
+		if err != nil || got == taken || got == 0 || got == cliPort {
+			t.Errorf("with %s %s listening on %d, pickPort(%d) = %d, %v", a.network, a.address, taken, taken, got, err)
+		}
+		l.Close()
 	}
 }
 

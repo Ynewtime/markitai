@@ -14,7 +14,7 @@ import zipfile
 
 import bounded_run
 import desktop_build
-from desktop_build import PLATFORMS, SHIPPED, check_artifacts, mygo_build_command, stage
+from desktop_build import PLATFORMS, SHIPPED, check_artifacts, e2e_project, layout, mygo_build_command, stage
 from release_build import TARGETS, archive_name
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -151,10 +151,12 @@ class StageTests(unittest.TestCase):
             repo.stage(tar_archive(repo.archives / archive_name(VERSION, TARGET)))
 
     def test_a_program_that_names_another_version_is_refused_where_it_runs(self):
-        archive = tar_archive(self.repo.archives / archive_name(VERSION, TARGET), version="9.8.6")
-        if desktop_build.host_platform() == "darwin/arm64":
+        host = desktop_build.host_platform()
+        target = PLATFORMS[host] if host in ("darwin/arm64", "linux/amd64") else TARGET
+        archive = tar_archive(self.repo.archives / archive_name(VERSION, target), version="9.8.6")
+        if target != TARGET or host == "darwin/arm64":
             with self.assertRaisesRegex(SystemExit, "printed 'markitai 9.8.6'"):
-                self.repo.stage(archive, host_system="darwin/arm64")
+                self.repo.stage(archive, host_system=host)
         self.repo.stage(archive)
 
     def test_a_module_without_a_licence_fails(self):
@@ -197,15 +199,47 @@ class RegistryTests(unittest.TestCase):
                          ("Markitai", "markitai-desktop", "dev.markitai.desktop"))
         self.assertFalse(mygo["slug"].startswith(desktop_build.CLI_ASSET_PREFIX))
 
+    def test_linux_packages_are_named_by_the_slug(self):
+        app, program, packages = layout("linux/amd64", "2.3.2")
+        self.assertEqual((app, program), ("markitai-desktop", "bin/markitai"))
+        self.assertEqual(packages, {"markitai-desktop_2.3.2_amd64.deb", "markitai-desktop-2.3.2-linux-amd64.tar.gz"})
+        check_artifacts([app, *packages])
+        self.assertIn("markitai-desktop_2.4.0~rc.1_amd64.deb", layout("linux/amd64", "2.4.0-rc.1")[2])
+
     def test_the_e2e_build_keeps_the_inspector_and_its_own_directory(self):
         arguments, environment = mygo_build_command("darwin/arm64", e2e=True)
-        self.assertEqual(arguments[-4:], ["-debug", "-skip-dmg", "-o", "build/e2e"])
+        self.assertEqual(arguments[-5:], ["-debug", "-skip-dmg", "-o", "../e2e", desktop_build.E2E_PROJECT])
+        desktop = ROOT / "desktop"
+        self.assertEqual(os.path.normpath(desktop / arguments[-1] / arguments[-2]), str(desktop / "build/e2e"))
         self.assertEqual(environment, {"GOFLAGS": "-tags=e2e"})
         _, environment = mygo_build_command("darwin/arm64", e2e=True, goflags="-mod=mod")
         self.assertEqual(environment, {"GOFLAGS": "-mod=mod -tags=e2e"})
         arguments, environment = mygo_build_command("darwin/arm64", e2e=False)
         self.assertNotIn("-debug", arguments)
         self.assertEqual(environment, {})
+
+
+class E2EProjectTests(unittest.TestCase):
+    @unittest.skipIf(os.name == "nt", "the e2e build runs on macOS and Linux; its project links the resources")
+    def test_the_e2e_build_has_its_own_identifier_and_the_app_s_package_and_resources(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        repo = Checkout(directory.name)
+        desktop = repo.root / "desktop"
+        production = (desktop / "mygo.json").read_bytes()
+        (desktop / "build/e2e-project").mkdir(parents=True)
+        (desktop / "build/e2e-project/stale").write_bytes(b"x")
+        project = e2e_project(repo.root)
+        self.assertEqual(project, desktop / desktop_build.E2E_PROJECT)
+        self.assertFalse((project / "stale").exists())
+        config = json.loads((project / "mygo.json").read_text(encoding="utf-8"))
+        expected = json.loads(production)
+        self.assertEqual(config.pop("identifier"), expected.pop("identifier") + ".e2e")
+        self.assertEqual((project / config.pop("main")).resolve(), desktop.resolve())
+        self.assertEqual((project / config.pop("icon")).resolve(), (desktop / expected.pop("icon")).resolve())
+        self.assertEqual(config, expected)
+        self.assertEqual((project / "resources").resolve(), (desktop / "resources").resolve())
+        self.assertEqual((desktop / "mygo.json").read_bytes(), production)
 
 
 if __name__ == "__main__":

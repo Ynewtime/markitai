@@ -7,7 +7,9 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -81,6 +83,49 @@ func TestLoginEnvReadsEachShellsStartupFiles(t *testing.T) {
 			}
 			if value(env, "PATH") == "" || value(env, "HOME") != os.Getenv("HOME") {
 				t.Errorf("the login environment lost PATH or HOME: %q", env)
+			}
+		})
+	}
+}
+
+// A startup file that leaves a job running with the shell's output (an
+// update check or a daemon started with &) costs neither the environment
+// nor the app's time: the shell's own jobs end with it, and a job in a
+// session of its own is given a second.
+func TestLoginEnvDoesNotWaitForJobsHoldingTheOutput(t *testing.T) {
+	cases := []struct {
+		name, shell, file, body string
+	}{
+		{"zsh", "/bin/zsh", ".zshrc", "export MARKITAI_PROBE=kept\nsleep 30 &!\necho $! > \"$HOME/job.pid\"\n"},
+		{"bash", "/bin/bash", ".bash_profile", "export MARKITAI_PROBE=kept\n(sleep 30 & echo $! > \"$HOME/job.pid\")\n"},
+		{"session of its own", "/bin/zsh", ".zshrc", "export MARKITAI_PROBE=kept\n" +
+			`/usr/bin/perl -MPOSIX -e 'POSIX::setsid() or die; open(F, ">", "$ENV{HOME}/ready"); close(F); sleep 6' &!` + "\n" +
+			`while [ ! -e "$HOME/ready" ]; do sleep 0.01; done` + "\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := os.Stat("/usr/bin/perl"); err != nil && strings.Contains(tc.body, "perl") {
+				t.Skip("no /usr/bin/perl")
+			}
+			started := time.Now()
+			env, err := launchedFromFinder(t, context.Background(), tc.shell, map[string]string{tc.file: tc.body})
+			took := time.Since(started)
+			if err != nil || !slices.Contains(env, "MARKITAI_PROBE=kept") {
+				t.Fatalf("loginEnv = %v; the login environment has MARKITAI_PROBE=kept: %v", err, slices.Contains(env, "MARKITAI_PROBE=kept"))
+			}
+			if took > 3*time.Second {
+				t.Errorf("loginEnv took %v", took)
+			}
+			b, err := os.ReadFile(filepath.Join(os.Getenv("HOME"), "job.pid"))
+			if err != nil {
+				return
+			}
+			job, _ := strconv.Atoi(strings.TrimSpace(string(b)))
+			for deadline := time.Now().Add(time.Second); job > 0 && alive(job); time.Sleep(20 * time.Millisecond) {
+				if time.Now().After(deadline) {
+					_ = syscall.Kill(job, syscall.SIGKILL)
+					t.Fatalf("the startup file's job %d outlived the login shell", job)
+				}
 			}
 		})
 	}

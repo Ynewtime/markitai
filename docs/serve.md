@@ -67,8 +67,9 @@ The token is the app's: `token_regenerate`, `user_tokens`, `user_models` and
 `token_disabled`. User tokens are not accepted, and `/api/me/models` and
 `/api/me/config` answer the app's token 403 `user_token_required`, as they
 answer the admin of any server. The app updates the program: the server never checks
-for a release, has no web update routes or `Capabilities.update`, and refuses
-the restart `markitai update` asks for (409 `update_unavailable`).
+for a release and has no web update routes or `Capabilities.update`. Its
+`GET /api/update/control` says `"supervised": true`, so `markitai update` leaves
+it alone, and it refuses `POST /api/update/restart` (409 `update_unavailable`).
 `Capabilities.supervised` is `true` (contract v1.29).
 
 ## Machine-readable API description

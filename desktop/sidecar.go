@@ -348,8 +348,9 @@ func (s *Sidecar) Wait(d time.Duration) bool {
 	}
 }
 
-// Unfinished counts the conversions our ready child has running or queued,
-// or says why it cannot; 0 without a ready child.
+// Unfinished counts what our ready child would finish before it stops: the
+// conversions it has running or queued, and uploads still arriving; or says
+// why it cannot; 0 without a ready child.
 func (s *Sidecar) Unfinished(ctx context.Context) (int, error) {
 	r, ok := s.Phase().(Ready)
 	if !ok {

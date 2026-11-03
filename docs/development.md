@@ -97,8 +97,8 @@ packages a release CLI archive; its version is the workspace's, which
 
 ```sh
 python3 scripts/desktop_build.py vet
-python3 scripts/desktop_build.py stage --archive markitai-v<version>-aarch64-apple-darwin.tar.gz [--sums SHA256SUMS]
-python3 scripts/desktop_build.py build --platform darwin/arm64 [--e2e]
+python3 scripts/desktop_build.py stage --archive markitai-v<version>-<target>.tar.gz [--sums SHA256SUMS]
+python3 scripts/desktop_build.py build --platform darwin/arm64|linux/amd64 [--e2e]
 python3 scripts/desktop_e2e.py ROUND [--only NAME,...]
 ```
 
@@ -107,18 +107,26 @@ tests on this system (compiling them for the others); the tests stand in for
 `markitai serve` with the test binary itself, so they need no markitai.
 `stage` replaces the Git-ignored `desktop/resources/` with the archive's
 `markitai` and the licences: the archive's, Go's, and those of every module
-`go list -deps` links (a module without one fails). `build` makes
-`desktop/build/darwin-arm64/Markitai.app` and
-`markitai-desktop-<version>-arm64.dmg`, the only platform this round; no
+`go list -deps` links (a module without one fails). Each platform is built on
+its own system: `build` makes `desktop/build/darwin-arm64/Markitai.app` and
+`markitai-desktop-<version>-arm64.dmg` on an Apple silicon Mac, or the app,
+its `.tar.gz`, `.deb`, `PKGBUILD` and `install.sh` in
+`desktop/build/linux-amd64/` on x86-64 Linux ([Linux](desktop.md#linux)), from
+the `x86_64-unknown-linux-gnu` archive the manylinux_2_28 image builds. No
 artifact may be named like a CLI archive (`markitai-v…`). `--e2e` builds with
-the `e2e` tag, mygo's automation plugin and the web inspector, without a disk
-image, into `desktop/build/e2e/`. `desktop_e2e.py` drives that build over the
+the `e2e` tag, mygo's automation plugin and the web inspector, without
+packages, into `desktop/build/e2e/`, from a generated project
+(`desktop/build/e2e-project/`) whose identifier is the app's plus `.e2e`: on
+macOS web data is kept by identifier outside `HOME`, and an e2e run must not
+share an installed app's. `desktop_e2e.py` drives that build over the
 automation socket through the scenarios its docstring lists, each with its own
-`HOME`, `MARKITAI_HOME` and app data, and keeps the evidence in
-`.local/desktop-e2e/ROUND/`; the bundled `markitai` must have `serve
---supervised`. The native Save panel and quit question are answered by the
-e2e build's environment there, and a link it would open in the browser is
-recorded instead, so check them by hand once.
+`HOME` (with the XDG directories on Linux), `MARKITAI_HOME` and app data, and
+keeps the evidence in `.local/desktop-e2e/ROUND/`; the bundled `markitai` must
+have `serve --supervised`. On Linux it runs in a Hyprland session and quits by
+closing the window with `hyprctl`, as there is no application menu. The native
+Save panel and quit question are answered by the e2e build's environment
+there, and a link it would open in the browser is recorded instead, so check
+them by hand once.
 `scripts/test_desktop_build.py` runs with the helper tests.
 
 ## Website

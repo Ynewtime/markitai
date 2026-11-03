@@ -338,15 +338,18 @@ impl Update {
     }
 }
 
-/// Conversions running or queued, item by item.
-pub(super) fn active_conversions(state: &State) -> u64 {
-    state
+/// What a drain or a restart waits for, the `waiting_jobs` every route
+/// reports: conversions running or queued, item by item, and requests
+/// admitted that may still start some (an upload still being received).
+fn waiting(state: &State) -> u64 {
+    let active: u64 = state
         .jobs
         .lock()
         .unwrap_or_else(|error| error.into_inner())
         .values()
         .map(|job| job.active.load(Ordering::SeqCst) as u64)
-        .sum()
+        .sum();
+    active + state.update.admitting.load(Ordering::SeqCst) as u64
 }
 
 /// A request that may start conversions, counted while it runs so a drain
@@ -376,18 +379,13 @@ pub(super) fn admit(state: &State) -> ApiResult<Admission<'_>> {
     Ok(admission)
 }
 
-/// Whether nothing runs, waits or is being admitted.
-fn drained(state: &State) -> u64 {
-    active_conversions(state) + state.update.admitting.load(Ordering::SeqCst) as u64
-}
-
 /// What `Capabilities.update` says to the admin of a loopback server.
 pub(super) fn capability(state: &State, admin: bool) -> Option<Value> {
     let update = &state.update;
     if !update.web || !admin {
         return None;
     }
-    let view = update.view(active_conversions(state));
+    let view = update.view(waiting(state));
     Some(json!({
         "current": view["current"],
         "latest": view["latest"],
@@ -470,7 +468,7 @@ pub(super) async fn status(
     request: Request,
 ) -> ApiResult<Response> {
     admin(&request)?;
-    Ok(no_store(state.update.view(active_conversions(&state))))
+    Ok(no_store(state.update.view(waiting(&state))))
 }
 
 fn check_json(status: axum::http::StatusCode, value: Value) -> Response {
@@ -654,7 +652,7 @@ pub(super) async fn check_now(
     match ask(&state, true).await {
         Ok(_) => {
             state.update.manual_revealed.store(true, Ordering::SeqCst);
-            let update = state.update.view(active_conversions(&state));
+            let update = state.update.view(waiting(&state));
             Ok(no_store(json!({
                 "fresh": true,
                 "checked_at": update["checked_at"],
@@ -744,7 +742,7 @@ pub(super) async fn start(
         .unwrap_or_else(|error| error.into_inner()) = Some(handle);
     Ok((
         axum::http::StatusCode::ACCEPTED,
-        no_store(update.view(active_conversions(&state))),
+        no_store(update.view(waiting(&state))),
     )
         .into_response())
 }
@@ -769,7 +767,7 @@ pub(super) async fn cancel(
         ));
     }
     state.update.cancel.store(true, Ordering::SeqCst);
-    Ok(no_store(state.update.view(active_conversions(&state))))
+    Ok(no_store(state.update.view(waiting(&state))))
 }
 
 fn say(english: String, chinese: String, mark: crate::term::Mark) {
@@ -840,20 +838,20 @@ fn run(state: &Arc<State>, target: Version) {
             if cancelled() {
                 return Err(install::Error::Cancelled);
             }
-            let waiting = drained(state);
-            if waiting == 0 {
+            let count = waiting(state);
+            if count == 0 {
                 break;
             }
-            if told != Some(waiting) {
+            if told != Some(count) {
                 say(
                     format!(
-                        "Waiting for {waiting} conversion{} to finish",
-                        if waiting == 1 { "" } else { "s" }
+                        "Waiting for {count} conversion{} to finish",
+                        if count == 1 { "" } else { "s" }
                     ),
-                    format!("等待 {waiting} 个转换完成"),
+                    format!("等待 {count} 个转换完成"),
                     Mark::Info,
                 );
-                told = Some(waiting);
+                told = Some(count);
             }
             std::thread::sleep(Duration::from_millis(250));
         }
@@ -965,7 +963,9 @@ fn control_allowed(state: &State, request: &Request) -> ApiResult<()> {
     }
 }
 
-/// `GET /api/update/control`: the version and the work a restart waits for.
+/// `GET /api/update/control`: the version, the work a restart waits for, and
+/// whether the server is supervised (`markitai update` then offers no
+/// restart: the app that started it updates it).
 pub(super) async fn control_status(
     ExtractState(state): ExtractState<Arc<State>>,
     request: Request,
@@ -975,7 +975,8 @@ pub(super) async fn control_status(
     Ok(no_store(json!({
         "version": version,
         "pid": std::process::id(),
-        "waiting_jobs": active_conversions(&state),
+        "waiting_jobs": waiting(&state),
+        "supervised": state.supervised,
         "state": state.update.phase().name(),
         "undone": state.update.undone,
     })))
@@ -1030,7 +1031,7 @@ pub(super) async fn control_restart(
         .unwrap_or_else(|error| error.into_inner()) = Some(handle);
     Ok((
         axum::http::StatusCode::ACCEPTED,
-        no_store(json!({"waiting_jobs": active_conversions(&state)})),
+        no_store(json!({"waiting_jobs": waiting(&state)})),
     )
         .into_response())
 }
@@ -1056,20 +1057,20 @@ fn drain_and_restart(state: &Arc<State>) {
         if state.closing.load(Ordering::SeqCst) {
             return;
         }
-        let waiting = drained(state);
-        if waiting == 0 {
+        let count = waiting(state);
+        if count == 0 {
             break;
         }
-        if told != Some(waiting) {
+        if told != Some(count) {
             say(
                 format!(
-                    "Waiting for {waiting} conversion{} to finish",
-                    if waiting == 1 { "" } else { "s" }
+                    "Waiting for {count} conversion{} to finish",
+                    if count == 1 { "" } else { "s" }
                 ),
-                format!("等待 {waiting} 个转换完成"),
+                format!("等待 {count} 个转换完成"),
                 Mark::Info,
             );
-            told = Some(waiting);
+            told = Some(count);
         }
         std::thread::sleep(Duration::from_millis(250));
     }
@@ -1872,12 +1873,15 @@ pub(super) mod tests {
             (status, view["state"].as_str(), view["can_apply"].as_bool()),
             (200, Some("waiting"), Some(false))
         );
-        // A request admitted before holding began is waited for.
+        // A request admitted before holding began (an upload still arriving)
+        // is waited for, and the page is told so.
         state.update.set(Phase::Idle);
         let admission = admit(&state).unwrap();
-        assert_eq!(drained(&state), 1);
+        let (_, view, _) = answer(&state, request("GET", "/api/update", LOCAL, &[], "")).await;
+        assert_eq!(view["waiting_jobs"], 1, "{view}");
         drop(admission);
-        assert_eq!(drained(&state), 0);
+        let (_, view, _) = answer(&state, request("GET", "/api/update", LOCAL, &[], "")).await;
+        assert_eq!(view["waiting_jobs"], 0, "{view}");
     }
 
     #[tokio::test]
@@ -1907,6 +1911,22 @@ pub(super) mod tests {
         assert_eq!(status, 200, "{value}");
         assert_eq!(value["waiting_jobs"], 0);
         assert_eq!(value["pid"], std::process::id());
+        assert_eq!(value["supervised"], false);
+        // An upload still arriving is work a restart, or the app's drain, waits for.
+        let admission = admit(&state).unwrap();
+        let (_, value, _) = answer(
+            &state,
+            request(
+                "GET",
+                "/api/update/control",
+                LOCAL,
+                &[(control::HEADER, &secret)],
+                "",
+            ),
+        )
+        .await;
+        assert_eq!(value["waiting_jobs"], 1, "{value}");
+        drop(admission);
         for (peer, headers) in [
             (LOCAL, vec![(control::HEADER, "wrong")]),
             (LOCAL, vec![]),

@@ -7,11 +7,17 @@
         archive's attribution under licenses/markitai/, Go's and every linked
         module's under licenses/go/. With --sums the archive's SHA-256 must
         be the one SHA256SUMS lists.
-  build --platform darwin/arm64 [--e2e]
-        `go tool mygo build` of the staged app: desktop/build/darwin-arm64/
-        Markitai.app and markitai-desktop-<version>-arm64.dmg. --e2e makes
-        the -debug build with the automation plugin, without a disk image,
-        in desktop/build/e2e/, for scripts/desktop_e2e.py.
+  build --platform darwin/arm64|linux/amd64 [--e2e]
+        `go tool mygo build` of the staged app in desktop/build/<goos>-<goarch>/:
+        Markitai.app and markitai-desktop-<version>-arm64.dmg for macOS; the
+        markitai-desktop executable with bin/ and licenses/ beside it,
+        markitai-desktop_<version>_amd64.deb and
+        markitai-desktop-<version>-linux-amd64.tar.gz for Linux. --e2e makes
+        the -debug build with the automation plugin, without the disk image,
+        in desktop/build/e2e/, for scripts/desktop_e2e.py: from the project
+        desktop/build/e2e-project/, desktop/mygo.json with its own identifier
+        (".e2e" added), so it keeps no web view data where an installed
+        Markitai does.
   vet   gofmt, go vet and go test of desktop/ for darwin, linux and windows;
         tests run on this system and compile for the others.
 
@@ -48,12 +54,15 @@ PLATFORMS = {
     "windows/arm64": "aarch64-pc-windows-msvc",
 }
 # Built and verified this round; the others stage and compile only.
-SHIPPED = {"darwin/arm64"}
+SHIPPED = {"darwin/arm64", "linux/amd64"}
 CLI_ASSET_PREFIX = "markitai-v"
 # Licence files at a Go module's root.
 LICENCE_PREFIXES = ("LICENSE", "LICENCE", "COPYING", "NOTICE", "PATENTS")
 # What stage records beside the resources; hidden, so mygo does not ship it.
 STAMP = ".stage.json"
+# The e2e build's mygo project, within desktop/, and what it adds to the app's identifier.
+E2E_PROJECT = "build/e2e-project"
+E2E_IDENTIFIER = ".e2e"
 
 
 def resources_dir(platform):
@@ -218,13 +227,53 @@ def check_artifacts(names):
 
 
 def mygo_build_command(platform, e2e, goflags=""):
-    """`go tool mygo build` arguments and the extra environment; the e2e build keeps the
-    inspector the automation plugin needs, goes to build/e2e and adds its tag to `goflags`:
-    mygo build takes tags from GOFLAGS only."""
+    """`go tool mygo build` arguments, run in desktop/, and the extra environment; the e2e build of
+    E2E_PROJECT keeps the inspector the automation plugin needs, goes to build/e2e and adds its tag
+    to `goflags`: mygo build takes tags from GOFLAGS only."""
     arguments = ["tool", "mygo", "build", "-platform", platform]
     if e2e:
-        return arguments + ["-debug", "-skip-dmg", "-o", "build/e2e"], {"GOFLAGS": f"{goflags} -tags=e2e".strip()}
+        return (arguments + ["-debug", "-skip-dmg", "-o", "../e2e", E2E_PROJECT],
+                {"GOFLAGS": f"{goflags} -tags=e2e".strip()})
     return arguments, {}
+
+
+def e2e_project(root=ROOT):
+    """Write E2E_PROJECT: desktop/mygo.json under the identifier plus E2E_IDENTIFIER, building the
+    desktop/ package with desktop/resources. WKWebView keeps website data (localStorage, caches) by
+    the bundle identifier outside HOME, so the e2e build must not share an installed app's."""
+    desktop = root / "desktop"
+    project = desktop / E2E_PROJECT
+    if project.exists():
+        shutil.rmtree(project)
+    project.mkdir(parents=True)
+    config = json.loads((desktop / "mygo.json").read_text(encoding="utf-8"))
+    back = os.path.relpath(desktop, project)
+    config.update(identifier=config["identifier"] + E2E_IDENTIFIER, main=back,
+                  icon=os.path.join(back, config["icon"]))
+    (project / "mygo.json").write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+    (project / "resources").symlink_to(os.path.join(back, "resources"), target_is_directory=True)
+    return project
+
+
+def deb_version(version):
+    """mygo's Debian version of `version`: a pre-release sorts before its release with "~"."""
+    release, dash, pre = version.removeprefix("v").partition("-")
+    return (release + ("~" + pre.replace("-", ".") if dash else "")).replace("+", "~")
+
+
+def layout(platform, version):
+    """What `mygo build` writes to desktop/build/<goos>-<goarch>/ for `platform`: the app as it runs,
+    its markitai relative to that directory, and the packages only a release build makes."""
+    goos, goarch = platform.split("/")
+    program = program_name(platform)
+    if goos == "darwin":
+        return "Markitai.app", f"Markitai.app/Contents/Resources/bin/{program}", {
+            f"markitai-desktop-{version}-{goarch}.dmg"}
+    if goos == "linux":
+        return "markitai-desktop", f"bin/{program}", {
+            f"markitai-desktop_{deb_version(version)}_{goarch}.deb",
+            f"markitai-desktop-{version}-linux-{goarch}.tar.gz"}
+    raise SystemExit(f"No app layout for {platform}")
 
 
 def build(platform, e2e=False, *, root=ROOT):
@@ -242,14 +291,16 @@ def build(platform, e2e=False, *, root=ROOT):
     out = root / "desktop" / ("build/e2e" if e2e else "build") / resources_dir(platform)
     if out.exists():
         shutil.rmtree(out)
+    if e2e:
+        e2e_project(root)
     go(arguments, cwd=root / "desktop", environment=dict(os.environ, **extra))
     names = sorted(path.name for path in out.iterdir())
     check_artifacts(names)
-    goarch = platform.split("/")[1]
-    expected = {"Markitai.app"} | (set() if e2e else {f"markitai-desktop-{version}-{goarch}.dmg"})
+    app, program, packages = layout(platform, version)
+    expected = {app} | (set() if e2e else packages)
     if not expected <= set(names):
         raise SystemExit(f"{out} has {names}; expected {sorted(expected)}")
-    bundled = out / "Markitai.app/Contents/Resources/bin" / program_name(platform)
+    bundled = out / program
     if not os.access(bundled, os.X_OK):
         raise SystemExit(f"{bundled} is missing or not executable")
     for name in names:

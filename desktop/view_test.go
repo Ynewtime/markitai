@@ -152,7 +152,7 @@ func TestStaysOnThePageItShows(t *testing.T) {
 
 func TestRoute(t *testing.T) {
 	cases := map[string]request{
-		"markitai-desktop:print":     reqPrint,
+		"markitai-desktop:print":     reqDenied,
 		"markitai-desktop:retry":     reqRetry,
 		"markitai-desktop:stop-now":  reqStopNow,
 		"markitai-desktop:show-log":  reqShowLog,
@@ -170,6 +170,22 @@ func TestRoute(t *testing.T) {
 	for raw, want := range cases {
 		if got := route(raw); got != want {
 			t.Errorf("route(%q) = %v; want %v", raw, got, want)
+		}
+	}
+}
+
+// Export PDF is the workbench's alone: what the preload's window.print opens
+// is honored, a link in converted content asking for it is not.
+func TestOnlyThePreloadAsksForExportPDF(t *testing.T) {
+	opened := regexp.MustCompile(`window\.open\("([^"]+)"\)`).FindStringSubmatch(preload)
+	if opened == nil || route(opened[1]) != reqPrint {
+		t.Fatalf("the preload's window.print opens %q, which is not Export PDF", opened)
+	}
+	key := strings.TrimPrefix(opened[1], "markitai-desktop:print?")
+	for _, forged := range []string{"markitai-desktop:print", "markitai-desktop:print?", opened[1] + "x",
+		"markitai-desktop:print?" + string(newToken()), "markitai-desktop:print?" + strings.ToUpper(key)} {
+		if got := route(forged); got != reqDenied {
+			t.Errorf("route(%q) = %v; want denied", forged, got)
 		}
 	}
 }

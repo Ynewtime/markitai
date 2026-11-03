@@ -141,8 +141,12 @@ impl Control {
 pub(crate) struct Status {
     pub(crate) version: String,
     pub(crate) pid: u32,
-    /// Conversions running or queued: they finish before a restart.
+    /// Conversions running or queued, and uploads still being received:
+    /// they finish before a restart.
     pub(crate) waiting_jobs: u64,
+    /// Run by an app (`serve --supervised`), which updates and restarts it.
+    #[serde(default)]
+    pub(crate) supervised: bool,
     /// The update this server undid as it started (its failure file is
     /// gone by then).
     #[serde(default)]

@@ -6,5 +6,6 @@
   "copyright": "Copyright (c) 2026 Ynewtime",
   "icon": "icon.png",
   "out": "build",
-  "macos": { "minimumSystemVersion": "12.0" }
+  "macos": { "minimumSystemVersion": "13.0" },
+  "linux": { "comment": "Convert documents and URLs to Markdown" }
 }

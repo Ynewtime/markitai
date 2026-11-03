@@ -13,8 +13,8 @@ import (
 	"github.com/egoist/mygo"
 )
 
-// idleStop bounds the stop of a child with nothing running: an idle serve
-// exits in milliseconds, so the limit only catches a hang.
+// idleStop is how long the quit waits here for a child with nothing
+// running: an idle serve exits in milliseconds.
 const idleStop = 5 * time.Second
 
 type desktop struct {
@@ -85,8 +85,9 @@ const (
 	gateFocus             // a stop or the question is under way: show the window
 )
 
-// busy is how many conversions a stop would wait for, running or queued; not
-// Known when the server could not say.
+// busy is how many conversions a stop would wait for, running or queued, and
+// uploads still arriving that would start some; not Known when the server
+// could not say.
 type busy struct {
 	N     int
 	Known bool
@@ -120,10 +121,14 @@ func quitGate(p Phase, asking bool, unfinished func() (int, error)) (gate, busy)
 // beforeQuit is the one gate for every way out: Cmd+Q and the Quit item,
 // closing the window (close), SIGINT and SIGTERM, logout. It runs on the
 // main thread, which a drain here holds, so only an idle stop happens here,
-// bounded by idleStop; one that waits for conversions goes through the
+// for up to idleStop; one that waits for conversions goes through the
 // question and the Stopping page. An idle stop completes here rather than
 // canceling the quit: mygo answers a canceled quit to the system as a
-// refusal, which would also cancel a logout.
+// refusal, which would also cancel a logout. A child still draining after
+// idleStop is finishing work the count could not see, such as a conversion
+// an upload started just after it, and a draining serve no longer answers a
+// count: the quit goes on as Quit When Done, on the Stopping page with Stop
+// Now, rather than stopping that work unasked.
 func (d *desktop) beforeQuit(e *mygo.QuitEvent) {
 	if d.leaving || d.sc == nil {
 		d.leaving = true
@@ -138,12 +143,13 @@ func (d *desktop) beforeQuit(e *mygo.QuitEvent) {
 	case gateLeave:
 		d.leaving = true
 	case gateDrain:
-		d.sc.Stop(WhenDone)
-		if !d.sc.Wait(idleStop) {
-			d.sc.Stop(Now)
-			d.sc.Wait(killGrace + time.Second)
+		if drainHere(d.sc, idleStop) {
+			d.leaving = true
+			return
 		}
-		d.leaving = true
+		e.PreventDefault()
+		d.asking.Store(true)
+		go d.quitWhenStopped()
 	case gateAsk:
 		e.PreventDefault()
 		d.asking.Store(true)
@@ -152,6 +158,14 @@ func (d *desktop) beforeQuit(e *mygo.QuitEvent) {
 		e.PreventDefault()
 		d.focus()
 	}
+}
+
+// drainHere stops a child with nothing counted and waits up to limit for it
+// to exit; whether it did. One still draining is left to finish, never told
+// to stop now.
+func drainHere(sc *Sidecar, limit time.Duration) bool {
+	sc.Stop(WhenDone)
+	return sc.Wait(limit)
 }
 
 // close makes closing the window a quit on every system: the window is the
@@ -174,6 +188,10 @@ func (d *desktop) askAndQuit(b busy) {
 	case quitStopNow:
 		d.sc.Stop(Now)
 	}
+	d.quitWhenStopped()
+}
+
+func (d *desktop) quitWhenStopped() {
 	<-d.sc.Done()
 	mygo.App.Quit()
 }

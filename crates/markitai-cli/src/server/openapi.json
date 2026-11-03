@@ -614,7 +614,7 @@
         "security": [],
         "parameters": [{ "name": "X-Markitai-Control", "in": "header", "required": true, "schema": { "type": "string" } }],
         "responses": {
-          "200": { "description": "The server", "content": { "application/json": { "schema": { "type": "object", "required": ["version", "pid", "waiting_jobs", "state"], "properties": { "version": { "type": "string" }, "pid": { "type": "integer" }, "waiting_jobs": { "type": "integer" }, "state": { "type": "string" } } } } } },
+          "200": { "description": "The server", "content": { "application/json": { "schema": { "type": "object", "required": ["version", "pid", "waiting_jobs", "supervised", "state"], "properties": { "version": { "type": "string" }, "pid": { "type": "integer" }, "waiting_jobs": { "type": "integer", "description": "Conversions running or queued, and requests still being received that may start more (an upload); a restart, or a supervised server's drain, waits for them" }, "supervised": { "type": "boolean", "description": "Started with `--supervised`: the app that started it updates and restarts it, so `markitai update` offers no restart" }, "state": { "type": "string" } } } } } },
           "403": { "$ref": "#/components/responses/Error" }
         }
       }
@@ -1269,7 +1269,7 @@
           "can_apply": { "type": "boolean", "description": "`POST` would start: a setup install, a newer release, no update running" },
           "target": { "type": ["string", "null"], "description": "The version an update in progress installs" },
           "progress": { "type": ["object", "null"], "description": "While `downloading`", "properties": { "done": { "type": "integer" }, "total": { "type": ["integer", "null"] } } },
-          "waiting_jobs": { "type": "integer", "description": "Conversions running or queued; a restart waits for them" },
+          "waiting_jobs": { "type": "integer", "description": "Conversions running or queued, and requests still being received that may start more (an upload); a restart waits for them" },
           "error": { "type": ["object", "null"], "description": "Why the last update failed (also one the last start undid): `code` is `offline`, `checksum`, `disk_full`, `not_writable`, `file_busy`, `start_failed`, `install_failed`, `update_running` (`markitai update` was updating this install) or `cancelled`; `rolled_back` when files had been replaced and were put back (else nothing changed)", "properties": { "code": { "type": "string" }, "reason": { "type": "string" }, "rolled_back": { "type": "boolean" }, "version": { "type": "string" } } },
           "updated_from": { "type": ["string", "null"], "description": "The version this server ran before it restarted into this one" },
           "by": { "type": ["string", "null"], "enum": ["web", "cli", null], "description": "Who started the update in progress: the page, or `markitai update`" },
