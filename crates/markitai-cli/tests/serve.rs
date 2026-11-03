@@ -48,7 +48,11 @@ impl Server {
     /// With `MARKITAI_SERVE_TOKEN` among `variables` the server requires that
     /// token; otherwise it runs with `--no-auth`.
     fn start_with(root: &Path, variables: &[(&str, &std::ffi::OsStr)]) -> Self {
-        let mut child = Self::command(root, variables).spawn().unwrap();
+        Self::spawn(root, Self::command(root, variables))
+    }
+    /// Starts `command` (one `command` made) and waits until it listens.
+    fn spawn(root: &Path, mut command: Command) -> Self {
+        let mut child = command.spawn().unwrap();
         let captured = Arc::new(Mutex::new(String::new()));
         let copy = captured.clone();
         let reader = child.stderr.take().unwrap();
@@ -1327,3 +1331,6 @@ mod user_models;
 
 #[path = "serve/convert_defaults.rs"]
 mod convert_defaults;
+
+#[path = "serve/supervised.rs"]
+mod supervised;

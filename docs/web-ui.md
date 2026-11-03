@@ -12,7 +12,8 @@ A **sidebar** frames every view: Convert and Conversions (with the number of
 conversions and a grey pulsing dot while something converts, which turns green and still once
 everything is done and fades six seconds later), the Settings sections
 (Appearance, Models, Access token, Edit config; a user token sees Appearance,
-its own Models and Edit config for them, see [Access token](#access-token)), and Docs and GitHub at the bottom, with the version
+its own Models and Edit config for them, and a supervised server has no Access token,
+see [Access token](#access-token)), and Docs and GitHub at the bottom, with the version
 (`2.3.2`) in small muted text beside Docs and the commit it was built from beside GitHub (`-dirty` after
 it when built with uncommitted changes), and under them, as small muted text centred rather than a row,
 `Build: 20261017 19:54`, the build's date and time in the viewer's time zone (the label stays `Build:` in every
@@ -578,7 +579,8 @@ restart) with one status row (`12.1 / 31.2 MB`, `SHA-256`, the wait), Cancel unt
 with what it left. Another install shows its command to copy. While new conversions are held, Convert says so
 and a busy note shows in every tab; after the restart the page reloads itself (a notice offers it instead
 when the config editor or a dialog holds edits) and says the new version, with its release notes. Without
-`update` (an exposed server, a user token, Python markitai) nothing shows.
+`update` (an exposed server, a user token, Python markitai) nothing shows; a supervised server
+(contract v1.29, updated by the app that started it) never has it.
 
 With `update` (v1.28, also with `update.check: false`) a ↻ ends the sidebar's `Build:` line and the phone's
 version line in Settings; its tooltip or long press says when the last check was. A click checks now:
@@ -717,7 +719,9 @@ A 401 shows the Access token needed panel in place of the conversions (and a
 refused submission a toast), both with Enter token; it opens a small dialog that
 stores a typed token for the tab. Settings → Access token shows
 whether the tab is signed in and signs this tab out (another token then signs in
-from the sign-in screen).
+from the sign-in screen). A [supervised](serve.md#running-under-another-app) server
+(`Capabilities.supervised`, contract v1.29) belongs to the app that started it, which holds its token: the sidebar and
+the phone's settings list leave Access token out and `/settings/access` is not found.
 **Regenerate token** (on servers that offer it) asks first, then replaces the
 server's token: every other tab and device is signed out at once (open event
 streams end, unused download tickets stop working) and must sign in again,
@@ -851,7 +855,8 @@ an output whose start is an excerpt; v1.24 `Capabilities.update` and `/api/updat
 on a loopback server, see [service](serve.md#updates); v1.25 `regions` on a provider
 card; v1.26 `notices`, each warning's code and subjects in the order of `warnings`;
 v1.27 `endpoints` on a provider card, its documented addresses with their area and plan; v1.28
-`checked_at`, `retry_at` and `checking` in `update` and `POST /api/update/check`); a
+`checked_at`, `retry_at` and `checking` in `update` and `POST /api/update/check`; v1.29
+`supervised`, a server another app runs, which hides Access token); a
 missing feature hides its control instead of failing (no Stop
 remaining, no Compare, archives saved through the page, history read job by job,
 images read from the file route).

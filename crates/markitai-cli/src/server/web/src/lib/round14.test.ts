@@ -8,7 +8,8 @@ import { apiErrorText } from "../i18n/errors.ts";
 import { ja } from "../i18n/ja.ts";
 import { zh } from "../i18n/zh.ts";
 import { modelName } from "./models.ts";
-import { ADMIN_SECTIONS, parseRoute } from "./route.ts";
+import { ADMIN_SECTIONS, parseRoute, settingsSections } from "./route.ts";
+import type { Features } from "../api/types.ts";
 
 test("a user token's Models page calls the same routes under /api/me/models", async () => {
   assert.deepEqual(MODELS_BASE, { admin: "/api/settings/llm", user: "/api/me/models" });
@@ -96,7 +97,10 @@ test("Models stays an admin-guarded address while the caller is unknown, and a u
   assert.ok(ADMIN_SECTIONS.has("models"));
   const app = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
   // v1.16: a user's Edit config (its own models) joins them when the backend has it.
-  assert.match(app, /userModels\s+\? \["appearance", "models", \.\.\.\(features\?\.user_config === true \? \(\["config"\] as const\) : \[\]\)\]\s+: \["appearance"\]/);
+  const user = (features: Partial<Features>) => settingsSections({ access: { role: "user" }, features: features as Features });
+  assert.deepEqual(user({ user_models: true }), ["appearance", "models"]);
+  assert.deepEqual(user({ user_models: true, user_config: true }), ["appearance", "models", "config"]);
+  assert.deepEqual(user({}), ["appearance"]);
   assert.match(app, /scope=\{role === "user" \? "user" : "admin"\}/);
   assert.match(app, /canShare=\{role === "admin" && userModels\}/);
 });

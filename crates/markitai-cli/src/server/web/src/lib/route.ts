@@ -2,10 +2,24 @@
 // the page, so reloads, Back and new tabs keep it; the selected conversion and
 // the open preview ride in the query (`?sel=<job>/<item>&view=preview`).
 
+import type { Capabilities } from "../api/types.ts";
+
 export type Section = "appearance" | "models" | "access" | "config";
 export const SECTIONS: Section[] = ["appearance", "models", "access", "config"];
 /** Sections only the admin token opens (v1.13); a user token sees Appearance only. */
 export const ADMIN_SECTIONS: ReadonlySet<Section> = new Set(["models", "access", "config"]);
+
+/** The settings sections the sidebar and the phone's index list, and the only ones a settings address opens.
+ * v1.13: a user token's are Appearance, and with v1.15 its own Models and Edit config. v1.29: a supervised
+ * server's token belongs to the app that started it, so there is no Access token. */
+export function settingsSections(caps: Pick<Capabilities, "access" | "features" | "supervised"> | null): Section[] {
+  const features = caps?.features;
+  if ((caps?.access?.role ?? "admin") === "admin") {
+    return ["appearance", "models", ...(caps?.supervised === true ? [] : (["access"] as const)), ...(features?.config_edit === true ? (["config"] as const) : [])];
+  }
+  if (features?.user_models === true) return ["appearance", "models", ...(features.user_config === true ? (["config"] as const) : [])];
+  return ["appearance"];
+}
 
 export type Route =
   | { view: "convert" }

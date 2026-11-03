@@ -4,7 +4,8 @@ import { pairBlocks, type PageBlock, type Target } from "./compare.ts";
 import { errorPlace, firstError, jsonProblem, lineColumn } from "./config-text.ts";
 import { displayName, readable } from "./format.ts";
 import { remotePicture } from "./markdown.ts";
-import { ADMIN_SECTIONS, parseRoute, routePath } from "./route.ts";
+import { ADMIN_SECTIONS, parseRoute, routePath, settingsSections } from "./route.ts";
+import type { Capabilities, Features } from "../api/types.ts";
 import { bounded } from "../hooks/use-conversions.ts";
 
 test("escapes read as their characters, for display only", () => {
@@ -120,4 +121,24 @@ test("settings: Appearance first, Edit config has its own address, the rest is t
   assert.deepEqual(parseRoute("/settings/config"), { view: "settings", section: "config" });
   assert.equal(routePath({ view: "settings", section: "config" }), "/settings/config");
   assert.deepEqual([...ADMIN_SECTIONS].sort(), ["access", "config", "models"]);
+});
+
+test("settings sections: Access token only where the server's token is its own (not a supervised server's)", () => {
+  const caps = (role: "admin" | "user", features: Partial<Features>, supervised?: boolean): Pick<Capabilities, "access" | "features" | "supervised"> => ({
+    access: { role },
+    features: features as Features,
+    ...(supervised === undefined ? {} : { supervised }),
+  });
+  const rust = { config_edit: true, user_tokens: true, user_models: true, user_config: true };
+  // Before the capabilities arrive, and from a backend that does not report `supervised` (Python markitai).
+  assert.deepEqual(settingsSections(null), ["appearance", "models", "access"]);
+  assert.deepEqual(settingsSections(caps("admin", rust)), ["appearance", "models", "access", "config"]);
+  assert.deepEqual(settingsSections(caps("admin", rust, false)), ["appearance", "models", "access", "config"]);
+  const supervised = settingsSections(caps("admin", { config_edit: true }, true));
+  assert.deepEqual(supervised, ["appearance", "models", "config"]);
+  // Its address opens no page there: the sidebar, the phone's index and /settings/access agree.
+  const route = parseRoute("/settings/access");
+  assert.ok(route.view === "settings" && route.section !== null && !supervised.includes(route.section));
+  assert.deepEqual(settingsSections(caps("user", rust)), ["appearance", "models", "config"]);
+  assert.deepEqual(settingsSections(caps("user", { user_models: false })), ["appearance"]);
 });

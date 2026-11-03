@@ -40,7 +40,7 @@ import { basename, displayName, fmtBytes } from "./lib/format.ts";
 import { useConvertDefaults } from "./hooks/use-convert-defaults.ts";
 import { initialComposer, publicOptions, readRemembered, reconvertComposer, remember, resolveOptions, withOcrFor, type Composer } from "./lib/options.ts";
 import { prepareRetryBatch, retryBatchAnnouncement, submitRetryBatch } from "./lib/retry-batch.ts";
-import { ADMIN_SECTIONS, DIALOG_ENTRY, entryOnly, listEntry, listQuery, ONLY_ENTRY, OPEN_MODE, parseListState, parseRoute, routePath, SUMMARY_ENTRY, type PaneMode, type Route, type Section } from "./lib/route.ts";
+import { ADMIN_SECTIONS, DIALOG_ENTRY, entryOnly, listEntry, listQuery, ONLY_ENTRY, OPEN_MODE, parseListState, parseRoute, routePath, settingsSections, SUMMARY_ENTRY, type PaneMode, type Route } from "./lib/route.ts";
 import { canRetry, waitingJobs, type SessionItem } from "./lib/session.ts";
 import { hasUnsaved } from "./lib/unsaved.ts";
 import { notesFor } from "./lib/update.ts";
@@ -141,12 +141,7 @@ export function App() {
   const role = caps?.access?.role ?? "admin";
   // v1.15: a user token also manages models of its own (and sees the ones the admin shares).
   const userModels = features?.user_models === true;
-  const sections: Section[] =
-    role === "admin"
-      ? ["appearance", "models", "access", ...(features?.config_edit === true ? (["config"] as const) : [])]
-      : userModels
-        ? ["appearance", "models", ...(features?.user_config === true ? (["config"] as const) : [])]
-        : ["appearance"];
+  const sections = settingsSections(caps);
   const docsUrl = docsHome(caps?.docs_url && /^https:\/\//.test(caps.docs_url) ? caps.docs_url : DEFAULT_DOCS, locale);
   const sourceUrl = caps?.source_url && /^https:\/\//.test(caps.source_url) ? caps.source_url : DEFAULT_SOURCE;
 

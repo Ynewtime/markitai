@@ -329,7 +329,7 @@ fn token_disabled() -> ApiError {
     ApiError::new(
         409,
         "token_disabled",
-        "the server runs without an access token (--no-auth); user tokens are unavailable",
+        "user tokens are unavailable: the server runs without an access token (--no-auth) or for the app that holds it (--supervised)",
     )
 }
 
@@ -351,7 +351,7 @@ fn announce(text: String) {
 
 /// `GET /api/access-tokens`: the user tokens, oldest first.
 pub(super) async fn list(ExtractState(state): ExtractState<Arc<State>>) -> ApiResult<Response> {
-    if !state.auth_enabled() {
+    if !state.issues_tokens() {
         return Err(token_disabled());
     }
     let worker = state.clone();
@@ -378,7 +378,7 @@ pub(super) async fn create(
     let bytes = axum::body::to_bytes(request.into_body(), 1024)
         .await
         .map_err(|_| ApiError::new(413, "request_too_large", "request exceeds 1 KiB"))?;
-    if !state.auth_enabled() {
+    if !state.issues_tokens() {
         return Err(token_disabled());
     }
     let shape = || ApiError::new(422, "invalid_json", "send a JSON body {\"label\": \"…\"}");
@@ -415,7 +415,7 @@ pub(super) async fn revoke(
     ExtractState(state): ExtractState<Arc<State>>,
     Path(id): Path<String>,
 ) -> ApiResult<Response> {
-    if !state.auth_enabled() {
+    if !state.issues_tokens() {
         return Err(token_disabled());
     }
     let worker = state.clone();

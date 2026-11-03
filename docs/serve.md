@@ -19,13 +19,14 @@ settings writes unavailable until restart without those overrides.
 
 ## Updates
 
-The server checks for a new release once a day (`update.check`; CI never) and names it in
+The server checks for a new release once a day (`update.check`; CI and a
+[supervised](#running-under-another-app) server never) and names it in
 its startup lines. One that listens on loopback also has `GET/POST/DELETE
 /api/update`, `POST /api/update/check` (v1.28: ask now, 10 s cap, joining a check in
 flight; also with `update.check: false`, which only hides news until a manual check found it)
 and `Capabilities.update` (contract v1.24, admin only, never through
 a forwarding proxy); a server reachable from the network, or under another name
-(`--allowed-host`), has neither. `POST
+(`--allowed-host`), has neither, and nor has a supervised one. `POST
 {"version"}` takes only the release the server found and updates a setup-script
 install: download and verify while conversions run, hold new ones (503
 `updating`), let running and queued ones finish, swap, restart on the same
@@ -34,6 +35,20 @@ seconds puts the old one back. The workbench's update entry uses these routes ([
 with the owner-only secret in `MARKITAI_HOME/serve/control`. These control routes
 exist on every server, exposed or not, and answer only a direct loopback
 connection that sends the secret.
+
+## Running under another app
+
+An app that runs the server for its own window starts `markitai serve
+--supervised` with the token in `MARKITAI_SERVE_TOKEN` and a pipe on standard
+input. The server opens no browser, and when standard input ends or cannot be
+read (the app closed it, or exited) it stops as SIGTERM stops it, draining
+conversions and saving history (see [history](#history-and-persistence)). The
+token is the app's: `token_regenerate`, `user_tokens`, `user_models` and
+`user_config` are false, their routes answer 409 `token_disabled`, and user
+tokens are not accepted. The app updates the program: the server never checks
+for a release, has no web update routes or `Capabilities.update`, and refuses
+the restart `markitai update` asks for (409 `update_unavailable`).
+`Capabilities.supervised` is `true` (contract v1.29).
 
 ## Machine-readable API description
 
@@ -69,7 +84,7 @@ workbench relies on; they are not a byte-for-byte contract of every payload.
    `download_tickets`, `url_lists`, `history_items`, `original`,
    `result_excerpt`, `job_labels`, `item_assets`, `item_archive`, `config_edit`,
    `batch_delete`, all true, and `token_regenerate` and `user_tokens`, true unless
-   `--no-auth`), and `access`: `{"role": "admin"}` for the server token (or a
+   `--no-auth` or `--supervised`), and `access`: `{"role": "admin"}` for the server token (or a
    loopback client with `--no-auth`), `{"role": "user", "label": …}` for a user
    token, `{"role": "user"}` for another `--no-auth` client.
 2. `POST /api/jobs` accepts form fields `urls` (a JSON array), `options` (a JSON
@@ -636,7 +651,8 @@ These are local private-state integrity measures, not authentication
 against a local actor able to forge both metadata and recovery files. A full process
 or machine failure during filesystem recovery can require another recovery attempt.
 
-SIGINT and SIGTERM stop admission and queued conversion dispatch, close event
+SIGINT and SIGTERM (and a supervised server's standard input ending) stop
+admission and queued conversion dispatch, close event
 streams, and drain active blocking conversions before writing final metadata and
 exiting. Active native work is not forcibly interrupted. Pending items record a
 shutdown cancellation error. Queued reruns instead restore a prior successful result

@@ -241,6 +241,9 @@ export interface Capabilities {
   ocr_lang?: string;
   /** v1.24, only for the admin of a server that listens on loopback: a newer release and the update's state. */
   update?: UpdateSummary;
+  /** v1.29: started by another app (`markitai serve --supervised`) that holds the token and updates the server;
+   * the workbench shows no Access token. Absent (Python markitai, older Rust) = false. */
+  supervised?: boolean;
 }
 
 /** v1.24: where an update stands. */

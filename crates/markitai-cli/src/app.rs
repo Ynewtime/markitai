@@ -462,6 +462,9 @@ enum Command {
         #[arg(long, hide = true)]
         /// Load the configuration and stored state, then exit without listening (an update's dry start).
         preflight: bool,
+        #[arg(long, hide = true)]
+        /// Run for the app that started this server: it holds the token and updates the program, and closing standard input stops the server as Ctrl-C does. Implies --no-open.
+        supervised: bool,
     },
     /// Run the native MCP service over standard input/output.
     #[command(
@@ -3263,6 +3266,7 @@ fn subcommand(cli: &Cli, command: &Command, overrides: Option<Value>) -> CliResu
             no_auth,
             allowed_host,
             preflight,
+            supervised,
         } => {
             let source = crate::server::settings_source(cli.config.as_deref(), overrides.clone())
                 .map_err(runtime)?;
@@ -3278,10 +3282,11 @@ fn subcommand(cli: &Cli, command: &Command, overrides: Option<Value>) -> CliResu
                 crate::server::ServeOptions {
                     host: host.clone(),
                     port: *port,
-                    no_open: *no_open,
+                    no_open: *no_open || *supervised,
                     no_auth: *no_auth,
                     allowed_host: allowed_host.clone(),
                     preflight: *preflight,
+                    supervised: *supervised,
                     quiet: cli.quiet,
                 },
             )

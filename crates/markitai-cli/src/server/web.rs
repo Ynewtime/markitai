@@ -542,7 +542,7 @@ mod tests {
             );
         }
         // Nested llm fields must not be mistaken for top-level capabilities.
-        assert_eq!(interface("Capabilities").len(), 16);
+        assert_eq!(interface("Capabilities").len(), 17);
         assert_eq!(interface("CloudflareCapability").len(), 6);
     }
 }

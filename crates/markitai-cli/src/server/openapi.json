@@ -92,7 +92,7 @@
         "tags": ["service"],
         "operationId": "regenerateAccessToken",
         "summary": "Replace the access token; other tabs and devices must sign in again",
-        "description": "Trusted like the settings: the current token is required (403 `settings_forbidden` otherwise), and a server started with `--no-auth` has no token to replace (409 `token_disabled`). The body is empty or `{}`. Generates a new 64-character token, replaces the old one at once (it is refused with 401 from then on), revokes every outstanding download ticket and ends every open event stream. The token lives in memory only: a restart takes `MARKITAI_SERVE_TOKEN` or a fresh random token again. User tokens are kept. Admin only: a user token is refused with 403 `settings_forbidden`. The answer carries `Cache-Control: no-store`.",
+        "description": "Trusted like the settings: the current token is required (403 `settings_forbidden` otherwise), and a server started with `--no-auth` has no token to replace, nor does one started with `--supervised`, whose token the app that started it holds (409 `token_disabled`). The body is empty or `{}`. Generates a new 64-character token, replaces the old one at once (it is refused with 401 from then on), revokes every outstanding download ticket and ends every open event stream. The token lives in memory only: a restart takes `MARKITAI_SERVE_TOKEN` or a fresh random token again. User tokens are kept. Admin only: a user token is refused with 403 `settings_forbidden`. The answer carries `Cache-Control: no-store`.",
         "security": [{ "bearerAuth": [] }, { "tokenQuery": [] }],
         "requestBody": { "required": false, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false } } } },
         "responses": {
@@ -109,7 +109,7 @@
         "tags": ["service"],
         "operationId": "listAccessTokens",
         "summary": "The user tokens, oldest first, without the tokens themselves",
-        "description": "Admin only (a user token: 403 `settings_forbidden`); a server started with `--no-auth` has no tokens (409 `token_disabled`). `last_used_at` is kept in memory only: null after a restart until the token is used. `Cache-Control: no-store`.",
+        "description": "Admin only (a user token: 403 `settings_forbidden`); a server started with `--no-auth` or `--supervised` issues no tokens (409 `token_disabled`). `last_used_at` is kept in memory only: null after a restart until the token is used. `Cache-Control: no-store`.",
         "security": [{ "bearerAuth": [] }, { "tokenQuery": [] }],
         "responses": {
           "200": { "description": "User tokens", "content": { "application/json": { "schema": { "type": "object", "required": ["tokens"], "properties": { "tokens": { "type": "array", "items": { "$ref": "#/components/schemas/UserToken" } } } } } } },
@@ -122,7 +122,7 @@
         "tags": ["service"],
         "operationId": "createAccessToken",
         "summary": "Create a user token; the only answer that ever carries it",
-        "description": "Body exactly `{\"label\": string}` (else 422 `invalid_json`; over 1 KiB: 413 `request_too_large`). The label is trimmed and must be 1 to 60 characters without control characters (422 `invalid_label`). At most 50 tokens (409 `token_limit`). The token is `mku_` and 64 lowercase hex characters; the server keeps only its SHA-256 (in `MARKITAI_HOME/serve/access.json`), so it survives restarts and admin-token regeneration. A file that cannot be saved: 500 `settings_io_failed`, nothing changes. Admin only; `--no-auth`: 409 `token_disabled`. `Cache-Control: no-store`.",
+        "description": "Body exactly `{\"label\": string}` (else 422 `invalid_json`; over 1 KiB: 413 `request_too_large`). The label is trimmed and must be 1 to 60 characters without control characters (422 `invalid_label`). At most 50 tokens (409 `token_limit`). The token is `mku_` and 64 lowercase hex characters; the server keeps only its SHA-256 (in `MARKITAI_HOME/serve/access.json`), so it survives restarts and admin-token regeneration. A file that cannot be saved: 500 `settings_io_failed`, nothing changes. Admin only; `--no-auth` or `--supervised`: 409 `token_disabled`. `Cache-Control: no-store`.",
         "security": [{ "bearerAuth": [] }, { "tokenQuery": [] }],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["label"], "additionalProperties": false, "properties": { "label": { "type": "string", "minLength": 1, "maxLength": 60 } } } } } },
         "responses": {
@@ -141,7 +141,7 @@
         "tags": ["service"],
         "operationId": "revokeAccessToken",
         "summary": "Revoke a user token at once",
-        "description": "From then on the token's requests are 401 `token_required`, its outstanding download tickets are refused and its open event streams end (every stream ends and reconnects with its own token). Its jobs stay, visible to admins only. Unknown id: 404 `token_not_found`. Admin only; `--no-auth`: 409 `token_disabled`. `Cache-Control: no-store`.",
+        "description": "From then on the token's requests are 401 `token_required`, its outstanding download tickets are refused and its open event streams end (every stream ends and reconnects with its own token). Its jobs stay, visible to admins only. Unknown id: 404 `token_not_found`. Admin only; `--no-auth` or `--supervised`: 409 `token_disabled`. `Cache-Control: no-store`.",
         "security": [{ "bearerAuth": [] }, { "tokenQuery": [] }],
         "parameters": [{ "name": "id", "in": "path", "required": true, "description": "The token's id (`u_` and 12 hex characters)", "schema": { "type": "string" } }],
         "responses": {
@@ -549,7 +549,7 @@
         "tags": ["service"],
         "operationId": "getUpdate",
         "summary": "v1.24: the newer release this server found and the state of an update",
-        "description": "Only a server that listens on loopback has this route (an exposed one answers 404 `route_not_found`, and its capabilities carry no `update`). Admin only, on a direct loopback connection: the server token, or a loopback client of a `--no-auth` server; a user token, a forwarding header or another peer: 403 (`settings_forbidden`, `update_forbidden`). Other tabs poll it every 3 s while `state` is not `idle`. `Cache-Control: no-store`.",
+        "description": "Only a server that listens on loopback has this route (an exposed one answers 404 `route_not_found`, and its capabilities carry no `update`); a supervised one (v1.29) has none either. Admin only, on a direct loopback connection: the server token, or a loopback client of a `--no-auth` server; a user token, a forwarding header or another peer: 403 (`settings_forbidden`, `update_forbidden`). Other tabs poll it every 3 s while `state` is not `idle`. `Cache-Control: no-store`.",
         "security": [{ "bearerAuth": [] }, { "tokenQuery": [] }],
         "responses": {
           "200": { "description": "The update state", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UpdateStatus" } } } },
@@ -592,7 +592,7 @@
         "tags": ["service"],
         "operationId": "checkUpdate",
         "summary": "v1.28: check now for a newer release",
-        "description": "No body. Asks the release host now, ignoring the daily schedule but joining a manual or automatic check already in flight. A successful answer writes the same cache as the daily check and resets failure backoff. The request is capped at 10 seconds (5 to connect). There is no floor between completed manual checks. After a release-host 403 or 429, nothing is asked until `retry_at` (its `Retry-After` or `X-RateLimit-Reset`, else one hour, capped at one day); a repeat before then answers 429 without a request. `update.check: false`, `MARKITAI_NO_UPDATE_CHECK=1` and CI stop automatic checks, not this route. Admin only on a direct loopback connection, as `GET /api/update`; exposed and source-build servers answer 404. `Cache-Control: no-store`.",
+        "description": "No body. Asks the release host now, ignoring the daily schedule but joining a manual or automatic check already in flight. A successful answer writes the same cache as the daily check and resets failure backoff. The request is capped at 10 seconds (5 to connect). There is no floor between completed manual checks. After a release-host 403 or 429, nothing is asked until `retry_at` (its `Retry-After` or `X-RateLimit-Reset`, else one hour, capped at one day); a repeat before then answers 429 without a request. `update.check: false`, `MARKITAI_NO_UPDATE_CHECK=1` and CI stop automatic checks, not this route. Admin only on a direct loopback connection, as `GET /api/update`; exposed, supervised and source-build servers answer 404. `Cache-Control: no-store`.",
         "security": [{ "bearerAuth": [] }, { "tokenQuery": [] }],
         "responses": {
           "200": { "description": "The fresh check and the resulting update state", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UpdateCheckResponse" } } } },
@@ -624,7 +624,7 @@
         "tags": ["service"],
         "operationId": "updateRestart",
         "summary": "For markitai update: finish the conversions, then start the installed program again",
-        "description": "Authorised as `GET /api/update/control`. New conversions are held (503 `updating`) until the running and queued ones finish; then the server starts the installed program in its place with the same address and token. 409 `update_running` while an update runs.",
+        "description": "Authorised as `GET /api/update/control`. New conversions are held (503 `updating`) until the running and queued ones finish; then the server starts the installed program in its place with the same address and token. 409 `update_running` while an update runs; 409 `update_unavailable` on a server started with `--supervised`, which the app that started it updates.",
         "security": [],
         "parameters": [{ "name": "X-Markitai-Control", "in": "header", "required": true, "schema": { "type": "string" } }],
         "responses": {
@@ -1087,7 +1087,8 @@
           "access": { "type": "object", "required": ["role"], "description": "Who is asking: `admin` (the server token, or a loopback client with --no-auth) or `user` (a user token, with its `label`; an anonymous --no-auth client is a `user` without one)", "properties": { "role": { "type": "string", "enum": ["admin", "user"] }, "label": { "type": "string" } } },
           "ocr_languages": { "type": "array", "items": { "type": "string" }, "description": "v1.20, with `features.ocr_lang`: the `ocr_lang` values a job may choose, the automatic default `en` first; the configured `ocr.lang` is appended when it is none of them" },
           "ocr_lang": { "type": "string", "description": "v1.20, with `features.ocr_lang`: the configured `ocr.lang`, what a job without `ocr_lang` reads with" },
-          "update": { "type": "object", "description": "v1.24, only for the admin of a server that listens on loopback: the summary of `GET /api/update`; v1.28 adds the last-check fields", "required": ["current", "latest", "newer", "can_apply", "method", "state", "checked_at", "retry_at", "checking"], "properties": { "current": { "type": ["string", "null"] }, "latest": { "type": ["string", "null"] }, "newer": { "type": "boolean" }, "can_apply": { "type": "boolean" }, "method": { "type": "string" }, "state": { "type": "string" }, "checked_at": { "type": ["string", "null"], "format": "date-time", "description": "v1.28: the last successful check, RFC 3339" }, "retry_at": { "type": ["string", "null"], "format": "date-time", "description": "v1.28: when the release host allows the next ask after a 403 or 429; null otherwise" }, "checking": { "type": "boolean", "description": "v1.28: a manual or automatic check is in flight" } } }
+          "update": { "type": "object", "description": "v1.24, only for the admin of a server that listens on loopback (v1.29: and is not supervised): the summary of `GET /api/update`; v1.28 adds the last-check fields", "required": ["current", "latest", "newer", "can_apply", "method", "state", "checked_at", "retry_at", "checking"], "properties": { "current": { "type": ["string", "null"] }, "latest": { "type": ["string", "null"] }, "newer": { "type": "boolean" }, "can_apply": { "type": "boolean" }, "method": { "type": "string" }, "state": { "type": "string" }, "checked_at": { "type": ["string", "null"], "format": "date-time", "description": "v1.28: the last successful check, RFC 3339" }, "retry_at": { "type": ["string", "null"], "format": "date-time", "description": "v1.28: when the release host allows the next ask after a 403 or 429; null otherwise" }, "checking": { "type": "boolean", "description": "v1.28: a manual or automatic check is in flight" } } },
+          "supervised": { "type": "boolean", "description": "v1.29: started by another app (`markitai serve --supervised`) that holds the access token, updates the program and stops the server by closing its standard input: `features.token_regenerate`, `user_tokens`, `user_models` and `user_config` are false, user tokens are not accepted and there is no `update`. Absent from older backends: false" }
         }
       },
       "BuildInfo": {

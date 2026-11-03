@@ -203,7 +203,7 @@ pub(super) async fn regenerate(
             .ok()
             .and_then(|value| value.as_object().map(serde_json::Map::is_empty))
             == Some(true);
-    if !state.auth_enabled() {
+    if !state.issues_tokens() {
         return Err(token_disabled());
     }
     if !admin {
@@ -263,7 +263,7 @@ fn token_disabled() -> ApiError {
     ApiError::new(
         409,
         "token_disabled",
-        "the server runs without an access token (--no-auth); there is none to regenerate",
+        "there is no token to regenerate: the server runs without one (--no-auth) or for the app that holds it (--supervised)",
     )
 }
 fn settings_forbidden() -> ApiError {
@@ -306,14 +306,18 @@ async fn guard_inner(state: Arc<State>, mut request: Request, next: Next) -> Res
         .into_iter()
         .flatten()
         .collect();
-    // The admin token first, then the stored user-token digests. Without an
-    // admin token (`--no-auth`) there are no tokens at all.
+    // The admin token first, then the stored user-token digests where the
+    // server issues them. Without an admin token (`--no-auth`) there are no
+    // tokens at all.
     let mut principal = token.as_ref().and_then(|token| {
         if presented
             .iter()
             .any(|value| equal_secret(value.as_bytes(), token.as_bytes()))
         {
             return Some(Principal::Admin);
+        }
+        if !state.issues_tokens() {
+            return None;
         }
         presented.iter().find_map(|value| {
             state
@@ -493,6 +497,7 @@ mod router_tests {
             token: std::sync::RwLock::new(token.map(str::to_owned)),
             token_generation: watch::channel(0).0,
             token_from_environment: false,
+            supervised: false,
             address: Default::default(),
             allowed_hosts: HashSet::from(["trusted.example".into()]),
             tickets: Default::default(),

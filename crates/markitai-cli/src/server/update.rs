@@ -3,7 +3,9 @@
 //!
 //! Only a server that listens on loopback has the update routes and sends
 //! `Capabilities.update`; an exposed one has neither (its terminal still
-//! names a newer release). Only the admin may use them (the server token,
+//! names a newer release), and a supervised one (`serve --supervised`) has
+//! neither, never checks and refuses a restart: the app that started it
+//! updates it. Only the admin may use them (the server token,
 //! or a direct loopback client of a `--no-auth` server), never through a
 //! forwarding proxy. The page may only ask for the release the server
 //! itself found (`POST /api/update {"version"}`): it cannot pick another.
@@ -205,9 +207,10 @@ impl Default for Update {
 }
 
 impl Update {
-    /// The update state of a server starting with `cfg`; `web` when it
-    /// listens on loopback only.
-    pub(super) fn new(cfg: &Value, loopback: bool, secret: String) -> Self {
+    /// The update state of a server starting with `cfg`; with the web
+    /// update (`web`: it listens on loopback only and is not supervised) when
+    /// it is a release.
+    pub(super) fn new(cfg: &Value, web: bool, secret: String) -> Self {
         let current = updates::current_release();
         let detected = method::detect(&method::Facts::current());
         // A folder swap a killed update left half done is undone first.
@@ -222,7 +225,7 @@ impl Update {
         };
         let base = updates::base_for(&detected).ok();
         Self {
-            web: loopback && current.is_some(),
+            web: web && current.is_some(),
             automatic: updates::enabled(Some(cfg)) && !updates::ci(),
             current,
             method: detected,
@@ -985,6 +988,16 @@ pub(super) async fn control_restart(
     request: Request,
 ) -> ApiResult<Response> {
     control_allowed(&state, &request)?;
+    // The app updates this program. A restart would also start it again with
+    // `--supervised` on a standard input that, on Windows, carries the token
+    // and then ends, which stops a supervised server.
+    if state.supervised {
+        return Err(ApiError::new(
+            409,
+            "update_unavailable",
+            "the app that started this server (--supervised) updates and restarts it",
+        ));
+    }
     let update = &state.update;
     {
         let mut progress = update.lock();
@@ -1070,7 +1083,11 @@ fn drain_and_restart(state: &Arc<State>) {
 /// The daily check while the server runs: every hour it asks whether a
 /// check is due (once a day, with the backoff after failures).
 pub(super) fn start_checks(state: &Arc<State>, cfg: &Value) {
-    if state.update.current.is_none() || !updates::enabled(Some(cfg)) || updates::ci() {
+    if state.supervised
+        || state.update.current.is_none()
+        || !updates::enabled(Some(cfg))
+        || updates::ci()
+    {
         return;
     }
     if state.update.base.is_none() {
@@ -1173,6 +1190,7 @@ pub(super) mod tests {
             token: std::sync::RwLock::new(token.map(str::to_owned)),
             token_generation: watch::channel(0).0,
             token_from_environment: false,
+            supervised: false,
             address: Default::default(),
             allowed_hosts: HashSet::new(),
             tickets: Default::default(),

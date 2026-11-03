@@ -64,6 +64,9 @@ pub struct ServeOptions {
     /// Load the configuration and the stored state, then exit without
     /// binding: the dry start of a downloaded update.
     pub preflight: bool,
+    /// Run for the app that started this server: it holds the token and
+    /// updates the program, and closing standard input stops the server.
+    pub supervised: bool,
     pub quiet: bool,
 }
 
@@ -84,6 +87,9 @@ struct State {
     token_generation: watch::Sender<u64>,
     /// Whether the startup token came from `MARKITAI_SERVE_TOKEN`.
     token_from_environment: bool,
+    /// Started by an app that holds the token and updates the program
+    /// (`--supervised`).
+    supervised: bool,
     /// The address the listener bound, set once after binding.
     address: OnceLock<std::net::SocketAddr>,
     allowed_hosts: HashSet<String>,
@@ -151,11 +157,16 @@ impl State {
             )),
         }
     }
-    fn auth_enabled(&self) -> bool {
-        self.token
-            .read()
-            .unwrap_or_else(|error| error.into_inner())
-            .is_some()
+    /// Whether the workbench manages tokens here: it replaces the access
+    /// token and issues user tokens. Not without a token (`--no-auth`), nor
+    /// when the app that started the server holds it (`--supervised`).
+    fn issues_tokens(&self) -> bool {
+        !self.supervised
+            && self
+                .token
+                .read()
+                .unwrap_or_else(|error| error.into_inner())
+                .is_some()
     }
 }
 
@@ -213,6 +224,9 @@ impl From<String> for Failure {
 pub(crate) fn run(cfg: Value, source: SettingsSource, options: ServeOptions) -> Result<(), String> {
     if options.preflight {
         return preflight(cfg, source);
+    }
+    if options.supervised {
+        return supervised(cfg, source, &options);
     }
     let home = markitai_core::config::home();
     let (version, _) = crate::update::current_identity();
@@ -318,6 +332,62 @@ pub(crate) fn run(cfg: Value, source: SettingsSource, options: ServeOptions) -> 
             }
         }
     }
+}
+
+/// `serve --supervised`: the app that started it updates the program, so this
+/// server takes no part in an update of the home's install (no update marker,
+/// no handover, no watchdog). It is never relaunched: `control_restart`
+/// refuses it and it has no web update.
+fn supervised(cfg: Value, source: SettingsSource, options: &ServeOptions) -> Result<(), String> {
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| e.to_string())?
+        .block_on(serve(
+            cfg,
+            source,
+            options,
+            restart::Handover::default(),
+            None,
+            None,
+            None,
+        ))
+        .map(drop)
+        .map_err(|failure| failure.message)
+}
+
+/// What stops the server as Ctrl-C does: the shutdown signals and, for a
+/// supervised server, its standard input closing (the app that started it
+/// closed it, or exited).
+fn stop_requests(supervised: bool) -> std::io::Result<impl std::future::Future<Output = ()>> {
+    let signals = shutdown_signals()?;
+    let closed = if supervised {
+        Some(stdin_closed()?)
+    } else {
+        None
+    };
+    Ok(async move {
+        match closed {
+            Some(closed) => tokio::select! { _ = signals => {}, _ = closed => {} },
+            None => signals.await,
+        }
+    })
+}
+
+/// Ends when standard input reaches its end or cannot be read. Read on a
+/// thread of its own: a read in progress cannot be cancelled, and as a
+/// runtime's blocking task it would hold up the runtime's shutdown.
+fn stdin_closed() -> std::io::Result<impl std::future::Future<Output = ()>> {
+    let (closed, receiver) = tokio::sync::oneshot::channel::<()>();
+    std::thread::Builder::new()
+        .name("markitai-stdin".into())
+        .spawn(move || {
+            let _ = std::io::copy(&mut std::io::stdin().lock(), &mut std::io::sink());
+            let _ = closed.send(());
+        })?;
+    Ok(async move {
+        let _ = receiver.await;
+    })
 }
 
 /// Ctrl-C (and SIGTERM on Unix), registered now: the returned future ends
@@ -452,19 +522,24 @@ async fn serve(
     let kept = restart::Kept::of(&listener);
     let check_cfg = cfg.clone();
     // A server also reachable under another name (--allowed-host, a proxy) is
-    // treated as exposed: no web update.
+    // treated as exposed: no web update. Nor has a supervised one, whose app
+    // updates it; that one leaves an update of this home's install alone.
     let mut update = update::Update::new(
         &cfg,
-        !startup::exposed(address) && options.allowed_host.is_empty(),
+        !options.supervised && !startup::exposed(address) && options.allowed_host.is_empty(),
         security::new_token(),
     );
-    update.undone = crate::update::control::Pending::take_failure(&markitai_core::config::home())
+    if !options.supervised {
+        update.undone = crate::update::control::Pending::take_failure(
+            &markitai_core::config::home(),
+        )
         .filter(|failed| {
             update
                 .current
                 .as_ref()
                 .is_some_and(|current| failed.from == current.to_string())
         });
+    }
     // A start after an undone update was not updated into.
     update.updated_from = handover.from.clone().filter(|from| {
         update.undone.is_none()
@@ -483,6 +558,7 @@ async fn serve(
         token: RwLock::new(token),
         token_generation: watch::channel(0).0,
         token_from_environment,
+        supervised: options.supervised,
         address: OnceLock::new(),
         allowed_hosts,
         tickets: tickets::Tickets::default(),
@@ -523,7 +599,7 @@ async fn serve(
         .spawn(move || markitai_core::warm_local_ocr(&cfg));
     // Listening for Ctrl-C and SIGTERM before the startup lines say the
     // server is up: a signal from then on drains instead of killing it.
-    let interrupted = shutdown_signals().map_err(|e| e.to_string())?;
+    let interrupted = stop_requests(options.supervised).map_err(|e| e.to_string())?;
     let token = state.token();
     let restarted = handover.from.is_some();
     if restarted && state.update.updated_from.is_some() {
