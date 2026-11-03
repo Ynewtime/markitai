@@ -9,6 +9,14 @@ public enum AppLanguage: String, Sendable {
         preferred.first?.lowercased().hasPrefix("zh") == true ? .simplifiedChinese : .english
     }
 
+    /// The preferred languages for the bundle when the first is Chinese but
+    /// not zh-Hans: zh-Hans first, so the system's own menus and panels match
+    /// the app's language. Nil when the bundle already chooses right.
+    public static func bundleLanguages(_ preferred: [String]) -> [String]? {
+        guard let first = preferred.first?.lowercased(), first.hasPrefix("zh"), !first.hasPrefix("zh-hans") else { return nil }
+        return ["zh-Hans"] + preferred
+    }
+
     /// The locale dates and numbers are written in: the app's language with
     /// the user's region, so a 24-hour region keeps its clock.
     public var locale: Locale {
@@ -46,6 +54,12 @@ public struct Strings: Sendable {
         }
     }
 
+    /// Sentences one after another: Chinese runs them together, English
+    /// separates them with a space.
+    public func sentences(_ parts: [String]) -> String {
+        parts.joined(separator: language == .simplifiedChinese ? "" : " ")
+    }
+
     /// A `.one` / `.other` pair, chosen by `count == 1`, with `{count}` filled.
     public func plural(_ key: String, count: Int, _ arguments: [String: String] = [:]) -> String {
         var arguments = arguments
@@ -56,3 +70,13 @@ public struct Strings: Sendable {
 
 /// The app's strings in the language chosen at launch.
 public let L = Strings(language: AppLanguage.choose(from: Locale.preferredLanguages))
+
+/// The quit dialog's body (DESIGN.md 6.7): how many conversions run, and
+/// whether any file waits in the queue.
+public enum QuitDialog {
+    public static func body(converting: Int, queued: Int, strings: Strings = L) -> String {
+        var parts = [strings.plural("quit.body", count: converting)]
+        if queued > 0 { parts.append(strings["quit.body.queued"]) }
+        return strings.sentences(parts)
+    }
+}

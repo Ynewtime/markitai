@@ -40,9 +40,13 @@ public final class Workbench: ObservableObject {
     public let history: History
     /// Says a state change aloud (`a11y.done`, `a11y.failed`).
     public var announce: (String) -> Void = { _ in }
+    /// Runs a change to the History list in the list's animation.
+    public var animateList: (() -> Void) -> Void = { $0() }
 
     private let run: Job.Run
     private let claims = Claims()
+    /// Set on the main actor when the user confirms Quit; then nothing starts.
+    private var quitting = false
     private var nextTurn = 0
     private var noticeExpiry: Task<Void, Never>?
     private let strings: Strings
@@ -155,7 +159,7 @@ public final class Workbench: ObservableObject {
     }
 
     private func pump() {
-        while !claims.isQuitting, convertingCount < Workbench.concurrency,
+        while !quitting, convertingCount < Workbench.concurrency,
               let index = items.indices.filter({ items[$0].state == .queued }).min(by: { items[$0].turn < items[$1].turn }) {
             start(index)
         }
@@ -168,20 +172,23 @@ public final class Workbench: ObservableObject {
         let claims = self.claims
         let outputFolder = settings.effectiveOutputFolder
         DispatchQueue.global(qos: .userInitiated).async { [self] in
-            guard let result = run(item.source, item.options, outputFolder, { claims.claim(item.id, $0) }) else { return }
+            guard let result = run(item.source, item.options, outputFolder, { claims.claim(item.id, $0) }),
+                  claims.end(item.id)
+            else { return }
             Task { @MainActor in self.finish(item.id, result) }
         }
     }
 
     private func finish(_ id: UUID, _ result: Result<Conversion, Failure>) {
-        guard claims.finish(id), let index = items.firstIndex(where: { $0.id == id }) else { return }
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
         switch result {
         case .success(let conversion):
             if case .url = items[index].source, let title = conversion.urlTitle {
                 items[index].title = title
             }
             items[index].state = .done(conversion)
-            history.add(HistoryEntry(item: items[index], conversion: conversion, finished: Date()))
+            let entry = HistoryEntry(item: items[index], conversion: conversion, finished: Date())
+            animateList { history.add(entry) }
             announce(strings["a11y.done", ["title": items[index].title]])
         case .failure(let failure):
             items[index].state = .failed(failure)
@@ -192,8 +199,10 @@ public final class Workbench: ObservableObject {
 
     /// The user confirmed Quit (DESIGN.md 7.3): deletes the folders claimed for
     /// items still Converting, whose conversions end with the process. After
-    /// this nothing is claimed or started, and results change nothing.
+    /// this nothing is claimed or started, and only runs that ended before it
+    /// reach the list and History.
     public func discardConverting() {
+        quitting = true
         for folder in claims.quit() {
             try? FileManager.default.removeItem(atPath: folder)
         }
@@ -216,39 +225,57 @@ public final class Workbench: ObservableObject {
     }
 }
 
-/// The folders claimed for items still Converting. Workers claim under its
-/// lock and Quit takes the same lock, so every folder is either claimed before
-/// Quit, which deletes it, or never claimed.
+/// The folders claimed for runs that have not ended, shared by the workers
+/// and Quit. A worker's claim counts as in flight while it makes the folder,
+/// outside the lock; Quit waits for claims in flight (2 s at most), so every
+/// folder made before Quit is in `folders` when Quit takes them, and a claim
+/// that ends after Quit deletes its own folder. A run that ended before Quit
+/// keeps its folder and its result.
 private final class Claims: @unchecked Sendable {
-    private let lock = NSLock()
+    private let condition = NSCondition()
     private var quitting = false
+    private var inFlight = 0
     private var folders: [UUID: String] = [:]
 
-    var isQuitting: Bool { lock.withLock { quitting } }
-
     func claim(_ id: UUID, _ make: () -> Result<String, Failure>) -> Result<String, Failure>? {
-        lock.withLock {
-            guard !quitting else { return nil }
-            let result = make()
-            if case .success(let folder) = result {
+        let admitted = condition.withLock {
+            if !quitting { inFlight += 1 }
+            return !quitting
+        }
+        guard admitted else { return nil }
+        let result = make()
+        let kept = condition.withLock {
+            if !quitting, case .success(let folder) = result {
                 folders[id] = folder
             }
-            return result
+            return !quitting
         }
+        if !kept, case .success(let folder) = result {
+            try? FileManager.default.removeItem(atPath: folder)
+        }
+        condition.withLock {
+            inFlight -= 1
+            condition.broadcast()
+        }
+        return kept ? result : nil
     }
 
-    /// The item's result reached the list; false once quitting.
-    func finish(_ id: UUID) -> Bool {
-        lock.withLock {
+    /// The run ended: its folder is the result's now. False after Quit, whose
+    /// deletion the result must not outlive.
+    func end(_ id: UUID) -> Bool {
+        condition.withLock {
+            guard !quitting else { return false }
             folders[id] = nil
-            return !quitting
+            return true
         }
     }
 
     /// The folders to delete. Nothing is claimed after this.
     func quit() -> [String] {
-        lock.withLock {
+        condition.withLock {
             quitting = true
+            let deadline = Date().addingTimeInterval(2)
+            while inFlight > 0, condition.wait(until: deadline) {}
             return Array(folders.values)
         }
     }

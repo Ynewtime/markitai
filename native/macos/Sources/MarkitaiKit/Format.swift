@@ -2,9 +2,11 @@ import Foundation
 
 /// The formats of DESIGN.md 4.2 and 6.5.
 public enum Format {
+    /// One decimal below a minute, at least 0.1 s, so a fast conversion
+    /// never reads as taking no time.
     public static func duration(_ seconds: Double, strings: Strings = L) -> String {
         if seconds < 59.95 {
-            return strings["unit.seconds", ["value": String(format: "%.1f", max(seconds, 0))]]
+            return strings["unit.seconds", ["value": String(format: "%.1f", max((seconds * 10).rounded() / 10, 0.1))]]
         }
         let whole = Int(seconds.rounded())
         return strings["unit.minutes", ["minutes": String(whole / 60), "seconds": String(whole % 60)]]

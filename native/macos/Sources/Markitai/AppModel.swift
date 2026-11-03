@@ -51,10 +51,19 @@ struct Document: Equatable {
     }
 }
 
-enum Loaded: Equatable {
+enum Loaded: Equatable, Sendable {
     case loading
     case text(String)
     case missing
+}
+
+/// A field that takes keyboard focus once it is on screen, then clears the
+/// request: a field made later never replays it.
+enum FocusRequest: Equatable {
+    case webAddress
+    case historySearch
+    /// The list, back from the stacked detail.
+    case list
 }
 
 /// The window's state and every user action, shared by the views, the menu
@@ -80,9 +89,9 @@ final class AppModel: ObservableObject {
     @Published var copiedID: String?
     @Published var urlText = "" { didSet { if urlText != oldValue { urlInvalid = false } } }
     @Published var urlInvalid = false
-    @Published var focusURLField = 0
-    @Published var focusSearchField = 0
-    @Published private(set) var markdownByPath: [String: Loaded] = [:]
+    @Published var focusRequest: FocusRequest?
+    /// The shown History entry's Markdown; no other is kept.
+    @Published private var loadedMarkdown: (path: String, value: Loaded)?
 
     var openWindow: (() -> Void)?
     var openSettings: (() -> Void)?
@@ -94,6 +103,7 @@ final class AppModel: ObservableObject {
         settings = UserSettings(store: UserDefaults.standard)
         history = History(file: data.appendingPathComponent("history.json"))
         workbench = Workbench(settings: settings, history: history)
+        workbench.animateList = { change in withAnimation(Motion.list, change) }
         workbench.announce = { text in
             NSAccessibility.post(
                 element: NSApp.mainWindow ?? NSApp as Any,
@@ -132,7 +142,14 @@ final class AppModel: ObservableObject {
     func focusWebAddress() {
         page = .convert
         showsDetailWhenStacked = false
-        focusURLField += 1
+        focusRequest = .webAddress
+    }
+
+    /// Gives the field focus if it is the one requested.
+    func takeFocus(_ field: FocusRequest) -> Bool {
+        guard focusRequest == field else { return false }
+        focusRequest = nil
+        return true
     }
 
     func chooseFiles() {
@@ -211,16 +228,35 @@ final class AppModel: ObservableObject {
         if case .done(let conversion) = selectedItem?.state, page == .convert, conversion.markdownPath == document.markdownPath {
             return .text(conversion.markdown)
         }
-        return markdownByPath[document.markdownPath] ?? .loading
+        guard let loadedMarkdown, loadedMarkdown.path == document.markdownPath else { return .loading }
+        return loadedMarkdown.value
     }
 
-    func load(_ document: Document) {
+    /// Reads a History entry's Markdown again (the file may have gone), and
+    /// keeps it while the entry is shown.
+    @discardableResult
+    func load(_ document: Document) async -> Loaded {
         let path = document.markdownPath
-        guard page == .history || markdownByPath[path] == nil else { return }
-        DispatchQueue.global(qos: .userInitiated).async {
-            let loaded: Loaded = (try? String(contentsOfFile: path, encoding: .utf8)).map(Loaded.text) ?? .missing
-            Task { @MainActor in self.markdownByPath[path] = loaded }
+        let loaded = await Task.detached(priority: .userInitiated) {
+            (try? String(contentsOfFile: path, encoding: .utf8)).map(Loaded.text) ?? .missing
+        }.value
+        if self.document?.markdownPath == path {
+            loadedMarkdown = (path, loaded)
         }
+        return loaded
+    }
+
+    /// The shown document and its Markdown, waiting for a History entry's
+    /// file when it is still being read (a context menu acts on a row it
+    /// has only just shown).
+    private func shownText() async -> (Document, String)? {
+        guard let document else { return nil }
+        var loaded = markdown(for: document)
+        if loaded == .loading {
+            loaded = await load(document)
+        }
+        guard case .text(let text) = loaded, self.document == document else { return nil }
+        return (document, text)
     }
 
     /// False when a History entry's Markdown file is gone: then only Remove works.
@@ -235,7 +271,11 @@ final class AppModel: ObservableObject {
     }
 
     func copyMarkdown() {
-        guard let document, let text = shownMarkdown else { return }
+        Task { await copyShownMarkdown() }
+    }
+
+    private func copyShownMarkdown() async {
+        guard let (document, text) = await shownText() else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
         copiedID = document.id
@@ -247,7 +287,11 @@ final class AppModel: ObservableObject {
     /// DESIGN.md 7.2: the shown Markdown, plus the conversion's `.markitai`
     /// folder next to it when the text points into it, never replacing a file.
     func saveAs() {
-        guard let document, let text = shownMarkdown else { return }
+        Task { await saveShownMarkdown() }
+    }
+
+    private func saveShownMarkdown() async {
+        guard let (document, text) = await shownText() else { return }
         let panel = NSSavePanel()
         panel.nameFieldStringValue = (document.folder as NSString).lastPathComponent + ".md"
         panel.canCreateDirectories = true
@@ -291,9 +335,9 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// A click on a row in the stacked list shows its detail, also when the
-    /// row is still selected from before Back (DESIGN.md 14), which changes
-    /// no selection.
+    /// A click on a row in the stacked list, Return or a double click shows
+    /// its detail, also when the row is still selected from before Back
+    /// (DESIGN.md 14). Moving the selection with the arrow keys does not.
     func showDetailIfStacked() {
         if isStacked { showsDetailWhenStacked = true }
     }
@@ -363,11 +407,14 @@ final class AppModel: ObservableObject {
 
     func searchHistory() {
         go(to: .history)
-        focusSearchField += 1
+        focusRequest = .historySearch
     }
 
+    /// Back to the stacked list, with focus on it and the row still selected.
     func back() {
+        guard showsDetailWhenStacked else { return }
         showsDetailWhenStacked = false
+        focusRequest = .list
     }
 
     func showWindow() {

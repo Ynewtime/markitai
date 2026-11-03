@@ -22,6 +22,25 @@ struct SettingsTests {
         #expect(settings.options.llm, "an item added now converts with AI")
     }
 
+    /// DESIGN.md 4.5: a missing domain, or one holding only some keys, reads
+    /// every missing key as its default. The store answers a missing key as
+    /// `UserDefaults` does (nil, false, 0); a suite would write the account's
+    /// preferences folder, which cfprefsd keeps outside the test's HOME.
+    @Test func missingKeysReadAsTheirDefaults() {
+        let partial = MemoryStore()
+        partial.values["conversion.ocr"] = true
+        for (name, store) in [("empty", MemoryStore()), ("partial", partial)] {
+            let settings = UserSettings(store: store)
+            #expect(!settings.llm && !settings.screenshot && !settings.desc && !settings.alt, "\(name): flags off")
+            #expect(settings.ocr == (name == "partial"), "\(name): a stored key is kept")
+            #expect(settings.outputFolder == nil, "\(name): the platform's output folder")
+            #expect(settings.effectiveOutputFolder == UserSettings.defaultOutputFolder)
+            #expect(settings.configSource == .user, "\(name): the user's configuration")
+            #expect(settings.zoom == 1, "\(name): actual size, not zero")
+        }
+        #expect(partial.values.count == 1, "reading writes nothing back")
+    }
+
     @Test func outOfRangeZoomIsActualSize() throws {
         let defaults = try #require(UserDefaults(suiteName: "dev.markitai.Markitai.tests.\(UUID().uuidString)"))
         defaults.register(defaults: ["view.zoom": 9.0])

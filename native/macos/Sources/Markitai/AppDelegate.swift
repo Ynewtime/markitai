@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import MarkitaiKit
 import SwiftUI
 
@@ -7,6 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var pendingFiles: [URL] = []
     private var launched = false
     private var keyMonitor: Any?
+    private var quitDialogFollowing: AnyCancellable?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         launched = true
@@ -71,25 +73,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = L["quit.title"]
-        var body = L.plural("quit.body", count: running)
-        if workbench.queuedCount > 0 {
-            body += " " + L["quit.body.queued"]
-        }
-        alert.informativeText = body
+        alert.informativeText = QuitDialog.body(converting: running, queued: workbench.queuedCount)
         let quit = alert.addButton(withTitle: L["quit.confirm"])
         let cancel = alert.addButton(withTitle: L["common.cancel"])
         quit.keyEquivalent = ""
         cancel.keyEquivalent = "\r"
         quit.hasDestructiveAction = true
+        let sheetParent = NSApp.windows.first(where: { $0.isVisible && $0.canBecomeMain })
+        // The count follows the queue while the dialog is up. Once nothing
+        // runs, nothing would be lost: the dialog closes and the app quits.
+        quitDialogFollowing = workbench.objectWillChange
+            .receive(on: DispatchQueue.main)
+            .sink { _ in
+                let running = workbench.convertingCount
+                guard running == 0 else {
+                    alert.informativeText = QuitDialog.body(converting: running, queued: workbench.queuedCount)
+                    return
+                }
+                if let sheetParent {
+                    sheetParent.endSheet(alert.window, returnCode: .alertFirstButtonReturn)
+                } else {
+                    NSApp.stopModal(withCode: .alertFirstButtonReturn)
+                }
+            }
         let answer = { (response: NSApplication.ModalResponse) in
+            self.quitDialogFollowing = nil
             let quit = response == .alertFirstButtonReturn
             if quit {
                 workbench.discardConverting()
             }
             sender.reply(toApplicationShouldTerminate: quit)
         }
-        if let window = NSApp.windows.first(where: { $0.isVisible && $0.canBecomeMain }) {
-            alert.beginSheetModal(for: window, completionHandler: answer)
+        if let sheetParent {
+            alert.beginSheetModal(for: sheetParent, completionHandler: answer)
         } else {
             answer(alert.runModal())
         }

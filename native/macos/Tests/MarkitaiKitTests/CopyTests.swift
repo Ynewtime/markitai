@@ -48,6 +48,25 @@ struct CopyTests {
         #expect(AppLanguage.choose(from: []) == .english)
     }
 
+    /// DESIGN.md 4.2: one decimal, and never less than 0.1 s.
+    @Test func aFastConversionNeverReadsAsTakingNoTime() {
+        #expect(Format.duration(0, strings: english) == "0.1 s")
+        #expect(Format.duration(0.04, strings: english) == "0.1 s")
+        #expect(Format.duration(0.04, strings: chinese) == "0.1 秒")
+        #expect(Format.duration(0.26, strings: english) == "0.3 s")
+        #expect(Format.footer(duration: 0.01, usage: nil, strings: english) == "Converted in 0.1 s")
+    }
+
+    /// DESIGN.md 7.5: a Chinese first language other than zh-Hans puts zh-Hans
+    /// first for the bundle, so the system's menus and panels are Chinese too.
+    @Test func aChineseLanguageOtherThanSimplifiedLocalizesTheSystemMenus() {
+        #expect(AppLanguage.bundleLanguages(["zh-Hant-TW", "en-US"]) == ["zh-Hans", "zh-Hant-TW", "en-US"])
+        #expect(AppLanguage.bundleLanguages(["zh-HK"]) == ["zh-Hans", "zh-HK"])
+        #expect(AppLanguage.bundleLanguages(["zh-Hans-CN", "en"]) == nil, "zh-Hans already localizes")
+        #expect(AppLanguage.bundleLanguages(["en-GB", "zh-Hant"]) == nil)
+        #expect(AppLanguage.bundleLanguages([]) == nil)
+    }
+
     @Test func formats() {
         #expect(Format.duration(18.6, strings: english) == "18.6 s")
         #expect(Format.duration(18.6, strings: chinese) == "18.6 秒")

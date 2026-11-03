@@ -164,7 +164,7 @@ Each C function is a thin wrapper over the Rust function of the same name.
 | Parser | `pulldown-cmark` with `ENABLE_TABLES`, `ENABLE_STRIKETHROUGH`, `ENABLE_TASKLISTS`, `ENABLE_FOOTNOTES`, `ENABLE_YAML_STYLE_METADATA_BLOCKS` |
 | Raw HTML | `Event::Html` and `Event::InlineHtml` become `Event::Text`, so the HTML shows escaped |
 | Front matter | The YAML block is left out of the preview. The Markdown tab shows it |
-| Images | `data:` and `file:` sources stay. A relative source resolves against `base_dir` into an absolute `file://` URL, if the result stays inside `base_dir`. Every other source (http, https, `//`, absolute paths, `..` outside `base_dir`, any `base_dir` of null) becomes `<span class="img-remote" title="<source>"><alt or source></span>` |
+| Images | `data:` sources stay. A `file:` source stays if its path is inside `base_dir`. A relative source resolves against `base_dir` into an absolute `file://` URL, if the result stays inside `base_dir`. Every other source (http, https, `//`, absolute paths, `file:` or `..` outside `base_dir`, any `base_dir` of null) becomes `<span class="img-remote" title="<source>"><alt or source></span>` |
 | Links | Kept as written. The app decides what a click does (section 8) |
 | Base | No `<base>` element, so footnote links stay in the same document |
 | Output | Deterministic: the same request gives the same bytes on every platform |
@@ -285,8 +285,9 @@ Rules:
 | Cost | `complete` when every `usage.by_model` row has `"cost_status": "complete"`: show `cost_usd`. `partial` when some row is not complete and `cost_usd > 0`: show `footer.cost.at_least`. Otherwise `unknown`: show `footer.cost.unknown` |
 | URL title | `frontmatter.title` |
 
-Formats. Durations below 60 s use one decimal (`18.6 s`, `18.6 秒`), and longer
-ones use `unit.minutes`. Token counts use the locale's digit grouping. Costs are
+Formats. Durations below 60 s use one decimal (`18.6 s`, `18.6 秒`), rounded up
+to at least `0.1 s` so a fast conversion never reads as taking no time, and
+longer ones use `unit.minutes`. Token counts use the locale's digit grouping. Costs are
 USD: four decimals below $1 (`$0.0412`), two from $1.
 
 ### 4.3 Output folder
@@ -298,8 +299,8 @@ USD: four decimals below $1 (`$0.0412`), two from $1.
 | Linux | `glib::user_special_dir(UserDirectory::Documents)` + `Markitai`, else `$HOME/Documents/Markitai` |
 
 Each conversion writes into its own folder under the output folder (3.3). A folder holds
-`<source name>.md`, `<source name>.llm.md` when AI ran, and `.markitai/` with
-`assets/` and `screenshots/`. Paths shown in the UI abbreviate the home folder as
+`<source name>.md`, or `<source name>.llm.md` instead when AI ran (both when the markitai
+configuration sets `llm.keep_base`), and `.markitai/` with `assets/` and `screenshots/`. Paths shown in the UI abbreviate the home folder as
 `~` on macOS and Linux. Windows shows full paths.
 
 ### 4.4 History
@@ -567,6 +568,8 @@ cannot be written (a test file cannot be created and deleted) shows
 Queued items exist only while two items are Converting, so the dialog's
 condition is "any item Converting".
 
+While the dialog shows, its count follows the queue. When no item is
+Converting any more, nothing would be lost: the dialog closes and the app quits.
 After the user confirms Quit, the app deletes the folders it claimed for items
 still Converting (their conversions end with the process), then exits. A
 conversion that finishes between the dialog and the quit is kept and added to

@@ -87,8 +87,7 @@ struct DocumentView: View {
                     .frame(height: 30)
             }
         }
-        .onAppear { if document.finished != nil { model.load(document) } }
-        .onChange(of: document.id) { _ in if document.finished != nil { model.load(document) } }
+        .task(id: document.id) { if document.finished != nil { await model.load(document) } }
     }
 
     private var status: String {

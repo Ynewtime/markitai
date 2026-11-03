@@ -35,12 +35,14 @@ struct HistoryPage: View {
         }
         .navigationTitle(L["nav.history"])
         .toolbar {
-            ToolbarItem(placement: .navigation) {
-                Button { confirmingClear = true } label: {
-                    Label(L["history.clear"], systemImage: "trash")
+            if !model.showsDetailWhenStacked {
+                ToolbarItem(placement: .primaryAction) {
+                    Button { confirmingClear = true } label: {
+                        Label(L["history.clear"], systemImage: "trash")
+                    }
+                    .help(L["history.clear"])
+                    .disabled(history.entries.isEmpty)
                 }
-                .help(L["history.clear"])
-                .disabled(history.entries.isEmpty)
             }
         }
         .documentToolbar()
@@ -63,7 +65,9 @@ struct HistoryListColumn: View {
     var body: some View {
         let entries = model.filteredEntries
         VStack(spacing: 8) {
-            SearchField(text: $model.historyQuery, focusRequest: model.focusSearchField)
+            SearchField(text: $model.historyQuery, focusRequested: model.focusRequest == .historySearch) {
+                _ = model.takeFocus(.historySearch)
+            }
                 .frame(height: 28)
             if entries.isEmpty {
                 Text(L["history.no_results", ["query": model.historyQuery.trimmingCharacters(in: .whitespaces)]])
@@ -72,18 +76,22 @@ struct HistoryListColumn: View {
                     .padding(.top, 24)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             } else {
-                List(selection: Binding(get: { model.historySelection }, set: { id in
-                    model.historySelection = id
-                    if id != nil && model.isStacked { model.showsDetailWhenStacked = true }
-                })) {
+                List(selection: $model.historySelection) {
                     ForEach(entries) { entry in
                         HistoryRow(entry: entry)
                             .tag(entry.id)
                             .simultaneousGesture(TapGesture().onEnded(model.showDetailIfStacked))
-                            .contextMenu { HistoryMenu(entry: entry) }
                             .transition(.opacity)
                     }
                 }
+                .contextMenu(forSelectionType: String.self) { ids in
+                    if let entry = ids.first.flatMap({ id in entries.first { $0.id == id } }) {
+                        HistoryMenu(entry: entry)
+                    }
+                } primaryAction: { _ in
+                    model.showDetailIfStacked()
+                }
+                .focusedList()
                 .listStyle(.inset)
                 .rowHeight()
                 .scrollContentBackground(.hidden)
@@ -117,7 +125,7 @@ struct HistoryRow: View {
                 Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
             }
         }
-        .frame(height: 44)
+        .frame(height: Row.content)
         .rowName("\(entry.title), \(subtitle)")
     }
 
@@ -135,23 +143,28 @@ struct HistoryMenu: View {
     let entry: HistoryEntry
 
     var body: some View {
-        Button(L["detail.copy"]) { select(); model.copyMarkdown() }
-        Button(L["detail.save_as"]) { select(); model.saveAs() }
-        Button(L["detail.show.macos"]) { select(); model.showInFinder() }
+        let present = FileManager.default.fileExists(atPath: entry.markdownPath)
+        Group {
+            Button(L["detail.copy"]) { select(); model.copyMarkdown() }
+            Button(L["detail.save_as"]) { select(); model.saveAs() }
+            Button(L["detail.show.macos"]) { select(); model.showInFinder() }
+        }
+        .disabled(!present)
         Divider()
         Button(L["history.remove"]) { model.removeFromHistory(entry.id) }
     }
 
     private func select() {
+        model.page = .history
         model.historySelection = entry.id
-        model.load(Document(entry: entry))
     }
 }
 
 /// `NSSearchField`, labeled `history.search`, filtering as you type.
 struct SearchField: NSViewRepresentable {
     @Binding var text: String
-    let focusRequest: Int
+    let focusRequested: Bool
+    let tookFocus: () -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(text: $text) }
 
@@ -167,15 +180,16 @@ struct SearchField: NSViewRepresentable {
     func updateNSView(_ field: NSSearchField, context: Context) {
         context.coordinator.text = $text
         if field.stringValue != text { field.stringValue = text }
-        if context.coordinator.focusRequest != focusRequest {
-            context.coordinator.focusRequest = focusRequest
-            DispatchQueue.main.async { field.window?.makeFirstResponder(field) }
+        if focusRequested {
+            DispatchQueue.main.async {
+                guard let window = field.window, window.makeFirstResponder(field) else { return }
+                tookFocus()
+            }
         }
     }
 
     final class Coordinator: NSObject, NSSearchFieldDelegate {
         var text: Binding<String>
-        var focusRequest = 0
 
         init(text: Binding<String>) { self.text = text }
 

@@ -6,12 +6,26 @@ import SwiftUI
 @MainActor
 enum Main {
     static func main() {
+        localizeTheSystemMenus()
         if Core.abiMatches {
             let data = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
                 .appendingPathComponent("dev.markitai.Markitai")
             Core.prepareEnvironment(dataDirectory: data)
         }
         MarkitaiApp.main()
+    }
+
+    /// DESIGN.md 7.5: any Chinese first language shows zh-Hans, and the bundle
+    /// has no zh-Hant, so AppKit's own items (Hide, Quit, Services, the
+    /// panels) would fall back to English. The argument domain lasts for this
+    /// process only and keeps the arguments it was launched with.
+    private static func localizeTheSystemMenus() {
+        let defaults = UserDefaults.standard
+        let preferred = defaults.stringArray(forKey: "AppleLanguages") ?? Locale.preferredLanguages
+        guard let languages = AppLanguage.bundleLanguages(preferred) else { return }
+        var arguments = defaults.volatileDomain(forName: UserDefaults.argumentDomain)
+        arguments["AppleLanguages"] = languages
+        defaults.setVolatileDomain(arguments, forName: UserDefaults.argumentDomain)
     }
 }
 

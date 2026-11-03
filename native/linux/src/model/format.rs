@@ -97,7 +97,7 @@ mod tests {
             "~/Documents/Markitai"
         );
         assert_eq!(home_abbreviated(home, Some(home)), "~");
-        assert_eq!(home_abbreviated(Path::new("/home/examples/x"), Some(home)), "/home/examples/x");
+        assert_eq!(home_abbreviated(Path::new("/home/example-user/x"), Some(home)), "/home/example-user/x");
         assert_eq!(home_abbreviated(Path::new("/srv/x"), None), "/srv/x");
     }
 }

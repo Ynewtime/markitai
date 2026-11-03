@@ -20,8 +20,8 @@ struct ConvertPage: View {
         }
         .navigationTitle(L["nav.convert"])
         .toolbar {
-            if !workbench.items.isEmpty {
-                ToolbarItem(placement: .navigation) {
+            if !workbench.items.isEmpty && !model.showsDetailWhenStacked {
+                ToolbarItem(placement: .primaryAction) {
                     Button { withAnimation(Motion.list) { workbench.clearFinished() } } label: {
                         Label(L["convert.clear_finished"], systemImage: "xmark.circle")
                     }
@@ -82,10 +82,11 @@ struct EmptyConvert: View {
             NoticeLines()
         }
         .padding(40)
-        .frame(width: 560)
+        .frame(maxWidth: 560)
         .modifier(DropBorder())
         .accessibilityElement(children: .contain)
         .accessibilityLabel(L["a11y.drop_zone"])
+        .padding(.horizontal, 20)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(.bottom, 52)
         .onAppear { chooseFocused = true }
@@ -135,7 +136,8 @@ struct URLRow: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .onChange(of: model.focusURLField) { _ in focused = true }
+        .onAppear { if model.takeFocus(.webAddress) { focused = true } }
+        .onChange(of: model.focusRequest) { _ in if model.takeFocus(.webAddress) { focused = true } }
     }
 }
 
@@ -182,18 +184,22 @@ struct ConvertListColumn: View {
             .accessibilityLabel(L["a11y.drop_zone"])
             URLRow()
             NoticeLines()
-            List(selection: Binding(get: { workbench.selection }, set: { id in
-                workbench.selection = id
-                if id != nil && model.isStacked { model.showsDetailWhenStacked = true }
-            })) {
+            List(selection: $workbench.selection) {
                 ForEach(workbench.items) { item in
                     ItemRow(item: item)
                         .tag(item.id)
                         .simultaneousGesture(TapGesture().onEnded(model.showDetailIfStacked))
-                        .contextMenu { ItemMenu(item: item) }
                         .transition(.opacity)
                 }
             }
+            .contextMenu(forSelectionType: UUID.self) { ids in
+                if let item = ids.first.flatMap(workbench.item) {
+                    ItemMenu(item: item)
+                }
+            } primaryAction: { _ in
+                model.showDetailIfStacked()
+            }
+            .focusedList()
             .listStyle(.inset)
             .rowHeight()
             .scrollContentBackground(.hidden)
@@ -225,7 +231,7 @@ struct ItemRow: View {
             Spacer(minLength: 0)
             trailing
         }
-        .frame(height: 44)
+        .frame(height: Row.content)
         .rowName("\(item.title), \(subtitle)")
     }
 
@@ -250,16 +256,35 @@ struct ItemRow: View {
     }
 }
 
-extension View {
-    /// A row is 52 pt: its 44 pt content (DESIGN.md 13.4) and the inset
-    /// style's 4 pt above and below. The List measures a row it inserts
-    /// without animation (any change outside `withAnimation`, such as a
-    /// History entry added when a conversion finishes) before the row has
-    /// content, and keeps its estimate, this minimum (by default 24 pt): the
-    /// estimate is the real height.
-    func rowHeight() -> some View {
-        environment(\.defaultMinListRowHeight, 52)
+/// DESIGN.md 13.4: rows are 44 pt apart, separator to separator: 36 pt of
+/// content and the inset style's 4 pt above and below.
+enum Row {
+    static let pitch: CGFloat = 44
+    static let content: CGFloat = 36
+}
+
+/// Focus moves back to the list after the stacked detail (DESIGN.md 14).
+struct FocusedList: ViewModifier {
+    @EnvironmentObject private var model: AppModel
+    @FocusState private var focused: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .focused($focused)
+            .onAppear { if model.takeFocus(.list) { focused = true } }
+            .onChange(of: model.focusRequest) { _ in if model.takeFocus(.list) { focused = true } }
     }
+}
+
+extension View {
+    /// The List measures a row it inserts without animation before the row
+    /// has content, and keeps its estimate, this minimum (by default 24 pt):
+    /// the estimate is the real height.
+    func rowHeight() -> some View {
+        environment(\.defaultMinListRowHeight, Row.pitch)
+    }
+
+    func focusedList() -> some View { modifier(FocusedList()) }
 
     /// A row is one element named `<title>, <subtitle>` (DESIGN.md 12), exposed
     /// as text, as the sidebar's rows are: with the name alone, its role is
