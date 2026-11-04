@@ -54,6 +54,12 @@ type previews struct {
 	// placed and wasPlaced say whether this frame and the frame before it
 	// built the web view. view resets placed as each frame starts.
 	placed, wasPlaced bool
+	// failed is the document the core could not render, which is never
+	// kept. failedShown and failedWasShown say whether this frame and the
+	// frame before it showed that failure: shown again after it was not,
+	// the document renders again.
+	failed                      *previewKey
+	failedShown, failedWasShown bool
 }
 
 const previewCacheSize = 8
@@ -101,6 +107,16 @@ func (a *app) preview(c *ui.Context, t *target, d model.Done) {
 	k := previewKey{t.id, l.theme.Dark}
 	page := previewPage{k, bg}
 	html, ok := p.html[k]
+	if !ok && p.failed != nil && *p.failed == k {
+		if p.failedWasShown {
+			p.failedShown = true
+			ui.Column(c).Grow(1).Basis(0).Center().Padding(24).Children(func() {
+				ui.Text(c, a.lang.T("preview.failed")).TextAlign(ui.Center)
+			})
+			return
+		}
+		p.failed = nil
+	}
 	switch {
 	case !ok:
 		a.render(k, d)
@@ -161,7 +177,8 @@ func (a *app) render(k previewKey, d model.Done) {
 			delete(p.rendering, k)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "preview_html: %v\n", err)
-				html = ""
+				p.failed, p.failedShown = &k, true
+				return
 			}
 			p.put(k, html)
 		})

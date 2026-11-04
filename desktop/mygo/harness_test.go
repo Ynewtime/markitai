@@ -150,6 +150,21 @@ func startWith(t *testing.T, lang l10n.Lang, prepare func(home string, f files))
 	h.desk = &fakeDesk{post: post}
 	h.a = newApp(lang, offline{lib}, h.desk, h.pane, post, f)
 	h.a.version = "2.3.2"
+	// Conversions still running when a test ends write in its folder, and
+	// Windows removes no folder that is still being written. Cleanups run
+	// last first: this one ends them before the folder goes.
+	t.Cleanup(func() {
+		deadline := time.After(2 * time.Minute)
+		for model.Count[model.Converting](&h.a.queue) > 0 {
+			select {
+			case f := <-h.posts:
+				f()
+			case <-deadline:
+				t.Error("conversions were still running at the end of the test")
+				return
+			}
+		}
+	})
 	h.tt = ui.NewTester(h.a.view, 1200, 780)
 	h.tt.SetLocale(string(lang))
 	h.tt.Frame()

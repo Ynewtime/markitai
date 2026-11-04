@@ -24,7 +24,7 @@ func (a *app) settingsPage(c *ui.Context) {
 		ui.Column(c).FillWidth().AlignItems(ui.Center).Children(func() {
 			ui.Column(c).FillWidth().MaxWidth(640).Padding(24).Gap(24).AlignItems(ui.Stretch).Children(func() {
 				ui.Text(c, a.lang.T("nav.settings")).FontSize(l.size(17)).FontWeight(600).Role(ui.RoleHeading).Level(1)
-				a.noticeLine(c)
+				a.noticeLine(c, pathSettings)
 				a.conversionGroup(c)
 				a.outputGroup(c)
 				a.configGroup(c)
@@ -50,11 +50,17 @@ func (a *app) group(c *ui.Context, key string, rows ...func()) {
 	})
 }
 
-// settingRow is a title and its note on the left, a control on the right.
-func (a *app) settingRow(c *ui.Context, title, note string, control func()) {
+// settingRow is a title and its note on the left, a control on the
+// right. With the control disabled, which dims it, the title and note dim
+// too, so the whole row reads as off, as GNOME's insensitive rows do.
+func (a *app) settingRow(c *ui.Context, title, note string, disabled bool, control func()) {
 	l := &a.look
 	ui.Row(c).MinHeight(52).PaddingY(10).Gap(12).AlignItems(ui.Center).Children(func() {
-		ui.Column(c).Grow(1).Basis(0).Gap(2).Children(func() {
+		text := ui.Column(c).Grow(1).Basis(0).Gap(2)
+		if disabled {
+			text.Opacity(0.5)
+		}
+		text.Children(func() {
 			ui.Text(c, title)
 			if note != "" {
 				ui.Text(c, note).FontSize(l.b - 2).TextColor(l.theme.TextMuted)
@@ -79,8 +85,9 @@ func (a *app) conversionGroup(c *ui.Context) {
 		{"settings.alt", &s.Alt, true},
 	} {
 		rows = append(rows, func() {
-			a.settingRow(c, a.lang.T(sw.key), a.lang.T(sw.key+".note"), func() {
-				if ui.Switch(c.Key(sw.key), sw.on).Label(a.lang.T(sw.key)).Disabled(sw.needs && !s.LLM).Changed() {
+			off := sw.needs && !s.LLM
+			a.settingRow(c, a.lang.T(sw.key), a.lang.T(sw.key+".note"), off, func() {
+				if ui.Switch(c.Key(sw.key), sw.on).Label(a.lang.T(sw.key)).Disabled(off).Changed() {
 					a.saveSettings()
 				}
 			})
@@ -110,7 +117,11 @@ func (a *app) outputGroup(c *ui.Context) {
 
 func (a *app) configGroup(c *ui.Context) {
 	l := &a.look
-	cfg, err := a.core.ConfigFile()
+	if !a.config.read {
+		a.config.file, a.config.err = a.core.ConfigFile()
+		a.config.read = true
+	}
+	cfg, err := a.config.file, a.config.err
 	userNote := a.lang.T("settings.config.user.missing")
 	if err == nil && cfg.Exists {
 		userNote = a.abbreviated(cfg.Path)

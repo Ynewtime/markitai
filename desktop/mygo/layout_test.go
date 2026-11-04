@@ -95,6 +95,55 @@ func TestNarrowWindow(t *testing.T) {
 	h.find(h.T("a11y.conversions"))
 }
 
+// TestEmptyConvertFits keeps the empty page's drop zone 560 wide, or as
+// wide as the room, centered (DESIGN 6.2), and its URL row reachable at
+// the smallest window, by scrolling.
+func TestEmptyConvertFits(t *testing.T) {
+	for _, lang := range []l10n.Lang{l10n.En, l10n.ZhHans} {
+		t.Run(string(lang), func(t *testing.T) {
+			h := start(t, lang)
+			h.rest()
+			zone := h.find(h.T("a11y.drop_zone"))
+			content := float32(1200 - sidebarWidth)
+			if zone.W != 560 || abs(zone.X+zone.W/2-(sidebarWidth+content/2)) > 1 {
+				t.Errorf("at 1200x780 the zone is %v, want 560 wide in the middle", zone)
+			}
+			title := h.find(h.T("nav.convert"))
+			// In the middle of the page below the header, give or take the
+			// header's own height.
+			if mid := zone.Y + zone.H/2; abs(mid-(title.Y+780)/2) > 40 {
+				t.Errorf("at 1200x780 the zone %v is not in the middle of the page's height", zone)
+			}
+
+			h.tt.SetSize(640, 480)
+			h.rest()
+			zone = h.find(h.T("a11y.drop_zone"))
+			if zone.X < sidebarWidth || zone.X+zone.W > 640 {
+				t.Errorf("at 640x480 the zone %v reaches out of the content", zone)
+			}
+			add := h.find(h.T("convert.url.add"))
+			if add.X < sidebarWidth || add.X+add.W > 640 {
+				t.Fatalf("at 640x480 Add %v is off the window's side", add)
+			}
+			if add.Y+add.H > 480 {
+				h.tt.Scroll(zone.X+zone.W/2, 300, 0, add.Y+add.H-480+24)
+				h.rest()
+				add = h.find(h.T("convert.url.add"))
+			}
+			if add.Y < 0 || add.Y+add.H > 480 {
+				t.Errorf("at 640x480 Add %v cannot be scrolled into the window", add)
+			}
+		})
+	}
+}
+
+func abs(v float32) float32 {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
 // TestMotion follows the spike's TestRowMotionFollowsReduceMotion: a row
 // removed fades while those below slide up over 150 ms, unless the
 // desktop asks for less motion.

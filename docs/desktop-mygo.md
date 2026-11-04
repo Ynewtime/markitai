@@ -23,17 +23,18 @@ the bug.
 | | macOS | Windows | Linux |
 |---|---|---|---|
 | Minimum system | macOS 13 | Windows 10, x86-64. The preview needs the Microsoft Edge WebView2 Runtime | x86-64 with GTK 3. The preview needs WebKitGTK 4.1 |
-| App | `Markitai Mygo.app`, bundle ID `dev.markitai.mygo` | `Markitai Mygo.exe` with `markitai_app.dll` beside it | `markitai-mygo`, with `markitai-mygo.desktop` |
+| App | `Markitai Mygo.app`, bundle ID `dev.markitai.mygo` | `Markitai Mygo.exe` with `markitai_app.dll` beside it | `markitai-mygo`, with the desktop file `dev.markitai.mygo.desktop` |
 | Settings | `~/Library/Application Support/dev.markitai.mygo/settings.json` | `%LOCALAPPDATA%\Markitai Mygo\settings.json` | `$XDG_CONFIG_HOME/dev.markitai.mygo/settings.json` |
 | History | `~/Library/Application Support/dev.markitai.mygo/history.json` | `%LOCALAPPDATA%\Markitai Mygo\history.json` | `$XDG_DATA_HOME/dev.markitai.mygo/history.json` |
 
 The window's size and position are kept in `window-state.json` beside the
 history. On macOS, WebKit also keeps the preview's compiled blocking rules in
 `~/Library/WebKit/dev.markitai.mygo/`. On Windows, the preview's web view data
-is in `%LOCALAPPDATA%\Markitai Mygo\WebView2`. On Linux, the blocking rules and
-a cookie store the preview does not use are in `$XDG_CONFIG_HOME/Markitai
-Mygo/`, and WebKitGTK keeps its own data in `$XDG_DATA_HOME/markitai-mygo/` and
-`$XDG_CACHE_HOME/markitai-mygo/`.
+is in `%LOCALAPPDATA%\Markitai Mygo\WebView2`. On Linux, everything the app
+and its web view keep is in folders named `dev.markitai.mygo`: the blocking
+rules and a cookie store the preview does not use in
+`$XDG_CONFIG_HOME/dev.markitai.mygo/`, and WebKitGTK's own data in
+`$XDG_DATA_HOME/dev.markitai.mygo/` and `$XDG_CACHE_HOME/dev.markitai.mygo/`.
 
 ## What the app shares with the CLI
 
@@ -43,7 +44,9 @@ manage it. In Settings, the configuration source can be set to the built-in
 defaults instead.
 
 Each conversion writes into its own folder under the output folder. The default
-output folder is `Documents/Markitai`, shared with Markitai Native. A folder
+output folder is `Documents/Markitai`, shared with Markitai Native. On Windows,
+`Documents` is the system's Documents folder wherever it is, as when OneDrive
+keeps it. A folder
 holds `<source name>.md`, or `<source name>.llm.md` instead when AI ran, and
 `.markitai/` with assets and screenshots. With `llm.keep_base` set in the
 configuration, the folder holds both Markdown files.
@@ -68,16 +71,22 @@ Go tool of `desktop/mygo/go.mod`, so it needs no separate installation.
   runtime statically. There is no installer. The `Desktop Mygo` workflow builds
   the app, runs the tests and drives the app's window on a hosted runner.
 - Linux: the `markitai-mygo` executable with its desktop file, a Debian
-  package, a `.tar.gz` with `install.sh`, which installs the app for the user
-  in `~/.local`, and a `PKGBUILD`.
+  package, a `.tar.gz` of the app, `install.sh` beside it, and a `PKGBUILD`.
+  `sh install.sh` installs the app from the `.tar.gz` for the user in
+  `~/.local`, and `sh install.sh --uninstall` removes it. Every package
+  installs the desktop file as `dev.markitai.mygo.desktop`, the name of the
+  app's window, so launchers and docks match them.
 
 ## Copy and strings
 
 The copy for both languages lives in section 10 of `desktop/DESIGN.md`.
 `desktop/scripts/strings.py` generates `desktop/strings.json` from it, and the
 app embeds a copy that its tests keep equal. A system language starting with
-`zh` gets Simplified Chinese. Every other language gets English. The system
-file pickers follow the app's language.
+`zh` gets Simplified Chinese. Every other language gets English. On macOS and
+Windows, the system's open and save dialogs and, on macOS, the About panel and
+the menu items the system adds follow the app's language. On Linux, as in
+Markitai Native, the file dialogs are the desktop's: their title follows the
+app, and the rest the desktop's language and style.
 
 ## Limits
 

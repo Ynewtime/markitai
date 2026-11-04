@@ -23,6 +23,8 @@ import sys
 import tempfile
 import tomllib
 
+import linux_entry
+
 HERE = Path(__file__).resolve().parent
 DESKTOP = HERE.parent
 REPO = DESKTOP.parent
@@ -108,6 +110,7 @@ def check_version():
     app = json.loads((HERE / "mygo.json").read_text(encoding="utf-8"))["version"]
     if app != workspace:
         raise SystemExit(f"desktop/mygo/mygo.json says version {app}, the workspace {workspace}")
+    return app
 
 
 def copies(write):
@@ -137,11 +140,14 @@ def isolated_env(root, library):
         XDG_STATE_HOME=str(root / "state"),
         APPDATA=str(root / "AppData" / "Roaming"),
         LOCALAPPDATA=str(root / "AppData" / "Local"),
+        # Short: on Windows mygo binds its single-instance socket under TEMP, in under 100 bytes.
+        TEMP=str(root / "t"),
+        TMP=str(root / "t"),
         TERM="dumb",
         MARKITAI_APP_LIB=str(library),
         CGO_ENABLED="0",
     )
-    for key in ("HOME", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "APPDATA", "LOCALAPPDATA"):
+    for key in ("HOME", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "APPDATA", "LOCALAPPDATA", "TEMP"):
         Path(env[key]).mkdir(parents=True, exist_ok=True)
     return env
 
@@ -163,7 +169,7 @@ def build(plat, build_core, e2e):
     automation plugin (e2e.go), into build/e2e/: never ship it."""
     stage_core(plat, build_core)
     copies(write=True)
-    check_version()
+    version = check_version()
     env = dict(os.environ, CGO_ENABLED="0")
     command = ["go", "tool", "mygo", "build", "-platform", plat, "-skip-installer"]
     out = HERE / "build"
@@ -174,6 +180,8 @@ def build(plat, build_core, e2e):
     if plat.startswith("darwin/"):
         command.append("-skip-dmg")
     run(*command, env=env)
+    if plat.startswith("linux/"):
+        linux_entry.finish(out / plat.replace("/", "-"), version)
     for path in sorted((out / plat.replace("/", "-")).rglob("*")):
         if path.is_file() and not path.is_symlink():
             print(f"{path.relative_to(HERE)}  {path.stat().st_size} bytes")

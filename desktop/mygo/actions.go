@@ -232,6 +232,27 @@ func previewKeysJS(goos string) string {
 	if goos == "darwin" {
 		mod, other = "e.metaKey", "e.ctrlKey"
 	}
+	// WebView2 zooms the page itself on Ctrl and the wheel, apart from
+	// view.zoom (DESIGN 8): the wheel steps view.zoom instead, a notch, or
+	// a touchpad's 100 pixels, a step.
+	wheel := ""
+	if goos == "windows" {
+		wheel = `
+  let wheel = 0;
+  addEventListener("wheel", (e) => {
+    if (!e.ctrlKey || e.metaKey || e.deltaY === 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.deltaMode !== 0 || Math.abs(e.deltaY) >= 50) {
+      wheel = e.deltaY;
+    } else {
+      wheel += e.deltaY;
+      if (Math.abs(wheel) < 100) return;
+    }
+    globalThis.mygo?.call("PreviewKeys.Press", wheel < 0 ? "zoom_in" : "zoom_out");
+    wheel = 0;
+  }, {capture: true, passive: false});`
+	}
 	return `(() => {
   const keys = ` + string(table) + `;
   addEventListener("keydown", (e) => {
@@ -244,7 +265,7 @@ func previewKeysJS(goos string) string {
         return;
       }
     }
-  }, true);
+  }, true);` + wheel + `
 })();`
 }
 

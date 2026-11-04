@@ -10,10 +10,13 @@ import (
 func (a *app) historyPage(c *ui.Context, item bool) {
 	l := &a.look
 	if len(a.history.Entries) == 0 {
-		ui.Column(c).Fill().Center().Gap(8).Padding(24).Background(l.theme.Background).Children(func() {
-			ui.Text(c, a.lang.T("history.empty.title")).FontSize(l.size(22)).FontWeight(600).TextAlign(ui.Center)
-			ui.Text(c, a.lang.T("history.empty.body")).TextColor(l.theme.TextMuted).TextAlign(ui.Center)
-			a.noticeLine(c)
+		ui.Column(c).Fill().Background(l.theme.Background).AlignItems(ui.Stretch).Children(func() {
+			a.historyHeader(c)
+			ui.Column(c).Grow(1).Basis(0).Center().Gap(8).Padding(24).Children(func() {
+				ui.Text(c, a.lang.T("history.empty.title")).FontSize(l.size(22)).FontWeight(600).TextAlign(ui.Center)
+				ui.Text(c, a.lang.T("history.empty.body")).TextColor(l.theme.TextMuted).TextAlign(ui.Center)
+				a.noticeLine(c, pathHistory)
+			})
 		})
 		return
 	}
@@ -22,20 +25,26 @@ func (a *app) historyPage(c *ui.Context, item bool) {
 	})
 }
 
-func (a *app) historyColumn(c *ui.Context, stacked bool) {
+// historyHeader is the page title and Clear History, disabled with
+// nothing to clear (6.5).
+func (a *app) historyHeader(c *ui.Context) {
 	a.header(c, a.lang.T("nav.history"), func() {
 		label := a.lang.T("history.clear")
 		if a.iconButton(c, "history.clear", label, iconTrash, len(a.history.Entries) == 0).Clicked() {
 			a.asking = askingClearHistory
 		}
 	})
+}
+
+func (a *app) historyColumn(c *ui.Context, stacked bool) {
+	a.historyHeader(c)
 	ui.Column(c).Grow(1).Basis(0).Padding(12).Gap(8).AlignItems(ui.Stretch).Children(func() {
 		search := a.lang.T("history.search")
 		field := ui.SearchField(c.Key("history.search"), &a.query).Label(search).Placeholder(search).FillWidth()
 		if !a.leaving {
 			field.Bind(&a.searchField)
 		}
-		a.noticeLine(c)
+		a.noticeLine(c, pathHistory)
 		a.historyRows(c, stacked)
 	})
 }

@@ -37,37 +37,55 @@ func (a *app) dropFrame(e ui.Element, dragging bool) ui.Element {
 	return e.Border(1.5, l.theme.Border).BorderStyle(ui.BorderDashed)
 }
 
+// emptyConvert is 6.2: the page title over a drop zone 560 wide, or as wide
+// as the room, centered in a scroll that reaches its URL row at the
+// smallest window.
 func (a *app) emptyConvert(c *ui.Context, dragging bool) {
 	l := &a.look
-	ui.Column(c).Fill().Center().Padding(24).Background(l.theme.Background).Children(func() {
-		zone := ui.Column(c.Key("drop")).Width(560).MaxWidthPercent(100).Padding(40).Gap(12).AlignItems(ui.Center)
-		a.dropFrame(zone, dragging).Children(func() {
-			ui.Icon(c, iconAddFiles).FontSize(48).TextColor(l.theme.TextMuted)
-			heading := a.lang.T("convert.empty.title")
-			if dragging {
-				heading = a.lang.T("convert.drop.release")
-			}
-			ui.Text(c, heading).FontSize(l.size(22)).FontWeight(600).TextAlign(ui.Center).ContentTransition(ui.ContentTransition{})
-			ui.Text(c, a.lang.T("convert.empty.body", "folder", a.abbreviated(a.output()))).TextColor(l.theme.TextMuted).TextAlign(ui.Center)
-			ui.PrimaryButton(c.Key("convert.choose"), a.lang.T("convert.choose")).AutoFocus().OnClick(a.chooseFiles)
-			ui.Row(c).FillWidth().Gap(12).AlignItems(ui.Center).Children(func() {
-				ui.Box(c).Height(1).Grow(1).Background(l.rule)
-				ui.Text(c, a.lang.T("convert.or")).TextColor(l.theme.TextMuted)
-				ui.Box(c).Height(1).Grow(1).Background(l.rule)
+	ui.Column(c).Fill().Background(l.theme.Background).AlignItems(ui.Stretch).Children(func() {
+		a.header(c, a.lang.T("nav.convert"), func() {})
+		// The scroll is as tall as the zone, in the middle of the page, up
+		// to the page's height, past which it scrolls: inside a scroll no
+		// percentage of its height resolves, so it cannot center the zone
+		// itself.
+		ui.Column(c).Grow(1).Basis(0).Justify(ui.Center).AlignItems(ui.Stretch).Children(func() {
+			ui.Scroll(c.Key("convert.empty")).MaxHeightPercent(100).Children(func() {
+				ui.Column(c).FillWidth().Padding(24).AlignItems(ui.Center).Children(func() {
+					zone := ui.Column(c.Key("drop")).FillWidth().MaxWidth(560).Padding(40).Gap(12).AlignItems(ui.Center)
+					a.dropFrame(zone, dragging).Children(func() {
+						ui.Icon(c, iconAddFiles).FontSize(48).TextColor(l.theme.TextMuted)
+						heading := a.lang.T("convert.empty.title")
+						if dragging {
+							heading = a.lang.T("convert.drop.release")
+						}
+						ui.Text(c, heading).FontSize(l.size(22)).FontWeight(600).TextAlign(ui.Center).ContentTransition(ui.ContentTransition{})
+						ui.Text(c, a.lang.T("convert.empty.body", "folder", a.abbreviated(a.output()))).TextColor(l.theme.TextMuted).TextAlign(ui.Center)
+						ui.PrimaryButton(c.Key("convert.choose"), a.lang.T("convert.choose")).AutoFocus().OnClick(a.chooseFiles)
+						ui.Row(c).FillWidth().Gap(12).AlignItems(ui.Center).Children(func() {
+							ui.Box(c).Height(1).Grow(1).Background(l.rule)
+							ui.Text(c, a.lang.T("convert.or")).TextColor(l.theme.TextMuted)
+							ui.Box(c).Height(1).Grow(1).Background(l.rule)
+						})
+						a.urlRow(c, false)
+						a.noticeLine(c, pathConvert)
+					})
+				})
 			})
-			a.urlRow(c)
-			a.noticeLine(c)
 		})
 	})
 }
 
-func (a *app) urlRow(c *ui.Context) {
+// urlRow is the URL field and its Add button. The list's row leads with
+// the link glyph (6.3); the empty page's has none (6.2).
+func (a *app) urlRow(c *ui.Context, glyph bool) {
 	l := &a.look
 	ui.Column(c).FillWidth().Gap(6).Children(func() {
 		ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
 			ui.Row(c).Grow(1).Basis(0).Height(32).PaddingX(8).Gap(6).AlignItems(ui.Center).Radius(l.theme.Radius).
 				Background(l.theme.Background).Border(1, l.theme.Border).Children(func() {
-				ui.Icon(c, iconLink).FontSize(16).TextColor(l.theme.TextMuted)
+				if glyph {
+					ui.Icon(c, iconLink).FontSize(16).TextColor(l.theme.TextMuted)
+				}
 				field := ui.TextInputBase(c.Key("convert.url"), &a.url).Grow(1).
 					Placeholder(a.lang.T("convert.url.placeholder")).Label(a.lang.T("convert.url.label"))
 				if !a.leaving {
@@ -118,8 +136,8 @@ func (a *app) convertList(c *ui.Context, dragging, stacked bool) {
 				a.chooseFiles()
 			}
 		})
-		a.urlRow(c)
-		a.noticeLine(c)
+		a.urlRow(c, true)
+		a.noticeLine(c, pathConvert)
 		a.conversions(c, stacked)
 	})
 }

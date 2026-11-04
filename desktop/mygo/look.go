@@ -19,21 +19,22 @@ func makeLook(system ui.Theme, p ui.Preferences) look {
 	if l.scale <= 0 {
 		l.scale = 1
 	}
-	focus := float32(0.55)
 	if t.Dark {
 		t.Background, t.Surface, t.SurfaceHover, t.SurfacePressed = ui.Hex("#18181b"), ui.Hex("#27272a"), ui.Hex("#3f3f46"), ui.Hex("#52525b")
 		t.Border, t.Text, t.TextMuted = ui.Hex("#3f3f46"), ui.Hex("#fafafa"), ui.Hex("#a1a1aa")
 		t.Accent, t.AccentHover, t.AccentPressed = ui.Hex("#71717a"), ui.Hex("#52525b"), ui.Hex("#3f3f46")
 		l.sidebarFill, l.listFill, l.rule, l.rowHover, l.chosenQuiet = ui.Hex("#09090b"), ui.Hex("#09090b"), ui.Hex("#27272a"), ui.Hex("#18181b"), ui.Hex("#27272a")
-		focus = 0.6
+		// The ring is zinc 400: 4:1 or more on every dark fill (#3f3f46
+		// and darker), where the accent was near 2:1 (WCAG 1.4.11's 3:1).
+		t.Focus = ui.Hex("#a1a1aa")
 	} else {
 		t.Background, t.Surface, t.SurfaceHover, t.SurfacePressed = ui.Hex("#ffffff"), ui.Hex("#f4f4f5"), ui.Hex("#e4e4e7"), ui.Hex("#d4d4d8")
 		t.Border, t.Text, t.TextMuted = ui.Hex("#d4d4d8"), ui.Hex("#18181b"), ui.Hex("#52525b")
 		t.Accent, t.AccentHover, t.AccentPressed = ui.Hex("#18181b"), ui.Hex("#27272a"), ui.Hex("#3f3f46")
 		l.sidebarFill, l.listFill, l.rule, l.rowHover, l.chosenQuiet = ui.Hex("#f4f4f5"), ui.Hex("#fafafa"), ui.Hex("#e4e4e7"), ui.Hex("#f4f4f5"), ui.Hex("#e4e4e7")
+		t.Focus = t.Accent.Alpha(0.55) // 3.6:1 or more on the light fills
 	}
 	t.AccentText = ui.RGB(255, 255, 255)
-	t.Focus = t.Accent.Alpha(focus)
 	t.Radius = 6
 	if p.HighContrast {
 		t.Border = t.Border.Mix(t.Text, 0.45)

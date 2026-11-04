@@ -16,12 +16,17 @@ const stackBelow = 760
 
 const sidebarWidth = 200
 
+// mozURL is a link's URL and title, a line each: Chromium and Firefox
+// offer it, and Chromium on Linux offers no URI list for a link.
+const mozURL transfer.Format = "text/x-moz-url"
+
 // dropFormats are what the content area takes from a drag (10.1).
-var dropFormats = transfer.DropOptions{Formats: []transfer.Format{transfer.FileList, transfer.URIList}}
+var dropFormats = transfer.DropOptions{Formats: []transfer.Format{transfer.FileList, transfer.URIList, mozURL}}
 
 // view builds the window from the state, on the UI thread.
 func (a *app) view(c *ui.Context) {
 	a.previews.wasPlaced, a.previews.placed = a.previews.placed, false
+	a.previews.failedWasShown, a.previews.failedShown = a.previews.failedShown, false
 	if c.Preferences().ReduceMotion {
 		c.DisableAnimations()
 	}
@@ -40,7 +45,12 @@ func (a *app) view(c *ui.Context) {
 		a.shortcuts(c)
 	}
 	a.followWidth(c)
-	a.page = top(a.router.Path())
+	if page := top(a.router.Path()); page != a.page {
+		if page == pathSettings {
+			a.config.read = false
+		}
+		a.page = page
+	}
 	ui.Row(c).Fill().AlignItems(ui.Stretch).Children(func() {
 		a.sidebar(c)
 		content := ui.Column(c.Key("content")).Grow(1).Basis(0).AlignItems(ui.Stretch)
@@ -60,7 +70,7 @@ func (a *app) view(c *ui.Context) {
 		})
 	})
 	a.alerts(c)
-	a.syncMenu()
+	a.syncMenu(c)
 }
 
 // top is the sidebar's page of a path.
@@ -191,12 +201,13 @@ func (a *app) iconButton(c *ui.Context, key, label string, icon *ui.SVG, disable
 	})
 }
 
-// noticeLine shows the notice for 8 s (6.7).
-func (a *app) noticeLine(c *ui.Context) {
-	if a.notice.text == "" {
+// noticeLine shows the notice given on page for 8 s (6.7).
+func (a *app) noticeLine(c *ui.Context, page string) {
+	if a.notice.text == "" || a.notice.page != page {
 		return
 	}
-	if a.notice.at.IsZero() || a.notice.at.After(c.Now()) {
+	// A clock behind the notice's, as the Tester's, starts it now.
+	if a.notice.at.After(c.Now()) {
 		a.notice.at = c.Now()
 	}
 	left := 8*time.Second - c.Now().Sub(a.notice.at)
@@ -260,7 +271,7 @@ func (a *app) fatalView(c *ui.Context) {
 	}
 	ui.Column(c).Fill().Center().Gap(12).Padding(40).Background(l.theme.Background).Children(func() {
 		ui.Text(c, a.lang.T("fatal.abi.title")).FontSize(l.size(17)).FontWeight(600).Role(ui.RoleHeading).Level(1)
-		ui.Text(c, a.lang.T("fatal.abi.body")).TextColor(l.theme.TextMuted).TextAlign(ui.Center)
+		ui.Text(c, a.lang.T("fatal.abi.body")).TextAlign(ui.Center) // primary text (DESIGN 12)
 		ui.PrimaryButton(c.Key("fatal.quit"), a.lang.T("quit.confirm")).AutoFocus().OnClick(a.desk.quit)
 	})
 }

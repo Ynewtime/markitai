@@ -56,22 +56,35 @@ func Isolate(t testing.TB) string {
 		"USERPROFILE":     home,
 		"APPDATA":         filepath.Join(home, "AppData", "Roaming"),
 		"LOCALAPPDATA":    filepath.Join(home, "AppData", "Local"),
+		"TEMP":            filepath.Join(home, "t"),
+		"TMP":             filepath.Join(home, "t"),
 		"TERM":            "dumb",
 	} {
 		t.Setenv(k, v)
 	}
+	os.Mkdir(filepath.Join(home, "t"), 0o755)
 	return home
 }
 
 // Library is the core library to test against: MARKITAI_APP_LIB when
-// set, else the release build in the repository's target folder.
+// set, else where build.py has cargo leave it: the release build in the
+// target folder (CARGO_TARGET_DIR when set), and on Windows that
+// folder's mygo-windows build, which links the C runtime statically.
 func Library(t testing.TB) string {
 	if p := os.Getenv("MARKITAI_APP_LIB"); p != "" {
 		return p
 	}
-	name := map[string]string{"windows": "markitai_app.dll", "darwin": "libmarkitai_app.dylib"}[runtime.GOOS]
-	if name == "" {
-		name = "libmarkitai_app.so"
+	target := os.Getenv("CARGO_TARGET_DIR")
+	if target == "" {
+		target = filepath.Join(Repo(t), "target")
 	}
-	return filepath.Join(Repo(t), "target", "release", name)
+	switch runtime.GOOS {
+	case "windows":
+		triple := map[string]string{"amd64": "x86_64-pc-windows-msvc", "arm64": "aarch64-pc-windows-msvc"}[runtime.GOARCH]
+		return filepath.Join(target, "mygo-windows", triple, "release", "markitai_app.dll")
+	case "darwin":
+		return filepath.Join(target, "release", "libmarkitai_app.dylib")
+	default:
+		return filepath.Join(target, "release", "libmarkitai_app.so")
+	}
 }

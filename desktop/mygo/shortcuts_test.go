@@ -169,6 +169,15 @@ func TestPreviewKeysScript(t *testing.T) {
 	if strings.Contains(previewKeysJS("darwin"), `"KeyQ"`) || !strings.Contains(previewKeysJS("linux"), `"KeyQ"`) {
 		t.Error("Quit is forwarded on Linux only")
 	}
+	// WebView2 alone zooms the page on Ctrl and the wheel: there the
+	// wheel steps view.zoom.
+	for _, goos := range []string{"darwin", "windows", "linux"} {
+		js := previewKeysJS(goos)
+		wheel := strings.Contains(js, `addEventListener("wheel"`)
+		if wheel != (goos == "windows") || wheel && (!strings.Contains(js, "passive: false") || !strings.Contains(js, `"zoom_in"`) || !strings.Contains(js, `"zoom_out"`)) {
+			t.Errorf("%s: the wheel script %v", goos, wheel)
+		}
+	}
 }
 
 func TestMenuAccelerators(t *testing.T) {

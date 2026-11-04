@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 	"time"
+	"unicode/utf16"
 
 	"github.com/egoist/mygo/transfer"
 	"github.com/egoist/mygo/ui"
@@ -74,11 +75,12 @@ type files struct {
 	output string
 }
 
-// notice is the one-line notice of section 6.7. at stays zero until the
-// first frame that shows it, which stamps the frame's clock.
+// notice is the one-line notice of section 6.7: it shows on the page it
+// was given on, for 8 s from then.
 type notice struct {
 	text string
 	at   time.Time
+	page string
 }
 
 // app is the window's state, read and changed on the UI thread only.
@@ -124,6 +126,14 @@ type app struct {
 	previews  previews
 	markdowns map[model.ItemID]*markdownFile
 	menu      *menuBar
+	// config is the configuration file Settings shows, read again when
+	// Settings opens, after Create or Open, and when the window comes back
+	// (6.6), not on every frame.
+	config struct {
+		file core.ConfigFile
+		err  error
+		read bool
+	}
 }
 
 func newApp(lang l10n.Lang, lib coreLib, d desk, pane previewPane, post func(func()), f files) *app {
@@ -183,7 +193,7 @@ func (a *app) abbreviated(path string) string {
 }
 
 func (a *app) setNotice(text string) {
-	a.notice = notice{text: text}
+	a.notice = notice{text: text, at: time.Now(), page: a.page}
 	a.announce = append(a.announce, text)
 }
 
@@ -193,9 +203,15 @@ func (a *app) addPaths(paths []string) {
 	a.add(sources, folders)
 }
 
-// add puts sources in the Convert list and shows Convert (7.1).
+// add puts sources in the Convert list and shows Convert (7.1). Its
+// notices go with the page it leaves the window on.
 func (a *app) add(sources []model.Source, folders []string) {
 	a.notice = notice{}
+	var dups []model.Source
+	if len(sources) > 0 {
+		_, dups = a.queue.Add(sources, a.settings.Options(), time.Now())
+		a.show(pathConvert)
+	}
 	switch len(folders) {
 	case 0:
 	case 1:
@@ -203,15 +219,12 @@ func (a *app) add(sources []model.Source, folders []string) {
 	default:
 		a.setNotice(a.lang.P("notice.folders", len(folders)))
 	}
-	if len(sources) == 0 {
-		return
-	}
-	_, dups := a.queue.Add(sources, a.settings.Options(), time.Now())
 	if len(dups) > 0 {
 		a.setNotice(a.lang.T("notice.duplicate", "name", dups[0].Title()))
 	}
-	a.show(pathConvert)
-	a.pump()
+	if len(sources) > 0 {
+		a.pump()
+	}
 }
 
 // addURL adds the URL field's text, or shows why it cannot.
@@ -226,23 +239,47 @@ func (a *app) addURL() {
 }
 
 // dropped takes a drop on the content area: files, else the http and
-// https links (10.1).
+// https links of its URI list, else of its text/x-moz-url (10.1).
 func (a *app) dropped(d transfer.Data) {
 	if paths, err := d.Files(); err == nil && len(paths) > 0 {
 		a.addPaths(paths)
 		return
 	}
 	links, _ := d.URLs()
+	if len(links) == 0 {
+		if b, err := d.Read(mozURL); err == nil {
+			links = []string{mozURLLink(b)}
+		}
+	}
 	var sources []model.Source
 	for _, l := range links {
-		if s, ok := model.ParseURL(l); ok && strings.Contains(l, "://") {
+		if s, ok := webLink(l); ok {
 			sources = append(sources, s)
 		}
 	}
 	a.add(sources, nil)
 }
 
-// paste adds the clipboard's files, else its text when it is one URL.
+// mozURLLink is the URL of a text/x-moz-url: its first line, in the
+// UTF-16 the browsers write or in UTF-8.
+func mozURLLink(b []byte) string {
+	text := string(b)
+	// UTF-16 has its byte order mark, or a URL's first, ASCII letter
+	// leaves a zero byte after it.
+	if len(b) >= 2 && (b[1] == 0 || b[0] == 0xff && b[1] == 0xfe) {
+		units := make([]uint16, len(b)/2)
+		for i := range units {
+			units[i] = uint16(b[2*i]) | uint16(b[2*i+1])<<8
+		}
+		text = string(utf16.Decode(units))
+	}
+	text = strings.TrimPrefix(text, "\ufeff")
+	line, _, _ := strings.Cut(text, "\n")
+	return strings.TrimRight(line, "\r\x00")
+}
+
+// paste adds the clipboard's files, else its text when it is one http or
+// https URL with its scheme (7.1): other text with a dot is no link.
 func (a *app) paste(c *ui.Context) {
 	d := c.Services().ReadClipboardData(transfer.FileList, transfer.Text)
 	if paths, err := d.Files(); err == nil && len(paths) > 0 {
@@ -250,9 +287,19 @@ func (a *app) paste(c *ui.Context) {
 		return
 	}
 	text, _ := d.Read(transfer.Text)
-	if s, ok := model.ParseURL(string(text)); ok && !strings.ContainsAny(strings.TrimSpace(string(text)), " \n\t") {
+	if s, ok := webLink(string(text)); ok {
 		a.add([]model.Source{s}, nil)
 	}
+}
+
+// webLink is text that is one http or https URL, scheme and all.
+func webLink(text string) (model.Source, bool) {
+	text = strings.TrimSpace(text)
+	lower := strings.ToLower(text)
+	if !strings.HasPrefix(lower, "http://") && !strings.HasPrefix(lower, "https://") || strings.ContainsAny(text, " \n\t\r") {
+		return model.Source{}, false
+	}
+	return model.ParseURL(text)
 }
 
 // pump starts Queued items while a slot is free.
@@ -363,6 +410,9 @@ func (a *app) removeConvertingFolders() {
 
 // show goes to a page, as the sidebar does.
 func (a *app) show(path string) {
+	if path == pathSettings && a.page != pathSettings {
+		a.config.read = false
+	}
 	a.page = path
 	a.router.Replace(path)
 }
@@ -503,10 +553,31 @@ func (a *app) markdown(e model.Entry) *markdownFile {
 			if a.markdowns[id] != md {
 				return
 			}
-			md.read, md.missing, md.text = true, err != nil, string(data)
+			md.read, md.missing, md.text = true, err != nil, withoutFrontMatter(string(data))
 		})
 	}()
 	return md
+}
+
+// withoutFrontMatter is a written Markdown file's text after its YAML
+// front matter, as the core leaves it out of a result's markdown (DESIGN
+// 3.3), so that History shows, copies and saves what Convert did.
+func withoutFrontMatter(text string) string {
+	rest, ok := strings.CutPrefix(text, "---\n")
+	if !ok {
+		return text
+	}
+	for offset := 0; offset < len(rest); {
+		line := rest[offset:]
+		if end := strings.IndexByte(line, '\n'); end >= 0 {
+			line = line[:end+1]
+		}
+		if line == "---\n" || line == "---" {
+			return strings.TrimLeft(rest[offset+len(line):], "\n")
+		}
+		offset += len(line)
+	}
+	return text
 }
 
 // matches applies History's search: a case-insensitive substring of the
@@ -659,6 +730,7 @@ func (a *app) showOutput() {
 // openConfig opens the markitai configuration file, creating it first
 // when it is not there (DESIGN 6.6).
 func (a *app) openConfig() {
+	defer func() { a.config.read = false }()
 	cfg, err := a.core.ConfigFile()
 	if err == nil && !cfg.Exists {
 		if err = os.MkdirAll(filepath.Dir(cfg.Path), 0o755); err == nil {

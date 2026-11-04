@@ -25,10 +25,15 @@ func (a *app) detailPane(c *ui.Context, t *target, stacked bool) {
 	}
 	d, done := t.done()
 	ui.Column(c).Grow(1).Basis(0).Padding(24).Gap(16).AlignItems(ui.Stretch).Children(func() {
+		if stacked {
+			// The list column, which shows the notice side by side, is
+			// another page here.
+			a.noticeLine(c, a.page)
+		}
 		if t.missing {
 			ui.Text(c, a.lang.T("detail.missing.title")).FontSize(l.size(17)).FontWeight(600).Role(ui.RoleHeading).Level(2)
-			ui.Text(c, a.lang.T("detail.missing.body", "path", a.abbreviated(t.state.(model.Done).Result.MarkdownPath))).
-				TextColor(l.theme.TextMuted).Selectable()
+			// Informative text is primary text (DESIGN 12).
+			ui.Text(c, a.lang.T("detail.missing.body", "path", a.abbreviated(t.state.(model.Done).Result.MarkdownPath))).Selectable()
 			return
 		}
 		a.detailHeader(c, t)

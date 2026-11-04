@@ -29,21 +29,25 @@ func main() {
 	// Relative file arguments name paths from where the app was launched,
 	// before prepare_environment moves the working directory.
 	wd, _ := os.Getwd()
-	data, cache, settings := mygoFolders(runtime.GOOS, home, os.Getenv)
-	mygo.App.SetPath(mygo.PathUserData, data)
-	mygo.App.SetPath(mygo.PathCache, cache)
-	if !mygo.App.RequestSingleInstanceLock() {
-		return
-	}
 
+	// The language comes first: the system's own text takes it before
+	// anything asks the system for a language (10.5).
 	preferred := mygo.App.PreferredLanguages()
 	if tag := os.Getenv("MYGO_LOCALE"); tag != "" {
 		preferred = append([]string{tag}, preferred...)
 	}
 	lang := l10n.Choose(preferred)
+	localizeSystemText(lang, preferred)
+
+	data, cache, settings := mygoFolders(runtime.GOOS, home, os.Getenv)
+	mygo.App.SetPath(mygo.PathUserData, data)
+	mygo.App.SetPath(mygo.PathCache, cache)
+	prepareToolkit()
+	if !singleInstance(data, wd) {
+		return
+	}
 	mygo.App.SetLanguages(string(l10n.En), string(l10n.ZhHans))
 	mygo.App.SetLocale(string(lang))
-	localizeSystemText(lang)
 	log.Printf("language %s, from %v", lang, preferred)
 
 	resources, _ := mygo.App.Path(mygo.PathResources)
@@ -55,7 +59,7 @@ func main() {
 
 	var win *mygo.Window
 	post := func(fn func()) { win.Update(fn) }
-	d := systemDesk{win: func() *mygo.Window { return win }, post: post}
+	d := systemDesk{win: func() *mygo.Window { return win }, post: post, chooseTitle: lang.T("convert.choose")}
 	var a *app
 	if fatal {
 		log.Print(err)
@@ -70,10 +74,9 @@ func main() {
 		} else {
 			log.Printf("prepare_environment: %s", env.LoginEnvironment)
 		}
-		documents, _ := mygo.App.Path(mygo.PathDocuments)
 		a = newApp(lang, lib, d, nil, post, files{
 			data: data, settings: settings, history: filepath.Join(data, "history.json"),
-			output: filepath.Join(documents, "Markitai"),
+			output: filepath.Join(documentsFolder(), "Markitai"),
 		})
 		a.version = mygo.App.Version()
 		mygo.BindAs("PreviewKeys", &previewKeys{goos: runtime.GOOS, press: a.pressed})
@@ -82,15 +85,25 @@ func main() {
 	opened := fileArgs(os.Args[1:], wd)
 	if runtime.GOOS == "darwin" {
 		mygo.App.OnOpenFile(func(path string) {
-			if win == nil {
+			switch {
+			case a.fatal:
+				// The fatal window converts nothing (section 9).
+			case win == nil:
 				opened = append(opened, path)
-				return
+			default:
+				win.Update(func() { a.addPaths([]string{path}) })
 			}
-			win.Update(func() { a.addPaths([]string{path}) })
 		})
 	}
 	mygo.App.OnSecondInstance(func(args []string, wd string) {
 		paths := fileArgs(args, wd)
+		if win == nil {
+			// Before the window: its files wait with the first launch's.
+			if !a.fatal {
+				opened = append(opened, paths...)
+			}
+			return
+		}
 		win.Update(func() {
 			if len(paths) > 0 && !a.fatal {
 				a.addPaths(paths)
@@ -111,18 +124,28 @@ func main() {
 	})
 
 	mygo.App.WhenReady(func() {
+		// After Run gave the backend the app's languages, which the
+		// system's dialogs on Windows do not all resolve (10.5).
+		localizeSystemDialogs(lang)
 		// The window shows once the preview's web view is in it: on Linux,
 		// mygo makes room for the first web view by moving the content's
 		// widget, and a shown window that is not active yet loses its
 		// keyboard focus that way (DESIGN 14).
+		width, height := firstSize(mygo.Screen.PrimaryDisplay().WorkArea)
 		win = mygo.NewWindow(mygo.WindowOptions{
-			Title: lang.T("app.name.mygo"), Width: 1200, Height: 780, MinWidth: 640, MinHeight: 480,
+			Title: lang.T("app.name.mygo"), Width: width, Height: height, MinWidth: 640, MinHeight: 480,
 			StateKey: "main", Content: ui.View(a.view), Hidden: true,
 		})
 		defer win.Show()
 		log.Printf("window created at %d ms since the epoch", time.Now().UnixMilli())
 		win.OnReadyToShow(func() { log.Printf("first frame at %d ms since the epoch", time.Now().UnixMilli()) })
 		a.closing(win)
+		// Settings reads the configuration file again when the window
+		// comes back, as the user may have made it meanwhile (6.6).
+		win.OnFocus(func() {
+			a.config.read = false
+			win.Invalidate()
+		})
 		if fatal {
 			if runtime.GOOS == "darwin" {
 				mygo.App.SetMenu(mygo.NewMenu([]*mygo.MenuItem{{Role: mygo.RoleAppMenu, Submenu: []*mygo.MenuItem{{Role: mygo.RoleQuit}}}}))
@@ -145,13 +168,16 @@ func main() {
 			win.Update(func() { a.addPaths(paths) })
 		}
 	})
+	mygo.App.SetWindowStateStore(windowStates{path: filepath.Join(data, "window-state.json")})
 	if err := mygo.App.Run(); err != nil {
 		log.Fatal(err)
 	}
 }
 
 // closing follows section 10.3: on macOS closing the window hides it and
-// the Dock icon shows it again; elsewhere closing it quits.
+// the Dock icon shows it again; elsewhere closing it quits. The fatal
+// window has nothing to come back to: closing it quits everywhere, as mygo
+// does when the last window closes and nothing keeps the app.
 func (a *app) closing(win *mygo.Window) {
 	if runtime.GOOS != "darwin" {
 		win.OnClose(func(e *mygo.CloseEvent) {
@@ -162,8 +188,11 @@ func (a *app) closing(win *mygo.Window) {
 		})
 		return
 	}
+	if a.fatal {
+		return
+	}
 	win.OnClose(func(e *mygo.CloseEvent) {
-		if !a.quitting && !a.fatal {
+		if !a.quitting {
 			e.PreventDefault()
 			win.Hide()
 		}

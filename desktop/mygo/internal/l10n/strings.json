@@ -523,6 +523,10 @@
   "en": "The preview can't be shown on this computer. The Markdown tab still works.",
   "zh-Hans": "此电脑无法显示预览。Markdown 标签页仍可使用。"
  },
+ "preview.failed": {
+  "en": "The preview couldn't be shown. The Markdown tab still works.",
+  "zh-Hans": "无法显示预览。Markdown 标签页仍可使用。"
+ },
  "fatal.abi.title": {
   "en": "This copy of Markitai is incomplete",
   "zh-Hans": "这份 Markitai 不完整"

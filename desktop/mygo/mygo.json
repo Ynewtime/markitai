@@ -18,8 +18,9 @@
     }
   },
   "linux": {
-    "comment": "Convert documents and URLs to Markdown",
+    "comment": "Convert documents and web pages to Markdown",
     "categories": ["Office", "Utility"],
-    "command": "markitai-mygo"
+    "command": "markitai-mygo",
+    "maintainer": "Ynewtime <27655771+Ynewtime@users.noreply.github.com>"
   }
 }

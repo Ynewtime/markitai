@@ -14,8 +14,9 @@ import (
 // the process's argument domain, before AppKit starts, so its panels and
 // the items it adds to menus follow the app (section 10.5). mygo's
 // SetLanguages does nothing on macOS. The argument domain lasts for the
-// process and writes nothing.
-func localizeSystemText(lang l10n.Lang) {
+// process and writes nothing. Foundation keeps the languages it reads
+// first, so main calls it before anything else asks for a language.
+func localizeSystemText(lang l10n.Lang, _ []string) {
 	if _, err := purego.Dlopen("/System/Library/Frameworks/Foundation.framework/Foundation", purego.RTLD_GLOBAL|purego.RTLD_NOW); err != nil {
 		log.Printf("AppleLanguages: %v", err)
 		return
@@ -47,6 +48,10 @@ func appleLanguages() []string {
 	}
 	return out
 }
+
+// localizeSystemDialogs has nothing to add on macOS: the dialogs are
+// AppKit's.
+func localizeSystemDialogs(l10n.Lang) {}
 
 func goString(p *byte) string {
 	if p == nil {

@@ -189,9 +189,14 @@ python3.13 desktop/mygo/build.py [--check] [--no-core] [--platform GOOS/GOARCH] 
 the module's embedded copies of `desktop/strings.json` and `desktop/icon.png`
 differ from them or `mygo.json`'s version from the workspace's, and runs
 `go vet` and `go test` with `HOME`, `MARKITAI_HOME`, the XDG folders,
-`USERPROFILE`, `APPDATA` and `LOCALAPPDATA` in a temporary folder. It builds no
-app and writes no tracked file. Without `--check`, `build.py` refreshes those
-copies and builds the app into `desktop/mygo/build/<goos>-<goarch>/`. The
+`USERPROFILE`, `APPDATA`, `LOCALAPPDATA`, `TEMP` and `TMP` in a temporary
+folder. It builds no app and writes no tracked file. Without `--check`,
+`build.py` refreshes those copies and builds the app into
+`desktop/mygo/build/<goos>-<goarch>/`. On Linux, `desktop/mygo/linux_entry.py`
+then gives every copy of the desktop entry (beside the app, in the `.tar.gz`,
+`install.sh`, the Debian package and the `PKGBUILD`) Markitai Native's keys and
+the name `dev.markitai.mygo.desktop`, which `mygo build` cannot, and fails when
+`mygo build` writes them differently. The
 Windows core links the C runtime statically and builds in
 `target/mygo-windows`; the macOS core's install name is
 `@rpath/libmarkitai_app.dylib`.
@@ -211,8 +216,10 @@ It launches the app over the automation socket once per run of
 each with its own `HOME`, XDG folders, Windows user folders and `MARKITAI_HOME`
 under the evidence folder and a `TEMP` of its own under a short path, and converts fixtures and pages from a local server
 through Convert, a second instance, History, Settings and quitting while a
-conversion runs. It keeps the window's own captures, `report.json` and the
-app's log per run. With `MARKITAI_MYGO_E2E_WINDOW_SHOT` naming a program that
+conversion runs. It fails when the app writes in another version's folders,
+or on Linux under `Markitai Mygo` or `markitai-mygo`, the names mygo and
+WebKitGTK use when the app does not name itself. It keeps the window's own
+captures, `report.json` and the app's log per run. With `MARKITAI_MYGO_E2E_WINDOW_SHOT` naming a program that
 takes a process ID and a PNG path (`internal/e2e/windowshot.ps1` on Windows), it
 also keeps what the system composites, web view included. With
 `MARKITAI_MYGO_E2E_PAGE_KEY` naming a program that takes a process ID and

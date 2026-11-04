@@ -12,11 +12,13 @@ import (
 type systemDesk struct {
 	win  func() *mygo.Window
 	post func(func())
+	// chooseTitle titles the open dialog: convert.choose (6.2).
+	chooseTitle string
 }
 
 func (d systemDesk) chooseFiles(done func([]string)) {
 	go func() {
-		paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{Parent: d.win(), Multiple: true})
+		paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{Parent: d.win(), Title: d.chooseTitle, Multiple: true})
 		if err == nil && len(paths) > 0 {
 			d.post(func() { done(paths) })
 		}

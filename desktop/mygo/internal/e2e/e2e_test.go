@@ -727,9 +727,8 @@ func (s *session) quitWhileConverting(base string) {
 // home, and fails when any of it is another version's.
 func (s *session) checkFiles() {
 	own := map[string][]string{
-		"darwin": {"Library/Application Support/dev.markitai.mygo/", "Library/Caches/dev.markitai.mygo/", "Documents/Markitai/", ".markitai/"},
-		"linux": {".local/share/dev.markitai.mygo/", ".config/dev.markitai.mygo/", ".cache/dev.markitai.mygo/",
-			".config/Markitai Mygo/", ".local/share/markitai-mygo/", ".cache/markitai-mygo/", "Documents/Markitai/", ".markitai/"},
+		"darwin":  {"Library/Application Support/dev.markitai.mygo/", "Library/Caches/dev.markitai.mygo/", "Documents/Markitai/", ".markitai/"},
+		"linux":   {".local/share/dev.markitai.mygo/", ".config/dev.markitai.mygo/", ".cache/dev.markitai.mygo/", "Documents/Markitai/", ".markitai/"},
 		"windows": {"AppData/Local/Markitai Mygo/", "Documents/Markitai/", ".markitai/"},
 	}[runtime.GOOS]
 	var other []string
@@ -743,6 +742,11 @@ func (s *session) checkFiles() {
 		if strings.Contains(f, "dev.markitai.web") || strings.Contains(f, "dev.markitai.native") || strings.Contains(f, "Markitai Web") || strings.Contains(f, "Markitai Native") {
 			t := s.t
 			t.Errorf("wrote another version's file %s", f)
+		}
+		// On Linux every folder of the app is named dev.markitai.mygo
+		// (toolkit_linux.go), not after its display name or program name.
+		if runtime.GOOS == "linux" && (strings.Contains(f, "Markitai Mygo/") || strings.Contains(f, "markitai-mygo/")) {
+			s.t.Errorf("wrote %s outside the dev.markitai.mygo folders", f)
 		}
 	}
 }

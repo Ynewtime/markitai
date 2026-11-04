@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -51,6 +52,7 @@ func TestHistory(t *testing.T) {
 	h := start(t, l10n.En)
 	alpha, beta := h.write("alpha.md", "# Alpha\n"), h.write("beta.md", "# Beta\n")
 	h.convert(alpha)
+	alphaMarkdown := h.item("alpha.md").State.(model.Done).Result.Markdown
 	h.convert(beta)
 	h.click(h.T("nav.history"))
 	h.rest()
@@ -61,6 +63,15 @@ func TestHistory(t *testing.T) {
 
 	h.click(h.entryLabel("alpha.md"))
 	h.until("alpha's Markdown", func() bool { return h.has(h.T("detail.preview")) })
+	// DESIGN 3.3: the file's front matter stays out, as in Convert.
+	if file, err := os.ReadFile(h.entry("alpha.md").MarkdownPath); err != nil || !strings.HasPrefix(string(file), "---\n") {
+		t.Fatalf("the written file has no front matter to leave out: %v %.40q", err, file)
+	}
+	h.click(h.T("detail.markdown"))
+	if got := h.markdownText(); got != alphaMarkdown {
+		t.Errorf("History's Markdown %q, Convert's %q", got, alphaMarkdown)
+	}
+	h.click(h.T("detail.preview"))
 
 	h.click(h.T("history.search"))
 	h.tt.Type("BET")

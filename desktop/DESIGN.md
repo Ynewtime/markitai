@@ -172,7 +172,7 @@ Each C function is a thin wrapper over the Rust function of the same name.
 |---|---|
 | Parser | `pulldown-cmark` with `ENABLE_TABLES`, `ENABLE_STRIKETHROUGH`, `ENABLE_TASKLISTS`, `ENABLE_FOOTNOTES`, `ENABLE_YAML_STYLE_METADATA_BLOCKS` |
 | Raw HTML | `Event::Html` and `Event::InlineHtml` become `Event::Text`, so the HTML shows escaped |
-| Front matter | The YAML block is left out of the preview. The Markdown tab shows it |
+| Front matter | The YAML block is left out of the preview, and out of the Markdown the apps show, copy and save (4.2): the result's `markdown` field has none, and History leaves out a leading `---` block it reads from `markdown_path` |
 | Images | `data:` sources stay. A `file:` source (no host, or `localhost`) and a relative source (against `base_dir`) resolve to a path, decoding percent escapes and resolving `.` and `..`; if that path is inside `base_dir`, the image loads from its canonical `file://` URL, so the web view loads exactly the path that was checked. Every other source (http, https, `//`, absolute paths, `file:` or `..` outside `base_dir`, any `base_dir` of null) becomes `<span class="img-remote" title="<source>"><alt or source></span>` |
 | Links | Kept as written. The app decides what a click does (section 8) |
 | Base | No `<base>` element, so footnote links stay in the same document |
@@ -434,17 +434,18 @@ Output, Configuration, About.
 ### 6.2 Convert, empty
 
 When the Convert list is empty, the list column and the detail are replaced by
-one large drop zone, centered in the area right of the navigation.
+the column header and one large drop zone, centered in the area below it.
 
 | Element | Content |
 |---|---|
+| Column header | `nav.convert` title, no actions |
 | Drop zone | Rounded rectangle, 1 px dashed border (macOS and GNOME 1.5 px), 560 wide, height fits content, padding 40. While files are dragged over the window, the border turns solid in the accent color and the label reads `convert.drop.release` |
 | Glyph | "Add files" icon (13.6), 48 px, secondary color |
 | Title | `convert.empty.title` |
 | Body | `convert.empty.body` with the output folder path |
 | Primary button | `convert.choose`, the platform's accent (prominent) button. Gets initial focus |
 | Divider | `convert.or`, between hairlines |
-| URL row | Text field labeled `convert.url.label` (label visually hidden, placeholder `convert.url.placeholder`), then a standard button `convert.url.add`. Enter adds |
+| URL row | Text field labeled `convert.url.label` (label visually hidden, placeholder `convert.url.placeholder`), with no leading glyph, then a standard button `convert.url.add`. Enter adds |
 | Error | `convert.url.invalid` below the field, in primary text with the error glyph, until the text changes |
 | Notices | Below the URL row |
 
@@ -487,7 +488,8 @@ List row anatomy, the same on every platform:
 
 History entries use the Done column. Their status line is `state.done`, then
 ` · ` and the finish date as in History rows (6.5). The Markdown is read from
-`markdown_path` off the main thread.
+`markdown_path` off the main thread, without its front matter (3.3), so that an
+entry shows, copies and saves the same Markdown as its Convert item did.
 
 Platform controls for these parts:
 
@@ -507,9 +509,9 @@ Platform controls for these parts:
 |---|---|
 | Column header | `nav.history` title, action `history.clear` (disabled when empty) |
 | Search | Field labeled `history.search` at the top of the list column. Filters by title and source, case-insensitive substring, as you type. macOS `NSSearchField` through `NSViewRepresentable`, Windows `AutoSuggestBox`, GNOME `GtkSearchEntry` |
-| Rows | Kind glyph, title, subtitle = finish date (`date.today`, `date.yesterday` or the platform's medium date and short time) and, with warnings, ` · ` `state.warnings.*`. Warning glyph trailing |
+| Rows | Kind glyph, title, subtitle = finish date (`date.today`, `date.yesterday` or the medium date and short time of the app's language, with that language's clock) and, with warnings, ` · ` `state.warnings.*`. Warning glyph trailing |
 | Context menu | `detail.copy`, `detail.save_as`, `detail.show.*`, separator, `history.remove` |
-| Empty | `history.empty.title`, `history.empty.body`, centered in the list and detail area |
+| Empty | The column header, `history.clear` disabled, then `history.empty.title` and `history.empty.body`, centered in the area below it |
 | No matches | `history.no_results` in the list column |
 | Detail | 6.4, Done column |
 
@@ -544,16 +546,20 @@ cannot be written (a test file cannot be created and deleted) shows
 | Copied | The Copy button shows a checkmark glyph for 1.5 s | The Copy button shows `Accept` and `notice.copied` for 1.5 s | `AdwToast` `notice.copied`, 2 s |
 | Fatal (ABI mismatch) | Window with only `fatal.abi.title`, `fatal.abi.body`, `quit.confirm` | same | same |
 
+A notice belongs to the page it was given on, and shows only there: in the
+stacked layout (14) also on that page's detail, so that a failed Save As shows
+where it was asked. Its time runs from when it is given.
+
 ## 7. Behavior
 
 ### 7.1 Adding sources
 
 | Way | Rule |
 |---|---|
-| Drop on the window | Accepted on the Convert and History pages (History switches to Convert). Files become items. Web links (a URL drag) become URL items |
+| Drop on the window | Accepted on the Convert and History pages (History switches to Convert). Files become items. Web links (a URL drag) become URL items: from the drag's URI list, else from `text/x-moz-url` where a browser offers no URI list (Chromium on Linux). Only `http` and `https` links with their scheme |
 | `convert.choose` | The platform's open dialog, multiple selection, files only, no type filter |
 | URL field | Trim. With no scheme and a dot in the text, prefix `https://`. Accept only `http` and `https` URLs with a host. Clear the field after adding |
-| Paste (7.6 shortcut) | When focus is not in a text field: file references on the clipboard become items, else text that is one valid URL becomes a URL item |
+| Paste (7.6 shortcut) | When focus is not in a text field: file references on the clipboard become items, else text that is one `http` or `https` URL, scheme included, becomes a URL item. Other text, as `example.com` or a sentence with a dot, adds nothing; the URL field is where a scheme is added |
 | Open with the app | Files opened through the Dock icon (macOS), command-line arguments (Windows) or `GApplication::open` (Linux) are added |
 | Folders | Refused before any core call, with `notice.folder` or `notice.folders`. Exception: a directory whose name ends in `.numbers` (any case) is a Numbers document and is accepted |
 | Type filter | None. The core reports `unsupported` |
@@ -621,6 +627,7 @@ On a change, the Preview is rendered again with the new `theme`.
 | Background | Transparent (`drawsBackground` false), so the pane's own background shows | `DefaultBackgroundColor` transparent | `set_background_color` transparent |
 | Zoom | `pageZoom = view.zoom` | `ZoomFactor = view.zoom` | `zoom_level = view.zoom` |
 | Missing runtime | n/a | When `CoreWebView2` fails to start, the Preview tab shows `preview.webview2_missing` and the Markdown tab works | n/a |
+| Render failure | When `preview_html` fails, the Preview tab shows `preview.failed`, centered in primary text, and the Markdown tab works. A failure is never cached: the next time the Preview tab shows that item, it renders again | same | same |
 | Accessible name | `a11y.preview` | `a11y.preview` | `a11y.preview` |
 
 ## 9. Errors
@@ -786,6 +793,7 @@ Every user-visible string. The table is the source of `desktop/strings.json`.
 | `error.open_failed` | Markitai couldn't open {name}. | Markitai 无法打开 {name}。 |
 | `preview.webview2_missing` | The preview needs the Microsoft Edge WebView2 Runtime. The Markdown tab still works. | 预览需要 Microsoft Edge WebView2 运行时。Markdown 标签页仍可使用。 |
 | `preview.unavailable` | The preview can't be shown on this computer. The Markdown tab still works. | 此电脑无法显示预览。Markdown 标签页仍可使用。 |
+| `preview.failed` | The preview couldn't be shown. The Markdown tab still works. | 无法显示预览。Markdown 标签页仍可使用。 |
 | `fatal.abi.title` | This copy of Markitai is incomplete | 这份 Markitai 不完整 |
 | `fatal.abi.body` | Its conversion library doesn't match the app. Reinstall Markitai. | 它的转换库与应用不匹配。请重新安装 Markitai。 |
 | `a11y.drop_zone` | Drop files or web links here to convert them. | 将文件或网页链接拖到这里进行转换。 |
@@ -823,10 +831,13 @@ Every user-visible string. The table is the source of `desktop/strings.json`.
 | Close the window | ⌘W | Alt+F4 | Ctrl+W |
 | Quit | ⌘Q | Alt+F4 (closing quits) | Ctrl+Q |
 
-macOS puts these in the menu bar: File (Choose Files…, Add Web Address, Save
-As…, Show in Finder), Edit (Copy Markdown, Paste), View (Convert, History,
-Switch Preview and Markdown, zoom items), and the item commands (Retry, Remove
-from List). Windows sets `KeyboardAccelerator`s, so tooltips show them. GNOME
+macOS puts these in the menu bar, placed as Markitai Native's: File (Choose
+Files…, Add Web Address, then the system's Close, then Save As…, Show in
+Finder, separator, Retry, Remove from List or Remove from History), Edit (the
+system's items through Select All, separator, Copy Markdown, then Search
+History), View (Convert, History, separator, Switch Preview and Markdown,
+separator, Zoom In, Zoom Out, Actual Size). While a text field has the focus,
+⌘⌫ deletes in the field and does not remove the selected item. Windows sets `KeyboardAccelerator`s, so tooltips show them. GNOME
 registers app actions with `set_accels_for_action`.
 
 ## 12. Accessibility
