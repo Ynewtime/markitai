@@ -88,7 +88,7 @@ installation checks. Configuring a runner is separate from executing it.
 
 ## Desktop app
 
-`desktop/` is the [desktop app](desktop.md): a Go module (Go 1.27.3 or later,
+`desktop/` is Markitai Web, the [desktop app](desktop.md): a Go module (Go 1.27.3 or later,
 `desktop/go.mod`) on [mygo](https://github.com/egoist/mygo), a pure-Go
 toolkit for native windows, which comes in as a Go tool (`go tool mygo`). It
 packages a release CLI archive; its version is the workspace's, which
@@ -108,12 +108,12 @@ tests on this system (compiling them for the others); the tests stand in for
 `stage` replaces the Git-ignored `desktop/resources/` with the archive's
 `markitai` and the licences: the archive's, Go's, and those of every module
 `go list -deps` links (a module without one fails). Each platform is built on
-its own system: `build` makes `desktop/build/darwin-arm64/Markitai.app` and
-`markitai-desktop-<version>-arm64.dmg` on an Apple silicon Mac, or the app,
+its own system: `build` makes `desktop/build/darwin-arm64/Markitai Web.app` and
+`markitai-web-<version>-arm64.dmg` on an Apple silicon Mac, or the app,
 its `.tar.gz`, `.deb`, `PKGBUILD` and `install.sh` in
 `desktop/build/linux-amd64/` on x86-64 Linux ([Linux](desktop.md#linux)), from
 the `x86_64-unknown-linux-gnu` archive the manylinux_2_28 image builds, or
-`Markitai.exe` and the installer `markitai-desktop-setup-<version>-amd64.exe`
+`Markitai Web.exe` and the installer `markitai-web-setup-<version>-amd64.exe`
 in `desktop/build/windows-amd64/` on x86-64 Windows
 ([Windows](desktop.md#windows)). No
 artifact may be named like a CLI archive (`markitai-v…`). `--e2e` builds with

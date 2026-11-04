@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the Markitai desktop app (desktop/) around a released markitai CLI.
+"""Build the Markitai Web desktop app (desktop/) around a released markitai CLI.
 
   stage --archive PATH [--sums SHA256SUMS]
         Replace the Git-ignored desktop/resources/ with the archive's
@@ -9,17 +9,17 @@
         be the one SHA256SUMS lists.
   build --platform darwin/arm64|linux/amd64|windows/amd64 [--e2e]
         `go tool mygo build` of the staged app in desktop/build/<goos>-<goarch>/:
-        Markitai.app and markitai-desktop-<version>-arm64.dmg for macOS; the
-        markitai-desktop executable with bin/ and licenses/ beside it,
-        markitai-desktop_<version>_amd64.deb and
-        markitai-desktop-<version>-linux-amd64.tar.gz for Linux; Markitai.exe
+        Markitai Web.app and markitai-web-<version>-arm64.dmg for macOS; the
+        markitai-web executable with bin/ and licenses/ beside it,
+        markitai-web_<version>_amd64.deb and
+        markitai-web-<version>-linux-amd64.tar.gz for Linux; Markitai Web.exe
         with bin/ and licenses/ beside it and the installer
-        markitai-desktop-setup-<version>-amd64.exe for Windows. --e2e makes
+        markitai-web-setup-<version>-amd64.exe for Windows. --e2e makes
         the -debug build with the automation plugin, without the disk image or
         the installer, in desktop/build/e2e/, for scripts/desktop_e2e.py: from
         the project desktop/build/e2e-project/, desktop/mygo.json with its own
         identifier (".e2e" added), so it keeps no web view data where an
-        installed Markitai does.
+        installed Markitai Web does.
   vet   gofmt, go vet and go test of desktop/ for darwin, linux and windows;
         tests run on this system and compile for the others.
 
@@ -181,7 +181,7 @@ def stage_go_licences(destination, modules, goroot):
         where = target.relative_to(destination).as_posix()
         rows.append(f"- {owner} {version}".rstrip() + ": " + ", ".join(f"{where}/{path.name}" for path in found))
     (destination / "README.md").write_text(
-        "# Go licences\n\nThe Markitai desktop app is a Go program. It links the Go standard library and "
+        "# Go licences\n\nThe Markitai Web app is a Go program. It links the Go standard library and "
         "these modules:\n\n" + "\n".join(rows) + "\n", encoding="utf-8")
 
 
@@ -276,14 +276,14 @@ def layout(platform, version):
     goos, goarch = platform.split("/")
     program = program_name(platform)
     if goos == "darwin":
-        return "Markitai.app", f"Markitai.app/Contents/Resources/bin/{program}", {
-            f"markitai-desktop-{version}-{goarch}.dmg"}
+        return "Markitai Web.app", f"Markitai Web.app/Contents/Resources/bin/{program}", {
+            f"markitai-web-{version}-{goarch}.dmg"}
     if goos == "linux":
-        return "markitai-desktop", f"bin/{program}", {
-            f"markitai-desktop_{deb_version(version)}_{goarch}.deb",
-            f"markitai-desktop-{version}-linux-{goarch}.tar.gz"}
+        return "markitai-web", f"bin/{program}", {
+            f"markitai-web_{deb_version(version)}_{goarch}.deb",
+            f"markitai-web-{version}-linux-{goarch}.tar.gz"}
     if goos == "windows":
-        return "Markitai.exe", f"bin/{program}", {f"markitai-desktop-setup-{version}-{goarch}.exe"}
+        return "Markitai Web.exe", f"bin/{program}", {f"markitai-web-setup-{version}-{goarch}.exe"}
     raise SystemExit(f"No app layout for {platform}")
 
 

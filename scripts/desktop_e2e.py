@@ -120,16 +120,16 @@ class Build(NamedTuple):
 
 
 BUILDS = {
-    ("Darwin", "arm64"): Build("darwin/arm64", "desktop/build/e2e/darwin-arm64/Markitai.app", "Contents/MacOS/Markitai",
+    ("Darwin", "arm64"): Build("darwin/arm64", "desktop/build/e2e/darwin-arm64/Markitai Web.app", "Contents/MacOS/Markitai Web",
                                "Contents/Resources/bin/markitai", ("-AppleLanguages", "(en)"), {}, {}, "/bin/zsh",
                                "menu"),
     # No application menu on Linux; its window's class is the executable's name.
-    ("Linux", "x86_64"): Build("linux/amd64", "desktop/build/e2e/linux-amd64", "markitai-desktop", "bin/markitai", (),
+    ("Linux", "x86_64"): Build("linux/amd64", "desktop/build/e2e/linux-amd64", "markitai-web", "bin/markitai", (),
                                {"LANGUAGE": "en"},
                                {"XDG_CONFIG_HOME": ".config", "XDG_DATA_HOME": ".local/share",
                                 "XDG_CACHE_HOME": ".cache", "XDG_STATE_HOME": ".local/state"}, "/bin/bash", "hyprctl"),
     # The app takes Explorer's environment, as the process's own.
-    ("Windows", "AMD64"): Build("windows/amd64", "desktop/build/e2e/windows-amd64", "Markitai.exe", "bin/markitai.exe",
+    ("Windows", "AMD64"): Build("windows/amd64", "desktop/build/e2e/windows-amd64", "Markitai Web.exe", "bin/markitai.exe",
                                 (), {},
                                 {"APPDATA": "AppData/Roaming", "LOCALAPPDATA": "AppData/Local",
                                  "TEMP": "AppData/Local/Temp", "TMP": "AppData/Local/Temp"}, "", "close"),
@@ -1304,7 +1304,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("round", help="evidence goes to .local/desktop-e2e/ROUND/")
     parser.add_argument("--only", help="comma-separated scenarios: " + ", ".join(SCENARIOS))
-    parser.add_argument("--app", type=Path, help="the e2e build: its Markitai.app, or its directory on Linux "
+    parser.add_argument("--app", type=Path, help="the e2e build: its Markitai Web.app, or its directory on Linux "
                                                      "and Windows")
     args = parser.parse_args(argv)
     if not re.fullmatch(r"[A-Za-z0-9._-]+", args.round):

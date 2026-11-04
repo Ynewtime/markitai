@@ -1,14 +1,14 @@
 # Desktop app
 
-The Markitai desktop app opens the [browser workbench](web-ui.md) in a window
-of its own: open Markitai and convert, with no terminal and no browser tab. It
+Markitai Web, the desktop app, opens the [browser workbench](web-ui.md) in a window
+of its own: open Markitai Web and convert, with no terminal and no browser tab. It
 runs the `markitai` program bundled inside it as a server for that window
 ([running under another app](serve.md#running-under-another-app)), so it
 converts exactly as the CLI of the same version does. It runs on macOS 13 or
 later on Apple silicon, on Linux on x86-64 ([what it needs](#linux)), and on
 Windows 10 or later on x86-64 ([what it needs](#windows)).
 
-No release publishes the app yet; build it from a checkout with Go 1.27.3 or
+No release publishes Markitai Web yet; build it from a checkout with Go 1.27.3 or
 later, [on a Mac](#building-from-source), [on Linux](#linux) or
 [on Windows](#windows).
 
@@ -64,7 +64,7 @@ later, [on a Mac](#building-from-source), [on Linux](#linux) or
 - If the app crashes or is force quit, its server notices, finishes its
   running conversions and exits by itself. A launch in the meantime shows that
   the server stopped; Try Again works once the old one is gone.
-- On macOS the server's log is `~/Library/Logs/Markitai/serve.log` (Show Log
+- On macOS the server's log is `~/Library/Logs/Markitai Web/serve.log` (Show Log
   on the error page; [on Linux](#linux) and [on Windows](#windows) it is
   elsewhere): one file per launch
   of the app, Try Again included. The previous launch's is
@@ -80,13 +80,13 @@ aarch64-apple-darwin --output DIR`. Then, in the checkout:
 ```sh
 python3 scripts/desktop_build.py stage --archive markitai-v<version>-aarch64-apple-darwin.tar.gz --sums SHA256SUMS
 python3 scripts/desktop_build.py build --platform darwin/arm64
-open desktop/build/darwin-arm64/Markitai.app
+open "desktop/build/darwin-arm64/Markitai Web.app"
 ```
 
 `stage` refuses an archive whose name or checksum does not match the
 checkout's version (`--sums` is the release's `SHA256SUMS`; leave it out for
-an archive you built). `build` writes `Markitai.app` and the disk image
-`markitai-desktop-<version>-arm64.dmg` to `desktop/build/darwin-arm64/`. Copy
+an archive you built). `build` writes `Markitai Web.app` and the disk image
+`markitai-web-<version>-arm64.dmg` to `desktop/build/darwin-arm64/`. Copy
 the app to Applications, or open the disk image and drag it there. The app
 carries the licences of `markitai` and of the Go modules it links in
 `Contents/Resources/licenses/`.
@@ -101,8 +101,8 @@ from, remove the mark from the disk image before opening it, or from the app
 after copying it:
 
 ```sh
-xattr -d com.apple.quarantine markitai-desktop-<version>-arm64.dmg
-xattr -dr com.apple.quarantine /Applications/Markitai.app
+xattr -d com.apple.quarantine markitai-web-<version>-arm64.dmg
+xattr -dr com.apple.quarantine "/Applications/Markitai Web.app"
 ```
 
 As with [the CLI](quickstart.md#unsigned-builds-on-macos), this exempts only
@@ -124,18 +124,18 @@ python3 scripts/desktop_build.py build --platform linux/amd64
 sh desktop/build/linux-amd64/install.sh
 ```
 
-`build` writes to `desktop/build/linux-amd64/` the app (`markitai-desktop`,
+`build` writes to `desktop/build/linux-amd64/` the app (`markitai-web`,
 with `bin/markitai` and `licenses/` beside it), the archive
-`markitai-desktop-<version>-linux-amd64.tar.gz`, the Debian package
-`markitai-desktop_<version>_amd64.deb` (it installs in
-`/opt/markitai-desktop`), a `PKGBUILD` and `install.sh`. `install.sh` puts the
-archive beside it in `~/.local/markitai-desktop.app` with an entry in the
+`markitai-web-<version>-linux-amd64.tar.gz`, the Debian package
+`markitai-web_<version>_amd64.deb` (it installs in
+`/opt/markitai-web`), a `PKGBUILD` and `install.sh`. `install.sh` puts the
+archive beside it in `~/.local/markitai-web.app` with an entry in the
 applications menu; run it again to update, or with `--uninstall` to remove the
 app and leave its settings and data.
 
-On Linux the server's log is `~/.config/Markitai/logs/serve.log` (under
+On Linux the server's log is `~/.config/Markitai Web/logs/serve.log` (under
 `XDG_CONFIG_HOME`), beside the app's settings; the window's web data is in
-`~/.local/share/markitai-desktop` and `~/.cache/markitai-desktop`. There is no
+`~/.local/share/markitai-web` and `~/.cache/markitai-web`. There is no
 application menu: closing the window is how the app quits.
 
 ## Windows
@@ -150,15 +150,15 @@ x86_64-pc-windows-msvc` builds), then run the installer:
 ```sh
 python scripts/desktop_build.py stage --archive markitai-v<version>-x86_64-pc-windows-msvc.zip --sums SHA256SUMS
 python scripts/desktop_build.py build --platform windows/amd64
-desktop\build\windows-amd64\markitai-desktop-setup-<version>-amd64.exe
+desktop\build\windows-amd64\markitai-web-setup-<version>-amd64.exe
 ```
 
-`build` writes to `desktop\build\windows-amd64\` the app (`Markitai.exe`,
+`build` writes to `desktop\build\windows-amd64\` the app (`Markitai Web.exe`,
 with `bin\markitai.exe` and `licenses\` beside it) and the installer
-`markitai-desktop-setup-<version>-amd64.exe`. The first build downloads NSIS,
+`markitai-web-setup-<version>-amd64.exe`. The first build downloads NSIS,
 which makes the installer, into `%LOCALAPPDATA%\mygo`, unless NSIS is
 installed. The installer needs no administrator rights: it installs the app
-for your user in `%LOCALAPPDATA%\Programs\Markitai`, with a Start menu
+for your user in `%LOCALAPPDATA%\Programs\Markitai Web`, with a Start menu
 shortcut and an entry in Settings > Apps that uninstalls it and leaves its
 settings and data. To update, run a newer installer; it asks to close a
 running app, closes its window as you would, and stops what still runs 10
@@ -175,9 +175,9 @@ sure where it came from, choose More info, then Run anyway.
 The app starts its server with the environment Windows gives the programs it
 starts: your user and system variables, as a new terminal has them.
 `MARKITAI_HOME` is `%USERPROFILE%\.markitai` unless one of them sets
-another. The server's log is `%APPDATA%\Markitai\logs\serve.log`, beside the
-app's settings in `%APPDATA%\Markitai`; the window's web data is in
-`%LOCALAPPDATA%\Markitai\WebView2`.
+another. The server's log is `%APPDATA%\Markitai Web\logs\serve.log`, beside the
+app's settings in `%APPDATA%\Markitai Web`; the window's web data is in
+`%LOCALAPPDATA%\Markitai Web\WebView2`.
 
 ## Limits
 

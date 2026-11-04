@@ -128,9 +128,9 @@ func TestQuitQuestionSaysUnfinished(t *testing.T) {
 	}{
 		{en, busy{N: 1, Known: true}, "1 conversion is unfinished."},
 		{en, busy{N: 3, Known: true}, "3 conversions are unfinished."},
-		{en, busy{}, "Conversions may be unfinished; Markitai could not count them."},
+		{en, busy{}, "Conversions may be unfinished; Markitai Web could not count them."},
 		{zh, busy{N: 3, Known: true}, "还有 3 个转换未完成。"},
-		{zh, busy{}, "可能还有未完成的转换，Markitai 无法统计数量。"},
+		{zh, busy{}, "可能还有未完成的转换，Markitai Web 无法统计数量。"},
 	}
 	for _, tc := range cases {
 		if got := tc.texts.Unfinished(tc.busy); got != tc.want {

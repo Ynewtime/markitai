@@ -1,4 +1,4 @@
-// Command Markitai is the desktop app: the markitai workbench in a native
+// Command Markitai Web is the desktop app: the markitai workbench in a native
 // window, served by the markitai program bundled with it.
 package main
 

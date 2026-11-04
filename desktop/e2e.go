@@ -17,11 +17,11 @@ import (
 
 // An e2e build, driven by scripts/desktop_e2e.py over MYGO_AUTOMATION. With
 // MARKITAI_DESKTOP_E2E=DIR it keeps what it writes under DIR: its own name (a
-// single-instance lock apart from an installed Markitai), user data, cache,
+// single-instance lock apart from an installed Markitai Web), user data, cache,
 // logs and downloads. The web view's data (localStorage, cookies) lives
 // outside DIR, under the app's identifier, so each launch clears it before
 // the first page loads; on macOS it refuses to start unless its identifier
-// is its own (ending in .e2e), never clearing an installed Markitai's. Save
+// is its own (ending in .e2e), never clearing an installed Markitai Web's. Save
 // panels answer DIR/saved/<name>, or cancel when
 // MARKITAI_DESKTOP_E2E_SAVE=cancel; the busy-quit question answers
 // MARKITAI_DESKTOP_E2E_QUIT (when-done, the default; now; cancel) and

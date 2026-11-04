@@ -152,7 +152,7 @@ type window struct {
 func openWindow(sc *Sidecar, t Texts, logPath, downloads string) *window {
 	w := &window{sc: sc, texts: t, logPath: logPath, downloads: downloads, phases: make(chan Phase, 1)}
 	w.w = mygo.NewWindow(mygo.WindowOptions{
-		Title:           "Markitai",
+		Title:           "Markitai Web",
 		Width:           1280,
 		Height:          860,
 		MinWidth:        480,
@@ -328,7 +328,7 @@ func fileName(title string) string {
 	}
 	name = strings.Trim(name, " .")
 	if name == "" {
-		return "Markitai"
+		return "Markitai Web"
 	}
 	return name
 }

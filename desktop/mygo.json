@@ -1,6 +1,6 @@
 {
-  "name": "Markitai",
-  "slug": "markitai-desktop",
+  "name": "Markitai Web",
+  "slug": "markitai-web",
   "identifier": "dev.markitai.desktop",
   "version": "2.3.2",
   "copyright": "Copyright (c) 2026 Ynewtime",

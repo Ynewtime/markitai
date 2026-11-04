@@ -104,8 +104,8 @@ jobs:
         if: ${{ !cancelled() && steps.e2e.outcome == 'success' && steps.app.outcome == 'success' }}
         run: |
           mkdir -p .local/desktop-install
-          sha256sum dist/markitai-v*.zip desktop/build/windows-amd64/Markitai.exe desktop/build/windows-amd64/bin/markitai.exe \
-            desktop/build/windows-amd64/markitai-desktop-setup-*.exe desktop/build/e2e/windows-amd64/Markitai.exe \
+          sha256sum dist/markitai-v*.zip "desktop/build/windows-amd64/Markitai Web.exe" desktop/build/windows-amd64/bin/markitai.exe \
+            desktop/build/windows-amd64/markitai-web-setup-*.exe "desktop/build/e2e/windows-amd64/Markitai Web.exe" \
             | tee .local/desktop-install/sha256.txt
           git rev-parse HEAD | tee .local/desktop-install/commit.txt
           python -c "import winreg; print('WebView2 Runtime', winreg.QueryValueEx(winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r'SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'), 'pv')[0])" | tee .local/desktop-install/webview2.txt
@@ -144,12 +144,12 @@ jobs:
           Log ("firewall: " + ((Get-NetFirewallProfile | ForEach-Object { "$($_.Name)=$($_.Enabled)/notify=$($_.NotifyOnListen)" }) -join ' '))
           $since = Get-Date
 
-          $setup = Get-Item desktop\build\windows-amd64\markitai-desktop-setup-*.exe
+          $setup = Get-Item desktop\build\windows-amd64\markitai-web-setup-*.exe
           $installer = Start-Process $setup.FullName -ArgumentList '/S' -Wait -PassThru
           Check ($installer.ExitCode -eq 0) "the installer exits 0 ($($installer.ExitCode))"
-          $dir = Join-Path $env:LOCALAPPDATA 'Programs\Markitai'
-          $exe = Join-Path $dir 'Markitai.exe'
-          $shortcut = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Markitai.lnk'
+          $dir = Join-Path $env:LOCALAPPDATA 'Programs\Markitai Web'
+          $exe = Join-Path $dir 'Markitai Web.exe'
+          $shortcut = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Markitai Web.lnk'
           Check ((Test-Path $exe) -and (Test-Path "$dir\bin\markitai.exe") -and (Test-Path "$dir\licenses") -and (Test-Path "$dir\Uninstall.exe")) "the app is installed in $dir"
           Check (Test-Path $shortcut) 'a Start menu shortcut'
           Log ("installed: " + ((Get-ChildItem $dir | ForEach-Object Name) -join ', '))
@@ -167,13 +167,13 @@ jobs:
           $start.UseShellExecute = $false
           foreach ($name in $isolated.Keys) { $start.EnvironmentVariables[$name] = $isolated[$name] }
           $app = [System.Diagnostics.Process]::Start($start)
-          $serveLog = Join-Path $isolated.APPDATA 'Markitai\logs\serve.log'
+          $serveLog = Join-Path $isolated.APPDATA 'Markitai Web\logs\serve.log'
           $listening = $false
           for ($i = 0; $i -lt 120 -and -not $listening; $i++) {
             Start-Sleep -Milliseconds 500
             $listening = (Test-Path $serveLog) -and ((Get-Content -Raw $serveLog) -match 'Markitai server listening on http://127\.0\.0\.1:')
           }
-          Check $listening "the installed app's serve listens (serve.log in APPDATA\Markitai\logs)"
+          Check $listening "the installed app's serve listens (serve.log in APPDATA\Markitai Web\logs)"
           $serve = @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$($app.Id)" | Where-Object Name -eq 'markitai.exe')
           Check ($serve.Count -eq 1 -and $serve[0].ExecutablePath -eq "$dir\bin\markitai.exe" -and $serve[0].CommandLine -match 'serve --supervised') "its child is the bundled markitai.exe serve --supervised"
           Start-Sleep -Seconds 6
@@ -182,8 +182,8 @@ jobs:
           $alerts = @(Get-Process | Where-Object { $_.MainWindowTitle -match 'Security Alert|Firewall' } | ForEach-Object { "$($_.ProcessName): $($_.MainWindowTitle)" })
           Log ("firewall prompts: " + ($alerts -join '; '))
           Shot 'installed-ready'
-          Check (Test-Path (Join-Path $isolated.LOCALAPPDATA 'Markitai\WebView2')) 'web view data in LOCALAPPDATA\Markitai\WebView2'
-          Check (Test-Path (Join-Path $isolated.APPDATA 'Markitai\desktop.json')) 'the port kept in APPDATA\Markitai\desktop.json'
+          Check (Test-Path (Join-Path $isolated.LOCALAPPDATA 'Markitai Web\WebView2')) 'web view data in LOCALAPPDATA\Markitai Web\WebView2'
+          Check (Test-Path (Join-Path $isolated.APPDATA 'Markitai Web\desktop.json')) 'the port kept in APPDATA\Markitai Web\desktop.json'
           Check ($app.CloseMainWindow()) 'closing the window asks the app to quit'
           Check ($app.WaitForExit(30000) -and $app.ExitCode -eq 0) "the app quits with 0 ($($app.ExitCode))"
           if ($serve.Count -eq 1) {
@@ -195,8 +195,8 @@ jobs:
             $data = @{}
             foreach ($field in ([xml]$_.ToXml()).Event.EventData.Data) { $data[$field.Name] = $field.'#text' }
             if ($data.Application -match 'markitai') {
-              # Markitai.exe, the app, or bin\markitai.exe, its server
-            [pscustomobject]@{ Id = $_.Id; Application = $data.Application -replace '^.*\\programs\\markitai\\', ''; Address = $data.SourceAddress; Port = $data.SourcePort }
+              # Markitai Web.exe, the app, or bin\markitai.exe, its server
+            [pscustomobject]@{ Id = $_.Id; Application = $data.Application -replace '^.*\\programs\\markitai web\\', ''; Address = $data.SourceAddress; Port = $data.SourcePort }
             }
           })
           foreach ($listen in $listens) { Log "listen event $($listen.Id): $($listen.Application) $($listen.Address):$($listen.Port)" }
@@ -207,7 +207,7 @@ jobs:
           for ($i = 0; $i -lt 60 -and (Test-Path $dir); $i++) { Start-Sleep -Milliseconds 500 }
           Check (-not (Test-Path $dir)) 'the uninstaller removes the app'
           Check (-not (Test-Path $shortcut)) 'and its Start menu shortcut'
-          Check (Test-Path (Join-Path $isolated.APPDATA 'Markitai')) "and leaves the app's data"
+          Check (Test-Path (Join-Path $isolated.APPDATA 'Markitai Web')) "and leaves the app's data"
           if ($failures) { throw "$failures check(s) failed" }
       - name: Keep the evidence
         if: always()
@@ -226,7 +226,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: markitai-desktop-windows-amd64
-          path: desktop/build/windows-amd64/markitai-desktop-setup-*.exe
+          name: markitai-web-windows-amd64
+          path: desktop/build/windows-amd64/markitai-web-setup-*.exe
           if-no-files-found: warn
           retention-days: 7

@@ -189,27 +189,27 @@ class RegistryTests(unittest.TestCase):
             self.assertTrue(target.startswith({"arm64": "aarch64-", "amd64": "x86_64-"}[goarch]))
 
     def test_no_artifact_takes_the_cli_archive_prefix(self):
-        check_artifacts(["Markitai.app", "markitai-desktop-2.3.2-arm64.dmg", "SHA256SUMS"])
+        check_artifacts(["Markitai Web.app", "markitai-web-2.3.2-arm64.dmg", "SHA256SUMS"])
         with self.assertRaisesRegex(SystemExit, "markitai-v2.3.2-arm64.dmg"):
-            check_artifacts(["Markitai.app", "markitai-v2.3.2-arm64.dmg"])
+            check_artifacts(["Markitai Web.app", "markitai-v2.3.2-arm64.dmg"])
 
     def test_the_disk_image_is_named_by_the_slug(self):
         mygo = json.loads((ROOT / "desktop/mygo.json").read_text(encoding="utf-8"))
         self.assertEqual((mygo["name"], mygo["slug"], mygo["identifier"]),
-                         ("Markitai", "markitai-desktop", "dev.markitai.desktop"))
+                         ("Markitai Web", "markitai-web", "dev.markitai.desktop"))
         self.assertFalse(mygo["slug"].startswith(desktop_build.CLI_ASSET_PREFIX))
 
     def test_linux_packages_are_named_by_the_slug(self):
         app, program, packages = layout("linux/amd64", "2.3.2")
-        self.assertEqual((app, program), ("markitai-desktop", "bin/markitai"))
-        self.assertEqual(packages, {"markitai-desktop_2.3.2_amd64.deb", "markitai-desktop-2.3.2-linux-amd64.tar.gz"})
+        self.assertEqual((app, program), ("markitai-web", "bin/markitai"))
+        self.assertEqual(packages, {"markitai-web_2.3.2_amd64.deb", "markitai-web-2.3.2-linux-amd64.tar.gz"})
         check_artifacts([app, *packages])
-        self.assertIn("markitai-desktop_2.4.0~rc.1_amd64.deb", layout("linux/amd64", "2.4.0-rc.1")[2])
+        self.assertIn("markitai-web_2.4.0~rc.1_amd64.deb", layout("linux/amd64", "2.4.0-rc.1")[2])
 
     def test_the_windows_installer_is_named_by_the_slug(self):
         app, program, packages = layout("windows/amd64", "2.3.2")
-        self.assertEqual((app, program), ("Markitai.exe", "bin/markitai.exe"))
-        self.assertEqual(packages, {"markitai-desktop-setup-2.3.2-amd64.exe"})
+        self.assertEqual((app, program), ("Markitai Web.exe", "bin/markitai.exe"))
+        self.assertEqual(packages, {"markitai-web-setup-2.3.2-amd64.exe"})
         check_artifacts([app, *packages])
 
     def test_the_e2e_build_keeps_the_inspector_and_its_own_directory(self):

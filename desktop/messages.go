@@ -42,20 +42,20 @@ type Texts struct {
 
 var en = Texts{
 	Lang:          "en",
-	Starting:      "Starting Markitai…",
-	ExitedTitle:   "Markitai's server stopped",
+	Starting:      "Starting Markitai Web…",
+	ExitedTitle:   "Markitai Web's server stopped",
 	ExitedBody:    func(code int) string { return fmt.Sprintf("It exited with code %d.", code) },
-	ExitedHint:    "If Markitai quit unexpectedly a moment ago, it may still be finishing conversions; try again shortly.",
-	NotReadyTitle: "Markitai's server did not start",
+	ExitedHint:    "If Markitai Web quit unexpectedly a moment ago, it may still be finishing conversions; try again shortly.",
+	NotReadyTitle: "Markitai Web's server did not start",
 	NotReadyBody: func(seconds int) string {
 		return fmt.Sprintf("It did not answer within %d seconds and was stopped.", seconds)
 	},
-	NoProgramTitle: "This copy of Markitai is incomplete",
+	NoProgramTitle: "This copy of Markitai Web is incomplete",
 	NoProgramBody:  func(path string) string { return "It has no server program at " + path + "." },
-	SpawnTitle:     "Markitai could not start its server",
+	SpawnTitle:     "Markitai Web could not start its server",
 	SpawnBody:      func(err string) string { return err },
 	StoppingTitle:  "Finishing conversions…",
-	StoppingBody:   "Markitai quits when the running conversions are done.",
+	StoppingBody:   "Markitai Web quits when the running conversions are done.",
 	StoppingNow:    "Stopping…",
 	Retry:          "Try Again",
 	ShowLog:        "Show Log",
@@ -64,7 +64,7 @@ var en = Texts{
 	Unfinished: func(b busy) string {
 		switch {
 		case !b.Known:
-			return "Conversions may be unfinished; Markitai could not count them."
+			return "Conversions may be unfinished; Markitai Web could not count them."
 		case b.N == 1:
 			return "1 conversion is unfinished."
 		}
@@ -79,7 +79,7 @@ var en = Texts{
 	DownloadFailed: "The download failed.",
 
 	LoginEnvFailed: func(reason string) string {
-		return "Markitai could not read your login shell's environment (" + reason + "). The server runs " +
+		return "Markitai Web could not read your login shell's environment (" + reason + "). The server runs " +
 			"without it: programs on your PATH, exported keys and a MARKITAI_HOME set by your shell's startup " +
 			"files are missing."
 	},
@@ -87,20 +87,20 @@ var en = Texts{
 
 var zh = Texts{
 	Lang:          "zh",
-	Starting:      "正在启动 Markitai…",
-	ExitedTitle:   "Markitai 的服务已停止",
+	Starting:      "正在启动 Markitai Web…",
+	ExitedTitle:   "Markitai Web 的服务已停止",
 	ExitedBody:    func(code int) string { return fmt.Sprintf("服务以代码 %d 退出。", code) },
-	ExitedHint:    "如果 Markitai 刚刚意外退出，它可能还在完成转换，请稍后再试。",
-	NotReadyTitle: "Markitai 的服务未能启动",
+	ExitedHint:    "如果 Markitai Web 刚刚意外退出，它可能还在完成转换，请稍后再试。",
+	NotReadyTitle: "Markitai Web 的服务未能启动",
 	NotReadyBody: func(seconds int) string {
 		return fmt.Sprintf("服务在 %d 秒内没有响应，已被停止。", seconds)
 	},
-	NoProgramTitle: "这份 Markitai 不完整",
+	NoProgramTitle: "这份 Markitai Web 不完整",
 	NoProgramBody:  func(path string) string { return "缺少服务程序：" + path },
-	SpawnTitle:     "Markitai 无法启动服务",
+	SpawnTitle:     "Markitai Web 无法启动服务",
 	SpawnBody:      func(err string) string { return err },
 	StoppingTitle:  "正在完成转换…",
-	StoppingBody:   "正在运行的转换完成后，Markitai 就会退出。",
+	StoppingBody:   "正在运行的转换完成后，Markitai Web 就会退出。",
 	StoppingNow:    "正在停止…",
 	Retry:          "重试",
 	ShowLog:        "显示日志",
@@ -108,7 +108,7 @@ var zh = Texts{
 
 	Unfinished: func(b busy) string {
 		if !b.Known {
-			return "可能还有未完成的转换，Markitai 无法统计数量。"
+			return "可能还有未完成的转换，Markitai Web 无法统计数量。"
 		}
 		return fmt.Sprintf("还有 %d 个转换未完成。", b.N)
 	},
@@ -121,7 +121,7 @@ var zh = Texts{
 	DownloadFailed: "下载失败。",
 
 	LoginEnvFailed: func(reason string) string {
-		return "Markitai 无法读取登录 shell 的环境（" + reason + "）。服务在没有它的情况下运行：" +
+		return "Markitai Web 无法读取登录 shell 的环境（" + reason + "）。服务在没有它的情况下运行：" +
 			"PATH 中的程序、导出的密钥，以及 shell 启动文件设置的 MARKITAI_HOME 都不可用。"
 	},
 }
