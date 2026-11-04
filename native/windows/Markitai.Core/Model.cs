@@ -73,7 +73,8 @@ public sealed record Converting(DateTimeOffset StartedAt) : ItemState;
 
 public sealed record Done(string Folder, ConversionResult Result) : ItemState;
 
-public sealed record Failed(string Code, string Message) : ItemState;
+/// <param name="Folder">The output folder of the run, which output_unavailable names.</param>
+public sealed record Failed(string Code, string Message, string? Folder = null) : ItemState;
 
 /// <summary>One source in the Convert list. Owned by the UI thread.</summary>
 public sealed class ConversionItem : INotifyPropertyChanged

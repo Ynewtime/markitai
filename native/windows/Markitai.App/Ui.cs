@@ -65,19 +65,56 @@ public static class Ui
         Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(root) is TextBox or AutoSuggestBox or PasswordBox or RichEditBox;
 
     /// <summary>A confirmation whose default button is Cancel (native/DESIGN.md 6.7). True when the user confirms.</summary>
-    public static async Task<bool> ConfirmAsync(XamlRoot root, string title, string body, string confirm)
-    {
-        var dialog = new ContentDialog
-        {
-            Title = title,
-            Content = body,
-            PrimaryButtonText = confirm,
-            CloseButtonText = App.Strings["common.cancel"],
-            DefaultButton = ContentDialogButton.Close,
-            XamlRoot = root,
-        };
-        return await dialog.ShowAsync() == ContentDialogResult.Primary;
-    }
+    public static async Task<bool> ConfirmAsync(XamlRoot root, string title, string body, string confirm) =>
+        await Dialogs.ShowAsync(Dialogs.Confirmation(root, title, body, confirm)) == ContentDialogResult.Primary;
 
     public static void SetName(DependencyObject element, string name) => AutomationProperties.SetName(element, name);
+}
+
+/// <summary>
+/// The window's one ContentDialog: WinUI throws when a second opens, so a dialog asked
+/// for while another shows is not shown, and the quit dialog first closes the other.
+/// </summary>
+public static class Dialogs
+{
+    static ContentDialog? open;
+    static Task? closed;
+
+    public static ContentDialog Confirmation(XamlRoot root, string title, string body, string confirm) => new()
+    {
+        Title = title,
+        Content = body,
+        PrimaryButtonText = confirm,
+        CloseButtonText = App.Strings["common.cancel"],
+        DefaultButton = ContentDialogButton.Close,
+        XamlRoot = root,
+    };
+
+    /// <summary>The user's answer; null when another dialog is open.</summary>
+    public static async Task<ContentDialogResult?> ShowAsync(ContentDialog dialog)
+    {
+        if (open is not null)
+            return null;
+        var done = new TaskCompletionSource();
+        (open, closed) = (dialog, done.Task);
+        try
+        {
+            return await dialog.ShowAsync();
+        }
+        finally
+        {
+            (open, closed) = (null, null);
+            done.SetResult();
+        }
+    }
+
+    /// <summary>Closes the open dialog as Cancel and waits until it is gone.</summary>
+    public static async Task CloseAsync()
+    {
+        if (open is null || closed is null)
+            return;
+        var gone = closed;
+        open.Hide();
+        await gone;
+    }
 }

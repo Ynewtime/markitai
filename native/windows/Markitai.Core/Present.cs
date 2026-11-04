@@ -36,15 +36,25 @@ public sealed class Present(Strings strings, Func<DateTimeOffset, string> medium
 
     public static ErrorAction ActionFor(string code) => Errors.TryGetValue(code, out var row) ? row.Action : ErrorAction.None;
 
-    /// <summary>The mapped sentence; <paramref name="outputFolder"/> fills {folder}.</summary>
+    /// <summary>The mapped sentence; {folder} is the run's output folder, else <paramref name="outputFolder"/>.</summary>
     public string ErrorSentence(Failed failed, string outputFolder) =>
         strings.Format(Errors.TryGetValue(failed.Code, out var row) ? row.Key : "error.unknown",
-            ("folder", outputFolder), ("settings", strings["nav.settings"]), ("reason", failed.Message));
+            ("folder", failed.Folder ?? outputFolder), ("settings", strings["nav.settings"]), ("reason", failed.Message));
 
+    /// <summary>The quit dialog's body (native/DESIGN.md 7.3). Chinese sentences join without a space.</summary>
+    public string QuitBody(int converting, int queued)
+    {
+        var body = strings.Plural("quit.body", converting);
+        if (queued == 0)
+            return body;
+        return body + (strings.Language == "zh-Hans" ? "" : " ") + strings["quit.body.queued"];
+    }
+
+    /// <summary>One decimal below 60 s, at least 0.1 s (native/DESIGN.md 4.2); minutes and seconds above.</summary>
     public string Duration(double seconds)
     {
         if (seconds < 60)
-            return strings.Format("unit.seconds", ("value", seconds.ToString("0.0", strings.Culture)));
+            return strings.Format("unit.seconds", ("value", Math.Max(seconds, 0.1).ToString("0.0", strings.Culture)));
         var whole = (long)Math.Round(seconds);
         return strings.Format("unit.minutes", ("minutes", (whole / 60).ToString(strings.Culture)), ("seconds", (whole % 60).ToString(strings.Culture)));
     }

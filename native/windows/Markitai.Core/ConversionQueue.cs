@@ -13,11 +13,19 @@ public sealed class ConversionQueue(IConverter converter, Func<string> outputFol
 
     long nextOrder;
 
-    // The folders claimed for items still Converting. Workers add to it, the owner's
-    // thread reads it when quitting, so it is the one piece of state under a lock.
-    readonly Lock gate = new();
+    // What the workers and Quit share, under one lock: the folders claimed for runs
+    // still going, the claims in flight (a folder being made), and the results of runs
+    // that ended but have not reached the owner's thread yet. Quit waits for claims in
+    // flight (2 s at most), so every folder made before Quit is in `claimed` when Quit
+    // deletes them, and a claim that ends after Quit deletes its own folder. A run that
+    // ended before Quit keeps its folder and its result.
+    readonly object gate = new();
     readonly Dictionary<ConversionItem, string> claimed = [];
+    readonly Dictionary<ConversionItem, ItemState> ended = [];
+    int inFlight;
     bool quitting;
+
+    static readonly TimeSpan ClaimWait = TimeSpan.FromSeconds(2);
 
     public ObservableCollection<ConversionItem> Items { get; } = [];
 
@@ -76,7 +84,7 @@ public sealed class ConversionQueue(IConverter converter, Func<string> outputFol
 
     void Pump()
     {
-        while (ConvertingCount < Slots && Items.Where(i => i.State is Queued).MinBy(i => i.Order) is { } next)
+        while (!quitting && ConvertingCount < Slots && Items.Where(i => i.State is Queued).MinBy(i => i.Order) is { } next)
             Start(next);
     }
 
@@ -87,48 +95,90 @@ public sealed class ConversionQueue(IConverter converter, Func<string> outputFol
         var (source, parent, options) = (item.Source, outputFolder(), item.Options);
         Task.Run(() =>
         {
-            var state = Conversion.Run(converter, source, parent, options, folder => Claimed(item, folder));
-            post(() => Finish(item, state));
+            if (!BeginClaim())
+                return;
+            var claim = Conversion.Claim(converter, source, parent);
+            if (!EndClaim(item, claim.Folder))
+                return;
+            var state = claim.Folder is { } folder ? Conversion.Convert(converter, source, folder, options) : claim.Failure!;
+            if (state is Failed failed)
+                state = failed with { Folder = parent };
+            lock (gate)
+            {
+                if (quitting)
+                    return;
+                claimed.Remove(item);
+                ended[item] = state;
+            }
+            post(() => Finish(item));
         });
     }
 
-    void Claimed(ConversionItem item, string folder)
-    {
-        lock (gate)
-        {
-            if (!quitting)
-            {
-                claimed[item] = folder;
-                return;
-            }
-        }
-        Conversion.Delete(folder);
-    }
-
-    /// <summary>
-    /// The user confirmed Quit (native/DESIGN.md 7.3): deletes the folders claimed for
-    /// items still Converting, whose conversions end with the process. Conversions that
-    /// come back after this change nothing, so nothing they wrote reaches History.
-    /// </summary>
-    public void DiscardConverting()
-    {
-        List<string> folders;
-        lock (gate)
-        {
-            quitting = true;
-            folders = [.. Items.Where(i => i.State is Converting).Select(i => claimed.GetValueOrDefault(i)).OfType<string>()];
-        }
-        foreach (var folder in folders)
-            Conversion.Delete(folder);
-    }
-
-    void Finish(ConversionItem item, ItemState state)
+    bool BeginClaim()
     {
         lock (gate)
         {
             if (quitting)
+                return false;
+            inFlight++;
+            return true;
+        }
+    }
+
+    /// <summary>Keeps the folder for the run; false once quitting, after deleting it.</summary>
+    bool EndClaim(ConversionItem item, string? folder)
+    {
+        bool kept;
+        lock (gate)
+        {
+            kept = !quitting;
+            if (kept && folder is not null)
+                claimed[item] = folder;
+        }
+        // A claim that ends after Quit deletes its own folder before Quit stops waiting for it.
+        if (!kept && folder is not null)
+            Conversion.Delete(folder);
+        lock (gate)
+        {
+            inFlight--;
+            Monitor.PulseAll(gate);
+        }
+        return kept;
+    }
+
+    /// <summary>
+    /// The user confirmed Quit (native/DESIGN.md 7.3), or the session is ending: waits for
+    /// folder claims in flight, deletes the folders of runs still going, whose conversions
+    /// end with the process, and applies the results of runs that ended before it, so
+    /// they reach the list and History. After this nothing starts and later results change nothing.
+    /// </summary>
+    public void DiscardConverting()
+    {
+        List<string> folders;
+        List<ConversionItem> finished;
+        lock (gate)
+        {
+            quitting = true;
+            var deadline = DateTime.UtcNow + ClaimWait;
+            while (inFlight > 0 && deadline - DateTime.UtcNow is { Ticks: > 0 } left)
+                Monitor.Wait(gate, left);
+            folders = [.. claimed.Values];
+            claimed.Clear();
+            finished = [.. ended.Keys];
+        }
+        foreach (var folder in folders)
+            Conversion.Delete(folder);
+        foreach (var item in finished)
+            Finish(item);
+    }
+
+    void Finish(ConversionItem item)
+    {
+        ItemState? state;
+        lock (gate)
+        {
+            if (!ended.Remove(item, out state))
                 return;
-            claimed.Remove(item);
         }
         item.State = state;
         StateChanged?.Invoke();
@@ -140,22 +190,28 @@ public sealed class ConversionQueue(IConverter converter, Func<string> outputFol
 /// <summary>One conversion, start to end, off the UI thread (native/DESIGN.md 4.1, "Running an item").</summary>
 public static class Conversion
 {
-    /// <param name="claimed">Told the folder as soon as it is claimed, before the conversion starts.</param>
-    public static ItemState Run(IConverter converter, Source source, string parent, ConversionOptions options, Action<string>? claimed = null)
+    /// <summary>A claimed folder, or why there is none.</summary>
+    public sealed record Claimed(string? Folder, Failed? Failure);
+
+    /// <summary>Claims the item's folder in <paramref name="parent"/> (native/DESIGN.md 4.3).</summary>
+    public static Claimed Claim(IConverter converter, Source source, string parent)
     {
-        string folder;
         try
         {
             var claim = CoreJson.Parse(converter.ClaimOutputFolder(CoreJson.ClaimRequest(parent, source)));
             if (!claim.Ok)
-                return new Failed("output_unavailable", claim.Message);
-            folder = CoreJson.Text(claim.Result, "path") ?? throw new InvalidOperationException("The folder claim answered without a path.");
+                return new(null, new Failed("output_unavailable", claim.Message));
+            return new(CoreJson.Text(claim.Result, "path") ?? throw new InvalidOperationException("The folder claim answered without a path."), null);
         }
         catch (Exception e)
         {
-            return new Failed("internal_error", e.Message);
+            return new(null, new Failed("internal_error", e.Message));
         }
-        claimed?.Invoke(folder);
+    }
+
+    /// <summary>Converts into a claimed folder; a failure deletes the folder.</summary>
+    public static ItemState Convert(IConverter converter, Source source, string folder, ConversionOptions options)
+    {
         ItemState state;
         try
         {

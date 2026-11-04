@@ -94,6 +94,25 @@ public sealed class ResultTests
         Assert.Equal("Failed · " + sentence, EnText.Subtitle(new Failed(code, "empty"), @"C:\Out"));
     }
 
+    /// <summary>output_unavailable names the folder its run claimed in, not the one Settings shows now.</summary>
+    [Fact]
+    public void Output_unavailable_names_the_folder_of_its_run()
+    {
+        var failed = new Failed("output_unavailable", "Access is denied.", @"C:\Then");
+        Assert.Equal(@"Markitai couldn't create a folder in C:\Then. Choose another output folder in Settings.", EnText.ErrorSentence(failed, @"C:\Now"));
+        Assert.Contains(@"C:\Then", EnText.Subtitle(failed, @"C:\Now"));
+    }
+
+    /// <summary>DESIGN.md 7.3: the quit dialog's sentences; Chinese sentences join without a space.</summary>
+    [Fact]
+    public void The_quit_dialog_body_follows_the_counts()
+    {
+        var zh = new Present(Zh, t => "", t => "");
+        Assert.Equal(En.Plural("quit.body", 2) + " " + En["quit.body.queued"], EnText.QuitBody(2, 1));
+        Assert.Equal(En.Plural("quit.body", 1), EnText.QuitBody(1, 0));
+        Assert.Equal(Zh.Plural("quit.body", 2) + Zh["quit.body.queued"], zh.QuitBody(2, 3));
+    }
+
     [Fact]
     public void A_web_page_takes_its_title_once_done()
     {
@@ -126,6 +145,9 @@ public sealed class ResultTests
     {
         var zh = new Present(Zh, t => t.ToString("yyyy年M月d日 HH:mm", CultureInfo.InvariantCulture), t => t.ToLocalTime().ToString("HH:mm", CultureInfo.InvariantCulture));
         Assert.Equal("18.6 秒", zh.Duration(18.6));
+        Assert.Equal("0.1 秒", zh.Duration(0.0));
+        Assert.Equal("0.1 s", EnText.Duration(0.04));
+        Assert.Equal("Done in 0.1 s", EnText.Subtitle(new Done("/o", new ConversionResult("x", "/o/x.md", 0.0, [], null, null)), "/o"));
         Assert.Equal("2 分 5 秒", zh.Duration(125.4));
         Assert.Equal("1 条警告", zh.Warnings(1));
         Assert.Equal("3 条警告", zh.Warnings(3));

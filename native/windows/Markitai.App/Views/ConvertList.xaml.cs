@@ -1,5 +1,6 @@
 using Markitai.Core;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
@@ -129,12 +130,16 @@ static class Menus
                 break;
         }
         var remove = Entry("convert.remove", Ui.Delete, () => window.Remove(item));
+        menu.Items.Add(remove);
         if (item.State is Converting)
         {
+            // WinUI shows no tooltip on a disabled item, so the reason is also a line of its own.
+            var busy = App.Strings["convert.remove.busy"];
             remove.IsEnabled = false;
-            ToolTipService.SetToolTip(remove, App.Strings["convert.remove.busy"]);
+            ToolTipService.SetToolTip(remove, busy);
+            AutomationProperties.SetHelpText(remove, busy);
+            menu.Items.Add(new MenuFlyoutItem { Text = busy, IsEnabled = false });
         }
-        menu.Items.Add(remove);
         return menu;
     }
 

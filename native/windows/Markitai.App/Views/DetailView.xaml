@@ -17,7 +17,7 @@
         </Grid.RowDefinitions>
 
         <!-- Detail bar: view switch and actions (Done items and History entries only). -->
-        <Grid x:Name="Bar" Padding="24,8,12,0" ColumnSpacing="12" MinHeight="48">
+        <Grid x:Name="Bar" Padding="24,8,12,0" ColumnSpacing="12" MinHeight="48" SizeChanged="Bar_SizeChanged">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
@@ -28,18 +28,22 @@
                 SelectedIndex="0"
                 AutomationProperties.Name="{m:S Key=detail.view}"
                 SelectionChanged="ViewSwitch_SelectionChanged">
-                <toolkit:SegmentedItem Content="{m:S Key=detail.preview}" />
-                <toolkit:SegmentedItem Content="{m:S Key=detail.markdown}" />
+                <views:ViewSegment Content="{m:S Key=detail.preview}" />
+                <views:ViewSegment Content="{m:S Key=detail.markdown}" />
                 <views:ViewSwitch.KeyboardAccelerators>
                     <KeyboardAccelerator Modifiers="Control,Shift" Key="M" Invoked="SwitchView_Invoked" />
                 </views:ViewSwitch.KeyboardAccelerators>
             </views:ViewSwitch>
+            <!-- Never overflows: when the labels do not fit, the buttons show icons only (Bar_SizeChanged). -->
             <CommandBar
+                x:Name="Actions"
                 Grid.Column="1"
                 HorizontalAlignment="Right"
                 DefaultLabelPosition="Right"
                 Background="Transparent"
-                OverflowButtonVisibility="Collapsed">
+                IsDynamicOverflowEnabled="False"
+                OverflowButtonVisibility="Collapsed"
+                AutomationProperties.Name="{m:S Key=a11y.actions}">
                 <AppBarButton x:Name="CopyButton" Label="{m:S Key=detail.copy}" Click="Copy_Click">
                     <AppBarButton.Icon>
                         <FontIcon x:Name="CopyGlyph" Glyph="&#xE8C8;" />
@@ -176,14 +180,14 @@
                         <TextBlock Text="{m:S Key=detail.details}" Style="{StaticResource BodyStrongTextBlockStyle}" />
                         <Border
                             Padding="12"
-                            CornerRadius="{StaticResource ControlCornerRadius}"
+                            CornerRadius="{StaticResource OverlayCornerRadius}"
                             Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                             BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                             BorderThickness="1">
                             <TextBlock
                                 x:Name="ErrorDetails"
                                 FontFamily="{StaticResource MarkdownFont}"
-                                FontSize="12"
+                                FontSize="13"
                                 TextWrapping="Wrap"
                                 IsTextSelectionEnabled="True" />
                         </Border>

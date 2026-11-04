@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Markitai.Core;
 using Microsoft.UI.Composition.SystemBackdrops;
+using Microsoft.UI.Input;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -30,9 +31,14 @@ public sealed record Finished(string Title, string Folder, string MarkdownPath, 
     public async Task<string> ReadAsync() => Markdown ?? await Task.Run(() => File.ReadAllText(MarkdownPath));
 }
 
+/// <summary>A section 11 shortcut of the window. Forwarded ones also work with focus in the preview.</summary>
+public sealed record Shortcut(VirtualKey Key, VirtualKeyModifiers Modifiers, Func<bool> Run, bool Forwarded = true);
+
 public sealed partial class MainWindow : Window
 {
     const double StackBelow = 760;
+    const uint WmQueryEndSession = 0x0011;
+    const uint WmEndSession = 0x0016;
 
     readonly Workbench bench = App.Bench;
     readonly Strings s = App.Strings;
@@ -40,7 +46,13 @@ public sealed partial class MainWindow : Window
     bool stacked;
     bool detailShown;
     bool allowClose;
-    bool dialogOpen;
+    bool askingToQuit;
+    ContentDialog? quitDialog;
+    bool nothingLeftToLose;
+    bool blockingSessionEnd;
+    bool queueHadItems;
+    readonly List<Shortcut> shortcuts = [];
+    static nint previousWindowProc;
 
     public MainWindow()
     {
@@ -59,7 +71,8 @@ public sealed partial class MainWindow : Window
         else
             Root.Background = (Brush)Application.Current.Resources["SolidBackgroundFillColorBaseBrush"];
         RestoreWindow();
-        AddCodeAccelerators();
+        AddShortcuts();
+        HookSessionEnd();
 
         Nav.SelectedItem = ConvertItem;
         bench.Queue.Items.CollectionChanged += (_, _) => ShowRegions();
@@ -75,7 +88,22 @@ public sealed partial class MainWindow : Window
                 Environment.Exit(0);
         };
         ShowRegions();
-        ConvertEmptyView.FocusChoose();
+        Activated += FocusAtLaunch;
+    }
+
+    nint Hwnd => WinRT.Interop.WindowNative.GetWindowHandle(this);
+
+    /// <summary>DESIGN.md 6.2: Choose Files… has focus once the window is up (focus set before activation does not stick).</summary>
+    void FocusAtLaunch(object sender, WindowActivatedEventArgs args)
+    {
+        if (args.WindowActivationState == WindowActivationState.Deactivated)
+            return;
+        Activated -= FocusAtLaunch;
+        DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
+        {
+            if (page == Page.Convert && bench.Queue.Items.Count == 0)
+                ConvertEmptyView.FocusChoose();
+        });
     }
 
     public static new MainWindow Current { get; private set; } = null!;
@@ -130,17 +158,21 @@ public sealed partial class MainWindow : Window
             ConvertPane.Select(added[0]);
     }
 
+    /// <summary>A second launch's files, full paths (Program.Relaunch makes relative ones full first).</summary>
     public void OnRedirected(IReadOnlyList<string> files)
     {
         bench.AddFiles(files, Environment.CurrentDirectory);
         Activate();
-        SetForegroundWindow(WinRT.Interop.WindowNative.GetWindowHandle(this));
+        SetForegroundWindow(Hwnd);
     }
 
     /// <summary>Which of list, detail, empty states and Settings show, and whether list and detail stack.</summary>
     void ShowRegions()
     {
         var convertEmpty = page == Page.Convert && bench.Queue.Items.Count == 0;
+        if (convertEmpty && queueHadItems)
+            DispatcherQueue.TryEnqueue(() => ConvertEmptyView.FocusChoose());
+        queueHadItems = bench.Queue.Items.Count > 0;
         var historyEmpty = page == Page.History && bench.History.Entries.Count == 0;
         var panes = page != Page.Settings && !convertEmpty && !historyEmpty;
         stacked = Workspace.ActualWidth > 0 && Workspace.ActualWidth < StackBelow;
@@ -275,23 +307,133 @@ public sealed partial class MainWindow : Window
         if (allowClose || bench.Queue.ConvertingCount == 0)
             return;
         args.Cancel = true;
-        if (dialogOpen)
+        await AskToQuitAsync();
+    }
+
+    string QuitBody => bench.Text.QuitBody(bench.Queue.ConvertingCount, bench.Queue.QueuedCount);
+
+    /// <summary>
+    /// The quit dialog (DESIGN.md 7.3), after closing any other dialog. Its count follows the
+    /// queue; once nothing is Converting it closes and the app quits.
+    /// </summary>
+    async Task AskToQuitAsync()
+    {
+        if (askingToQuit)
             return;
-        var body = s.Plural("quit.body", bench.Queue.ConvertingCount);
-        if (bench.Queue.QueuedCount > 0)
-            body += " " + s["quit.body.queued"];
-        dialogOpen = true;
-        var quit = await Ui.ConfirmAsync(Root.XamlRoot, s["quit.title"], body, s["quit.confirm"]);
-        dialogOpen = false;
-        if (quit)
+        askingToQuit = true;
+        try
         {
-            bench.Queue.DiscardConverting();
-            allowClose = true;
-            Close();
+            await Dialogs.CloseAsync();
+            if (bench.Queue.ConvertingCount == 0)
+            {
+                Quit();
+                return;
+            }
+            nothingLeftToLose = false;
+            quitDialog = Dialogs.Confirmation(Root.XamlRoot, s["quit.title"], QuitBody, s["quit.confirm"]);
+            bench.Queue.StateChanged += FollowQueue;
+            bench.Queue.Items.CollectionChanged += FollowQueue;
+            ContentDialogResult? answer;
+            try
+            {
+                answer = await Dialogs.ShowAsync(quitDialog);
+            }
+            finally
+            {
+                bench.Queue.StateChanged -= FollowQueue;
+                bench.Queue.Items.CollectionChanged -= FollowQueue;
+                quitDialog = null;
+                if (blockingSessionEnd)
+                    BlockSessionEnd(false);
+            }
+            if (answer == ContentDialogResult.Primary || nothingLeftToLose)
+                Quit();
+        }
+        finally
+        {
+            askingToQuit = false;
         }
     }
 
-    double Scale => GetDpiForWindow(WinRT.Interop.WindowNative.GetWindowHandle(this)) / 96.0;
+    void FollowQueue(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e) => FollowQueue();
+
+    void FollowQueue()
+    {
+        if (quitDialog is null)
+            return;
+        if (bench.Queue.ConvertingCount == 0)
+        {
+            nothingLeftToLose = true;
+            quitDialog.Hide();
+            return;
+        }
+        quitDialog.Content = QuitBody;
+        if (blockingSessionEnd)
+            BlockSessionEnd(true);
+    }
+
+    /// <summary>A confirmed Quit: delete what running conversions claimed, then close.</summary>
+    void Quit()
+    {
+        bench.Queue.DiscardConverting();
+        allowClose = true;
+        Close();
+    }
+
+    /// <summary>Logoff, restart and shutdown reach the window as WM_QUERYENDSESSION and WM_ENDSESSION, not AppWindow.Closing.</summary>
+    unsafe void HookSessionEnd() =>
+        previousWindowProc = SetWindowLongPtrW(Hwnd, -4, (nint)(delegate* unmanaged<nint, uint, nint, nint, nint>)&WindowProc);
+
+    [UnmanagedCallersOnly]
+    static nint WindowProc(nint hwnd, uint message, nint wParam, nint lParam)
+    {
+        try
+        {
+            if (message == WmQueryEndSession && Current.QueryEndSession())
+                return 0;
+            if (message == WmEndSession)
+                Current.EndSession(wParam != 0);
+        }
+        catch (Exception e)
+        {
+            App.Log(App.Bench.Paths, e);
+        }
+        return CallWindowProcW(previousWindowProc, hwnd, message, wParam, lParam);
+    }
+
+    /// <summary>True blocks the session end: an item is Converting, so Windows shows the quit sentence and the window shows the quit dialog.</summary>
+    bool QueryEndSession()
+    {
+        SaveWindow();
+        if (bench.Queue.ConvertingCount == 0)
+            return false;
+        BlockSessionEnd(true);
+        DispatcherQueue.TryEnqueue(async () => await AskToQuitAsync());
+        return true;
+    }
+
+    /// <summary>The session ends whatever the dialog says: do what a confirmed Quit does before Windows ends the process.</summary>
+    void EndSession(bool ending)
+    {
+        if (!ending)
+        {
+            BlockSessionEnd(false);
+            return;
+        }
+        bench.Queue.DiscardConverting();
+        Environment.Exit(0);
+    }
+
+    void BlockSessionEnd(bool block)
+    {
+        blockingSessionEnd = block;
+        if (block)
+            ShutdownBlockReasonCreate(Hwnd, QuitBody);
+        else
+            ShutdownBlockReasonDestroy(Hwnd);
+    }
+
+    double Scale => GetDpiForWindow(Hwnd) / 96.0;
 
     void RestoreWindow()
     {
@@ -316,52 +458,94 @@ public sealed partial class MainWindow : Window
             : settings with { WindowMaximized = false, WindowWidth = Math.Round(AppWindow.Size.Width / scale), WindowHeight = Math.Round(AppWindow.Size.Height / scale) });
     }
 
-    void AddCodeAccelerators()
+    /// <summary>Section 11's window shortcuts, as keyboard accelerators of the root and as the keys the preview forwards.</summary>
+    void AddShortcuts()
     {
-        void Add(VirtualKey key, VirtualKeyModifiers modifiers, Action action)
+        const VirtualKeyModifiers Control = VirtualKeyModifiers.Control;
+        bool Zoom(double to)
         {
-            var accelerator = new KeyboardAccelerator { Key = key, Modifiers = modifiers };
-            accelerator.Invoked += (_, e) =>
-            {
-                action();
-                e.Handled = true;
-            };
-            Root.KeyboardAccelerators.Add(accelerator);
+            bench.UpdateSettings(settings => settings with { Zoom = Math.Round(Math.Clamp(to, AppSettings.MinZoom, AppSettings.MaxZoom), 2) });
+            return true;
         }
 
-        void Zoom(double to) => bench.UpdateSettings(settings => settings with { Zoom = Math.Round(Math.Clamp(to, AppSettings.MinZoom, AppSettings.MaxZoom), 2) });
-
-        Add((VirtualKey)188, VirtualKeyModifiers.Control, () => Go(Page.Settings));
-        Add((VirtualKey)187, VirtualKeyModifiers.Control, () => Zoom(bench.Settings.Zoom + 0.1));
-        Add(VirtualKey.Add, VirtualKeyModifiers.Control, () => Zoom(bench.Settings.Zoom + 0.1));
-        Add((VirtualKey)189, VirtualKeyModifiers.Control, () => Zoom(bench.Settings.Zoom - 0.1));
-        Add(VirtualKey.Subtract, VirtualKeyModifiers.Control, () => Zoom(bench.Settings.Zoom - 0.1));
-        Add(VirtualKey.Number0, VirtualKeyModifiers.Control, () => Zoom(1.0));
-        Add(VirtualKey.NumberPad0, VirtualKeyModifiers.Control, () => Zoom(1.0));
+        shortcuts.AddRange([
+            new(VirtualKey.O, Control, ChooseFiles),
+            new(VirtualKey.L, Control, AddUrl),
+            new(VirtualKey.V, Control, Paste),
+            new(VirtualKey.Number1, Control, () => Go(Page.Convert, true)),
+            new(VirtualKey.Number2, Control, () => Go(Page.History, true)),
+            new(VirtualKey.F, Control, Search),
+            new((VirtualKey)188, Control, () => Go(Page.Settings, true)),
+            new((VirtualKey)187, Control, () => Zoom(bench.Settings.Zoom + 0.1)),
+            new(VirtualKey.Add, Control, () => Zoom(bench.Settings.Zoom + 0.1)),
+            new((VirtualKey)189, Control, () => Zoom(bench.Settings.Zoom - 0.1)),
+            new(VirtualKey.Subtract, Control, () => Zoom(bench.Settings.Zoom - 0.1)),
+            new(VirtualKey.Number0, Control, () => Zoom(1.0)),
+            new(VirtualKey.NumberPad0, Control, () => Zoom(1.0)),
+            new(VirtualKey.Escape, VirtualKeyModifiers.None, Back),
+            new(VirtualKey.Left, VirtualKeyModifiers.Menu, Back),
+            new(VirtualKey.Delete, VirtualKeyModifiers.None, RemoveSelected, Forwarded: false),
+        ]);
+        foreach (var shortcut in shortcuts)
+        {
+            var accelerator = new KeyboardAccelerator { Key = shortcut.Key, Modifiers = shortcut.Modifiers };
+            accelerator.Invoked += (_, e) => e.Handled = shortcut.Run();
+            Root.KeyboardAccelerators.Add(accelerator);
+        }
     }
 
-    async void ChooseFiles_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    /// <summary>The window shortcuts the preview forwards (its web view keeps the keys it is given).</summary>
+    public IEnumerable<Shortcut> ForwardedShortcuts => shortcuts.Where(s => s.Forwarded);
+
+    /// <summary>Runs a window shortcut pressed in the preview; false when none matched or it did nothing.</summary>
+    public bool RunForwarded(VirtualKey key, VirtualKeyModifiers modifiers) =>
+        ForwardedShortcuts.FirstOrDefault(s => s.Key == key && s.Modifiers == modifiers) is { } shortcut && shortcut.Run();
+
+    /// <summary>
+    /// Ctrl+, from a text field: the field takes Ctrl with the comma key before keyboard
+    /// accelerators see it (Ctrl+2 and Ctrl+L still reach them), so the window looks first.
+    /// </summary>
+    void Root_PreviewKeyDown(object sender, KeyRoutedEventArgs e)
     {
-        args.Handled = true;
+        if (e.Key == (VirtualKey)188 && Pressed(VirtualKey.Control) && !Pressed(VirtualKey.Shift) && !Pressed(VirtualKey.Menu) && Ui.FocusInText(Root.XamlRoot))
+            e.Handled = Go(Page.Settings, true);
+    }
+
+    static bool Pressed(VirtualKey key) => InputKeyboardSource.GetKeyStateForCurrentThread(key).HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down);
+
+    bool Go(Page target, bool handled)
+    {
+        Go(target);
+        return handled;
+    }
+
+    bool ChooseFiles()
+    {
         Go(Page.Convert);
-        await ChooseFilesAsync();
+        _ = ChooseFilesAsync();
+        return true;
     }
 
-    void AddUrl_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    bool AddUrl()
     {
-        args.Handled = true;
         Go(Page.Convert);
         if (bench.Queue.Items.Count == 0)
             ConvertEmptyView.FocusUrl();
         else
             ConvertPane.FocusUrl();
+        return true;
     }
 
-    async void Paste_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    bool Paste()
     {
         if (Ui.FocusInText(Root.XamlRoot) || page == Page.Settings)
-            return;
-        args.Handled = true;
+            return false;
+        _ = PasteAsync();
+        return true;
+    }
+
+    async Task PasteAsync()
+    {
         var content = Clipboard.GetContent();
         if (content.Contains(StandardDataFormats.StorageItems))
         {
@@ -374,36 +558,23 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    void GoConvert_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    bool Search()
     {
-        args.Handled = true;
-        Go(Page.Convert);
-    }
-
-    void GoHistory_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
-    {
-        args.Handled = true;
-        Go(Page.History);
-    }
-
-    void Search_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
-    {
-        args.Handled = true;
         Go(Page.History);
         HistoryPane.FocusSearch();
+        return true;
     }
 
-    void Remove_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    bool RemoveSelected()
     {
         if (Ui.FocusInText(Root.XamlRoot))
-            return;
+            return false;
         if (page == Page.Convert && ConvertPane.SelectedItem is { } item)
-            args.Handled = ConvertPane.Remove(item);
-        else if (page == Page.History && HistoryPane.SelectedEntry is { } entry)
-            args.Handled = HistoryPane.Remove(entry);
+            return ConvertPane.Remove(item);
+        if (page == Page.History && HistoryPane.SelectedEntry is { } entry)
+            return HistoryPane.Remove(entry);
+        return false;
     }
-
-    void Back_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args) => args.Handled = Back();
 
     void SetDragging(bool dragging)
     {
@@ -448,6 +619,20 @@ public sealed partial class MainWindow : Window
 
     [LibraryImport("user32.dll")]
     private static partial uint GetDpiForWindow(nint hwnd);
+
+    [LibraryImport("user32.dll")]
+    private static partial nint SetWindowLongPtrW(nint hwnd, int index, nint value);
+
+    [LibraryImport("user32.dll")]
+    private static partial nint CallWindowProcW(nint previous, nint hwnd, uint message, nint wParam, nint lParam);
+
+    [LibraryImport("user32.dll", StringMarshalling = StringMarshalling.Utf16)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool ShutdownBlockReasonCreate(nint hwnd, string reason);
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool ShutdownBlockReasonDestroy(nint hwnd);
 
     [LibraryImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]

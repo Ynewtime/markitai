@@ -1,12 +1,18 @@
 using System.ComponentModel;
 using System.Globalization;
+using System.Text.Json;
 using Markitai.Core;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation.Peers;
+using Microsoft.UI.Xaml.Automation.Provider;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.Web.WebView2.Core;
+using VirtualKey = Windows.System.VirtualKey;
+using VirtualKeyModifiers = Windows.System.VirtualKeyModifiers;
 
 namespace MarkitaiApp.Views;
 
@@ -33,6 +39,11 @@ public sealed partial class DetailView : UserControl
     string? textShown;
     Task<bool>? webView;
     bool rendering;
+    // The latest preview render. Renders run off the UI thread and all write current.html,
+    // so only the latest one writes it and navigates (an older one finishing later would
+    // otherwise replace the newer document).
+    int renderTicket;
+    readonly object previewWrite = new();
 
     public DetailView()
     {
@@ -302,6 +313,7 @@ public sealed partial class DetailView : UserControl
 
     async Task ShowPreviewAsync(int expected)
     {
+        var ticket = Interlocked.Increment(ref renderTicket);
         var dark = ActualTheme == ElementTheme.Dark;
         var zoom = bench.Settings.Zoom;
         var key = $"{expected}|{dark}|{zoom.ToString(CultureInfo.InvariantCulture)}";
@@ -329,16 +341,21 @@ public sealed partial class DetailView : UserControl
                 return false;
             try
             {
-                Directory.CreateDirectory(Path.GetDirectoryName(file)!);
-                AtomicFile.Write(file, System.Text.Encoding.UTF8.GetBytes(PreviewRules.WithZoom(html, zoom)));
-                return true;
+                lock (previewWrite)
+                {
+                    if (ticket != Volatile.Read(ref renderTicket))
+                        return false;
+                    Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+                    AtomicFile.Write(file, System.Text.Encoding.UTF8.GetBytes(PreviewRules.WithZoom(html, zoom)));
+                    return true;
+                }
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException)
             {
                 return false;
             }
         });
-        if (expected != version || !PreviewChosen || !written)
+        if (ticket != renderTicket || expected != version || !PreviewChosen || !written)
             return;
         previewShown = key;
         PreviewMissing.Visibility = Visibility.Collapsed;
@@ -387,6 +404,12 @@ public sealed partial class DetailView : UserControl
             args.Handled = true;
             OpenOutside(args.Uri, PreviewRules.Navigation(args.Uri, bench.Paths.PreviewFile));
         };
+        core.WebMessageReceived += (_, args) =>
+        {
+            if (PreviewRules.Navigation(args.Source, bench.Paths.PreviewFile) == LinkDecision.Allow && ForwardedKey(args.WebMessageAsJson) is var (key, modifiers))
+                RunShortcut(key, modifiers);
+        };
+        await core.AddScriptToExecuteOnDocumentCreatedAsync(ForwardKeysScript());
         core.ContextMenuRequested += (_, args) =>
         {
             var items = args.MenuItems;
@@ -397,6 +420,99 @@ public sealed partial class DetailView : UserControl
                 args.Handled = true;
         };
         return true;
+    }
+
+    /// <summary>
+    /// Section 11 with focus in the preview: keys go to the web view's own process, past the
+    /// window's keyboard accelerators, and WinUI's WebView2 does not raise AcceleratorKeyPressed.
+    /// A script the host adds (page scripts stay off) posts the app's shortcut keys back, and
+    /// cancels them in the page; every other key, Ctrl+C and Ctrl+A among them, stays with the page.
+    /// </summary>
+    string ForwardKeysScript()
+    {
+        IEnumerable<(VirtualKey Key, VirtualKeyModifiers Modifiers)> keys = [
+            .. MainWindow.Current.ForwardedShortcuts.Select(s => (s.Key, s.Modifiers)),
+            .. Commands.SelectMany(c => c.Owner.KeyboardAccelerators.Select(a => (a.Key, a.Modifiers))),
+        ];
+        var names = JsonSerializer.Serialize(keys.Select(k => KeyName((int)k.Key, k.Modifiers)).Distinct().ToArray());
+        return "(() => { const keys = new Set(" + names + "); addEventListener('keydown', e => {"
+            + " const name = e.keyCode + (e.ctrlKey ? '+c' : '') + (e.shiftKey ? '+s' : '') + (e.altKey ? '+a' : '');"
+            + " if (!keys.has(name)) return; e.preventDefault(); e.stopPropagation();"
+            + " chrome.webview.postMessage({ key: e.keyCode, ctrl: e.ctrlKey, shift: e.shiftKey, alt: e.altKey }); }, true); })();";
+    }
+
+    static string KeyName(int key, VirtualKeyModifiers modifiers) =>
+        key + (modifiers.HasFlag(VirtualKeyModifiers.Control) ? "+c" : "") + (modifiers.HasFlag(VirtualKeyModifiers.Shift) ? "+s" : "") + (modifiers.HasFlag(VirtualKeyModifiers.Menu) ? "+a" : "");
+
+    static (VirtualKey, VirtualKeyModifiers)? ForwardedKey(string json)
+    {
+        try
+        {
+            using var message = JsonDocument.Parse(json);
+            var root = message.RootElement;
+            var modifiers = VirtualKeyModifiers.None;
+            if (root.GetProperty("ctrl").GetBoolean())
+                modifiers |= VirtualKeyModifiers.Control;
+            if (root.GetProperty("shift").GetBoolean())
+                modifiers |= VirtualKeyModifiers.Shift;
+            if (root.GetProperty("alt").GetBoolean())
+                modifiers |= VirtualKeyModifiers.Menu;
+            return ((VirtualKey)root.GetProperty("key").GetInt32(), modifiers);
+        }
+        catch (Exception e) when (e is JsonException or KeyNotFoundException or InvalidOperationException or FormatException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>The detail's own shortcuts, owned by the controls that show them in tooltips.</summary>
+    IEnumerable<(UIElement Owner, Action Run)> Commands =>
+    [
+        (ViewSwitch, () => ViewSwitch.SelectedIndex = PreviewChosen ? 1 : 0),
+        (CopyButton, () => Click(CopyButton)),
+        (SaveButton, () => Click(SaveButton)),
+        (ShowButton, () => Click(ShowButton)),
+        (RetryButton, () => Click(RetryButton)),
+    ];
+
+    static void Click(ButtonBase button)
+    {
+        if (FrameworkElementAutomationPeer.CreatePeerForElement(button)?.GetPattern(PatternInterface.Invoke) is IInvokeProvider invoke)
+            invoke.Invoke();
+    }
+
+    /// <summary>A shortcut pressed in the preview: the detail's commands first, then the window's.</summary>
+    void RunShortcut(VirtualKey key, VirtualKeyModifiers modifiers)
+    {
+        foreach (var (owner, run) in Commands)
+        {
+            if (IsShown(owner) && owner.KeyboardAccelerators.Any(a => a.Key == key && a.Modifiers == modifiers))
+            {
+                run();
+                return;
+            }
+        }
+        MainWindow.Current.RunForwarded(key, modifiers);
+    }
+
+    bool IsShown(UIElement element)
+    {
+        for (DependencyObject? at = element; at is not null && !ReferenceEquals(at, this); at = VisualTreeHelper.GetParent(at))
+            if (at is UIElement { Visibility: Visibility.Collapsed } or Control { IsEnabled: false })
+                return false;
+        return true;
+    }
+
+    /// <summary>The labels show when they fit beside the view switch; otherwise the buttons show icons, with their labels as tooltips.</summary>
+    void Bar_SizeChanged(object sender, SizeChangedEventArgs e) => FitActions();
+
+    void FitActions()
+    {
+        var room = Bar.ActualWidth - Bar.Padding.Left - Bar.Padding.Right - Bar.ColumnSpacing - ViewSwitch.ActualWidth;
+        Actions.DefaultLabelPosition = CommandBarDefaultLabelPosition.Right;
+        Actions.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
+        if (Actions.DesiredSize.Width > room)
+            Actions.DefaultLabelPosition = CommandBarDefaultLabelPosition.Collapsed;
     }
 
     /// <summary>http, https and mailto links open in their default apps; everything else is refused.</summary>
@@ -440,6 +556,8 @@ public sealed partial class DetailView : UserControl
         copiedTimer.Stop();
         CopyGlyph.Glyph = copied ? Ui.Accept : Ui.Copy;
         CopyButton.Label = s[copied ? "notice.copied" : "detail.copy"];
+        if (Bar.ActualWidth > 0)
+            FitActions();
         if (copied)
         {
             Ui.Announce(CopyButton, s["notice.copied"]);

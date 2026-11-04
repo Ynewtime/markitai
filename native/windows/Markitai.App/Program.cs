@@ -26,6 +26,7 @@ public sealed record AppPaths(string DataDir)
     public string Settings => Path.Combine(DataDir, "settings.json");
     public string WebView2 => Path.Combine(DataDir, "WebView2");
     public string PreviewFile => Path.Combine(DataDir, "Preview", "current.html");
+    public string ErrorLog => Path.Combine(DataDir, "error.log");
 }
 
 public static partial class Program
@@ -39,7 +40,10 @@ public static partial class Program
         var instance = AppInstance.FindOrRegisterForKey(InstanceKey);
         if (!instance.IsCurrent)
         {
-            Redirect(instance, AppInstance.GetCurrent().GetActivatedEventArgs());
+            if (args.Any(a => !string.IsNullOrWhiteSpace(a) && !Path.IsPathFullyQualified(a)))
+                Relaunch(args);
+            else
+                Redirect(instance, AppInstance.GetCurrent().GetActivatedEventArgs());
             return 0;
         }
         var startup = Prepare(args);
@@ -72,6 +76,20 @@ public static partial class Program
         {
         }
         return new(args, launchDirectory, paths, version);
+    }
+
+    /// <summary>
+    /// The redirect carries the command line but not the working directory, so the running
+    /// instance cannot resolve a relative path: a launch with one starts again with full paths.
+    /// </summary>
+    static void Relaunch(string[] args)
+    {
+        var info = new System.Diagnostics.ProcessStartInfo(Environment.ProcessPath!) { UseShellExecute = false };
+        foreach (var arg in args)
+            info.ArgumentList.Add(string.IsNullOrWhiteSpace(arg) ? arg : Path.GetFullPath(arg));
+        using var relaunched = System.Diagnostics.Process.Start(info);
+        if (relaunched is not null)
+            AllowSetForegroundWindow((uint)relaunched.Id);
     }
 
     /// <summary>Hands this launch, file arguments included, to the running instance and lets it come forward.</summary>

@@ -18,7 +18,7 @@
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
             <TextBlock Text="{m:S Key=nav.history}" Style="{StaticResource TitleTextBlockStyle}" VerticalAlignment="Center" />
-            <CommandBar Grid.Column="1" DefaultLabelPosition="Right" Background="Transparent" OverflowButtonVisibility="Collapsed">
+            <CommandBar Grid.Column="1" DefaultLabelPosition="Right" Background="Transparent" IsDynamicOverflowEnabled="False" OverflowButtonVisibility="Collapsed" AutomationProperties.Name="{m:S Key=a11y.actions}">
                 <AppBarButton x:Name="ClearHistory" Label="{m:S Key=history.clear}" Click="ClearHistory_Click">
                     <AppBarButton.Icon>
                         <FontIcon Glyph="&#xE74D;" />

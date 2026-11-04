@@ -5,22 +5,18 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:m="using:MarkitaiApp"
     xmlns:views="using:MarkitaiApp.Views">
-    <Grid x:Name="Root" AllowDrop="True" DragOver="Root_DragOver" DragLeave="Root_DragLeave" Drop="Root_Drop">
+    <Grid
+        x:Name="Root"
+        AllowDrop="True"
+        DragOver="Root_DragOver"
+        DragLeave="Root_DragLeave"
+        Drop="Root_Drop"
+        PreviewKeyDown="Root_PreviewKeyDown"
+        KeyboardAcceleratorPlacementMode="Hidden">
         <Grid.RowDefinitions>
             <RowDefinition Height="48" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
-        <Grid.KeyboardAccelerators>
-            <KeyboardAccelerator Modifiers="Control" Key="O" Invoked="ChooseFiles_Invoked" />
-            <KeyboardAccelerator Modifiers="Control" Key="L" Invoked="AddUrl_Invoked" />
-            <KeyboardAccelerator Modifiers="Control" Key="V" Invoked="Paste_Invoked" />
-            <KeyboardAccelerator Modifiers="Control" Key="Number1" Invoked="GoConvert_Invoked" />
-            <KeyboardAccelerator Modifiers="Control" Key="Number2" Invoked="GoHistory_Invoked" />
-            <KeyboardAccelerator Modifiers="Control" Key="F" Invoked="Search_Invoked" />
-            <KeyboardAccelerator Modifiers="None" Key="Delete" Invoked="Remove_Invoked" />
-            <KeyboardAccelerator Modifiers="None" Key="Escape" Invoked="Back_Invoked" />
-            <KeyboardAccelerator Modifiers="Menu" Key="Left" Invoked="Back_Invoked" />
-        </Grid.KeyboardAccelerators>
 
         <Grid x:Name="TitleBar" ColumnSpacing="12" Padding="16,0,0,0">
             <Grid.ColumnDefinitions>

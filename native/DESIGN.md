@@ -393,7 +393,7 @@ file means defaults.
 | Platform | Data folder (`data_dir`, working directory) | Other |
 |---|---|---|
 | macOS | `~/Library/Application Support/dev.markitai.Markitai` | none |
-| Windows | `%LOCALAPPDATA%\Markitai` | `WebView2\` (user data folder), `Preview\` (preview documents) |
+| Windows | `%LOCALAPPDATA%\Markitai` | `WebView2\` (user data folder), `Preview\` (preview documents), `error.log` (unhandled exceptions, written before the app deletes the folders of Converting items and exits) |
 | Linux | `$XDG_DATA_HOME/dev.markitai.Markitai` | none |
 
 ## 5. Information architecture

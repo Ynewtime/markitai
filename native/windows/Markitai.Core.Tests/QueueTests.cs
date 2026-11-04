@@ -12,6 +12,11 @@ sealed class GatedConverter : IConverter
     public string Parent = "";
     public bool RefuseClaims;
 
+    /// <summary>When set, a claim makes its folder, then waits for this before answering.</summary>
+    public TaskCompletionSource? ClaimGate;
+
+    public readonly ConcurrentQueue<string> Claimed = new();
+
     public string ClaimOutputFolder(string request)
     {
         if (RefuseClaims)
@@ -20,6 +25,8 @@ sealed class GatedConverter : IConverter
         var source = doc.RootElement.GetProperty("source").GetString()!;
         var folder = Path.Combine(doc.RootElement.GetProperty("parent").GetString()!, Path.GetFileNameWithoutExtension(source) + "-" + Guid.NewGuid().ToString("N")[..6]);
         Directory.CreateDirectory(folder);
+        Claimed.Enqueue(folder);
+        ClaimGate?.Task.Wait();
         return JsonSerializer.Serialize(new { ok = true, result = new { path = folder, name = Path.GetFileName(folder) } });
     }
 
@@ -63,6 +70,8 @@ sealed class GatedConverter : IConverter
 sealed class ManualThread
 {
     readonly BlockingCollection<Action> posted = new();
+
+    public int Waiting => posted.Count;
 
     public void Post(Action action) => posted.Add(action);
 
@@ -171,6 +180,7 @@ public sealed class QueueTests : IDisposable
         var failed = Assert.IsType<Failed>(queue.Items[0].State);
         Assert.Equal("output_unavailable", failed.Code);
         Assert.Equal("Access is denied.", failed.Message);
+        Assert.Equal(dir, failed.Folder);
         Assert.Empty(converter.Started);
     }
 
@@ -210,8 +220,47 @@ public sealed class QueueTests : IDisposable
         Assert.Equal([done.Folder], Directory.GetDirectories(dir));
         Assert.True(File.Exists(Path.Combine(done.Folder, "partial.md")));
         converter.ReleaseAll(GatedConverter.Ok("late"));
-        ui.RunOne();
+        WaitFor(() => converter.Running == 0);
+        Thread.Sleep(50);
+        Assert.Equal(0, ui.Waiting);
         Assert.All(queue.Items.Where(i => i.Title != "a.pdf"), i => Assert.IsType<Converting>(i.State));
+    }
+
+    /// <summary>DESIGN.md 7.3: a run that ended before Quit keeps its folder and reaches the list and History, even before its result reached the UI thread.</summary>
+    [Fact]
+    public void Quitting_keeps_a_run_that_ended_before_it()
+    {
+        var finished = new List<ConversionItem>();
+        queue.Finished += finished.Add;
+        queue.Add([F("a.pdf"), F("b.pdf")], Plain);
+        WaitFor(() => converter.Started.Count == 2);
+        converter.Gate(F("a.pdf").Value).SetResult(GatedConverter.Ok("a"));
+        WaitFor(() => ui.Waiting == 1);
+
+        queue.DiscardConverting();
+
+        var a = queue.Items.Single(i => i.Title == "a.pdf");
+        var done = Assert.IsType<Done>(a.State);
+        Assert.Equal([a], finished);
+        Assert.Equal([done.Folder], Directory.GetDirectories(dir));
+        Assert.IsType<Converting>(queue.Items.Single(i => i.Title == "b.pdf").State);
+    }
+
+    /// <summary>DESIGN.md 7.3: Quit waits for a folder claim in flight, so the folder it makes goes with the others.</summary>
+    [Fact]
+    public void Quitting_waits_for_a_claim_in_flight_and_deletes_its_folder()
+    {
+        converter.ClaimGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        queue.Add([F("a.pdf")], Plain);
+        WaitFor(() => converter.Claimed.Count == 1);
+        var gate = converter.ClaimGate;
+        _ = Task.Run(() => { Thread.Sleep(300); gate.SetResult(); }, TestContext.Current.CancellationToken);
+
+        queue.DiscardConverting();
+
+        Assert.Empty(Directory.GetDirectories(dir));
+        Thread.Sleep(200);
+        Assert.Empty(converter.Started);
     }
 
     [Fact]
