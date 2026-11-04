@@ -1,4 +1,4 @@
-//! Each conversion's own folder under the output folder (native/DESIGN.md,
+//! Each conversion's own folder under the output folder (desktop/DESIGN.md,
 //! section 3.3).
 
 use std::io::ErrorKind;

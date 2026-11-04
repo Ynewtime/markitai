@@ -1,7 +1,8 @@
 # Markitai Web
 
-Markitai Web, a desktop app, opens the [browser workbench](web-ui.md) in a window
-of its own: open Markitai Web and convert, with no terminal and no browser tab. It
+Markitai Web, one of the [desktop versions](desktop.md), opens the
+[browser workbench](web-ui.md) in a window of its own: open Markitai Web and
+convert, with no terminal and no browser tab. It
 runs the `markitai` program bundled inside it as a server for that window
 ([running under another app](serve.md#running-under-another-app)), so it
 converts exactly as the CLI of the same version does. It runs on macOS 13 or

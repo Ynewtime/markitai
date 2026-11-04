@@ -1,5 +1,5 @@
 //! The process environment an app gives the core before it starts its UI
-//! (native/DESIGN.md, section 3.3).
+//! (desktop/DESIGN.md, section 3.3).
 
 use std::path::Path;
 

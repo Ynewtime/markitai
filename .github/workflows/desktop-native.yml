@@ -1,0 +1,93 @@
+name: Desktop Native
+
+# Markitai Native (docs/desktop-native.md, desktop/DESIGN.md) on Windows x86-64:
+# build markitai_app.dll and Markitai Native.exe, run Markitai.Core.Tests, then
+# drive the real app on the runner's desktop (desktop/native/windows/smoke.ps1).
+
+on:
+  push:
+    # What the Windows job reads, so macOS and Linux commits do not restart it:
+    # the app, its strings and icon, the core with its fixtures, and the crates it builds.
+    paths:
+      - 'desktop/native/windows/**'
+      - 'desktop/strings.json'
+      - 'desktop/icon.png'
+      - 'crates/markitai-app/**'
+      - 'crates/markitai-core/**'
+      - 'vendor/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/desktop-native.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-native-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: never
+  RUSTUP_TOOLCHAIN: 1.99.1
+  CARGO_INCREMENTAL: '0'
+  DOTNET_SDK_VERSION: 10.0.403
+  DOTNET_NOLOGO: '1'
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+
+jobs:
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: '3.13'
+      - name: Install Rust
+        run: rustup toolchain install ${{ env.RUSTUP_TOOLCHAIN }} --profile minimal
+      # Dependency artifacts only; build.py builds the DLL in target/native-windows.
+      # Saved after a failed run too: the dependencies take about 20 minutes and do
+      # not depend on whether the app or its smoke test passed.
+      - name: Restore Cargo dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          key: desktop-native-windows-v2
+          workspaces: '. -> target/native-windows'
+          cache-bin: false
+          cache-workspace-crates: false
+          cache-on-failure: true
+      - name: Install the .NET SDK
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'dotnet'
+          $script = Join-Path $env:RUNNER_TEMP 'dotnet-install.ps1'
+          Invoke-WebRequest -Uri https://dot.net/v1/dotnet-install.ps1 -OutFile $script
+          & $script -Version $env:DOTNET_SDK_VERSION -InstallDir $dir -NoPath
+          "DOTNET_ROOT=$dir" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          $dir | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+          & (Join-Path $dir 'dotnet.exe') --version
+      - name: Build the app and run Markitai.Core.Tests
+        run: python desktop/native/windows/build.py --check --state "$env:RUNNER_TEMP\markitai-tests"
+      - name: Drive the app on the desktop
+        shell: powershell
+        run: desktop\native\windows\smoke.ps1 -State "$env:RUNNER_TEMP\markitai-smoke" -Out "$env:RUNNER_TEMP\markitai-evidence"
+      - name: Keep the screenshots, logs and test results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: markitai-native-windows-evidence
+          path: |
+            ${{ runner.temp }}/markitai-evidence
+            ${{ runner.temp }}/markitai-tests/results
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Keep the app folder
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: markitai-native-windows-amd64
+          path: desktop/native/windows/Markitai.App/bin/x64/Release/net10.0-windows10.0.26100.0/win-x64
+          if-no-files-found: warn
+          retention-days: 7

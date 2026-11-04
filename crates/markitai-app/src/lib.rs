@@ -1,4 +1,4 @@
-//! The native apps' private core (native/DESIGN.md, section 3): conversion
+//! The native apps' private core (desktop/DESIGN.md, section 3): conversion
 //! through the bindings' JSON contract, the Markdown preview, and what the
 //! apps need around them. Not a public binding. Every call takes and answers
 //! JSON, `{"ok": true, "result"}` or `{"ok": false, "error": {"code",

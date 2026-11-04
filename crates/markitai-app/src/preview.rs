@@ -1,4 +1,4 @@
-//! The Markdown preview every app shows (native/DESIGN.md, sections 3.3 and
+//! The Markdown preview every app shows (desktop/DESIGN.md, sections 3.3 and
 //! 15): one Rust function, so the three apps show the same bytes.
 
 use std::path::Path;

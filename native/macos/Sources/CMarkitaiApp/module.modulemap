@@ -1,4 +1,0 @@
-module CMarkitaiApp [system] {
-    header "../../../../crates/markitai-app/include/markitai_app.h"
-    export *
-}

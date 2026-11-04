@@ -11,6 +11,7 @@ on:
   push:
     paths:
       - 'desktop/web/**'
+      - 'desktop/icon.png'
       - 'scripts/desktop_web_*.py'
       - 'scripts/test_desktop_web_build.py'
       - '.github/workflows/desktop-web.yml'
@@ -55,7 +56,7 @@ jobs:
         run: |
           python scripts/release_build.py version --github-output "$GITHUB_OUTPUT"
           sources=$(git ls-tree -r HEAD \
-            | grep -Ev $'\t(desktop/web/|\\.github/|docs/desktop-web\\.md$|docs/development\\.md$|scripts/desktop_web_[^/]*\\.py$|scripts/test_desktop_web_build\\.py$)' \
+            | grep -Ev $'\t(desktop/web/|desktop/icon\\.png$|\\.github/|docs/desktop-web\\.md$|docs/development\\.md$|scripts/desktop_web_[^/]*\\.py$|scripts/test_desktop_web_build\\.py$)' \
             | sha256sum | cut -c1-16)
           echo "key=desktop-web-cli-$TARGET-$RUSTUP_TOOLCHAIN-$sources" >> "$GITHUB_OUTPUT"
       - name: Restore the archive

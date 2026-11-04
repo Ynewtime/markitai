@@ -139,11 +139,36 @@ project without the symlink privilege links its resources with a junction.
 `scripts/test_desktop_web_build.py` runs with the helper tests.
 
 `.github/workflows/desktop-web.yml` builds the Windows app on a hosted
-`windows-2025` runner on a push to `desktop/web/**` or
+`windows-2025` runner on a push to `desktop/web/**`, `desktop/icon.png` or
 `scripts/desktop_web_*.py`, or by hand: it builds the CLI archive (cached by
 the tree it is built from), the e2e build and the installer, runs a full
 `desktop_web_e2e.py` round, installs, launches, closes and uninstalls the app,
 and keeps the evidence and the installer for 7 days.
+
+## Markitai Native
+
+`desktop/native/` holds [Markitai Native](desktop-native.md): the apps for macOS
+(SwiftUI), Windows (WinUI 3) and Linux (GTK 4 and libadwaita), specified by
+`desktop/DESIGN.md`. They call the core in process through `crates/markitai-app`,
+a private crate: a C ABI for the macOS and Windows apps, a Rust API for the
+Linux app. `desktop/native/linux` is a Cargo workspace of its own, excluded from
+the root one. The three versions share the app icon `desktop/icon.png`;
+Markitai Native and Markitai Mygo share the design and `desktop/strings.json`
+([desktop versions](desktop.md)).
+
+```sh
+python3.13 desktop/scripts/strings.py [--check]
+python3.13 desktop/native/macos/build.py [--check] [--no-core]
+python3.13 desktop/native/windows/build.py [--check] [--state DIR]
+python3 desktop/native/linux/build.py [--check]
+```
+
+`strings.py` writes `desktop/strings.json` from section 10 of the design, and
+`--check` fails when the two differ. Each build's `--check` runs that app's
+tests with an isolated home. `desktop/native/windows/smoke.ps1` drives the built
+Windows app through UI Automation, and `.github/workflows/desktop-native.yml`
+runs the Windows build, tests and smoke on a hosted `windows-2025` runner on a
+push to the files that build reads, or by hand.
 
 ## Website
 

@@ -1,4 +1,4 @@
-/* The native apps' private core (crates/markitai-app, native/DESIGN.md
+/* The native apps' private core (crates/markitai-app, desktop/DESIGN.md
  * section 3). Not a public binding: it changes with the apps. */
 #ifndef MARKITAI_APP_H
 #define MARKITAI_APP_H

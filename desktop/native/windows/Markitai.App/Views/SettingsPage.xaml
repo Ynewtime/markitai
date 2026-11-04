@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="MarkitaiApp.Views.SettingsPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:m="using:MarkitaiApp"
+    xmlns:toolkit="using:CommunityToolkit.WinUI.Controls">
+    <UserControl.Resources>
+        <Style x:Key="GroupHeading" TargetType="TextBlock" BasedOn="{StaticResource BodyStrongTextBlockStyle}">
+            <Setter Property="Margin" Value="1,24,0,8" />
+        </Style>
+    </UserControl.Resources>
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Padding="36,8,36,36" MaxWidth="1000" HorizontalAlignment="Stretch" Spacing="4">
+            <TextBlock Text="{m:S Key=nav.settings}" Style="{StaticResource TitleTextBlockStyle}" Margin="0,8,0,4" />
+
+            <TextBlock Text="{m:S Key=settings.conversion}" Style="{StaticResource GroupHeading}" />
+            <toolkit:SettingsCard Header="{m:S Key=settings.llm}" Description="{m:S Key=settings.llm.note}">
+                <ToggleSwitch x:Name="Llm" OnContent="" OffContent="" AutomationProperties.Name="{m:S Key=settings.llm}" Toggled="Toggle_Toggled" />
+            </toolkit:SettingsCard>
+            <toolkit:SettingsCard Header="{m:S Key=settings.ocr}" Description="{m:S Key=settings.ocr.note}">
+                <ToggleSwitch x:Name="Ocr" OnContent="" OffContent="" AutomationProperties.Name="{m:S Key=settings.ocr}" Toggled="Toggle_Toggled" />
+            </toolkit:SettingsCard>
+            <toolkit:SettingsCard Header="{m:S Key=settings.screenshot}" Description="{m:S Key=settings.screenshot.note}">
+                <ToggleSwitch x:Name="Screenshot" OnContent="" OffContent="" AutomationProperties.Name="{m:S Key=settings.screenshot}" Toggled="Toggle_Toggled" />
+            </toolkit:SettingsCard>
+            <toolkit:SettingsCard x:Name="DescCard" Header="{m:S Key=settings.desc}" Description="{m:S Key=settings.desc.note}">
+                <ToggleSwitch x:Name="Desc" OnContent="" OffContent="" AutomationProperties.Name="{m:S Key=settings.desc}" Toggled="Toggle_Toggled" />
+            </toolkit:SettingsCard>
+            <toolkit:SettingsCard x:Name="AltCard" Header="{m:S Key=settings.alt}" Description="{m:S Key=settings.alt.note}">
+                <ToggleSwitch x:Name="Alt" OnContent="" OffContent="" AutomationProperties.Name="{m:S Key=settings.alt}" Toggled="Toggle_Toggled" />
+            </toolkit:SettingsCard>
+
+            <TextBlock Text="{m:S Key=settings.output}" Style="{StaticResource GroupHeading}" />
+            <toolkit:SettingsCard Header="{m:S Key=settings.output.folder}">
+                <toolkit:SettingsCard.Description>
+                    <StackPanel Spacing="2">
+                        <TextBlock Text="{m:S Key=settings.output.note}" TextWrapping="Wrap" />
+                        <TextBlock x:Name="OutputPath" TextWrapping="Wrap" IsTextSelectionEnabled="True" />
+                    </StackPanel>
+                </toolkit:SettingsCard.Description>
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Button x:Name="ChangeOutput" Content="{m:S Key=settings.output.change}" Click="ChangeOutput_Click" />
+                    <Button x:Name="ShowOutput" Content="{m:S Key=settings.output.show}" Click="ShowOutput_Click" />
+                </StackPanel>
+            </toolkit:SettingsCard>
+            <InfoBar
+                x:Name="OutputError"
+                Severity="Error"
+                IsClosable="True"
+                Message="{m:S Key=settings.output.unwritable}" />
+
+            <TextBlock Text="{m:S Key=settings.config}" Style="{StaticResource GroupHeading}" />
+            <toolkit:SettingsCard ContentAlignment="Left">
+                <StackPanel Spacing="8">
+                    <RadioButton x:Name="UseUser" GroupName="ConfigSource" Checked="Config_Checked" AutomationProperties.Name="{m:S Key=settings.config.user}">
+                        <StackPanel Spacing="2">
+                            <TextBlock Text="{m:S Key=settings.config.user}" />
+                            <TextBlock
+                                x:Name="UserNote"
+                                Style="{StaticResource CaptionTextBlockStyle}"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                TextWrapping="Wrap" />
+                        </StackPanel>
+                    </RadioButton>
+                    <RadioButton x:Name="UseBuiltin" GroupName="ConfigSource" Checked="Config_Checked" AutomationProperties.Name="{m:S Key=settings.config.builtin}">
+                        <StackPanel Spacing="2">
+                            <TextBlock Text="{m:S Key=settings.config.builtin}" />
+                            <TextBlock
+                                Text="{m:S Key=settings.config.builtin.note}"
+                                Style="{StaticResource CaptionTextBlockStyle}"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                TextWrapping="Wrap" />
+                        </StackPanel>
+                    </RadioButton>
+                </StackPanel>
+            </toolkit:SettingsCard>
+            <toolkit:SettingsCard x:Name="ConfigFileCard" IsClickEnabled="True" Click="ConfigFileCard_Click" />
+            <InfoBar x:Name="ConfigError" Severity="Error" IsClosable="True" />
+
+            <TextBlock Text="{m:S Key=settings.about}" Style="{StaticResource GroupHeading}" />
+            <toolkit:SettingsExpander x:Name="About" Header="{m:S Key=app.name.native}" Description="{m:S Key=settings.about.copyright}" IsExpanded="True">
+                <toolkit:SettingsExpander.HeaderIcon>
+                    <ImageIcon x:Name="AboutIcon" />
+                </toolkit:SettingsExpander.HeaderIcon>
+                <toolkit:SettingsExpander.Items>
+                    <toolkit:SettingsCard Header="{m:S Key=settings.about.app}">
+                        <TextBlock x:Name="AppVersion" IsTextSelectionEnabled="True" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    </toolkit:SettingsCard>
+                    <toolkit:SettingsCard Header="{m:S Key=settings.about.core}">
+                        <TextBlock x:Name="CoreVersion" IsTextSelectionEnabled="True" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    </toolkit:SettingsCard>
+                </toolkit:SettingsExpander.Items>
+            </toolkit:SettingsExpander>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>
