@@ -656,12 +656,14 @@ Every user-visible string. The table is the source of `desktop/strings.json`.
 | Key | en | zh-Hans |
 |---|---|---|
 | `app.name.native` | Markitai Native | Markitai Native |
+| `app.name.mygo` | Markitai Mygo | Markitai Mygo |
 | `nav.convert` | Convert | 转换 |
 | `nav.history` | History | 历史记录 |
 | `nav.settings` | Settings | 设置 |
 | `nav.preferences` | Preferences | 首选项 |
 | `menu.settings` | Settings… | 设置… |
 | `menu.about.native` | About Markitai Native | 关于 Markitai Native |
+| `menu.about.mygo` | About Markitai Mygo | 关于 Markitai Mygo |
 | `menu.main` | Main Menu | 主菜单 |
 | `menu.add_url` | Add Web Address | 添加网址 |
 | `menu.toggle_view` | Switch Preview and Markdown | 切换预览与 Markdown |
@@ -704,6 +706,7 @@ Every user-visible string. The table is the source of `desktop/strings.json`.
 | `detail.show.macos` | Show in Finder | 在访达中显示 |
 | `detail.show.windows` | Show in File Explorer | 在文件资源管理器中显示 |
 | `detail.show.gnome` | Show in Files | 在“文件”中显示 |
+| `detail.show.linux` | Show in Folder | 在文件夹中显示 |
 | `detail.more` | More Actions | 更多操作 |
 | `detail.retry` | Retry | 重试 |
 | `detail.details` | Details | 详细信息 |
@@ -762,6 +765,7 @@ Every user-visible string. The table is the source of `desktop/strings.json`.
 | `quit.body.queued` | Files waiting in the queue are not converted. | 排队中的文件也不会被转换。 |
 | `quit.confirm` | Quit | 退出 |
 | `common.cancel` | Cancel | 取消 |
+| `common.copy` | Copy | 复制 |
 | `common.back` | Back | 返回 |
 | `action.open_settings` | Open {settings} | 打开{settings} |
 | `error.not_found` | The file is no longer there. It may have been moved or deleted. | 文件已不在原处，可能已被移动或删除。 |
@@ -781,6 +785,7 @@ Every user-visible string. The table is the source of `desktop/strings.json`.
 | `error.save_failed` | The file couldn't be saved. | 无法保存文件。 |
 | `error.open_failed` | Markitai couldn't open {name}. | Markitai 无法打开 {name}。 |
 | `preview.webview2_missing` | The preview needs the Microsoft Edge WebView2 Runtime. The Markdown tab still works. | 预览需要 Microsoft Edge WebView2 运行时。Markdown 标签页仍可使用。 |
+| `preview.unavailable` | The preview can't be shown on this computer. The Markdown tab still works. | 此电脑无法显示预览。Markdown 标签页仍可使用。 |
 | `fatal.abi.title` | This copy of Markitai is incomplete | 这份 Markitai 不完整 |
 | `fatal.abi.body` | Its conversion library doesn't match the app. Reinstall Markitai. | 它的转换库与应用不匹配。请重新安装 Markitai。 |
 | `a11y.drop_zone` | Drop files or web links here to convert them. | 将文件或网页链接拖到这里进行转换。 |

@@ -11,7 +11,7 @@ release publishes any of them yet. Build them from a checkout.
 | Minimum system | macOS 13 (Apple silicon), Windows 10 (x86-64), Linux (x86-64) | macOS 13, Windows 10 1809, GNOME 48 | macOS 13, Windows (x86-64), Linux (x86-64) |
 | Identifier | `dev.markitai.web` | `dev.markitai.native` | `dev.markitai.mygo` |
 | Source | `desktop/web/` | `desktop/native/macos/`, `desktop/native/windows/`, `desktop/native/linux/` | `desktop/mygo/` |
-| Guide | [Markitai Web](desktop-web.md) | [Markitai Native](desktop-native.md) | In development, specified by [`desktop/mygo/DESIGN.md`](../desktop/mygo/DESIGN.md) |
+| Guide | [Markitai Web](desktop-web.md) | [Markitai Native](desktop-native.md) | [Markitai Mygo](desktop-mygo.md) |
 
 Markitai Web has every workbench feature and converts exactly as the CLI of the
 same version does. Markitai Native and Markitai Mygo share one product

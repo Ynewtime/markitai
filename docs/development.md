@@ -170,6 +170,63 @@ Windows app through UI Automation, and `.github/workflows/desktop-native.yml`
 runs the Windows build, tests and smoke on a hosted `windows-2025` runner on a
 push to the files that build reads, or by hand.
 
+## Markitai Mygo
+
+`desktop/mygo/` holds [Markitai Mygo](desktop-mygo.md), one app for macOS,
+Windows and Linux: a Go module (`markitai.local/mygo`, Go 1.27.3) on mygo's
+`ui` package, with `go tool mygo` from its `go.mod`, specified by
+`desktop/DESIGN.md` and `desktop/mygo/DESIGN.md`. It loads the core's C ABI
+(`crates/markitai-app` as a cdylib) with purego, so every build is
+`CGO_ENABLED=0`. The core library is staged in the Git-ignored
+`desktop/mygo/resources/<goos>-<goarch>/`, which `mygo build` puts beside the
+executable or in the bundle's resources.
+
+```sh
+python3.13 desktop/mygo/build.py [--check] [--no-core] [--platform GOOS/GOARCH] [--e2e]
+```
+
+`--check` builds and stages the core, runs `strings.py --check`, fails when
+the module's embedded copies of `desktop/strings.json` and `desktop/icon.png`
+differ from them or `mygo.json`'s version from the workspace's, and runs
+`go vet` and `go test` with `HOME`, `MARKITAI_HOME`, the XDG folders,
+`USERPROFILE`, `APPDATA` and `LOCALAPPDATA` in a temporary folder. It builds no
+app and writes no tracked file. Without `--check`, `build.py` refreshes those
+copies and builds the app into `desktop/mygo/build/<goos>-<goarch>/`. The
+Windows core links the C runtime statically and builds in
+`target/mygo-windows`; the macOS core's install name is
+`@rpath/libmarkitai_app.dylib`.
+
+`--e2e` builds with the `e2e` tag, which links mygo's automation plugin and
+keeps the web inspector, into `desktop/mygo/build/e2e/`; never ship it. The
+driver is a Go test behind the same tag:
+
+```sh
+cd desktop/mygo
+MARKITAI_MYGO_APP=<e2e executable> MARKITAI_MYGO_E2E_OUT=<evidence folder> \
+  go test -tags e2e -count=1 -v ./internal/e2e
+```
+
+It launches the app over the automation socket once per run of
+`MARKITAI_MYGO_E2E_RUNS` (default `en-light,zh-Hans-dark,en-dark,zh-Hans-light`),
+each with its own `HOME`, XDG folders, Windows user folders and `MARKITAI_HOME`
+under the evidence folder and a `TEMP` of its own under a short path, and converts fixtures and pages from a local server
+through Convert, a second instance, History, Settings and quitting while a
+conversion runs. It keeps the window's own captures, `report.json` and the
+app's log per run. With `MARKITAI_MYGO_E2E_WINDOW_SHOT` naming a program that
+takes a process ID and a PNG path (`internal/e2e/windowshot.ps1` on Windows), it
+also keeps what the system composites, web view included. With
+`MARKITAI_MYGO_E2E_PAGE_KEY` naming a program that takes a process ID and
+`zoom-in` and sends that window Ctrl+= (`internal/e2e/pagekey.ps1` on Windows),
+it gives the preview page the keyboard, presses Zoom In and checks that the
+page's script zooms exactly one step. Without it, the e2e build dispatches that
+keydown in the page itself, which checks the page's script but not the system's
+delivery of the key. Quitting is asked through the app menu on
+macOS, Ctrl+Q on Linux and `WM_CLOSE` on Windows.
+
+`.github/workflows/desktop-mygo.yml` runs `--check`, both builds and the e2e
+driver on a hosted `windows-2025` runner on a push to the files those read, or
+by hand, and keeps the evidence and the app folder for 7 days.
+
 ## Website
 
 `website/` is markitai.dev (VitePress, English at the root, Chinese under

@@ -30,7 +30,7 @@ Scope is DESIGN 1, unchanged. Nothing in this file adds a feature.
 | Identifier | `dev.markitai.mygo` |
 | macOS | `Markitai Mygo.app`, minimum macOS 13 |
 | Windows | `Markitai Mygo.exe`, x86-64, WebView2 Runtime for the preview |
-| Linux | binary and Debian package `markitai-mygo`, x86-64. GTK 3 and WebKitGTK 4.1 (`libgtk-3-0`, `libwebkit2gtk-4.1-0`, `cmd/mygo/deb.go:74-81`) |
+| Linux | binary and Debian package `markitai-mygo`, x86-64. GTK 3 and WebKitGTK 4.1 (`libgtk-3-0`, `libwebkit2gtk-4.1-0`, `cmd/mygo/deb.go:74-81`). The desktop file is `markitai-mygo.desktop`, and the window's class (Wayland app ID) is `markitai-mygo`, the program name, so launchers and docks match the two (found in the Linux run). On Linux the identifier names only the data folders and the single-instance lock |
 | Source | `desktop/mygo/`, its own Go module `markitai.local/mygo`. Go version and mygo version equal `desktop/web/go.mod`'s (Go 1.27.3, `github.com/egoist/mygo v0.7.4`), with `tool github.com/egoist/mygo/cmd/mygo`. Code names inside it say "mygo" for this version, never "desktop" or "native" |
 | UI | mygo `ui`, drawn by mygo on every platform. The only system views are the preview web view (section 8) and the system file pickers |
 | Core | `crates/markitai-app` built as a cdylib, loaded with `github.com/ebitengine/purego`, `CGO_ENABLED=0`. The C ABI is DESIGN 3.1 and 3.3, unchanged. The library sits in `resources/<goos>-<goarch>/` (`libmarkitai_app.dylib`, `markitai_app.dll`, `libmarkitai_app.so`), which `mygo build` merges into the bundle's resources (`cmd/mygo/resources.go:104-112`) |
@@ -45,7 +45,7 @@ Scope is DESIGN 1, unchanged. Nothing in this file adds a feature.
   "identifier": "dev.markitai.mygo",
   "version": "<workspace version>",
   "copyright": "Copyright (c) 2026 Ynewtime",
-  "icon": "icon.png",
+  "icon": "../icon.png",
   "out": "build",
   "macos": {
     "minimumSystemVersion": "13.0",
@@ -62,7 +62,11 @@ Scope is DESIGN 1, unchanged. Nothing in this file adds a feature.
 }
 ```
 
-`icon.png` is a copy of `desktop/icon.png`. `linux.webview` stays unset,
+`icon` names `desktop/icon.png` itself, from which `mygo build` makes the
+bundle's `AppIcon.icns`, the `.exe`'s icon and the Linux icons. The About
+panel and Settings' About draw `internal/brand/icon.png`, a copy inside the
+module, because `go:embed` cannot reach a parent folder; `build.py` refreshes
+the copy, and its `--check` and `brand_test.go` fail when it differs. `linux.webview` stays unset,
 which means true: a `ui.WebView` needs WebKitGTK (`cmd/mygo/deb.go:37-41`).
 `macos.infoPlist` overrides the keys mygo writes (`cmd/mygo/bundle.go:307-309`).
 `build.py` fails when `version` differs from the workspace version.
@@ -78,10 +82,12 @@ The three versions run side by side on one machine. Markitai Web is
 | History (DESIGN 4.4 shape) | `<data folder>/history.json` |
 | Settings (DESIGN 4.5 keys except `window.*`) | macOS and Windows `<data folder>/settings.json`. Linux `$XDG_CONFIG_HOME/dev.markitai.mygo/settings.json`. Writes follow DESIGN 4.4's temporary-file-and-rename rule |
 | Window frame | mygo's `WindowOptions.StateKey` `"main"`, saved in `window-state.json` under `PathUserData` (`window.go:192-199`, `window_state.go:24`). It is restored only where it shows on a connected display (`window_state.go:113-116`) |
-| mygo's own folders | Before `App.Run`, `App.SetPath(PathUserData, <data folder>)` and `App.SetPath(PathCache, <cache folder>)` (`paths.go:72-80`). Without this, mygo names them after the display name (`paths.go:90-95`). The cache folder is macOS `~/Library/Caches/dev.markitai.mygo`, Windows `%LOCALAPPDATA%\Markitai Mygo\Cache`, Linux `$XDG_CACHE_HOME/dev.markitai.mygo` |
-| WebView2 data (Windows) | `%LOCALAPPDATA%\Markitai Mygo\WebView2`, which mygo derives from the display name (`internal/windows/app.go:185-189`) |
+| mygo's own folders | Before `App.Run`, `App.SetPath(PathUserData, <data folder>)` and `App.SetPath(PathCache, <cache folder>)` (`paths.go:72-80`). Without this, mygo names them after the display name (`paths.go:90-95`). The cache folder is macOS `~/Library/Caches/dev.markitai.mygo`, Windows `%LOCALAPPDATA%\Markitai Mygo\Cache`, Linux `$XDG_CACHE_HOME/dev.markitai.mygo`. On Linux, mygo's web data does not follow these paths (row "Web data (Linux)") |
+| WebView2 data (Windows) | `%LOCALAPPDATA%\Markitai Mygo\WebView2`, which mygo derives from the display name (`internal/windows/app.go:185-189`). The GPU driver keeps its own shader cache, Intel's in `%USERPROFILE%\AppData\LocalLow\Intel\ShaderCache`, shared by every app that draws through it |
 | Single instance | `App.RequestSingleInstanceLock()`. A packaged app's key is `identifier + "\n" + name` (`single_instance.go:164-172`), so the three versions never share a lock |
 | macOS defaults domain | `dev.markitai.mygo`, used only for `AppleLanguages` (section 10.5) |
+| WebKit's content rules (macOS) | `~/Library/WebKit/dev.markitai.mygo/ContentRuleLists/`, the compiled `preview-no-network` list (256 bytes). mygo compiles into `WKContentRuleListStore.defaultStore` (`internal/darwin/content_rules.go:61`), which WebKit keeps by identifier in the account's real home, not under `HOME`, so test runs with an isolated `HOME` still write it there. The preview's session is ephemeral (`NewEphemeralSession`, `internal/darwin/session.go:44`), so no other web data is kept |
+| Web data (Linux) | Found in the Linux runs, not what this row first said. mygo keeps the compiled content rules in `$XDG_CONFIG_HOME/Markitai Mygo/content-rules/` and the default web context's cookies in `$XDG_CONFIG_HOME/Markitai Mygo/cookies.sqlite`, by the display name from `os.UserConfigDir`, not `PathUserData` (`internal/linux/content_rules.go:84-89`, `internal/linux/cookies.go:92-103`). That default context's WebKitGTK data manager keeps its data in `$XDG_DATA_HOME/markitai-mygo/` and `$XDG_CACHE_HOME/markitai-mygo/`, after the program name. The preview's own session is ephemeral (`internal/linux/session.go:59`). All of these are named for this app, so they stay apart from the other versions. The GPU driver also keeps its shader cache, Mesa's in `$XDG_CACHE_HOME/mesa_shader_cache/`, which every app that draws through it shares |
 | Output folders | The shared default output folder (DESIGN 4.3) is safe to share: `claim_output_folder` creates each conversion's folder with an atomic `create_dir` (DESIGN 3.3), so no two apps get one folder |
 
 ### 2.2 Code structure and data shapes
@@ -93,7 +99,10 @@ The spike's packages stay and grow:
 | `internal/core` | The purego binding of DESIGN 3.1 (spike `core.go`) |
 | `internal/l10n` | `strings.json` lookup, plurals, formats of DESIGN 4.2 |
 | `internal/model` | `Item`, `State` (`Queued`, `Converting`, `Done`, `Failed`), `Queue` (DESIGN 4.1, spike `queue.go`), and new `History` (DESIGN 4.4: add, remove, clear, 500 limit, atomic write, unreadable rename) and `Settings` (DESIGN 4.5) with their files |
-| `main` | `main.go` (launch, section 2.3), `app.go` (state and actions), one file per screen, `preview.go` (section 8), `menu.go` (section 9.1) |
+| `internal/brand` | The embedded app icon (section 2) |
+| `internal/testenv` | The isolated environment of section 15 for tests, the repository's fixtures and the core library to test against |
+| `internal/e2e` | The real-window driver, behind the `e2e` build tag (section 16) |
+| `main` | `main.go` (launch, section 2.3), `app.go` (state and actions), one file per screen, `preview.go` (section 8), `menu.go` (section 9.1), `desk.go` (dialogs, shell and the web view behind small interfaces that tests fake), `e2e.go` (the `e2e` build's automation plugin and theme override) |
 
 The window's state is one `app` value read and changed on the UI thread. Work
 done elsewhere (a conversion, a preview render, a dialog's answer) returns
@@ -116,9 +125,12 @@ app {
 
 ### 2.3 Launch
 
-1. Compute the folders of section 2.1. Call `App.SetPath` for them.
+1. Keep the working directory: relative file arguments name paths from it,
+   and step 5 moves it. Compute the folders of section 2.1. Call
+   `App.SetPath` for them.
 2. `App.RequestSingleInstanceLock()`. A second launch hands its arguments to the
-   first and exits (`single_instance.go:50-73`).
+   first and exits (`single_instance.go:50-73`); on Windows only while the
+   temporary folder's path is short enough (section 14).
 3. Choose the language. On macOS, put it in the argument domain now, before
    AppKit starts (section 10.5).
 4. `core.Load(core.Find(resources))`. An ABI mismatch shows only the fatal
@@ -127,8 +139,16 @@ app {
    (DESIGN 3.3).
 6. Load settings and history.
 7. `mygo.BindAs("PreviewKeys", &previewKeys{})` (section 8.3, `ipc.go:105-110`).
-8. `App.WhenReady`: make the window, its web view, and on macOS the menu bar.
-   Add the files from `os.Args[1:]` (section 10.1).
+8. `App.WhenReady`: make the window hidden (`WindowOptions.Hidden`), compile
+   the content rules (section 8.1), make the preview's web view, and on macOS
+   the menu bar. Then show the window. Add the files from `os.Args[1:]`
+   (section 10.1). The window shows only after its web view is made, because
+   of a Linux focus defect (section 14). The first launch with a new data
+   folder compiles the content rules before that (measured on the Linux
+   machine: the window showed about 1.25 s after launch, and about 0.3 s once
+   the compiled rules were kept). On the Windows machine, at 192 dpi, the
+   window showed about 0.6 s after launch with a new data folder and about
+   0.12 s with one it had used.
 
 ## 3. Relation to desktop/DESIGN.md
 
@@ -414,7 +434,7 @@ folder apply.
 |---|---|
 | Quit with running conversions | `ui.AlertDialog(c, &askingQuit, quit.title, body, quit.confirm, common.cancel)`. The body is `quit.body.*`, then `quit.body.queued` when items are Queued, after a space in English and directly in zh-Hans. The last button, `common.cancel`, is the default: accent, focused, Enter. Escape cancels (`ui/feedback.go:161-218`) |
 | Clear History | `ui.AlertDialog(c, &askingClear, history.clear.title.*, history.clear.body, history.clear.confirm, common.cancel)` |
-| Notice (folder refused, duplicate, history reset, save or open failed) | A `ui.Row` below the URL row, gap 6: Warning glyph 14 in `Warning`, the text in `Text`. `Role(RoleStatus)`, and `c.Announce` of its text when it appears. It clears after 8 s (`c.After`) or at the next add |
+| Notice (folder refused, duplicate, history reset, save or open failed) | A `ui.Row` below the URL row, gap 6: Warning glyph 14 in `Warning`, the text in `Text`. `Role(RoleStatus)`, and `c.Announce` of its text when it appears. It clears after 8 s (`c.After`) or at the next add, and `settings.output.unwritable` also when a folder is taken |
 | Copied | The Copy Markdown button's glyph becomes `check` for 1.5 s, and `c.Announce(notice.copied)` |
 | File pickers | `mygo.Dialog.Open` (multiple, files) and `mygo.Dialog.Save` with `Parent` set, which makes them sheets on macOS (`dialog.go:24-25`, `internal/darwin/dialog.go:19-28`). They block, so they run on a goroutine and post the answer back (`dialog.go:9-10`) |
 
@@ -494,7 +514,6 @@ The window makes one web view at `WhenReady`, never in the view
 
 ```go
 preview, err := win.NewWebView(mygo.WebViewOptions{
-	Transparent: true,
 	Page: mygo.PageOptions{
 		DevTools:      mygo.DevToolsDisabled,
 		Session:       mygo.NewEphemeralSession(),
@@ -506,17 +525,19 @@ preview, err := win.NewWebView(mygo.WebViewOptions{
 
 The detail builds `ui.WebView(c, preview).Grow(1).Label(a11y.preview)` only
 while a Done item's Preview tab shows. An element the view does not build
-hides its web view and keeps its page (`ui/webview.go:26-27`).
+hides its web view and keeps its page (`ui/webview.go:26-27`). On Linux, the
+first frame that builds it again gives it a bottom margin of 1 DIP and asks
+for another frame, because of a GTK sizing defect (section 14).
 
 | DESIGN 8 concern | mygo |
 |---|---|
-| Load | `Page.LoadHTML(html, baseURL)` with `baseURL` the `file://` URL of the result folder with a trailing slash (`window.go:1348-1351`). macOS calls `loadHTMLString:baseURL:` (`internal/darwin/window.go:1379-1388`), Linux `webkit_web_view_load_html` (`internal/linux/window.go:1100-1103`), Windows serves the document at the base URL (`internal/windows/webview.go:667-684`). Images inside the folder load on Windows **(unverified)** |
-| Scripts | The page's own scripts never run: the document's CSP `default-src 'none'` blocks them, and `preview_html` escapes raw HTML (DESIGN 3.3). The only script is `previewKeysJS` (section 8.3), injected by the host, which the CSP does not govern **(unverified per OS)** |
-| Network | The CSP, plus `noNetwork = CompileContentRules("preview-no-network", rules)` blocking `^https?://` and `^wss?://` (`content_rules.go:28-81`), plus an ephemeral session (`session.go:88-93`). Compile once, off the main thread, at launch |
+| Load | `Page.LoadHTML(html, baseURL)` with `baseURL` the `file://` URL of the result folder with a trailing slash (`window.go:1345-1351`). macOS calls `loadHTMLString:baseURL:` (`internal/darwin/window.go:1379-1388`), Linux `webkit_web_view_load_html` (`internal/linux/window.go:1100-1103`), Windows serves the document at the base URL (`internal/windows/webview.go:667-684`). On macOS `loadHTMLString:baseURL:` grants the page no read access to the folder, so the result's own images do not load (measured: `naturalWidth` 0). There the app first loads the Markdown file with `Page.LoadFile`, which calls `loadFileURL:allowingReadAccessToURL:` with the file's folder (`window.go:1276-1288`, `internal/darwin/window.go:1390-1395`), and on its `OnDidFinishLoad` loads the HTML: WebKit keeps the folder's access for a later load whose base is inside it. Section 18 has the outcome per OS |
+| Scripts | The page's own scripts never run: the document's CSP `default-src 'none'` blocks them, and `preview_html` escapes raw HTML (DESIGN 3.3). The only script is `previewKeysJS` (section 8.3), injected by the host, which the CSP does not govern (section 18, claim 2) |
+| Network | The CSP, plus `noNetwork = CompileContentRules("preview-no-network", rules)` blocking `^https?://` and `^wss?://` (`content_rules.go:28-100`), plus an ephemeral session (`session.go:88-93`). Compile once, at `WhenReady`, on the main thread. `CompileContentRules` waits for WebKit's answer, which mygo delivers on the main thread (`cookies.go:270-290`, `internal/darwin/content_rules.go:62-74`); on the main thread mygo keeps handling events while it waits, but a goroutine's call deadlocks when the main thread waits for that goroutine (measured: no first frame) |
 | Navigation | `Page.OnWillNavigate`: allow a URL equal to the base URL with only a fragment added. Open `http`, `https` and `mailto` with `Shell.OpenExternal` and `PreventDefault`. Prevent everything else (`window.go:1738-1741`, `events.go:32-42`). No `SetWindowOpenHandler`: without one, mygo opens `http` and `https` in the browser and denies the rest (`window.go:1549-1552`) |
 | Context menu | `Page.OnContextMenu`: keep only the item with ID `ContextMenuCopy`, relabeled `common.copy`, when text is selected. Otherwise `PreventDefault` (`context_menu.go:25`, `context_menu.go:124`) |
 | Developer tools | `DevToolsDisabled` (`window.go:38-46`), which also turns off WebView2's browser keys (`internal/windows/webview.go:205-212`) |
-| Background | `Transparent: true`, so the detail's `Background` shows under the page (`webview.go:44-46`) |
+| Background | Two parts, both the detail's `Background` as `#rrggbb`. `WebView.SetBackgroundColor`, again when the theme changes (`webview.go:142-146`), fills the web view until the page paints. Not `Transparent`: the web view sits in a clip view under mygo's surface, which leaves a hole there (`internal/darwin/webview.go:15-24`), so a transparent page shows the window's backing, not the detail (measured on macOS: `#22201f` beside a `#18181b` detail in dark). The preview stylesheet's page background is transparent (DESIGN 15), and WebKitGTK paints a transparent page in the dark color scheme `#1e1e1e` whatever the web view's color (found in the Linux run, and in a probe with a green web view). So the app also ends the document's head with `<style>html { background: <color>; }</style>`, which the document's CSP allows (`style-src 'unsafe-inline'`), and loads the document again when the color changes |
 | Zoom | `Page.SetZoomFactor(view.zoom)` (`window.go:1409`) |
 | Appearance | On a change of `c.Theme().Dark`, render again with the new `theme` and load it |
 | Missing web engine | When `NewWebView` fails, the Preview tab shows `preview.webview2_missing` on Windows and `preview.unavailable` elsewhere, centered, and the Markdown tab works |
@@ -558,7 +579,7 @@ folder, Search History, the three zoom keys, Back (Esc, ⌘[ or Alt+Left), and o
 Linux Close and Quit. The script compares `event.code` with modifiers, so it
 works on any keyboard layout. On macOS a key the page leaves unhandled goes
 on to the menu bar. The script's `preventDefault` marks it handled, so the
-action runs once, through the script **(unverified)**.
+action runs once, through the script **(unverified)**, section 18, claim 3.
 
 ## 9. Menus and shortcuts
 
@@ -668,7 +689,7 @@ The app never calls `Theme.SetSource`, so the theme follows the system
 | mygo's own text | `App.SetLanguages("en", "zh-Hans")`, then `App.SetLocale(<choice>)` (`locale.go:77-180`). Role menus, text-field context menus and mygo-drawn labels follow at once. `SetLocale` also stores the choice, on macOS in the app's defaults (`internal/darwin/locale.go:93-104`). Each launch chooses again from the global list |
 | Windows system text | mygo sets the process's preferred UI languages (`internal/windows/locale.go:112-129`), so the system file pickers follow the app |
 | Linux system text | The file pickers are labeled with mygo's strings in the app's language (`internal/linux/dialog.go:72-106`) |
-| macOS system text | AppKit's own text (open and save panels, the About panel, the items AppKit adds to menus) takes `AppleLanguages` when AppKit starts, and mygo's `SetLanguages` does nothing on macOS (`internal/darwin/locale.go:106-108`). So `main`, before `App.Run`, sets `AppleLanguages` = `[<choice>]` in the process's argument domain: `NSUserDefaults.standardUserDefaults`, its `volatileDomainForName:` `NSArgumentDomain` with the key added, then `setVolatileDomain:forName:`. It calls them through `github.com/ebitengine/purego/objc`, without cgo. Markitai Native's macOS `main` does the same (`localizeTheSystemMenus` in its `Main.swift`). mygo makes `NSApplication` only in `App.Run` (`app.go:105-110`, `internal/darwin/app.go:102-121`), after this. The argument domain lasts for the process and writes nothing. `CFBundleLocalizations` lists English and zh-Hans. A zh-Hant user then sees zh-Hans in every panel from the first launch **(unverified in a mygo process)** |
+| macOS system text | AppKit's own text (open and save panels, the About panel, the items AppKit adds to menus) takes `AppleLanguages` when AppKit starts, and mygo's `SetLanguages` does nothing on macOS (`internal/darwin/locale.go:106-108`). So `main`, before `App.Run`, sets `AppleLanguages` = `[<choice>]` in the process's argument domain: `NSUserDefaults.standardUserDefaults`, its `volatileDomainForName:` `NSArgumentDomain` with the key added, then `setVolatileDomain:forName:`. It calls them through `github.com/ebitengine/purego/objc`, without cgo. Markitai Native's macOS `main` does the same (`localizeTheSystemMenus` in its `Main.swift`). mygo makes `NSApplication` only in `App.Run` (`app.go:105-110`, `internal/darwin/app.go:102-121`), after this. The argument domain lasts for the process and writes nothing. `CFBundleLocalizations` lists English and zh-Hans. A zh-Hant user then sees zh-Hans in every panel from the first launch **(unverified)** in the panels, section 18, claim 4 |
 
 ### 10.6 Single instance
 
@@ -741,40 +762,73 @@ Add these to DESIGN 10 and `desktop/strings.json`.
 | Linux launcher entry passes no files without `fileAssociations` | `cmd/mygo/build.go:609-651` | Accepted. Command-line arguments still add files |
 | `Tester.Texts` omits a `TextArea`'s content | `ui/headless.go:471-478` | Tests read the Markdown text with Select All and Copy (spike `TestDropToDone`) |
 | `Tester` places web views but shows no page | `ui/headless.go:204-208`, `docs/ui/web-view.md:286-290` | The app loads pages through a small `previewPane` interface whose `View()` is the `ui.NativeWebView` to build. Tests pass a fake that records the HTML, base URL and zoom. Its view embeds a nil `ui.NativeWebView`, because the interface's one method names mygo's internal types (`internal/surface/surface.go:109-113`) and the Tester never calls it (`ui/headless.go:208`). `Tester.WebViewAt` then finds it where the Preview tab shows |
+| On macOS `Page.LoadHTML` with a `file:` base loads no file the page refers to, though its documentation says relative URLs resolve against the base | `window.go:1345-1348`, `internal/darwin/window.go:1379-1388` | Load the Markdown file with `Page.LoadFile` first (section 8.1) |
+| `Transparent` shows the window's backing, not the native UI's background, under the page | `webview.go:44-46`, `internal/darwin/webview.go:15-24` | `WebView.SetBackgroundColor` with the detail's color (section 8.1) |
+| `CompileContentRules` from a goroutine waits for the main thread | `content_rules.go:81-100`, `cookies.go:270-290` | Called on the main thread at `WhenReady` (section 8.1) |
+| WebKit keeps compiled content rules in the real home, by identifier | `internal/darwin/content_rules.go:40-61` | Accepted, listed in section 2.1 |
+| An `Absolute` element paints over its later siblings | `ui/paint.go:360-372` | The segmented control's pill shares the chosen segment's grid cell and is built first (section 6.4) |
+| A `ui.SidebarItem`'s glyph takes the accent | `ui/sidebar.go:180-200` | The item draws its glyph and the chosen bar itself in `Draw`, with no glyph given to mygo |
+| A `Router` builds the page going away as the next one comes in, so a `ui.Handle` bound in both binds twice | `ui/router.go:535-560` | A page binds its handles only when it is the route shown (`view.go`: `a.leaving`) |
+| `Tester.DropFiles` drops only files | `ui/headless.go:674-681` | The link drop calls `app.dropped` with `transfer.URLData` (`convert_test.go`) |
+| `Tester` has no automation of the real window | `plugins/automation` | The `e2e` build links mygo's automation plugin; `internal/e2e` drives it (section 16) |
+| On Linux, the first web view of a shown window that is not active yet takes the keyboard from the native UI for good: the window gets no key until a click on the content | `internal/linux/webview.go:136-166` (`makeLayers` moves the content's widget into an overlay and gives the focus back only when the widget has it, which it does not before the window is active; removing the widget clears the window's focus), `window.go:575-577` (`NewWindow` shows the window unless `Hidden`), `internal/linux/window.go:740-758` (`Focus` only presents the window), `internal/linux/surface.go:926-931` (only a press gives the content the focus again) | The window is made with `Hidden`, gets its web view, and is shown after it (section 2.3). Found in the Linux runs: a probe typed through the compositor reached a text field without a web view or with this order, and nothing reached it with the web view made after the window showed |
+| On Linux, a web view placed again after it was hidden keeps the size it had before: a taller frame shows GTK's window color in a band under the page | `internal/linux/webview.go:183-189` (`PlaceWebViews` sets the size request, then shows the hidden widget). The cause inside GTK 3 is not traced: in the probe, a change of size while the widget shows takes effect, and one made while it was hidden does not | On Linux, the preview's first frame after it comes back has a bottom margin of 1 DIP and asks for another frame, whose new size GTK applies (`preview.go`, section 8.1). Found in the Linux run (a band of 59 DIP under the page after switching items); a probe reproduced it, and with the margin it filled its frame (`.local` evidence, `probe-web/`) |
+| On Linux, a transparent page in the dark color scheme paints `#1e1e1e`, not the web view's color | WebKitGTK; `internal/linux/window.go:840-844` sets the web view's color | The document's head gets the detail's background (section 8.1) |
+| On Linux, mygo keeps web data by the display name and WebKitGTK's program name, not under `PathUserData` | `internal/linux/content_rules.go:84-89`, `internal/linux/cookies.go:92-103` | Accepted, listed in section 2.1 |
+| On Windows, when the temporary folder's path is long, a second launch opens a second window instead of handing its files to the first: the lock's socket goes in the temporary folder only while its path stays under 100 bytes, else in `/tmp`, which Windows lacks, and a lock that cannot listen lets every instance run | `single_instance.go:176-184` (the path), `single_instance.go:105-109` (any error but address-in-use returns true) | Accepted: the usual `%TEMP%`, `C:\Users\<name>\AppData\Local\Temp`, stays short enough for a user name of up to 45 characters. The e2e driver gives the app a short temporary folder (section 16), since one under a runner's evidence folder is too long |
 
 ## 15. Build
 
-`python3 desktop/mygo/build.py [--check] [--no-core]` on macOS, Windows and
-Linux, Python 3.13 standard library only, mirroring
-`desktop/native/macos/build.py` and `desktop/native/linux/build.py`:
+`python3.13 desktop/mygo/build.py [--check] [--no-core] [--platform GOOS/GOARCH]
+[--e2e]` on macOS, Windows and Linux, Python 3.13 or newer, standard library
+only:
 
 1. Build the core: `cargo rustc -p markitai-app --release --locked --lib
-   --crate-type cdylib`, on macOS with `MACOSX_DEPLOYMENT_TARGET=13.0`.
-   `--no-core` reuses `target/release`.
+   --crate-type cdylib`, honoring `CARGO_TARGET_DIR`. On macOS with
+   `MACOSX_DEPLOYMENT_TARGET=13.0`, `SDKROOT` from `xcrun` when unset, and
+   `-C link-arg=-Wl,-install_name,@rpath/libmarkitai_app.dylib`: without it the
+   library's install name is its absolute path under `target/`, which would
+   ship a build machine's home path. On Windows with `-Ctarget-feature=+crt-static`
+   added to the flags, as Markitai Native's Windows build does, so the app
+   needs no Visual C++ redistributable, in `target/mygo-windows` so other builds
+   keep their flags. `--no-core` reuses the library built before.
 2. Stage it in `desktop/mygo/resources/<goos>-<goarch>/` (ignored).
-3. Copy `desktop/strings.json` to `internal/l10n/strings.json`. Check that
-   `mygo.json`'s `version` equals the workspace version.
+3. Copy `desktop/strings.json` to `internal/l10n/strings.json` and
+   `desktop/icon.png` to `internal/brand/icon.png`. Check that `mygo.json`'s
+   `version` equals the workspace version.
 4. `go vet ./...`.
 5. `go test -count=1 ./...` with `MARKITAI_APP_LIB` set to the staged
-   library and an isolated environment: `HOME`, `MARKITAI_HOME`,
-   `XDG_DATA_HOME`, `XDG_CONFIG_HOME`, `XDG_CACHE_HOME`, `XDG_STATE_HOME`,
-   `USERPROFILE`, `APPDATA` and `LOCALAPPDATA` in a temporary folder, `TERM=dumb`.
-   `GOMODCACHE`, `GOCACHE` and `GOPATH` keep their real values so the module
-   cache is not downloaded again.
-6. `CGO_ENABLED=0 go tool mygo build -platform <goos>/<goarch> -skip-dmg
-   -skip-installer`, into `desktop/mygo/build/`.
+   library and an isolated environment: `HOME`, `USERPROFILE`,
+   `MARKITAI_HOME`, `XDG_DATA_HOME`, `XDG_CONFIG_HOME`, `XDG_CACHE_HOME`,
+   `XDG_STATE_HOME`, `APPDATA` and `LOCALAPPDATA` in a temporary folder,
+   `TERM=dumb`, `CGO_ENABLED=0`. `GOMODCACHE`, `GOCACHE` and `GOPATH` keep
+   their real values so the module cache is not downloaded again.
+6. `CGO_ENABLED=0 go tool mygo build -platform <goos>/<goarch> -skip-installer`,
+   on macOS also `-skip-dmg`, into `desktop/mygo/build/<goos>-<goarch>/`.
 
-`--check` runs steps 1 to 5 and `desktop/scripts/strings.py --check`, and
-builds nothing. It never writes a tracked file: in place of step 3's copy it
-fails when the copy differs.
+`--check` runs steps 1, 2, 4 and 5 and `desktop/scripts/strings.py --check`,
+and in place of step 3's copy fails when a copy differs. It builds no app and
+never writes a tracked file. Without `--check`, `build.py` runs steps 1 to 3
+and 6; run `--check` for the vet and the tests. `--e2e` builds with
+`GOFLAGS=-tags=e2e` and `MYGO_INSPECTOR=1` into `desktop/mygo/build/e2e/`:
+`e2e.go` links mygo's automation plugin, which builds without the inspector
+leave out. Never ship that build. The e2e build keeps the identifier
+`dev.markitai.mygo`: its only data outside `HOME` is WebKit's content-rule
+list of section 2.1, the same rules an installed app compiles.
 
 Hosted verification: a `windows` job in `.github/workflows/desktop-mygo.yml`
-on `windows-2025`: checkout, the repository's Rust toolchain, `actions/setup-go`
-with `go-version-file: desktop/mygo/go.mod`, `python desktop/mygo/build.py
---check`, then `python desktop/mygo/build.py --no-core`, and an upload of
-`desktop/mygo/build/` as `markitai-mygo-windows-amd64` and the test log. The
-workflow runs on changes under `desktop/mygo/`, `desktop/strings.json` and
-`crates/`. The user guide is `docs/desktop-mygo.md`.
+on `windows-2025`: checkout, Python 3.13, `actions/setup-go` with
+`go-version-file: desktop/mygo/go.mod`, the repository's Rust toolchain with
+its dependencies cached for `target/mygo-windows`, `build.py --check`, then
+`build.py --no-core` and `build.py --no-core --e2e`, the SHA-256 of the
+executables and the DLL with the commit and the WebView2 Runtime version, then
+the e2e driver of section 16 on the runner's desktop. The evidence uploads as
+`markitai-mygo-windows-evidence` and `desktop/mygo/build/windows-amd64/` as
+`markitai-mygo-windows-amd64`. The workflow runs on pushes, on any branch, that
+change `desktop/mygo/`, `desktop/strings.json`, `desktop/icon.png`,
+`desktop/scripts/strings.py`, the core's crates, `vendor/`, `Cargo.toml`,
+`Cargo.lock` or the workflow, one run per ref at a time. The user guide is
+`docs/desktop-mygo.md`.
 
 ## 16. Test plan
 
@@ -796,14 +850,52 @@ isolated environment of section 15 again with `t.Setenv`.
 | Retry | Retry captures the current settings and queues |
 | Remove and Clear Finished | Converting rows refuse removal. Selection moves to the next row |
 | History | Done items appear newest first. Search filters, no-match text. Remove keeps files. Clear asks, Cancel keeps, Clear empties. 501 additions keep 500. A corrupt file is renamed and reported once. A missing Markdown file shows `detail.missing.*` |
-| Settings | Switches write `settings.json`. Desc and Alt are disabled without AI. Change refuses an unwritable folder. Configuration choice, Open and Create |
+| Settings | Switches write `settings.json`. Desc and Alt are disabled without AI. Change refuses an unwritable folder, and taking a folder clears that notice. Configuration choice, Open and Create, scrolled to in a window too short for the page |
 | Quit | With an item Converting, the close path asks. Cancel keeps it. The alert follows the count and closes by itself when the conversion ends. Quit deletes the claimed folder |
 | Shortcuts | Each section 9.2 action, from the native UI and through `PreviewKeys.Press` |
 | Stacked layout | At 800 wide: list fills, Enter pushes the detail, Esc and Back return with the selection kept, widening replaces the page |
 | Motion | Row removal slides over 150 ms, and is at once with Reduce Motion (spike `TestRowMotionFollowsReduceMotion`). With Reduce Motion no frame is pending after any change except the spinner |
 | Accessibility | Names of section 11 found with `Tester.Find`. Announcements with `Tester.Announcements` |
 | Copy | Every visible string comes from `strings.json` in both languages: a test walks every screen and checks `Tester.Texts` against the catalog's values, allowing file names, paths, numbers and the core's text |
-| Images | The preview's base URL is the result folder. Remote images are not loaded (the HTML from `preview_html` holds `img-remote`) |
+| Images | The preview's base URL is the result folder, and the file loaded first for read access is the Markdown file in it (section 8.1). Remote images are not loaded (the HTML from `preview_html` holds `img-remote`). The web view is filled with the detail's background |
+| Library | `internal/core/ship_test.go` reads the staged core: on macOS its install name is `@rpath/libmarkitai_app.dylib` and it links only `/usr/lib` and `/System/Library`; on Windows it imports no `vcruntime`, `msvcp` or `api-ms-win-crt-` DLL; on Linux it needs only `lib*` sonames |
+| Design shots | `design_test.go`, only with `MARKITAI_MYGO_DESIGN_SHOTS` naming a folder: every screen and state of section 6, light and dark, English and zh-Hans, as PNGs from the `Tester` for review |
+
+The real window. `internal/e2e` (build tag `e2e`) drives the `--e2e` build
+through mygo's automation socket (`MYGO_AUTOMATION`). Each run of
+`MARKITAI_MYGO_E2E_RUNS` (default `en-light,zh-Hans-dark,en-dark,zh-Hans-light`)
+gets its own `HOME`, XDG folders, `USERPROFILE`, `APPDATA`, `LOCALAPPDATA` and
+`MARKITAI_HOME` under `MARKITAI_MYGO_E2E_OUT/<run>/`, a `TEMP` of its own under
+the system's temporary folder, whose short path keeps mygo's single-instance
+lock working on Windows (section 14), `MYGO_LOCALE` and
+`MARKITAI_MYGO_E2E_THEME` (read by `e2e.go`). The run launches the app with a PDF
+fixture whose images are confined and a folder, waits for Done and
+`notice.folder`, opens the Markdown
+tab, starts a second instance with two more files (one Markdown file with a
+table, task lists, a footnote, a remote image and raw HTML), adds a page from
+a local server, searches History, turns OCR on and reads `settings.json`,
+starts a page the server never answers, then quits, cancels, quits again and
+checks that the converting item's folder is gone. `report.json` lists what the
+app wrote outside its folders of section 2.1, the output folder and the
+markitai home, and the run fails if any of it is another version's. Quitting
+is asked through the app menu on macOS, Ctrl+Q on Linux and `WM_CLOSE`
+(`taskkill` without `/F`) on Windows. Each step keeps the window's own capture
+and, with `MARKITAI_MYGO_E2E_WINDOW_SHOT` naming a program that takes a process
+ID and a PNG path, the system's (`internal/e2e/windowshot.ps1` on Windows),
+which shows the web view. With `MARKITAI_MYGO_E2E_PAGE_KEY` naming a program
+that takes a process ID and `zoom-in` and sends that window the platform's
+Zoom In keys as the keyboard does (`internal/e2e/pagekey.ps1` on Windows), it
+gives the preview page the keyboard with the automation's `focus`, sends the
+keys and checks that `view.zoom` rises exactly one step: only the page's
+injected script can act on them there (section 8.3), and two steps would mean
+the action ran twice. Without such a program, as on macOS, where posting keys
+to another process needs the Accessibility permission, the e2e build itself
+dispatches that keydown in the page when the driver writes `zoom-in` to the
+file `MARKITAI_MYGO_E2E_PAGE_EVENT` names (`e2e.go`, `Page.Eval`). That checks
+the script and its `mygo.call`, not the system's delivery of the key, and
+`report.json` says which way ran. `report.json` holds the first-frame and
+window-visible times, the time from the first Done to its preview, the memory
+after the first conversion, the second instance's exit time, the rows and the files written.
 
 ## 17. Checks before calling a platform done
 
@@ -822,14 +914,14 @@ isolated environment of section 15 again with `t.Setenv`.
 
 ## 18. Unverified
 
-- Images inside the result folder load in WebView2 from a document that
-  `LoadHTML` serves at a `file:` base URL (section 8.1).
-- Host-injected `PreloadScript`s run in a page whose CSP is `default-src
-  'none'`, on all three engines, and `mygo.call` reaches a bound method from
-  it (section 8.3).
-- On macOS, a key the preview script prevents does not also reach the menu
-  bar's key equivalents (section 8.3).
-- AppKit's panels and About panel follow `AppleLanguages` set in the
-  argument domain from Go, through purego, before `App.Run` (section 10.5).
-- Dropping a link from a browser delivers `transfer.URIList` on Windows and
-  Linux (section 10.1).
+The claims this section listed before the first builds, and what the runs of
+2026-11-04 found (evidence in the ignored `.local/desktop-mygo-r1/`). Where a
+run disproved a claim, the sections above now say what the app does.
+
+| Claim | macOS | Linux | Windows |
+|---|---|---|---|
+| 1. Images inside the result folder load from a document that `LoadHTML` serves at a `file:` base URL (section 8.1) | False: `loadHTMLString:baseURL:` grants no read access (`naturalWidth` 0). The app loads the Markdown file first (sections 8.1 and 14); the e2e runs then show the PDF fixture's image | True: the e2e runs show the image | True: on a 192-dpi display the real-window runs show the PDF fixture's image. mygo serves the document at its `file:` base URL through WebView2's resource requests (`internal/windows/webview.go:667-684`, `internal/windows/webview.go:1191-1194`). The hosted runner's runs, at 96 dpi, show it too |
+| 2. A host-injected `PreloadScript` runs in a page whose CSP is `default-src 'none'`, and `mygo.call` reaches a bound method from it (section 8.3) | True: a keydown of Cmd+= that the e2e build dispatches in the page raises `view.zoom` one step. The system's delivery of the key is not checked (claim 3) | True with system keys: Ctrl+= from the compositor (Hyprland `send_shortcut`) raises `view.zoom` one step, once the window shows after its web view (section 14) | True with system keys: Ctrl+= sent with `keybd_event` to the preview, once the automation gave it the focus, raises `view.zoom` one step (`internal/e2e/pagekey.ps1`, 192 dpi). The hosted runner's runs agree |
+| 3. On macOS, a key the preview script prevents does not also reach the menu bar's key equivalents (section 8.3) | Unverified: posting keys to the app (`CGEventPostToPid`, System Events) needs the Accessibility permission, a security setting these runs did not change | Not applicable | Not applicable |
+| 4. AppKit's panels and About panel follow `AppleLanguages` set in the argument domain from Go, through purego, before `App.Run` (section 10.5) | Partly: `TestAppleLanguages` sets the argument domain through purego and reads `zh-Hans` and `en` back in a Go process. The panels on a system whose first language is zh-Hant are unverified: that needs changing the system's language | Not applicable | Not applicable |
+| 5. Dropping a link from a browser delivers `transfer.URIList` (section 10.1) | Not claimed | Unverified: the runs open no browser. The Tester covers `app.dropped` with `transfer.URLData` | Unverified, as on Linux |

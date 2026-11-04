@@ -1,0 +1,578 @@
+{
+ "app.name.native": {
+  "en": "Markitai Native",
+  "zh-Hans": "Markitai Native"
+ },
+ "app.name.mygo": {
+  "en": "Markitai Mygo",
+  "zh-Hans": "Markitai Mygo"
+ },
+ "nav.convert": {
+  "en": "Convert",
+  "zh-Hans": "转换"
+ },
+ "nav.history": {
+  "en": "History",
+  "zh-Hans": "历史记录"
+ },
+ "nav.settings": {
+  "en": "Settings",
+  "zh-Hans": "设置"
+ },
+ "nav.preferences": {
+  "en": "Preferences",
+  "zh-Hans": "首选项"
+ },
+ "menu.settings": {
+  "en": "Settings…",
+  "zh-Hans": "设置…"
+ },
+ "menu.about.native": {
+  "en": "About Markitai Native",
+  "zh-Hans": "关于 Markitai Native"
+ },
+ "menu.about.mygo": {
+  "en": "About Markitai Mygo",
+  "zh-Hans": "关于 Markitai Mygo"
+ },
+ "menu.main": {
+  "en": "Main Menu",
+  "zh-Hans": "主菜单"
+ },
+ "menu.add_url": {
+  "en": "Add Web Address",
+  "zh-Hans": "添加网址"
+ },
+ "menu.toggle_view": {
+  "en": "Switch Preview and Markdown",
+  "zh-Hans": "切换预览与 Markdown"
+ },
+ "menu.zoom_in": {
+  "en": "Zoom In",
+  "zh-Hans": "放大"
+ },
+ "menu.zoom_out": {
+  "en": "Zoom Out",
+  "zh-Hans": "缩小"
+ },
+ "menu.actual_size": {
+  "en": "Actual Size",
+  "zh-Hans": "实际大小"
+ },
+ "convert.empty.title": {
+  "en": "Drop files to convert",
+  "zh-Hans": "拖入文件即可转换"
+ },
+ "convert.empty.body": {
+  "en": "PDF, Word, PowerPoint, Excel, images, web pages and more become Markdown in {folder}.",
+  "zh-Hans": "PDF、Word、PowerPoint、Excel、图片、网页等都会转成 Markdown，保存到 {folder}。"
+ },
+ "convert.choose": {
+  "en": "Choose Files…",
+  "zh-Hans": "选择文件…"
+ },
+ "convert.or": {
+  "en": "or",
+  "zh-Hans": "或"
+ },
+ "convert.url.label": {
+  "en": "Web address",
+  "zh-Hans": "网址"
+ },
+ "convert.url.placeholder": {
+  "en": "https://example.com/article",
+  "zh-Hans": "https://example.com/article"
+ },
+ "convert.url.add": {
+  "en": "Add",
+  "zh-Hans": "添加"
+ },
+ "convert.url.invalid": {
+  "en": "Enter a web address that starts with http:// or https://.",
+  "zh-Hans": "请输入以 http:// 或 https:// 开头的网址。"
+ },
+ "convert.drop.bar": {
+  "en": "Drop files here",
+  "zh-Hans": "将文件拖到这里"
+ },
+ "convert.drop.release": {
+  "en": "Release to add",
+  "zh-Hans": "松开即可添加"
+ },
+ "convert.clear_finished": {
+  "en": "Clear Finished",
+  "zh-Hans": "清除已完成"
+ },
+ "convert.remove": {
+  "en": "Remove from List",
+  "zh-Hans": "从列表中移除"
+ },
+ "convert.remove.busy": {
+  "en": "A conversion can't be stopped once it starts.",
+  "zh-Hans": "转换开始后无法停止。"
+ },
+ "notice.folder": {
+  "en": "“{name}” is a folder. Add the files inside it instead.",
+  "zh-Hans": "“{name}”是文件夹。请添加其中的文件。"
+ },
+ "notice.folders": {
+  "en": "{count} folders weren't added. Add the files inside them instead.",
+  "zh-Hans": "{count} 个文件夹未添加。请添加其中的文件。"
+ },
+ "notice.duplicate": {
+  "en": "“{name}” is already waiting or converting.",
+  "zh-Hans": "“{name}”已在等待或转换中。"
+ },
+ "notice.copied": {
+  "en": "Copied",
+  "zh-Hans": "已复制"
+ },
+ "state.queued": {
+  "en": "Queued",
+  "zh-Hans": "排队中"
+ },
+ "state.converting": {
+  "en": "Converting…",
+  "zh-Hans": "正在转换…"
+ },
+ "state.done": {
+  "en": "Done in {duration}",
+  "zh-Hans": "已完成，用时 {duration}"
+ },
+ "state.failed": {
+  "en": "Failed",
+  "zh-Hans": "失败"
+ },
+ "state.warnings.one": {
+  "en": "1 warning",
+  "zh-Hans": "1 条警告"
+ },
+ "state.warnings.other": {
+  "en": "{count} warnings",
+  "zh-Hans": "{count} 条警告"
+ },
+ "row.failed": {
+  "en": "Failed · {reason}",
+  "zh-Hans": "失败 · {reason}"
+ },
+ "detail.empty": {
+  "en": "Select a conversion to see its Markdown.",
+  "zh-Hans": "选择一个转换以查看 Markdown。"
+ },
+ "detail.queued": {
+  "en": "Waiting for a free slot. Markitai converts two files at a time.",
+  "zh-Hans": "正在等待空位。Markitai 每次同时转换两个文件。"
+ },
+ "detail.converting": {
+  "en": "Converting… {elapsed}",
+  "zh-Hans": "正在转换… {elapsed}"
+ },
+ "detail.converting.note": {
+  "en": "A conversion can't be stopped once it starts. Quitting now loses its result.",
+  "zh-Hans": "转换开始后无法停止。现在退出会丢失结果。"
+ },
+ "detail.view": {
+  "en": "View",
+  "zh-Hans": "视图"
+ },
+ "detail.preview": {
+  "en": "Preview",
+  "zh-Hans": "预览"
+ },
+ "detail.markdown": {
+  "en": "Markdown",
+  "zh-Hans": "Markdown"
+ },
+ "detail.copy": {
+  "en": "Copy Markdown",
+  "zh-Hans": "复制 Markdown"
+ },
+ "detail.save_as": {
+  "en": "Save As…",
+  "zh-Hans": "另存为…"
+ },
+ "detail.show.macos": {
+  "en": "Show in Finder",
+  "zh-Hans": "在访达中显示"
+ },
+ "detail.show.windows": {
+  "en": "Show in File Explorer",
+  "zh-Hans": "在文件资源管理器中显示"
+ },
+ "detail.show.gnome": {
+  "en": "Show in Files",
+  "zh-Hans": "在“文件”中显示"
+ },
+ "detail.show.linux": {
+  "en": "Show in Folder",
+  "zh-Hans": "在文件夹中显示"
+ },
+ "detail.more": {
+  "en": "More Actions",
+  "zh-Hans": "更多操作"
+ },
+ "detail.retry": {
+  "en": "Retry",
+  "zh-Hans": "重试"
+ },
+ "detail.details": {
+  "en": "Details",
+  "zh-Hans": "详细信息"
+ },
+ "detail.missing.title": {
+  "en": "The Markdown file is missing",
+  "zh-Hans": "找不到 Markdown 文件"
+ },
+ "detail.missing.body": {
+  "en": "It is no longer at {path}. It may have been moved or deleted.",
+  "zh-Hans": "它已不在 {path}，可能已被移动或删除。"
+ },
+ "footer.duration": {
+  "en": "Converted in {duration}",
+  "zh-Hans": "转换用时 {duration}"
+ },
+ "footer.tokens": {
+  "en": "{count} tokens",
+  "zh-Hans": "{count} 个 token"
+ },
+ "footer.cost.at_least": {
+  "en": "at least {cost}",
+  "zh-Hans": "至少 {cost}"
+ },
+ "footer.cost.unknown": {
+  "en": "cost unknown",
+  "zh-Hans": "费用未知"
+ },
+ "unit.seconds": {
+  "en": "{value} s",
+  "zh-Hans": "{value} 秒"
+ },
+ "unit.minutes": {
+  "en": "{minutes} min {seconds} s",
+  "zh-Hans": "{minutes} 分 {seconds} 秒"
+ },
+ "date.today": {
+  "en": "Today, {time}",
+  "zh-Hans": "今天 {time}"
+ },
+ "date.yesterday": {
+  "en": "Yesterday, {time}",
+  "zh-Hans": "昨天 {time}"
+ },
+ "history.search": {
+  "en": "Search History",
+  "zh-Hans": "搜索历史记录"
+ },
+ "history.empty.title": {
+  "en": "No conversions yet",
+  "zh-Hans": "还没有转换记录"
+ },
+ "history.empty.body": {
+  "en": "Finished conversions appear here. Removing an entry keeps its files.",
+  "zh-Hans": "完成的转换会显示在这里。移除记录不会删除文件。"
+ },
+ "history.no_results": {
+  "en": "No results for “{query}”",
+  "zh-Hans": "没有与“{query}”匹配的结果"
+ },
+ "history.remove": {
+  "en": "Remove from History",
+  "zh-Hans": "从历史记录中移除"
+ },
+ "history.clear": {
+  "en": "Clear History…",
+  "zh-Hans": "清除历史记录…"
+ },
+ "history.clear.title.one": {
+  "en": "Clear the 1 entry?",
+  "zh-Hans": "清除这 1 条记录？"
+ },
+ "history.clear.title.other": {
+  "en": "Clear all {count} entries?",
+  "zh-Hans": "清除全部 {count} 条记录？"
+ },
+ "history.clear.body": {
+  "en": "Your converted files stay in the output folder.",
+  "zh-Hans": "转换后的文件仍保留在输出文件夹中。"
+ },
+ "history.clear.confirm": {
+  "en": "Clear",
+  "zh-Hans": "清除"
+ },
+ "history.reset": {
+  "en": "History couldn't be read, so Markitai started a new one. The old file is kept as {name}.",
+  "zh-Hans": "无法读取历史记录，已重新开始。旧文件保留为 {name}。"
+ },
+ "settings.conversion": {
+  "en": "Conversion",
+  "zh-Hans": "转换"
+ },
+ "settings.llm": {
+  "en": "Enhance with AI",
+  "zh-Hans": "AI 增强"
+ },
+ "settings.llm.note": {
+  "en": "A model from your markitai configuration tidies the Markdown. Providers may charge for requests.",
+  "zh-Hans": "由 markitai 配置中的模型整理 Markdown。服务商可能按请求收费。"
+ },
+ "settings.ocr": {
+  "en": "OCR",
+  "zh-Hans": "OCR 文字识别"
+ },
+ "settings.ocr.note": {
+  "en": "Reads scans and images on this computer with the OCR settings in your markitai configuration. The first use downloads its models.",
+  "zh-Hans": "按 markitai 配置中的 OCR 设置在本机识别扫描件和图片。首次使用会下载模型。"
+ },
+ "settings.screenshot": {
+  "en": "Screenshots",
+  "zh-Hans": "页面截图"
+ },
+ "settings.screenshot.note": {
+  "en": "Saves an image of each page. Office files need LibreOffice. Web pages need Chrome or Chromium.",
+  "zh-Hans": "保存每一页的图像。Office 文件需要 LibreOffice，网页需要 Chrome 或 Chromium。"
+ },
+ "settings.desc": {
+  "en": "Image descriptions",
+  "zh-Hans": "图片描述"
+ },
+ "settings.desc.note": {
+  "en": "A vision model from your markitai configuration describes each image. Needs Enhance with AI.",
+  "zh-Hans": "由 markitai 配置中的视觉模型描述每张图片。需要开启 AI 增强。"
+ },
+ "settings.alt": {
+  "en": "Alt text",
+  "zh-Hans": "替代文本"
+ },
+ "settings.alt.note": {
+  "en": "A vision model from your markitai configuration writes alt text for each image. Needs Enhance with AI.",
+  "zh-Hans": "由 markitai 配置中的视觉模型为每张图片写替代文本。需要开启 AI 增强。"
+ },
+ "settings.output": {
+  "en": "Output",
+  "zh-Hans": "输出"
+ },
+ "settings.output.folder": {
+  "en": "Output folder",
+  "zh-Hans": "输出文件夹"
+ },
+ "settings.output.note": {
+  "en": "Each conversion gets its own folder here.",
+  "zh-Hans": "每次转换都会在这里新建一个文件夹。"
+ },
+ "settings.output.change": {
+  "en": "Change…",
+  "zh-Hans": "更改…"
+ },
+ "settings.output.show": {
+  "en": "Show",
+  "zh-Hans": "显示"
+ },
+ "settings.output.unwritable": {
+  "en": "Markitai can't write to that folder. Choose another one.",
+  "zh-Hans": "Markitai 无法写入该文件夹，请另选一个。"
+ },
+ "settings.config": {
+  "en": "Configuration",
+  "zh-Hans": "配置"
+ },
+ "settings.config.user": {
+  "en": "Use my markitai configuration",
+  "zh-Hans": "使用我的 markitai 配置"
+ },
+ "settings.config.user.missing": {
+  "en": "No configuration file yet. Built-in defaults apply until you create one.",
+  "zh-Hans": "还没有配置文件。创建之前使用内置默认值。"
+ },
+ "settings.config.builtin": {
+  "en": "Use built-in defaults",
+  "zh-Hans": "使用内置默认值"
+ },
+ "settings.config.builtin.note": {
+  "en": "Ignores configuration files. MODEL and provider keys in your environment still apply.",
+  "zh-Hans": "忽略配置文件。环境中的 MODEL 和服务商密钥仍然有效。"
+ },
+ "settings.config.open": {
+  "en": "Open Configuration File",
+  "zh-Hans": "打开配置文件"
+ },
+ "settings.config.create": {
+  "en": "Create Configuration File",
+  "zh-Hans": "创建配置文件"
+ },
+ "settings.about": {
+  "en": "About",
+  "zh-Hans": "关于"
+ },
+ "settings.about.app": {
+  "en": "App version",
+  "zh-Hans": "应用版本"
+ },
+ "settings.about.core": {
+  "en": "markitai version",
+  "zh-Hans": "markitai 版本"
+ },
+ "settings.about.copyright": {
+  "en": "Copyright © 2026 Ynewtime",
+  "zh-Hans": "Copyright © 2026 Ynewtime"
+ },
+ "quit.title": {
+  "en": "Quit anyway?",
+  "zh-Hans": "仍要退出吗？"
+ },
+ "quit.body.one": {
+  "en": "1 conversion is still running. If you quit now, it stops and its result is lost.",
+  "zh-Hans": "还有 1 个转换正在进行。现在退出会中止它，结果将丢失。"
+ },
+ "quit.body.other": {
+  "en": "{count} conversions are still running. If you quit now, they stop and their results are lost.",
+  "zh-Hans": "还有 {count} 个转换正在进行。现在退出会中止它们，结果将丢失。"
+ },
+ "quit.body.queued": {
+  "en": "Files waiting in the queue are not converted.",
+  "zh-Hans": "排队中的文件也不会被转换。"
+ },
+ "quit.confirm": {
+  "en": "Quit",
+  "zh-Hans": "退出"
+ },
+ "common.cancel": {
+  "en": "Cancel",
+  "zh-Hans": "取消"
+ },
+ "common.copy": {
+  "en": "Copy",
+  "zh-Hans": "复制"
+ },
+ "common.back": {
+  "en": "Back",
+  "zh-Hans": "返回"
+ },
+ "action.open_settings": {
+  "en": "Open {settings}",
+  "zh-Hans": "打开{settings}"
+ },
+ "error.not_found": {
+  "en": "The file is no longer there. It may have been moved or deleted.",
+  "zh-Hans": "文件已不在原处，可能已被移动或删除。"
+ },
+ "error.is_directory": {
+  "en": "This is a folder. Add the files inside it instead.",
+  "zh-Hans": "这是文件夹。请添加其中的文件。"
+ },
+ "error.no_model_configured": {
+  "en": "Enhance with AI needs a model. Add one to your markitai configuration, or turn off Enhance with AI.",
+  "zh-Hans": "AI 增强需要模型。请在 markitai 配置中添加模型，或关闭 AI 增强。"
+ },
+ "error.invalid_input": {
+  "en": "Markitai couldn't read this input.",
+  "zh-Hans": "Markitai 无法读取此输入。"
+ },
+ "error.unsupported": {
+  "en": "Markitai can't convert this kind of file.",
+  "zh-Hans": "Markitai 无法转换此类文件。"
+ },
+ "error.conversion_error": {
+  "en": "The document couldn't be converted. Check that it opens in its own app.",
+  "zh-Hans": "无法转换此文档。请确认它能在原应用中正常打开。"
+ },
+ "error.fetch_error": {
+  "en": "Couldn't download this page. Check the address and your internet connection.",
+  "zh-Hans": "无法下载此网页。请检查网址和网络连接。"
+ },
+ "error.config_error": {
+  "en": "Your markitai configuration has a problem.",
+  "zh-Hans": "markitai 配置有问题。"
+ },
+ "error.io_error": {
+  "en": "Markitai couldn't read or write a file. Check that the output folder exists, can be written and has free space.",
+  "zh-Hans": "Markitai 无法读写文件。请确认输出文件夹存在、可写入且空间充足。"
+ },
+ "error.output_unavailable": {
+  "en": "Markitai couldn't create a folder in {folder}. Choose another output folder in {settings}.",
+  "zh-Hans": "无法在 {folder} 中创建文件夹。请在{settings}中另选输出文件夹。"
+ },
+ "error.image_only": {
+  "en": "This image has no text layer. Turn on OCR or Enhance with AI in {settings} to read its text.",
+  "zh-Hans": "这张图片没有文字层。请在{settings}中开启 OCR 或 AI 增强以识别其中的文字。"
+ },
+ "error.skipped": {
+  "en": "Markitai skipped this file ({reason}).",
+  "zh-Hans": "Markitai 跳过了此文件（{reason}）。"
+ },
+ "error.internal": {
+  "en": "Markitai hit an internal error. Retry, and report the details if it happens again.",
+  "zh-Hans": "Markitai 遇到内部错误。请重试；如再次出现，请报告详细信息。"
+ },
+ "error.unknown": {
+  "en": "The conversion failed.",
+  "zh-Hans": "转换失败。"
+ },
+ "error.save_failed": {
+  "en": "The file couldn't be saved.",
+  "zh-Hans": "无法保存文件。"
+ },
+ "error.open_failed": {
+  "en": "Markitai couldn't open {name}.",
+  "zh-Hans": "Markitai 无法打开 {name}。"
+ },
+ "preview.webview2_missing": {
+  "en": "The preview needs the Microsoft Edge WebView2 Runtime. The Markdown tab still works.",
+  "zh-Hans": "预览需要 Microsoft Edge WebView2 运行时。Markdown 标签页仍可使用。"
+ },
+ "preview.unavailable": {
+  "en": "The preview can't be shown on this computer. The Markdown tab still works.",
+  "zh-Hans": "此电脑无法显示预览。Markdown 标签页仍可使用。"
+ },
+ "fatal.abi.title": {
+  "en": "This copy of Markitai is incomplete",
+  "zh-Hans": "这份 Markitai 不完整"
+ },
+ "fatal.abi.body": {
+  "en": "Its conversion library doesn't match the app. Reinstall Markitai.",
+  "zh-Hans": "它的转换库与应用不匹配。请重新安装 Markitai。"
+ },
+ "a11y.drop_zone": {
+  "en": "Drop files or web links here to convert them.",
+  "zh-Hans": "将文件或网页链接拖到这里进行转换。"
+ },
+ "a11y.conversions": {
+  "en": "Conversions",
+  "zh-Hans": "转换列表"
+ },
+ "a11y.preview": {
+  "en": "Markdown preview",
+  "zh-Hans": "Markdown 预览"
+ },
+ "a11y.markdown_text": {
+  "en": "Markdown text",
+  "zh-Hans": "Markdown 文本"
+ },
+ "a11y.warnings": {
+  "en": "Warnings",
+  "zh-Hans": "警告"
+ },
+ "a11y.actions": {
+  "en": "Actions",
+  "zh-Hans": "操作"
+ },
+ "a11y.done": {
+  "en": "{title} converted",
+  "zh-Hans": "{title} 已转换"
+ },
+ "a11y.failed": {
+  "en": "{title} failed",
+  "zh-Hans": "{title} 转换失败"
+ },
+ "plist.documents": {
+  "en": "Markitai saves converted Markdown in your Documents folder.",
+  "zh-Hans": "Markitai 会把转换后的 Markdown 保存到“文稿”文件夹。"
+ },
+ "plist.desktop": {
+  "en": "Markitai reads the files you add from your Desktop.",
+  "zh-Hans": "Markitai 会读取你从桌面添加的文件。"
+ },
+ "plist.downloads": {
+  "en": "Markitai reads the files you add from your Downloads folder.",
+  "zh-Hans": "Markitai 会读取你从“下载”文件夹添加的文件。"
+ }
+}

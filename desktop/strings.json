@@ -3,6 +3,10 @@
   "en": "Markitai Native",
   "zh-Hans": "Markitai Native"
  },
+ "app.name.mygo": {
+  "en": "Markitai Mygo",
+  "zh-Hans": "Markitai Mygo"
+ },
  "nav.convert": {
   "en": "Convert",
   "zh-Hans": "转换"
@@ -26,6 +30,10 @@
  "menu.about.native": {
   "en": "About Markitai Native",
   "zh-Hans": "关于 Markitai Native"
+ },
+ "menu.about.mygo": {
+  "en": "About Markitai Mygo",
+  "zh-Hans": "关于 Markitai Mygo"
  },
  "menu.main": {
   "en": "Main Menu",
@@ -194,6 +202,10 @@
  "detail.show.gnome": {
   "en": "Show in Files",
   "zh-Hans": "在“文件”中显示"
+ },
+ "detail.show.linux": {
+  "en": "Show in Folder",
+  "zh-Hans": "在文件夹中显示"
  },
  "detail.more": {
   "en": "More Actions",
@@ -427,6 +439,10 @@
   "en": "Cancel",
   "zh-Hans": "取消"
  },
+ "common.copy": {
+  "en": "Copy",
+  "zh-Hans": "复制"
+ },
  "common.back": {
   "en": "Back",
   "zh-Hans": "返回"
@@ -502,6 +518,10 @@
  "preview.webview2_missing": {
   "en": "The preview needs the Microsoft Edge WebView2 Runtime. The Markdown tab still works.",
   "zh-Hans": "预览需要 Microsoft Edge WebView2 运行时。Markdown 标签页仍可使用。"
+ },
+ "preview.unavailable": {
+  "en": "The preview can't be shown on this computer. The Markdown tab still works.",
+  "zh-Hans": "此电脑无法显示预览。Markdown 标签页仍可使用。"
  },
  "fatal.abi.title": {
   "en": "This copy of Markitai is incomplete",
