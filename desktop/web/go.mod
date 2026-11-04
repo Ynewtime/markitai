@@ -1,4 +1,4 @@
-module markitai.local/desktop
+module markitai.local/web
 
 go 1.27.3
 

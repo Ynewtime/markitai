@@ -1,19 +1,19 @@
-name: Desktop
+name: Desktop Web
 
-# The desktop app (docs/desktop.md) on Windows x86-64: the markitai archive
-# built as release.yml builds it, staged into the app; desktop_build.py vet;
-# the e2e build driven by desktop_e2e.py on the runner's desktop; the release
-# build's installer installed, the app run from it and uninstalled. The archive
-# is cached under a key of every tracked file but the desktop app's own, so a
-# change to the app alone does not build it again.
+# Markitai Web (docs/desktop-web.md) on Windows x86-64: the markitai archive
+# built as release.yml builds it, staged into the app; desktop_web_build.py
+# vet; the e2e build driven by desktop_web_e2e.py on the runner's desktop; the
+# release build's installer installed, the app run from it and uninstalled.
+# The archive is cached under a key of every tracked file but the app's own, so
+# a change to the app alone does not build it again.
 
 on:
   push:
     paths:
-      - 'desktop/**'
-      - 'scripts/desktop_*.py'
-      - 'scripts/test_desktop_build.py'
-      - '.github/workflows/desktop.yml'
+      - 'desktop/web/**'
+      - 'scripts/desktop_web_*.py'
+      - 'scripts/test_desktop_web_build.py'
+      - '.github/workflows/desktop-web.yml'
   workflow_dispatch:
 
 permissions:
@@ -22,7 +22,7 @@ permissions:
 # A newer push waits rather than cancels: a run may be building the archive
 # that later runs take from the cache.
 concurrency:
-  group: desktop-${{ github.ref }}
+  group: desktop-web-${{ github.ref }}
   cancel-in-progress: false
 
 env:
@@ -49,15 +49,15 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: '1.27.3'
-          cache-dependency-path: desktop/go.sum
+          cache-dependency-path: desktop/web/go.sum
       - name: Version, and the key of the archive's sources
         id: cli
         run: |
           python scripts/release_build.py version --github-output "$GITHUB_OUTPUT"
           sources=$(git ls-tree -r HEAD \
-            | grep -Ev $'\t(desktop/|\\.github/|docs/desktop\\.md$|docs/development\\.md$|scripts/desktop_[^/]*\\.py$|scripts/test_desktop_build\\.py$)' \
+            | grep -Ev $'\t(desktop/web/|\\.github/|docs/desktop-web\\.md$|docs/development\\.md$|scripts/desktop_web_[^/]*\\.py$|scripts/test_desktop_web_build\\.py$)' \
             | sha256sum | cut -c1-16)
-          echo "key=desktop-cli-$TARGET-$RUSTUP_TOOLCHAIN-$sources" >> "$GITHUB_OUTPUT"
+          echo "key=desktop-web-cli-$TARGET-$RUSTUP_TOOLCHAIN-$sources" >> "$GITHUB_OUTPUT"
       - name: Restore the archive
         id: archive
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -87,32 +87,32 @@ jobs:
         id: stage
         env:
           VERSION: ${{ steps.cli.outputs.version }}
-        run: python scripts/desktop_build.py stage --archive dist/markitai-v"$VERSION"-"$TARGET".zip
+        run: python scripts/desktop_web_build.py stage --archive dist/markitai-v"$VERSION"-"$TARGET".zip
       - name: Vet and test
         run: |
-          python scripts/desktop_build.py vet
-          cd scripts && python -m unittest test_desktop_build
+          python scripts/desktop_web_build.py vet
+          cd scripts && python -m unittest test_desktop_web_build
       - name: Build the e2e app
         id: e2e
         if: ${{ !cancelled() && steps.stage.outcome == 'success' }}
-        run: python scripts/desktop_build.py build --platform windows/amd64 --e2e
+        run: python scripts/desktop_web_build.py build --platform windows/amd64 --e2e
       - name: Build the app and its installer
         id: app
         if: ${{ !cancelled() && steps.stage.outcome == 'success' }}
-        run: python scripts/desktop_build.py build --platform windows/amd64
+        run: python scripts/desktop_web_build.py build --platform windows/amd64
       - name: Record what was built
         if: ${{ !cancelled() && steps.e2e.outcome == 'success' && steps.app.outcome == 'success' }}
         run: |
-          mkdir -p .local/desktop-install
-          sha256sum dist/markitai-v*.zip "desktop/build/windows-amd64/Markitai Web.exe" desktop/build/windows-amd64/bin/markitai.exe \
-            desktop/build/windows-amd64/markitai-web-setup-*.exe "desktop/build/e2e/windows-amd64/Markitai Web.exe" \
-            | tee .local/desktop-install/sha256.txt
-          git rev-parse HEAD | tee .local/desktop-install/commit.txt
-          python -c "import winreg; print('WebView2 Runtime', winreg.QueryValueEx(winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r'SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'), 'pv')[0])" | tee .local/desktop-install/webview2.txt
+          mkdir -p .local/desktop-web-install
+          sha256sum dist/markitai-v*.zip "desktop/web/build/windows-amd64/Markitai Web.exe" desktop/web/build/windows-amd64/bin/markitai.exe \
+            desktop/web/build/windows-amd64/markitai-web-setup-*.exe "desktop/web/build/e2e/windows-amd64/Markitai Web.exe" \
+            | tee .local/desktop-web-install/sha256.txt
+          git rev-parse HEAD | tee .local/desktop-web-install/commit.txt
+          python -c "import winreg; print('WebView2 Runtime', winreg.QueryValueEx(winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r'SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'), 'pv')[0])" | tee .local/desktop-web-install/webview2.txt
       - name: Drive the e2e app on the desktop
         if: ${{ !cancelled() && steps.e2e.outcome == 'success' }}
         timeout-minutes: 45
-        run: python scripts/desktop_e2e.py "windows-ci-${{ github.run_id }}-${{ github.run_attempt }}"
+        run: python scripts/desktop_web_e2e.py "windows-ci-${{ github.run_id }}-${{ github.run_attempt }}"
       - name: Install the app, run it and uninstall it
         if: ${{ !cancelled() && steps.app.outcome == 'success' }}
         timeout-minutes: 10
@@ -122,7 +122,7 @@ jobs:
           Add-Type -AssemblyName System.Drawing, System.Windows.Forms
           Add-Type 'using System.Runtime.InteropServices; public static class Dpi { [DllImport("user32.dll")] public static extern bool SetProcessDPIAware(); }'
           [Dpi]::SetProcessDPIAware() | Out-Null
-          $out = Join-Path $env:GITHUB_WORKSPACE '.local\desktop-install'
+          $out = Join-Path $env:GITHUB_WORKSPACE '.local\desktop-web-install'
           New-Item -ItemType Directory -Force $out | Out-Null
           $log = Join-Path $out 'install.log'
           function Log([string]$text) { Write-Host $text; Add-Content -Path $log -Value $text -Encoding UTF8 }
@@ -144,7 +144,7 @@ jobs:
           Log ("firewall: " + ((Get-NetFirewallProfile | ForEach-Object { "$($_.Name)=$($_.Enabled)/notify=$($_.NotifyOnListen)" }) -join ' '))
           $since = Get-Date
 
-          $setup = Get-Item desktop\build\windows-amd64\markitai-web-setup-*.exe
+          $setup = Get-Item desktop\web\build\windows-amd64\markitai-web-setup-*.exe
           $installer = Start-Process $setup.FullName -ArgumentList '/S' -Wait -PassThru
           Check ($installer.ExitCode -eq 0) "the installer exits 0 ($($installer.ExitCode))"
           $dir = Join-Path $env:LOCALAPPDATA 'Programs\Markitai Web'
@@ -183,7 +183,7 @@ jobs:
           Log ("firewall prompts: " + ($alerts -join '; '))
           Shot 'installed-ready'
           Check (Test-Path (Join-Path $isolated.LOCALAPPDATA 'Markitai Web\WebView2')) 'web view data in LOCALAPPDATA\Markitai Web\WebView2'
-          Check (Test-Path (Join-Path $isolated.APPDATA 'Markitai Web\desktop.json')) 'the port kept in APPDATA\Markitai Web\desktop.json'
+          Check (Test-Path (Join-Path $isolated.APPDATA 'Markitai Web\web.json')) 'the port kept in APPDATA\Markitai Web\web.json'
           Check ($app.CloseMainWindow()) 'closing the window asks the app to quit'
           Check ($app.WaitForExit(30000) -and $app.ExitCode -eq 0) "the app quits with 0 ($($app.ExitCode))"
           if ($serve.Count -eq 1) {
@@ -213,12 +213,12 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: desktop-windows-evidence
+          name: desktop-web-windows-evidence
           path: |
-            .local/desktop-e2e/
-            .local/desktop-install/
-            !.local/desktop-e2e/**/WebView2/
-            !.local/desktop-e2e/**/*.sock
+            .local/desktop-web-e2e/
+            .local/desktop-web-install/
+            !.local/desktop-web-e2e/**/WebView2/
+            !.local/desktop-web-e2e/**/*.sock
           include-hidden-files: true
           if-no-files-found: warn
           retention-days: 7
@@ -227,6 +227,6 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: markitai-web-windows-amd64
-          path: desktop/build/windows-amd64/markitai-web-setup-*.exe
+          path: desktop/web/build/windows-amd64/markitai-web-setup-*.exe
           if-no-files-found: warn
           retention-days: 7

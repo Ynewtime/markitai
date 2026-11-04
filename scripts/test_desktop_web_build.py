@@ -1,4 +1,4 @@
-"""desktop_build.py with synthetic archives and Go modules; no Go, mygo or network."""
+"""desktop_web_build.py with synthetic archives and Go modules; no Go, mygo or network."""
 from pathlib import Path
 import contextlib
 import hashlib
@@ -13,8 +13,9 @@ import unittest
 import zipfile
 
 import bounded_run
-import desktop_build
-from desktop_build import PLATFORMS, SHIPPED, check_artifacts, e2e_project, layout, mygo_build_command, stage
+import desktop_web_build
+from desktop_web_build import (APP_DIR, PLATFORMS, SHIPPED, check_artifacts, e2e_project, layout, mygo_build_command,
+                               stage)
 from release_build import TARGETS, archive_name
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -49,15 +50,15 @@ def zip_archive(path):
 
 
 class Checkout:
-    """A synthetic repository root: Cargo.toml, desktop/mygo.json, a Go root and one module."""
+    """A synthetic repository root: Cargo.toml, desktop/web/mygo.json, a Go root and one module."""
 
     def __init__(self, directory, cargo=VERSION, app=VERSION):
         self.root = Path(directory) / "repo"
-        (self.root / "desktop").mkdir(parents=True)
+        (self.root / APP_DIR).mkdir(parents=True)
         (self.root / "Cargo.toml").write_text(f'[workspace.package]\nversion = "{cargo}"\n', encoding="utf-8")
-        mygo = json.loads((ROOT / "desktop/mygo.json").read_text(encoding="utf-8"))
+        mygo = json.loads((ROOT / APP_DIR / "mygo.json").read_text(encoding="utf-8"))
         mygo["version"] = app
-        (self.root / "desktop/mygo.json").write_text(json.dumps(mygo, indent=2) + "\n", encoding="utf-8")
+        (self.root / APP_DIR / "mygo.json").write_text(json.dumps(mygo, indent=2) + "\n", encoding="utf-8")
         self.goroot = Path(directory) / "goroot"
         self.goroot.mkdir()
         (self.goroot / "LICENSE").write_bytes(b"Go BSD")
@@ -77,7 +78,7 @@ class Checkout:
 
     @property
     def resources(self):
-        return self.root / "desktop/resources"
+        return self.root / APP_DIR / "resources"
 
 
 class StageTests(unittest.TestCase):
@@ -147,11 +148,11 @@ class StageTests(unittest.TestCase):
 
     def test_mygo_json_must_name_the_workspace_version(self):
         repo = Checkout(self.directory / "drift", cargo=VERSION, app="9.8.6")
-        with self.assertRaisesRegex(SystemExit, "desktop/mygo.json says 9.8.6, Cargo.toml 9.8.7"):
+        with self.assertRaisesRegex(SystemExit, "desktop/web/mygo.json says 9.8.6, Cargo.toml 9.8.7"):
             repo.stage(tar_archive(repo.archives / archive_name(VERSION, TARGET)))
 
     def test_a_program_that_names_another_version_is_refused_where_it_runs(self):
-        host = desktop_build.host_platform()
+        host = desktop_web_build.host_platform()
         target = PLATFORMS[host] if host in ("darwin/arm64", "linux/amd64") else TARGET
         archive = tar_archive(self.repo.archives / archive_name(VERSION, target), version="9.8.6")
         if target != TARGET or host == "darwin/arm64":
@@ -194,10 +195,10 @@ class RegistryTests(unittest.TestCase):
             check_artifacts(["Markitai Web.app", "markitai-v2.3.2-arm64.dmg"])
 
     def test_the_disk_image_is_named_by_the_slug(self):
-        mygo = json.loads((ROOT / "desktop/mygo.json").read_text(encoding="utf-8"))
+        mygo = json.loads((ROOT / APP_DIR / "mygo.json").read_text(encoding="utf-8"))
         self.assertEqual((mygo["name"], mygo["slug"], mygo["identifier"]),
-                         ("Markitai Web", "markitai-web", "dev.markitai.desktop"))
-        self.assertFalse(mygo["slug"].startswith(desktop_build.CLI_ASSET_PREFIX))
+                         ("Markitai Web", "markitai-web", "dev.markitai.web"))
+        self.assertFalse(mygo["slug"].startswith(desktop_web_build.CLI_ASSET_PREFIX))
 
     def test_linux_packages_are_named_by_the_slug(self):
         app, program, packages = layout("linux/amd64", "2.3.2")
@@ -215,9 +216,9 @@ class RegistryTests(unittest.TestCase):
     def test_the_e2e_build_keeps_the_inspector_and_its_own_directory(self):
         arguments, environment = mygo_build_command("darwin/arm64", e2e=True)
         self.assertEqual(arguments[-6:], ["-debug", "-skip-dmg", "-skip-installer", "-o", "../e2e",
-                                          desktop_build.E2E_PROJECT])
-        desktop = ROOT / "desktop"
-        self.assertEqual(os.path.normpath(desktop / arguments[-1] / arguments[-2]), str(desktop / "build/e2e"))
+                                          desktop_web_build.E2E_PROJECT])
+        app = ROOT / APP_DIR
+        self.assertEqual(os.path.normpath(app / arguments[-1] / arguments[-2]), str(app / "build/e2e"))
         self.assertEqual(environment, {"GOFLAGS": "-tags=e2e"})
         _, environment = mygo_build_command("darwin/arm64", e2e=True, goflags="-mod=mod")
         self.assertEqual(environment, {"GOFLAGS": "-mod=mod -tags=e2e"})
@@ -231,23 +232,23 @@ class E2EProjectTests(unittest.TestCase):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         repo = Checkout(directory.name)
-        desktop = repo.root / "desktop"
-        production = (desktop / "mygo.json").read_bytes()
-        (desktop / "build/e2e-project").mkdir(parents=True)
-        (desktop / "build/e2e-project/stale").write_bytes(b"x")
-        (desktop / "resources").mkdir()  # as stage leaves it
+        app = repo.root / APP_DIR
+        production = (app / "mygo.json").read_bytes()
+        (app / "build/e2e-project").mkdir(parents=True)
+        (app / "build/e2e-project/stale").write_bytes(b"x")
+        (app / "resources").mkdir()  # as stage leaves it
         project = e2e_project(repo.root)
-        self.assertEqual(project, desktop / desktop_build.E2E_PROJECT)
+        self.assertEqual(project, app / desktop_web_build.E2E_PROJECT)
         self.assertFalse((project / "stale").exists())
         config = json.loads((project / "mygo.json").read_text(encoding="utf-8"))
         expected = json.loads(production)
         self.assertEqual(config.pop("identifier"), expected.pop("identifier") + ".e2e")
-        self.assertEqual((project / config.pop("main")).resolve(), desktop.resolve())
-        self.assertEqual((project / config.pop("icon")).resolve(), (desktop / expected.pop("icon")).resolve())
+        self.assertEqual((project / config.pop("main")).resolve(), app.resolve())
+        self.assertEqual((project / config.pop("icon")).resolve(), (app / expected.pop("icon")).resolve())
         self.assertEqual(config, expected)
         # The same directory, however the link names it (Windows: a junction, maybe in 8.3 names).
-        self.assertTrue(os.path.samefile(project / "resources", desktop / "resources"))
-        self.assertEqual((desktop / "mygo.json").read_bytes(), production)
+        self.assertTrue(os.path.samefile(project / "resources", app / "resources"))
+        self.assertEqual((app / "mygo.json").read_bytes(), production)
 
 
 if __name__ == "__main__":

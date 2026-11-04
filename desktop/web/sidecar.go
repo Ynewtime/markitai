@@ -35,7 +35,7 @@ type Config struct {
 	// crashes. It holds one launch: the previous one's is beside it as
 	// serve.previous.log.
 	LogPath string
-	// MemoryPath is PathUserData/desktop.json.
+	// MemoryPath is PathUserData/web.json.
 	MemoryPath string
 	// Texts' Lang is the child's LANG when the login environment has none.
 	Texts Texts
@@ -147,7 +147,7 @@ func (s *Sidecar) do(f effect) event {
 	case doRemember:
 		s.memory.Port = f.Port
 		if err := s.memory.save(s.cfg.MemoryPath); err != nil {
-			log.Printf("markitai desktop: %v", err)
+			log.Printf("markitai web: %v", err)
 		}
 	}
 	return nil

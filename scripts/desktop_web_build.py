@@ -1,32 +1,34 @@
 #!/usr/bin/env python3
-"""Build the Markitai Web desktop app (desktop/) around a released markitai CLI.
+"""Build Markitai Web (desktop/web/) around a released markitai CLI.
 
   stage --archive PATH [--sums SHA256SUMS]
-        Replace the Git-ignored desktop/resources/ with the archive's
+        Replace the Git-ignored desktop/web/resources/ with the archive's
         markitai, at <goos>-<goarch>/bin/, and the app's licences: the
         archive's attribution under licenses/markitai/, Go's and every linked
         module's under licenses/go/. With --sums the archive's SHA-256 must
         be the one SHA256SUMS lists.
   build --platform darwin/arm64|linux/amd64|windows/amd64 [--e2e]
-        `go tool mygo build` of the staged app in desktop/build/<goos>-<goarch>/:
-        Markitai Web.app and markitai-web-<version>-arm64.dmg for macOS; the
-        markitai-web executable with bin/ and licenses/ beside it,
+        `go tool mygo build` of the staged app in
+        desktop/web/build/<goos>-<goarch>/: Markitai Web.app and
+        markitai-web-<version>-arm64.dmg for macOS; the markitai-web
+        executable with bin/ and licenses/ beside it,
         markitai-web_<version>_amd64.deb and
         markitai-web-<version>-linux-amd64.tar.gz for Linux; Markitai Web.exe
         with bin/ and licenses/ beside it and the installer
         markitai-web-setup-<version>-amd64.exe for Windows. --e2e makes
         the -debug build with the automation plugin, without the disk image or
-        the installer, in desktop/build/e2e/, for scripts/desktop_e2e.py: from
-        the project desktop/build/e2e-project/, desktop/mygo.json with its own
+        the installer, in desktop/web/build/e2e/, for
+        scripts/desktop_web_e2e.py: from the project
+        desktop/web/build/e2e-project/, desktop/web/mygo.json with its own
         identifier (".e2e" added), so it keeps no web view data where an
         installed Markitai Web does.
-  vet   gofmt, go vet and go test of desktop/ for darwin, linux and windows;
-        tests run on this system and compile for the others.
+  vet   gofmt, go vet and go test of desktop/web/ for darwin, linux and
+        windows; tests run on this system and compile for the others.
 
 The input is a release-shaped CLI archive (`release_build.py cli`, or the
 GitHub release's); nothing here downloads. The app's version is the
-workspace's: `release_build.py prepare-version` writes desktop/mygo.json, and
-stage refuses an archive when Cargo.toml, mygo.json and the archive name
+workspace's: `release_build.py prepare-version` writes desktop/web/mygo.json,
+and stage refuses an archive when Cargo.toml, mygo.json and the archive name
 disagree. No artifact may be named like a CLI archive (markitai-v...), which
 the CLI's updater and setup scripts match.
 """
@@ -45,6 +47,8 @@ from package_cli_target import workspace_version
 from release_build import TARGETS, archive_attribution, archive_name, extract_release_archive
 
 ROOT = Path(__file__).resolve().parents[1]
+# The app's Go module and mygo project, from the checkout.
+APP_DIR = "desktop/web"
 # mygo platform -> release target; the platform, "/" made "-", names mygo's
 # resource directory (resources/darwin-arm64).
 PLATFORMS = {
@@ -62,7 +66,7 @@ CLI_ASSET_PREFIX = "markitai-v"
 LICENCE_PREFIXES = ("LICENSE", "LICENCE", "COPYING", "NOTICE", "PATENTS")
 # What stage records beside the resources; hidden, so mygo does not ship it.
 STAMP = ".stage.json"
-# The e2e build's mygo project, within desktop/, and what it adds to the app's identifier.
+# The e2e build's mygo project, within APP_DIR, and what it adds to the app's identifier.
 E2E_PROJECT = "build/e2e-project"
 E2E_IDENTIFIER = ".e2e"
 
@@ -76,17 +80,17 @@ def program_name(platform):
 
 
 def versions(root):
-    """(Cargo workspace version, desktop/mygo.json version)."""
+    """(Cargo workspace version, desktop/web/mygo.json version)."""
     cargo = workspace_version((root / "Cargo.toml").read_text(encoding="utf-8"))
-    app = json.loads((root / "desktop/mygo.json").read_text(encoding="utf-8"))["version"]
+    app = json.loads((root / APP_DIR / "mygo.json").read_text(encoding="utf-8"))["version"]
     return cargo, app
 
 
 def app_version(root):
     cargo, app = versions(root)
     if cargo != app:
-        raise SystemExit(f"desktop/mygo.json says {app}, Cargo.toml {cargo}; "
-                         "run release_build.py prepare-version or fix desktop/mygo.json")
+        raise SystemExit(f"{APP_DIR}/mygo.json says {app}, Cargo.toml {cargo}; "
+                         f"run release_build.py prepare-version or fix {APP_DIR}/mygo.json")
     return app
 
 
@@ -152,7 +156,7 @@ def go_modules(root, platform):
     """(path, version, directory) of every module linked into the app for `platform`."""
     listed = go(["list", "-deps", "-f",
                  "{{with .Module}}{{if not .Main}}{{.Path}}\t{{.Version}}\t{{.Dir}}{{end}}{{end}}", "."],
-                cwd=root / "desktop", environment=go_environment(platform), capture=True)
+                cwd=root / APP_DIR, environment=go_environment(platform), capture=True)
     return sorted({tuple(line.split("\t")) for line in listed.splitlines() if line})
 
 
@@ -186,13 +190,13 @@ def stage_go_licences(destination, modules, goroot):
 
 
 def stage(archive, sums=None, *, root=ROOT, modules=None, goroot=None, host_system=None):
-    """Replace desktop/resources with the archive's program and the app's licences. The new
+    """Replace desktop/web/resources with the archive's program and the app's licences. The new
     resources are made apart and replace the old ones only once complete."""
     version = app_version(root)
     platform = archive_platform(archive, version)
     if sums is not None:
         check_sum(archive, sums)
-    resources = root / "desktop/resources"
+    resources = root / APP_DIR / "resources"
     with tempfile.TemporaryDirectory() as work:
         staged = Path(work) / "resources"
         extracted = Path(work) / "archive"
@@ -224,12 +228,12 @@ def stage(archive, sums=None, *, root=ROOT, modules=None, goroot=None, host_syst
 def check_artifacts(names):
     taken = sorted(name for name in names if name.startswith(CLI_ASSET_PREFIX))
     if taken:
-        raise SystemExit(f"Desktop artifacts must not be named like CLI archives ({CLI_ASSET_PREFIX}...): "
+        raise SystemExit(f"Markitai Web's artifacts must not be named like CLI archives ({CLI_ASSET_PREFIX}...): "
                          + ", ".join(taken))
 
 
 def mygo_build_command(platform, e2e, goflags=""):
-    """`go tool mygo build` arguments, run in desktop/, and the extra environment; the e2e build of
+    """`go tool mygo build` arguments, run in APP_DIR, and the extra environment; the e2e build of
     E2E_PROJECT keeps the inspector the automation plugin needs, makes no disk image or installer,
     goes to build/e2e and adds its tag to `goflags`: mygo build takes tags from GOFLAGS only."""
     arguments = ["tool", "mygo", "build", "-platform", platform]
@@ -240,16 +244,16 @@ def mygo_build_command(platform, e2e, goflags=""):
 
 
 def e2e_project(root=ROOT):
-    """Write E2E_PROJECT: desktop/mygo.json under the identifier plus E2E_IDENTIFIER, building the
-    desktop/ package with desktop/resources. WKWebView keeps website data (localStorage, caches) by
-    the bundle identifier outside HOME, so the e2e build must not share an installed app's."""
-    desktop = root / "desktop"
-    project = desktop / E2E_PROJECT
+    """Write E2E_PROJECT: APP_DIR's mygo.json under the identifier plus E2E_IDENTIFIER, building the
+    APP_DIR package with its resources. WKWebView keeps website data (localStorage, caches) by the
+    bundle identifier outside HOME, so the e2e build must not share an installed app's."""
+    app = root / APP_DIR
+    project = app / E2E_PROJECT
     if project.exists():
         shutil.rmtree(project)
     project.mkdir(parents=True)
-    config = json.loads((desktop / "mygo.json").read_text(encoding="utf-8"))
-    back = os.path.relpath(desktop, project)
+    config = json.loads((app / "mygo.json").read_text(encoding="utf-8"))
+    back = os.path.relpath(app, project)
     config.update(identifier=config["identifier"] + E2E_IDENTIFIER, main=back,
                   icon=os.path.join(back, config["icon"]))
     (project / "mygo.json").write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
@@ -259,7 +263,7 @@ def e2e_project(root=ROOT):
         # Without Developer Mode or the symlink privilege, a junction, which mygo reads the same.
         if os.name != "nt" or error.winerror != 1314:
             raise
-        subprocess.run(["cmd.exe", "/d", "/c", "mklink", "/J", str(project / "resources"), str(desktop / "resources")],
+        subprocess.run(["cmd.exe", "/d", "/c", "mklink", "/J", str(project / "resources"), str(app / "resources")],
                        check=True, stdout=subprocess.DEVNULL)
     return project
 
@@ -271,7 +275,7 @@ def deb_version(version):
 
 
 def layout(platform, version):
-    """What `mygo build` writes to desktop/build/<goos>-<goarch>/ for `platform`: the app as it runs,
+    """What `mygo build` writes to APP_DIR/build/<goos>-<goarch>/ for `platform`: the app as it runs,
     its markitai relative to that directory, and the packages only a release build makes."""
     goos, goarch = platform.split("/")
     program = program_name(platform)
@@ -291,20 +295,20 @@ def build(platform, e2e=False, *, root=ROOT):
     if platform not in SHIPPED:
         raise SystemExit(f"This round builds {', '.join(sorted(SHIPPED))}, not {platform}")
     version = app_version(root)
-    resources = root / "desktop/resources"
+    resources = root / APP_DIR / "resources"
     stamp_path = resources / STAMP
     stamp = json.loads(stamp_path.read_text(encoding="utf-8")) if stamp_path.exists() else None
     if stamp is None or (stamp.get("version"), stamp.get("platform")) != (version, platform):
         held = "nothing staged" if stamp is None else f"{stamp.get('platform')} {stamp.get('version')}"
-        raise SystemExit(f"desktop/resources holds {held}, not {platform} {version}; run: desktop_build.py "
+        raise SystemExit(f"{APP_DIR}/resources holds {held}, not {platform} {version}; run: desktop_web_build.py "
                          f"stage --archive {archive_name(version, PLATFORMS[platform])}")
     arguments, extra = mygo_build_command(platform, e2e, os.environ.get("GOFLAGS", ""))
-    out = root / "desktop" / ("build/e2e" if e2e else "build") / resources_dir(platform)
+    out = root / APP_DIR / ("build/e2e" if e2e else "build") / resources_dir(platform)
     if out.exists():
         shutil.rmtree(out)
     if e2e:
         e2e_project(root)
-    go(arguments, cwd=root / "desktop", environment=dict(os.environ, **extra))
+    go(arguments, cwd=root / APP_DIR, environment=dict(os.environ, **extra))
     names = sorted(path.name for path in out.iterdir())
     check_artifacts(names)
     app, program, packages = layout(platform, version)
@@ -320,9 +324,9 @@ def build(platform, e2e=False, *, root=ROOT):
 
 
 def vet(root=ROOT):
-    desktop = root / "desktop"
+    app = root / APP_DIR
     gofmt = go_root() / "bin" / ("gofmt.exe" if os.name == "nt" else "gofmt")
-    unformatted = subprocess.run([str(gofmt), "-l", "."], cwd=desktop, capture_output=True, text=True,
+    unformatted = subprocess.run([str(gofmt), "-l", "."], cwd=app, capture_output=True, text=True,
                                  check=True).stdout.split()
     if unformatted:
         raise SystemExit("gofmt would change: " + ", ".join(unformatted))
@@ -330,25 +334,26 @@ def vet(root=ROOT):
     for system in ["darwin", "linux", "windows"]:
         platform = native if native.startswith(system + "/") else f"{system}/amd64"
         environment = go_environment(platform)
-        go(["vet", "./..."], cwd=desktop, environment=environment)
+        go(["vet", "./..."], cwd=app, environment=environment)
         if platform == native:
-            go(["vet", "-tags", "e2e", "./..."], cwd=desktop, environment=environment)
-            go(["test", "-count=1", "./..."], cwd=desktop, environment=environment)
+            go(["vet", "-tags", "e2e", "./..."], cwd=app, environment=environment)
+            go(["test", "-count=1", "./..."], cwd=app, environment=environment)
         else:
             with tempfile.TemporaryDirectory() as work:
-                go(["test", "-c", "-o", str(Path(work) / "desktop.test"), "."], cwd=desktop,
+                go(["test", "-c", "-o", str(Path(work) / "web.test"), "."], cwd=app,
                    environment=environment)
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
-    staging = commands.add_parser("stage", help="put a release archive's markitai and the licences in desktop/resources")
+    staging = commands.add_parser("stage",
+                                  help=f"put a release archive's markitai and the licences in {APP_DIR}/resources")
     staging.add_argument("--archive", type=Path, required=True)
     staging.add_argument("--sums", type=Path, help="the release's SHA256SUMS")
     building = commands.add_parser("build", help="build the app from the staged resources")
     building.add_argument("--platform", required=True, choices=sorted(SHIPPED))
-    building.add_argument("--e2e", action="store_true", help="the -debug build scripts/desktop_e2e.py drives")
+    building.add_argument("--e2e", action="store_true", help="the -debug build scripts/desktop_web_e2e.py drives")
     commands.add_parser("vet", help="gofmt, go vet and go test for darwin, linux and windows")
     args = parser.parse_args(argv)
     if args.command == "stage":

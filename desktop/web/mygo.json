@@ -1,7 +1,7 @@
 {
   "name": "Markitai Web",
   "slug": "markitai-web",
-  "identifier": "dev.markitai.desktop",
+  "identifier": "dev.markitai.web",
   "version": "2.3.2",
   "copyright": "Copyright (c) 2026 Ynewtime",
   "icon": "icon.png",

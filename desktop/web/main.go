@@ -1,5 +1,5 @@
-// Command Markitai Web is the desktop app: the markitai workbench in a native
-// window, served by the markitai program bundled with it.
+// Command Markitai Web is the markitai workbench in a native window, served
+// by the markitai program bundled with it.
 package main
 
 import (
@@ -17,7 +17,7 @@ import (
 // running: an idle serve exits in milliseconds.
 const idleStop = 5 * time.Second
 
-type desktop struct {
+type app struct {
 	sc    *Sidecar
 	win   *window
 	texts Texts
@@ -30,11 +30,11 @@ func main() {
 	if !mygo.App.RequestSingleInstanceLock() {
 		return
 	}
-	d := &desktop{}
-	mygo.App.OnSecondInstance(func([]string, string) { d.focus() })
-	mygo.App.OnBeforeQuit(d.beforeQuit)
-	mygo.App.OnQuit(d.cleanup)
-	mygo.App.WhenReady(d.start)
+	a := &app{}
+	mygo.App.OnSecondInstance(func([]string, string) { a.focus() })
+	mygo.App.OnBeforeQuit(a.beforeQuit)
+	mygo.App.OnQuit(a.cleanup)
+	mygo.App.WhenReady(a.start)
 	if err := mygo.App.Run(); err != nil {
 		log.Fatal(err)
 	}
@@ -42,23 +42,23 @@ func main() {
 
 // start shows the window on the Starting page at once; the sidecar resolves
 // the login environment and starts serve behind it.
-func (d *desktop) start() {
-	d.texts = textsFor(mygo.App.PreferredLanguages())
+func (a *app) start() {
+	a.texts = textsFor(mygo.App.PreferredLanguages())
 	resources, _ := mygo.App.Path(mygo.PathResources)
 	data, _ := mygo.App.Path(mygo.PathUserData)
 	logs, _ := mygo.App.Path(mygo.PathLogs)
 	downloads, _ := mygo.App.Path(mygo.PathDownloads)
 	logPath := filepath.Join(logs, "serve.log")
-	d.sc = NewSidecar(Config{
+	a.sc = NewSidecar(Config{
 		Program:    programPath(resources, mygo.App.IsPackaged()),
 		LogPath:    logPath,
-		MemoryPath: filepath.Join(data, "desktop.json"),
-		Texts:      d.texts,
+		MemoryPath: filepath.Join(data, "web.json"),
+		Texts:      a.texts,
 		Env:        loginEnv,
-	}, func(p Phase) { d.win.Show(p) })
-	d.win = openWindow(d.sc, d.texts, logPath, downloads)
-	d.win.w.OnClose(d.close)
-	go d.sc.Run()
+	}, func(p Phase) { a.win.Show(p) })
+	a.win = openWindow(a.sc, a.texts, logPath, downloads)
+	a.win.w.OnClose(a.close)
+	go a.sc.Run()
 }
 
 // programPath is the bundled markitai: bin/ of the app's resources, or of
@@ -129,34 +129,34 @@ func quitGate(p Phase, asking bool, unfinished func() (int, error)) (gate, busy)
 // an upload started just after it, and a draining serve no longer answers a
 // count: the quit goes on as Quit When Done, on the Stopping page with Stop
 // Now, rather than stopping that work unasked.
-func (d *desktop) beforeQuit(e *mygo.QuitEvent) {
-	if d.leaving || d.sc == nil {
-		d.leaving = true
+func (a *app) beforeQuit(e *mygo.QuitEvent) {
+	if a.leaving || a.sc == nil {
+		a.leaving = true
 		return
 	}
-	g, b := quitGate(d.sc.Phase(), d.asking.Load(), func() (int, error) {
+	g, b := quitGate(a.sc.Phase(), a.asking.Load(), func() (int, error) {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
-		return d.sc.Unfinished(ctx)
+		return a.sc.Unfinished(ctx)
 	})
 	switch g {
 	case gateLeave:
-		d.leaving = true
+		a.leaving = true
 	case gateDrain:
-		if drainHere(d.sc, idleStop) {
-			d.leaving = true
+		if drainHere(a.sc, idleStop) {
+			a.leaving = true
 			return
 		}
 		e.PreventDefault()
-		d.asking.Store(true)
-		go d.quitWhenStopped()
+		a.asking.Store(true)
+		go a.quitWhenStopped()
 	case gateAsk:
 		e.PreventDefault()
-		d.asking.Store(true)
-		go d.askAndQuit(b)
+		a.asking.Store(true)
+		go a.askAndQuit(b)
 	case gateFocus:
 		e.PreventDefault()
-		d.focus()
+		a.focus()
 	}
 }
 
@@ -170,29 +170,29 @@ func drainHere(sc *Sidecar, limit time.Duration) bool {
 
 // close makes closing the window a quit on every system: the window is the
 // app, and no server may outlive it unseen.
-func (d *desktop) close(e *mygo.CloseEvent) {
-	if d.leaving {
+func (a *app) close(e *mygo.CloseEvent) {
+	if a.leaving {
 		return
 	}
 	e.PreventDefault()
 	mygo.App.Quit()
 }
 
-func (d *desktop) askAndQuit(b busy) {
-	switch askQuit(d.win.w, d.texts, b) {
+func (a *app) askAndQuit(b busy) {
+	switch askQuit(a.win.w, a.texts, b) {
 	case quitCancel:
-		d.asking.Store(false)
+		a.asking.Store(false)
 		return
 	case quitWhenDone:
-		d.sc.Stop(WhenDone)
+		a.sc.Stop(WhenDone)
 	case quitStopNow:
-		d.sc.Stop(Now)
+		a.sc.Stop(Now)
 	}
-	d.quitWhenStopped()
+	a.quitWhenStopped()
 }
 
-func (d *desktop) quitWhenStopped() {
-	<-d.sc.Done()
+func (a *app) quitWhenStopped() {
+	<-a.sc.Done()
 	mygo.App.Quit()
 }
 
@@ -231,18 +231,18 @@ var askQuit = func(parent *mygo.Window, t Texts, b busy) quitChoice {
 
 // cleanup runs as the app ends, also when mygo ends it after its 3 s grace:
 // a child still running is stopped at once.
-func (d *desktop) cleanup() {
-	if d.sc == nil {
+func (a *app) cleanup() {
+	if a.sc == nil {
 		return
 	}
-	if _, ok := d.sc.Phase().(Stopped); !ok {
-		d.sc.Stop(Now)
-		d.sc.Wait(killGrace + time.Second)
+	if _, ok := a.sc.Phase().(Stopped); !ok {
+		a.sc.Stop(Now)
+		a.sc.Wait(killGrace + time.Second)
 	}
 }
 
-func (d *desktop) focus() {
-	if d.win != nil {
-		d.win.focus()
+func (a *app) focus() {
+	if a.win != nil {
+		a.win.focus()
 	}
 }

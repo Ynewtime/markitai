@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""The desktop app end to end: its e2e build driven over mygo's automation socket.
+"""Markitai Web end to end: its e2e build driven over mygo's automation socket.
 
-    python3.13 scripts/desktop_e2e.py ROUND [--only NAME,...] [--app PATH]
+    python3.13 scripts/desktop_web_e2e.py ROUND [--only NAME,...] [--app PATH]
 
 It runs on an Apple silicon Mac, on x86_64 Linux in a Hyprland session, and on x86-64 Windows in a
 desktop session. Build the app first, around a markitai that has `serve --supervised`:
 
-    python3.13 scripts/desktop_build.py stage --archive markitai-v<version>-aarch64-apple-darwin.tar.gz
-    python3.13 scripts/desktop_build.py build --e2e --platform darwin/arm64
+    python3.13 scripts/desktop_web_build.py stage --archive markitai-v<version>-aarch64-apple-darwin.tar.gz
+    python3.13 scripts/desktop_web_build.py build --e2e --platform darwin/arm64
 
 and on Linux the same with x86_64-unknown-linux-gnu and linux/amd64, on Windows with
 x86_64-pc-windows-msvc (a .zip) and windows/amd64.
@@ -67,11 +67,11 @@ Scenarios (all by default):
 Each scenario runs the app with its own HOME (on Linux with the XDG data,
 config, cache and state directories in it, on Windows with APPDATA,
 LOCALAPPDATA and TEMP), MARKITAI_HOME and app data in
-.local/desktop-e2e/ROUND/<scenario>/ and leaves there result.json, the app's
+.local/desktop-web-e2e/ROUND/<scenario>/ and leaves there result.json, the app's
 output, screenshots, and the app's data and serve logs. ROUND/run.json names
 the app, the bundled markitai, the staged archive and the commit. Save panels
 and the busy-quit question answer through the e2e build's environment, which
-also records what would open in the browser (desktop/e2e.go); the native panel
+also records what would open in the browser (desktop/web/e2e.go); the native panel
 and dialog are checked by hand.
 """
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -120,51 +120,51 @@ class Build(NamedTuple):
 
 
 BUILDS = {
-    ("Darwin", "arm64"): Build("darwin/arm64", "desktop/build/e2e/darwin-arm64/Markitai Web.app", "Contents/MacOS/Markitai Web",
-                               "Contents/Resources/bin/markitai", ("-AppleLanguages", "(en)"), {}, {}, "/bin/zsh",
-                               "menu"),
+    ("Darwin", "arm64"): Build("darwin/arm64", "desktop/web/build/e2e/darwin-arm64/Markitai Web.app",
+                               "Contents/MacOS/Markitai Web", "Contents/Resources/bin/markitai",
+                               ("-AppleLanguages", "(en)"), {}, {}, "/bin/zsh", "menu"),
     # No application menu on Linux; its window's class is the executable's name.
-    ("Linux", "x86_64"): Build("linux/amd64", "desktop/build/e2e/linux-amd64", "markitai-web", "bin/markitai", (),
+    ("Linux", "x86_64"): Build("linux/amd64", "desktop/web/build/e2e/linux-amd64", "markitai-web", "bin/markitai", (),
                                {"LANGUAGE": "en"},
                                {"XDG_CONFIG_HOME": ".config", "XDG_DATA_HOME": ".local/share",
                                 "XDG_CACHE_HOME": ".cache", "XDG_STATE_HOME": ".local/state"}, "/bin/bash", "hyprctl"),
     # The app takes Explorer's environment, as the process's own.
-    ("Windows", "AMD64"): Build("windows/amd64", "desktop/build/e2e/windows-amd64", "Markitai Web.exe", "bin/markitai.exe",
-                                (), {},
+    ("Windows", "AMD64"): Build("windows/amd64", "desktop/web/build/e2e/windows-amd64", "Markitai Web.exe",
+                                "bin/markitai.exe", (), {},
                                 {"APPDATA": "AppData/Roaming", "LOCALAPPDATA": "AppData/Local",
                                  "TEMP": "AppData/Local/Temp", "TMP": "AppData/Local/Temp"}, "", "close"),
 }
 BUILD = BUILDS.get((platform.system(), platform.machine()))
 # Its real path: serve refuses a MARKITAI_HOME reached through a symbolic link (output.allow_symlinks).
-EVIDENCE = (ROOT / ".local/desktop-e2e").resolve()
+EVIDENCE = (ROOT / ".local/desktop-web-e2e").resolve()
 TOKEN_KEY = "markitai.service-token"
 READY_TIMEOUT = 90
 # The page a held conversion fetches: enough text for a plain fetch to keep.
 SLOW_PAGE = ("<!doctype html><html><head><title>Held page</title></head><body><h1>Held page</h1>"
-             + "".join(f"<p>Paragraph {n} of a page the desktop e2e holds open until the app quits.</p>"
+             + "".join(f"<p>Paragraph {n} of a page the web e2e holds open until the app quits.</p>"
                        for n in range(1, 21))
              + "</body></html>").encode()
-DROPPED = "desktop-e2e.html"
-DROPPED_HTML = ("<!doctype html><html><head><title>Desktop e2e</title></head>"
-                "<body><h1>Desktop e2e</h1><p>hello desktop</p></body></html>")
+DROPPED = "web-e2e.html"
+DROPPED_HTML = ("<!doctype html><html><head><title>Web e2e</title></head>"
+                "<body><h1>Web e2e</h1><p>hello web</p></body></html>")
 # Proxy settings would send the held page's fetch elsewhere.
 PROXIES = {"http_proxy", "https_proxy", "all_proxy", "no_proxy"}
 LOOPBACK = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-# Where the app looks for a port first (desktop/port.go).
+# Where the app looks for a port first (desktop/web/port.go).
 APP_PORTS = range(23600, 23700)
 # What serve writes to serve.log (MARKITAI_LANG=en).
 LISTENING = "Markitai server listening on http://127.0.0.1:"
 STOPPED_BY_APP = "The app that started this server stops it through standard input."
 DRAINING = "Server stopping: draining active conversions and saving history."
 STOPPING_NOW = "Server stopping now: running conversions are abandoned"
-# The e2e build's name (desktop/e2e.go), which its application menu shows.
-APP_NAME = "Markitai E2E"
-# A4 in PDF points; Export PDF lays out on it (desktop/window.go).
+# The e2e build's name (desktop/web/e2e.go), which its application menu shows.
+APP_NAME = "Markitai Web E2E"
+# A4 in PDF points; Export PDF lays out on it (desktop/web/window.go).
 A4 = (595.28, 841.89)
 # Words of the workbench's sidebar, which an export of the preview must not print.
 SIDEBAR = ("Conversions", "Settings")
-# The status pages' buttons (desktop/window.go).
-RETRY, SHOW_LOG, STOP_NOW = "markitai-desktop:retry", "markitai-desktop:show-log", "markitai-desktop:stop-now"
+# The status pages' buttons (desktop/web/window.go).
+RETRY, SHOW_LOG, STOP_NOW = "markitai-web:retry", "markitai-web:show-log", "markitai-web:stop-now"
 
 
 class Failure(Exception):
@@ -484,7 +484,7 @@ class App:
         self.process = subprocess.Popen(
             [str(executable), *BUILD.arguments], cwd=scenario.dir, stdin=subprocess.DEVNULL,
             stdout=self.output, stderr=subprocess.STDOUT, start_new_session=True,
-            env=scenario.environment(MYGO_AUTOMATION=socket_name, MARKITAI_DESKTOP_E2E=str(scenario.app_data),
+            env=scenario.environment(MYGO_AUTOMATION=socket_name, MARKITAI_WEB_E2E=str(scenario.app_data),
                                      **environment))
         self.socket = os.path.relpath(scenario.dir / socket_name)
         self.ui = None
@@ -663,7 +663,7 @@ class Scenario:
         self.home, self.markitai_home, self.app_data = self.dir / "home", self.dir / "markitai-home", self.dir / "app"
         self.base = sandbox(self.home, self.markitai_home)
         # A login shell in an empty HOME would start zsh's new-user setup.
-        (self.home / ".zshrc").write_text("# desktop e2e\n", encoding="utf-8")
+        (self.home / ".zshrc").write_text("# web e2e\n", encoding="utf-8")
         self.checks, self.notes, self.apps, self.others, self.sites = [], [], [], [], []
         self.serve_pids = set()
 
@@ -813,8 +813,8 @@ def convert_dropped(scenario, app, origin, token):
     job, item = finished(origin, token, name=DROPPED)
     status, body = http(f"{origin}/api/jobs/{job}/items/{item}/result", token)
     markdown = json.loads(body).get("markdown", "") if status == 200 else ""
-    scenario.require("the conversion's Markdown", status == 200 and "# Desktop e2e" in markdown
-                     and "hello desktop" in markdown, f"{status} {markdown[:200]!r}")
+    scenario.require("the conversion's Markdown", status == 200 and "# Web e2e" in markdown
+                     and "hello web" in markdown, f"{status} {markdown[:200]!r}")
     return job, item, markdown
 
 
@@ -868,7 +868,7 @@ def ready(s):
             f"browser: {opened!r}, the window at {at}, the site was asked for {elsewhere.asked}")
     pid = s.control()
     app.ui.eval("""const a = document.createElement("a");
-        a.href = "markitai-desktop:stop-now"; a.target = "_blank";
+        a.href = "markitai-web:stop-now"; a.target = "_blank";
         document.body.append(a); a.click(); a.remove(); return true;""")
     time.sleep(2)
     s.check("a stop-now link in the workbench does nothing", app.page()["url"].startswith(origin) and alive(pid),
@@ -894,7 +894,7 @@ def download(s):
         const {{markdown}} = await r.json();
         const a = document.createElement("a");
         a.href = URL.createObjectURL(new Blob([markdown], {{type: "text/markdown"}}));
-        a.download = "desktop-e2e-blob.md";
+        a.download = "web-e2e-blob.md";
         document.body.append(a); a.click(); a.remove();
         return r.status;
     """)
@@ -915,7 +915,7 @@ def download(s):
         if (!r.ok) return r.status;
         const a = document.createElement("a");
         a.href = (await r.json()).url;
-        a.download = "desktop-e2e-ticket.zip";
+        a.download = "web-e2e-ticket.zip";
         document.body.append(a); a.click(); a.remove();
         return r.status;
     """)
@@ -924,7 +924,7 @@ def download(s):
     with zipfile.ZipFile(archive) as bundle:
         texts = [bundle.read(name).decode("utf-8", "replace") for name in bundle.namelist() if name.endswith(".md")]
     s.check("the ticket download is saved, an archive holding the Markdown",
-            any("hello desktop" in text for text in texts), f"{archive.name}: {len(texts)} Markdown file(s)")
+            any("hello web" in text for text in texts), f"{archive.name}: {len(texts)} Markdown file(s)")
     app.quit()
 
 
@@ -963,7 +963,7 @@ def pdf(s):
     if not s.check("Download as > PDF... > Print... in the preview", step == "printing", step):
         step = app.ui.eval("""window.__e2eAfterprint = 0;
             addEventListener("afterprint", () => { window.__e2eAfterprint += 1; });
-            document.title = "desktop-e2e-print"; window.print(); return "window.print";""")
+            document.title = "web-e2e-print"; window.print(); return "window.print";""")
     saved = s.saved(".pdf")
     data = saved.read_bytes()
     s.check(f"{step} saved a PDF", data.startswith(b"%PDF"), f"{saved.name}, {len(data)} bytes")
@@ -979,13 +979,13 @@ def pdf(s):
                           cwd=s.dir, stdin=subprocess.DEVNULL, env=s.environment(MARKITAI_NO_UPDATE_CHECK="1"))
     (s.dir / "saved-pdf.md").write_text(read.stdout + read.stderr, encoding="utf-8")
     s.check("the bundled markitai reads the PDF as the page's text, without the workbench's sidebar",
-            read.returncode == 0 and "Desktop e2e" in read.stdout and "hello desktop" in read.stdout
+            read.returncode == 0 and "Web e2e" in read.stdout and "hello web" in read.stdout
             and not any(word in read.stdout for word in SIDEBAR),
             f"exit {read.returncode}; sidebar words: {[word for word in SIDEBAR if word in read.stdout]}")
 
 
 def remembered_port(s):
-    return json.loads((s.app_data / "data/desktop.json").read_text(encoding="utf-8")).get("port")
+    return json.loads((s.app_data / "data/web.json").read_text(encoding="utf-8")).get("port")
 
 
 def press(app, href):
@@ -1037,7 +1037,7 @@ def quit_idle(s):
 
 
 def quit_uncounted(s):
-    app = s.launch(MARKITAI_DESKTOP_E2E_QUIT="cancel")
+    app = s.launch(MARKITAI_WEB_E2E_QUIT="cancel")
     origin = app.ready()
     pid = s.control()
     s.require("serve wrote its control file", pid is not None and alive(pid), pid)
@@ -1078,7 +1078,7 @@ def hold_a_conversion(s, app, origin, token):
 def ask_to_quit(s, choice):
     """A launch whose quit question answers `choice`, told to quit while it holds a conversion;
     (app, origin, held, job, serve's PID)."""
-    app = s.launch(MARKITAI_DESKTOP_E2E_QUIT=choice)
+    app = s.launch(MARKITAI_WEB_E2E_QUIT=choice)
     origin = app.ready()
     held, job = hold_a_conversion(s, app, origin, app.token())
     pid = s.control()
@@ -1247,7 +1247,7 @@ def identity(run, guard):
     program = app / BUILD.program
     plist = app / "Contents/Info.plist"
     info = plistlib.loads(plist.read_bytes()) if plist.exists() else {}
-    stamp = ROOT / "desktop/resources/.stage.json"
+    stamp = ROOT / "desktop/web/resources/.stage.json"
     git = lambda *arguments: subprocess.run(["git", "--no-optional-locks", *arguments], cwd=ROOT,
                                             capture_output=True, text=True).stdout.strip()
     with_home = run.dir / "version-home"
@@ -1302,7 +1302,7 @@ def loopback_only(event, arguments):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("round", help="evidence goes to .local/desktop-e2e/ROUND/")
+    parser.add_argument("round", help="evidence goes to .local/desktop-web-e2e/ROUND/")
     parser.add_argument("--only", help="comma-separated scenarios: " + ", ".join(SCENARIOS))
     parser.add_argument("--app", type=Path, help="the e2e build: its Markitai Web.app, or its directory on Linux "
                                                      "and Windows")
@@ -1314,11 +1314,11 @@ def main(argv=None):
     if unknown:
         parser.error(f"unknown scenarios: {', '.join(unknown)}")
     if BUILD is None:
-        raise SystemExit("The desktop e2e runs the darwin/arm64 build on an Apple silicon Mac, the linux/amd64 "
+        raise SystemExit("The Markitai Web e2e runs the darwin/arm64 build on an Apple silicon Mac, the linux/amd64 "
                          "build on x86_64 Linux, or the windows/amd64 build on x86-64 Windows")
     app = (args.app or ROOT / BUILD.path).resolve()
     if not os.access(app / BUILD.executable, os.X_OK):
-        raise SystemExit(f"No e2e build at {app}; run desktop_build.py stage, then build --e2e --platform "
+        raise SystemExit(f"No e2e build at {app}; run desktop_web_build.py stage, then build --e2e --platform "
                          f"{BUILD.platform}")
     run = Run(args.round, app)
     taken = [name for name in names if (run.dir / name).exists()]

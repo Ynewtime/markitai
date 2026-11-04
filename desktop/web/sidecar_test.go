@@ -26,7 +26,7 @@ import (
 // would; deaf ignores stdin, as a hung serve would. Modes combine with
 // commas. sleep stands in for a login shell whose startup files take a
 // minute.
-const fakeServeMode = "MARKITAI_DESKTOP_FAKE_SERVE"
+const fakeServeMode = "MARKITAI_WEB_FAKE_SERVE"
 
 func TestMain(m *testing.M) {
 	if mode := os.Getenv(fakeServeMode); mode != "" {
@@ -62,7 +62,7 @@ func fakeServe(mode string, args []string) int {
 		fmt.Fprintln(os.Stderr, "fake serve: another serve instance is using this MARKITAI_HOME")
 		return 1
 	}
-	running, _ := strconv.Atoi(os.Getenv("MARKITAI_DESKTOP_FAKE_RUNNING"))
+	running, _ := strconv.Atoi(os.Getenv("MARKITAI_WEB_FAKE_RUNNING"))
 	authed := func(answer func() any) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			if r.Header.Get("Authorization") != "Bearer "+token {
@@ -144,7 +144,7 @@ func harnessConfig(t *testing.T, mode string, extra ...string) Config {
 	return Config{
 		Program:      os.Args[0],
 		LogPath:      filepath.Join(dir, "logs", "serve.log"),
-		MemoryPath:   filepath.Join(dir, "data", "desktop.json"),
+		MemoryPath:   filepath.Join(dir, "data", "web.json"),
 		Texts:        en,
 		Env:          func(context.Context) ([]string, error) { return env, nil },
 		ReadyTimeout: 3 * time.Second,
@@ -415,7 +415,7 @@ func TestAnIdleQuitLeavesWorkTheCountMissedToFinish(t *testing.T) {
 }
 
 func TestSidecarCountsUnfinishedConversions(t *testing.T) {
-	h := newHarness(t, "ready", "MARKITAI_DESKTOP_FAKE_RUNNING=2")
+	h := newHarness(t, "ready", "MARKITAI_WEB_FAKE_RUNNING=2")
 	h.ready()
 	if n, err := h.sc.Unfinished(context.Background()); n != 2 || err != nil {
 		t.Errorf("Unfinished = %d, %v; want 2", n, err)
@@ -423,7 +423,7 @@ func TestSidecarCountsUnfinishedConversions(t *testing.T) {
 }
 
 func TestQuitAsksWhenTheCountFails(t *testing.T) {
-	h := newHarness(t, "ready", "MARKITAI_DESKTOP_FAKE_RUNNING=2")
+	h := newHarness(t, "ready", "MARKITAI_WEB_FAKE_RUNNING=2")
 	r := h.ready()
 	if err := os.Remove(filepath.Join(r.Child.Home, "serve", "control")); err != nil {
 		t.Fatal(err)
@@ -435,7 +435,7 @@ func TestQuitAsksWhenTheCountFails(t *testing.T) {
 }
 
 func TestSidecarAsksOnlyItsOwnServer(t *testing.T) {
-	h := newHarness(t, "ready", "MARKITAI_DESKTOP_FAKE_RUNNING=2")
+	h := newHarness(t, "ready", "MARKITAI_WEB_FAKE_RUNNING=2")
 	r := h.ready()
 	path := filepath.Join(r.Child.Home, "serve", "control")
 	other, _ := json.Marshal(control{Format: 1, PID: r.Child.PID + 1, Secret: "fake-control-secret"})

@@ -19,7 +19,7 @@ type page struct {
 }
 
 // status is the template's data. Phase and Cause become data-phase and
-// data-cause on <body>, which scripts/desktop_e2e.py reads.
+// data-cause on <body>, which scripts/desktop_web_e2e.py reads.
 type status struct {
 	Lang    string
 	Phase   string
@@ -32,7 +32,7 @@ type status struct {
 
 type button struct {
 	Label string
-	// Href is a markitai-desktop: request (route in window.go); template.URL,
+	// Href is a markitai-web: request (route in window.go); template.URL,
 	// as html/template rewrites other schemes than http(s) and mailto.
 	Href    template.URL
 	Primary bool

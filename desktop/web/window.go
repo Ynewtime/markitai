@@ -16,14 +16,14 @@ import (
 	"github.com/egoist/mygo"
 )
 
-// A page reaches Go through one channel: window.open of a markitai-desktop:
+// A page reaches Go through one channel: window.open of a markitai-web:
 // URL, or a target="_blank" link to one, which SetWindowOpenHandler sees
 // without saying which frame asked. The app binds no Go service; it honors
 // a request only in a phase whose page offers it (offers in view.go).
 const (
-	openRetry   = "markitai-desktop:retry"
-	openStopNow = "markitai-desktop:stop-now"
-	openShowLog = "markitai-desktop:show-log"
+	openRetry   = "markitai-web:retry"
+	openStopNow = "markitai-web:stop-now"
+	openShowLog = "markitai-web:show-log"
 )
 
 // openPrint is Export PDF's request, offered while the workbench shows,
@@ -31,7 +31,7 @@ const (
 // (the snapshot frame lets pop-ups out of its sandbox). It carries a key of
 // this launch that only the preload knows, which runs in the main frame
 // alone and before the workbench's scripts.
-var openPrint = "markitai-desktop:print?" + string(newToken())
+var openPrint = "markitai-web:print?" + string(newToken())
 
 // preload replaces window.print, which the web view ignores (it returns at
 // once, with no panel and no afterprint), so the workbench's PDF export

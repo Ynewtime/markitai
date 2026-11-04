@@ -15,27 +15,27 @@ import (
 	_ "github.com/egoist/mygo/plugins/automation"
 )
 
-// An e2e build, driven by scripts/desktop_e2e.py over MYGO_AUTOMATION. With
-// MARKITAI_DESKTOP_E2E=DIR it keeps what it writes under DIR: its own name (a
+// An e2e build, driven by scripts/desktop_web_e2e.py over MYGO_AUTOMATION.
+// With MARKITAI_WEB_E2E=DIR it keeps what it writes under DIR: its own name (a
 // single-instance lock apart from an installed Markitai Web), user data, cache,
 // logs and downloads. The web view's data (localStorage, cookies) lives
 // outside DIR, under the app's identifier, so each launch clears it before
 // the first page loads; on macOS it refuses to start unless its identifier
 // is its own (ending in .e2e), never clearing an installed Markitai Web's. Save
 // panels answer DIR/saved/<name>, or cancel when
-// MARKITAI_DESKTOP_E2E_SAVE=cancel; the busy-quit question answers
-// MARKITAI_DESKTOP_E2E_QUIT (when-done, the default; now; cancel) and
+// MARKITAI_WEB_E2E_SAVE=cancel; the busy-quit question answers
+// MARKITAI_WEB_E2E_QUIT (when-done, the default; now; cancel) and
 // writes the count it was asked about, or "unknown", to DIR/asked. What
 // would open in the browser or mail app is appended to DIR/external.
 func init() {
-	dir := os.Getenv("MARKITAI_DESKTOP_E2E")
+	dir := os.Getenv("MARKITAI_WEB_E2E")
 	if dir == "" {
 		return
 	}
 	if id := bundleIdentifier(); runtime.GOOS == "darwin" && !strings.HasSuffix(id, ".e2e") {
-		log.Fatalf("markitai desktop e2e: the identifier %q is not an e2e build's, whose web data it would clear", id)
+		log.Fatalf("markitai web e2e: the identifier %q is not an e2e build's, whose web data it would clear", id)
 	}
-	mygo.App.SetName("Markitai E2E")
+	mygo.App.SetName("Markitai Web E2E")
 	for name, sub := range map[mygo.PathName]string{mygo.PathUserData: "data", mygo.PathCache: "cache",
 		mygo.PathLogs: "logs", mygo.PathDownloads: "downloads"} {
 		mygo.App.SetPath(name, filepath.Join(dir, sub))
@@ -43,11 +43,11 @@ func init() {
 	// Registered before main's start, so it runs first.
 	mygo.App.WhenReady(func() {
 		if err := mygo.App.ClearBrowsingData(); err != nil {
-			log.Fatalf("markitai desktop e2e: clearing the web view's data: %v", err)
+			log.Fatalf("markitai web e2e: clearing the web view's data: %v", err)
 		}
 	})
 	saveAs = func(_ *mygo.Window, suggested string) string {
-		if os.Getenv("MARKITAI_DESKTOP_E2E_SAVE") == "cancel" {
+		if os.Getenv("MARKITAI_WEB_E2E_SAVE") == "cancel" {
 			return ""
 		}
 		saved := filepath.Join(dir, "saved")
@@ -68,7 +68,7 @@ func init() {
 			asked = strconv.Itoa(b.N)
 		}
 		_ = os.WriteFile(filepath.Join(dir, "asked"), []byte(asked), 0o600)
-		switch os.Getenv("MARKITAI_DESKTOP_E2E_QUIT") {
+		switch os.Getenv("MARKITAI_WEB_E2E_QUIT") {
 		case "now":
 			return quitStopNow
 		case "cancel":

@@ -76,7 +76,7 @@ func TestPickPortNeverTakesTheCLIPort(t *testing.T) {
 }
 
 func TestMemoryRoundTrip(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "data", "desktop.json")
+	path := filepath.Join(t.TempDir(), "data", "web.json")
 	if m := loadMemory(path); m != (Memory{}) {
 		t.Errorf("a missing file loads %v", m)
 	}

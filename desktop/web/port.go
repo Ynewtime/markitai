@@ -35,7 +35,7 @@ func newToken() Token {
 	return Token(hex.EncodeToString(b))
 }
 
-// Memory is what the app keeps between launches in PathUserData/desktop.json.
+// Memory is what the app keeps between launches in PathUserData/web.json.
 // The workbench keeps its theme, language and options in localStorage, which
 // belongs to an origin: the same port keeps them.
 type Memory struct {

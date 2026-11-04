@@ -93,7 +93,7 @@ full repository checkout; internal work records are not copied into packages.
 ## Services and bindings
 
 - [REST service](serve.md) and [browser workspace](web-ui.md).
-- [Desktop app](desktop.md): Markitai Web, the workspace in a window of its own on macOS, Linux and Windows, built from a checkout.
+- [Markitai Web](desktop-web.md): a desktop app, the workspace in a window of its own on macOS, Linux and Windows, built from a checkout.
 - [Service settings](service-settings.md) and
   [provider management](provider-management.md): saved connections, model
   discovery and connection tests.

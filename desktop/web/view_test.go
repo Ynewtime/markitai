@@ -23,23 +23,23 @@ func TestRender(t *testing.T) {
 		{name: "ready shows the workbench", phase: Ready{Child: c}, texts: en,
 			workURL: "http://127.0.0.1:51234/#token=secret"},
 		{name: "preparing", phase: Preparing{}, texts: en,
-			has: []string{`data-phase="starting"`, "Starting Markitai Web"}, hasNot: []string{"markitai-desktop:"}},
+			has: []string{`data-phase="starting"`, "Starting Markitai Web"}, hasNot: []string{"markitai-web:"}},
 		{name: "starting", phase: Starting{Child: c}, texts: en,
-			has: []string{`data-phase="starting"`, "Starting Markitai Web"}, hasNot: []string{"markitai-desktop:"}},
+			has: []string{`data-phase="starting"`, "Starting Markitai Web"}, hasNot: []string{"markitai-web:"}},
 		{name: "an exit shows the tail, retry and the log", phase: Failed{Cause: Exited{Code: 1}, Tail: "home is busy <b>"},
 			texts: en, has: []string{`data-phase="failed"`, `data-cause="exited"`, "exited with code 1",
-				"home is busy &lt;b&gt;", `href="markitai-desktop:retry"`, `href="markitai-desktop:show-log"`,
+				"home is busy &lt;b&gt;", `href="markitai-web:retry"`, `href="markitai-web:show-log"`,
 				"finishing conversions"}},
 		{name: "not ready", phase: Failed{Cause: NotReady{}}, texts: en,
-			has: []string{`data-cause="not-ready"`, "60 seconds", `href="markitai-desktop:retry"`}, hasNot: []string{"<pre>"}},
+			has: []string{`data-cause="not-ready"`, "60 seconds", `href="markitai-web:retry"`}, hasNot: []string{"<pre>"}},
 		{name: "no program", phase: Failed{Cause: NoProgram{Path: "/a/bin/markitai"}}, texts: en,
 			has: []string{`data-cause="no-program"`, "/a/bin/markitai"}},
 		{name: "spawn failed", phase: Failed{Cause: SpawnFailed{Err: "permission denied"}}, texts: en,
-			has: []string{`data-cause="spawn-failed"`, "permission denied", `href="markitai-desktop:retry"`}},
+			has: []string{`data-cause="spawn-failed"`, "permission denied", `href="markitai-web:retry"`}},
 		{name: "a drain offers to stop now", phase: Stopping{Mode: WhenDone, PID: 7}, texts: en,
-			has: []string{`data-phase="stopping"`, `href="markitai-desktop:stop-now"`}},
+			has: []string{`data-phase="stopping"`, `href="markitai-web:stop-now"`}},
 		{name: "stopping now offers nothing", phase: Stopping{Mode: Now, PID: 7}, texts: en,
-			has: []string{`data-phase="stopping"`}, hasNot: []string{"markitai-desktop:"}},
+			has: []string{`data-phase="stopping"`}, hasNot: []string{"markitai-web:"}},
 		{name: "Chinese", phase: Failed{Cause: Exited{Code: 2}}, texts: zh,
 			has: []string{`lang="zh-CN"`, "重试", "代码 2"}},
 	}
@@ -82,7 +82,7 @@ func TestOffersAreThePagesButtons(t *testing.T) {
 	phases := []Phase{Preparing{}, Preparing{Dying: 6}, Starting{Child: c}, Stopping{Mode: WhenDone, PID: 7},
 		Stopping{Mode: Now, PID: 7}, Failed{Cause: Exited{Code: 1}}, Failed{Cause: NotReady{}, Dying: 7},
 		Failed{Cause: NoProgram{Path: "/x"}}, Failed{Cause: SpawnFailed{Err: "e"}}}
-	hrefs := regexp.MustCompile(`href="(markitai-desktop:[a-z-]+)"`)
+	hrefs := regexp.MustCompile(`href="(markitai-web:[a-z-]+)"`)
 	for _, p := range phases {
 		var shown []request
 		for _, m := range hrefs.FindAllStringSubmatch(render(p, en).HTML, -1) {
@@ -183,11 +183,11 @@ func TestAtStatusPage(t *testing.T) {
 
 func TestRoute(t *testing.T) {
 	cases := map[string]request{
-		"markitai-desktop:print":     reqDenied,
-		"markitai-desktop:retry":     reqRetry,
-		"markitai-desktop:stop-now":  reqStopNow,
-		"markitai-desktop:show-log":  reqShowLog,
-		"markitai-desktop:other":     reqDenied,
+		"markitai-web:print":         reqDenied,
+		"markitai-web:retry":         reqRetry,
+		"markitai-web:stop-now":      reqStopNow,
+		"markitai-web:show-log":      reqShowLog,
+		"markitai-web:other":         reqDenied,
 		"https://markitai.dev/":      reqExternal,
 		"http://example.com/a?b=c":   reqExternal,
 		"mailto:someone@example.com": reqExternal,
@@ -212,9 +212,9 @@ func TestOnlyThePreloadAsksForExportPDF(t *testing.T) {
 	if opened == nil || route(opened[1]) != reqPrint {
 		t.Fatalf("the preload's window.print opens %q, which is not Export PDF", opened)
 	}
-	key := strings.TrimPrefix(opened[1], "markitai-desktop:print?")
-	for _, forged := range []string{"markitai-desktop:print", "markitai-desktop:print?", opened[1] + "x",
-		"markitai-desktop:print?" + string(newToken()), "markitai-desktop:print?" + strings.ToUpper(key)} {
+	key := strings.TrimPrefix(opened[1], "markitai-web:print?")
+	for _, forged := range []string{"markitai-web:print", "markitai-web:print?", opened[1] + "x",
+		"markitai-web:print?" + string(newToken()), "markitai-web:print?" + strings.ToUpper(key)} {
 		if got := route(forged); got != reqDenied {
 			t.Errorf("route(%q) = %v; want denied", forged, got)
 		}

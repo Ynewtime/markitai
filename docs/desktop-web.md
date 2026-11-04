@@ -1,6 +1,6 @@
-# Desktop app
+# Markitai Web
 
-Markitai Web, the desktop app, opens the [browser workbench](web-ui.md) in a window
+Markitai Web, a desktop app, opens the [browser workbench](web-ui.md) in a window
 of its own: open Markitai Web and convert, with no terminal and no browser tab. It
 runs the `markitai` program bundled inside it as a server for that window
 ([running under another app](serve.md#running-under-another-app)), so it
@@ -78,15 +78,15 @@ built from the checkout with `python3 scripts/release_build.py cli --target
 aarch64-apple-darwin --output DIR`. Then, in the checkout:
 
 ```sh
-python3 scripts/desktop_build.py stage --archive markitai-v<version>-aarch64-apple-darwin.tar.gz --sums SHA256SUMS
-python3 scripts/desktop_build.py build --platform darwin/arm64
-open "desktop/build/darwin-arm64/Markitai Web.app"
+python3 scripts/desktop_web_build.py stage --archive markitai-v<version>-aarch64-apple-darwin.tar.gz --sums SHA256SUMS
+python3 scripts/desktop_web_build.py build --platform darwin/arm64
+open "desktop/web/build/darwin-arm64/Markitai Web.app"
 ```
 
 `stage` refuses an archive whose name or checksum does not match the
 checkout's version (`--sums` is the release's `SHA256SUMS`; leave it out for
 an archive you built). `build` writes `Markitai Web.app` and the disk image
-`markitai-web-<version>-arm64.dmg` to `desktop/build/darwin-arm64/`. Copy
+`markitai-web-<version>-arm64.dmg` to `desktop/web/build/darwin-arm64/`. Copy
 the app to Applications, or open the disk image and drag it there. The app
 carries the licences of `markitai` and of the Go modules it links in
 `Contents/Resources/licenses/`.
@@ -119,12 +119,12 @@ checkout's version (the GitHub release's, or one `release_build.py cli
 install it for your user:
 
 ```sh
-python3 scripts/desktop_build.py stage --archive markitai-v<version>-x86_64-unknown-linux-gnu.tar.gz --sums SHA256SUMS
-python3 scripts/desktop_build.py build --platform linux/amd64
-sh desktop/build/linux-amd64/install.sh
+python3 scripts/desktop_web_build.py stage --archive markitai-v<version>-x86_64-unknown-linux-gnu.tar.gz --sums SHA256SUMS
+python3 scripts/desktop_web_build.py build --platform linux/amd64
+sh desktop/web/build/linux-amd64/install.sh
 ```
 
-`build` writes to `desktop/build/linux-amd64/` the app (`markitai-web`,
+`build` writes to `desktop/web/build/linux-amd64/` the app (`markitai-web`,
 with `bin/markitai` and `licenses/` beside it), the archive
 `markitai-web-<version>-linux-amd64.tar.gz`, the Debian package
 `markitai-web_<version>_amd64.deb` (it installs in
@@ -148,12 +148,12 @@ version (the GitHub release's, or one `release_build.py cli --target
 x86_64-pc-windows-msvc` builds), then run the installer:
 
 ```sh
-python scripts/desktop_build.py stage --archive markitai-v<version>-x86_64-pc-windows-msvc.zip --sums SHA256SUMS
-python scripts/desktop_build.py build --platform windows/amd64
-desktop\build\windows-amd64\markitai-web-setup-<version>-amd64.exe
+python scripts/desktop_web_build.py stage --archive markitai-v<version>-x86_64-pc-windows-msvc.zip --sums SHA256SUMS
+python scripts/desktop_web_build.py build --platform windows/amd64
+desktop\web\build\windows-amd64\markitai-web-setup-<version>-amd64.exe
 ```
 
-`build` writes to `desktop\build\windows-amd64\` the app (`Markitai Web.exe`,
+`build` writes to `desktop\web\build\windows-amd64\` the app (`Markitai Web.exe`,
 with `bin\markitai.exe` and `licenses\` beside it) and the installer
 `markitai-web-setup-<version>-amd64.exe`. The first build downloads NSIS,
 which makes the installer, into `%LOCALAPPDATA%\mygo`, unless NSIS is
