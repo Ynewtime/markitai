@@ -70,7 +70,7 @@ struct DocumentView: View {
                 Group {
                     switch model.mode {
                     case .preview:
-                        PreviewPane(markdown: markdown, baseDirectory: document.folder, zoom: settings.zoom)
+                        PreviewPane(markdown: markdown, file: document.markdownPath, baseDirectory: document.folder, zoom: settings.zoom)
                     case .markdown:
                         MarkdownText(text: markdown, zoom: settings.zoom)
                             .accessibilityLabel(L["a11y.markdown_text"])
@@ -179,19 +179,27 @@ extension View {
 /// The core's preview document in a `WKWebView` (DESIGN.md section 8),
 /// rendered off the main thread whenever the Markdown or appearance changes.
 /// The web view exists only once the network rule list is compiled, so no
-/// document loads without it.
+/// document loads without it. A failed render shows `preview.failed` and is
+/// not kept: the pane renders again the next time it shows.
 struct PreviewPane: View {
     @Environment(\.colorScheme) private var colorScheme
     let markdown: String
+    /// The Markdown file in `baseDirectory`, loaded first for read access.
+    let file: String
     let baseDirectory: String
     let zoom: Double
-    @ViewState private var html: String?
+    @ViewState private var rendered: Rendered?
     @ViewState private var rules: PreviewNetworkRules.Compiled?
 
     var body: some View {
         Group {
-            if let rules {
-                PreviewWebView(html: html, baseDirectory: baseDirectory, zoom: zoom, rules: rules)
+            if case .failed = rendered {
+                Text(L["preview.failed"])
+                    .multilineTextAlignment(.center)
+                    .padding(20)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if let rules {
+                PreviewWebView(html: rendered?.html, file: file, baseDirectory: baseDirectory, zoom: zoom, rules: rules)
             } else {
                 Color.clear
             }
@@ -201,9 +209,20 @@ struct PreviewPane: View {
             let dark = colorScheme == .dark
             let markdown = markdown
             let base = baseDirectory
-            html = await Task.detached(priority: .userInitiated) {
+            let html = await Task.detached(priority: .userInitiated) {
                 Core.previewHTML(markdown: markdown, dark: dark, baseDirectory: base)
             }.value
+            rendered = html.map(Rendered.html) ?? .failed
+        }
+    }
+
+    private enum Rendered {
+        case html(String)
+        case failed
+
+        var html: String? {
+            guard case .html(let html) = self else { return nil }
+            return html
         }
     }
 
@@ -216,6 +235,7 @@ struct PreviewPane: View {
 
 struct PreviewWebView: NSViewRepresentable {
     let html: String?
+    let file: String
     let baseDirectory: String
     let zoom: Double
     let rules: PreviewNetworkRules.Compiled
@@ -240,14 +260,65 @@ struct PreviewWebView: NSViewRepresentable {
     func updateNSView(_ view: PreviewWKWebView, context: Context) {
         if view.pageZoom != zoom { view.pageZoom = zoom }
         guard let html, context.coordinator.loaded != html else { return }
-        context.coordinator.loaded = html
-        context.coordinator.loading = true
-        view.loadHTMLString(html, baseURL: URL(fileURLWithPath: baseDirectory, isDirectory: true))
+        context.coordinator.show(html, file: file, folder: URL(fileURLWithPath: baseDirectory, isDirectory: true), in: view)
     }
 
+    @MainActor
     final class Coordinator: NSObject, WKNavigationDelegate {
         var loaded: String?
         var loading = false
+        /// The folder the page may read, and the document waiting for that
+        /// grant while the file load that gives it runs.
+        private var granted: URL?
+        private var grant: WKNavigation?
+        private var waiting: String?
+
+        /// `loadHTMLString` gives the page no read access to the result
+        /// folder, so its images would not load. Loading the Markdown file with
+        /// `allowingReadAccessTo:` its folder grants it, and WebKit keeps it
+        /// for later documents whose base is that folder. The view stays
+        /// hidden until the document replaces the file.
+        func show(_ html: String, file: String, folder: URL, in view: WKWebView) {
+            loaded = html
+            if granted == folder, grant != nil {
+                waiting = html
+                return
+            }
+            loading = true
+            if granted == folder {
+                view.loadHTMLString(html, baseURL: folder)
+                return
+            }
+            granted = folder
+            waiting = html
+            view.isHidden = true
+            grant = view.loadFileURL(URL(fileURLWithPath: file), allowingReadAccessTo: folder)
+        }
+
+        private func ended(_ navigation: WKNavigation!, in webView: WKWebView) {
+            guard navigation == grant, let html = waiting, let folder = granted else {
+                // A load that ends while another folder's grant runs, such as
+                // the grant it replaced, leaves the view hidden for that one.
+                if grant == nil { webView.isHidden = false }
+                return
+            }
+            grant = nil
+            waiting = nil
+            loading = true
+            webView.loadHTMLString(html, baseURL: folder)
+        }
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            ended(navigation, in: webView)
+        }
+
+        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+            ended(navigation, in: webView)
+        }
+
+        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+            ended(navigation, in: webView)
+        }
 
         /// Allows the document's own load and same-document fragment links;
         /// opens http, https and mailto links in their apps; cancels the rest.

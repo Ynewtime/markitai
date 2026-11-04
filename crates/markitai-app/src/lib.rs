@@ -5,6 +5,7 @@
 //! "message"}}`, the same from Rust and over the C ABI
 //! (`include/markitai_app.h`).
 
+mod body;
 mod environment;
 mod folder;
 mod preview;
@@ -18,7 +19,7 @@ use serde_json::{Value, json};
 
 pub use preview::{PREVIEW_CSS, Theme, file_url, render as render_preview};
 
-pub const ABI_VERSION: u32 = 1;
+pub const ABI_VERSION: u32 = 2;
 const MAX_REQUEST_BYTES: usize = 64 * 1024 * 1024;
 
 /// The markitai version.
@@ -103,6 +104,16 @@ pub fn preview_html(request: &str) -> String {
             Some(_) => return Err(invalid("\"base_dir\" must be a string or null")),
         };
         Ok(json!({"html": preview::render(markdown, theme, base_dir.as_deref())}))
+    })
+}
+
+/// `{"markdown"}`: the text of a Markdown file the core wrote, `{"markdown"}`
+/// without its front matter, as the conversion's `markdown` field had it.
+pub fn markdown_body(request: &str) -> String {
+    answer(|| {
+        let request = parse(request)?;
+        let markdown = string(&request, "markdown")?;
+        Ok(json!({"markdown": body::body(markdown)}))
     })
 }
 
@@ -252,6 +263,16 @@ pub unsafe extern "C" fn markitai_app_preview_html(
 /// # Safety
 /// `request` points to `len` readable bytes.
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn markitai_app_markdown_body(
+    request: *const u8,
+    len: usize,
+) -> MarkitaiAppBuffer {
+    unsafe { with_request(request, len, markdown_body) }
+}
+
+/// # Safety
+/// `request` points to `len` readable bytes.
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn markitai_app_claim_output_folder(
     request: *const u8,
     len: usize,
@@ -333,6 +354,13 @@ mod tests {
             call(markitai_app_claim_output_folder, "{}")["error"]["code"],
             "invalid_input"
         );
+        for bad in [r#"{}"#, r#"{"markdown":1}"#, "[]"] {
+            assert_eq!(
+                call(markitai_app_markdown_body, bad)["error"]["code"],
+                "invalid_input",
+                "{bad}"
+            );
+        }
         let refused = unsafe { take(markitai_app_convert_json(ptr::null(), 1)) };
         assert_eq!(refused["error"]["code"], "invalid_input");
         let config = unsafe { take(markitai_app_config_file()) };
@@ -372,6 +400,95 @@ mod tests {
         );
         let written = response["result"]["output_path"].as_str().unwrap();
         assert!(Path::new(written).starts_with(folder), "{written}");
+    }
+
+    fn body_of(text: &str) -> String {
+        let answer = call(
+            markitai_app_markdown_body,
+            &json!({ "markdown": text }).to_string(),
+        );
+        assert_eq!(answer["ok"], true, "{answer}");
+        answer["result"]["markdown"].as_str().unwrap().to_owned()
+    }
+
+    #[test]
+    fn a_written_file_without_its_front_matter_is_the_conversions_markdown() {
+        let dir = tempfile::tempdir().unwrap();
+        for (name, text) in [
+            ("plain.md", "# Plain\n\nBody.\n"),
+            (
+                "own.md",
+                "---\ntitle: Existing\ncustom: kept\n---\n\n# Heading\n",
+            ),
+            (
+                "rules.md",
+                "---\n\nIntro after a rule.\n\n---\n\nSecond part.\n",
+            ),
+        ] {
+            let source = dir.path().join(name);
+            std::fs::write(&source, text).unwrap();
+            let request = json!({"source": source, "options": {"config": {}, "llm": false, "output_dir": dir.path().join(name.replace(".md", ""))}});
+            let response = call(markitai_app_convert_json, &request.to_string());
+            assert_eq!(response["ok"], true, "{response}");
+            let written =
+                std::fs::read_to_string(response["result"]["output_path"].as_str().unwrap())
+                    .unwrap();
+            assert!(written.starts_with("---\ntitle: "), "{name}: {written}");
+            assert_eq!(
+                body_of(&written),
+                response["result"]["markdown"].as_str().unwrap(),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn only_a_leading_yaml_mapping_is_front_matter() {
+        for (text, body) in [
+            ("", ""),
+            (
+                "# No front matter\n\nBody.\n",
+                "# No front matter\n\nBody.\n",
+            ),
+            ("---\ntitle: Only\n---\n", ""),
+            ("---\ntitle: x\n---", ""),
+            ("---\ntitle: x\n---\n\n\n# Body\n", "# Body\n"),
+            (
+                "---\n\nIntro after a rule.\n\n---\n\nSecond part.\n",
+                "---\n\nIntro after a rule.\n\n---\n\nSecond part.\n",
+            ),
+            ("---\n- a\n- b\n---\nbody\n", "---\n- a\n- b\n---\nbody\n"),
+            (
+                "---\ninvalid: [\n---\nbody\n",
+                "---\ninvalid: [\n---\nbody\n",
+            ),
+            ("---\n---\nbody\n", "---\n---\nbody\n"),
+            (
+                "---\ntitle: never closed\n\n# Body\n",
+                "---\ntitle: never closed\n\n# Body\n",
+            ),
+            ("# Title\n\n---\na: 1\n---\n", "# Title\n\n---\na: 1\n---\n"),
+            (
+                "---\r\ntitle: CRLF\r\n---\r\n\r\n# CRLF body\r\n",
+                "# CRLF body\r\n",
+            ),
+            ("---\r\ntitle: 中文\r\n---", ""),
+            (
+                "---\r\n\r\nA rule.\r\n\r\n---\r\n\r\nNext.\r\n",
+                "---\r\n\r\nA rule.\r\n\r\n---\r\n\r\nNext.\r\n",
+            ),
+            (
+                "\u{feff}---\ntitle: BOM\n---\n\n# BOM body\n",
+                "# BOM body\n",
+            ),
+            ("\u{feff}# Plain\n", "# Plain\n"),
+            (
+                "\u{feff}---\r\ntitle: Both\r\n---\r\n\r\nBody\r\n",
+                "Body\r\n",
+            ),
+        ] {
+            assert_eq!(body_of(text), body, "{text:?}");
+        }
     }
 
     #[test]

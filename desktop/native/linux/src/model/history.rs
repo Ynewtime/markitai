@@ -29,6 +29,17 @@ pub struct Entry {
     pub markitai_version: String,
 }
 
+/// The Markdown its Convert item showed: the file at `path` without its front
+/// matter (DESIGN.md 3.3). None when the file is gone or not UTF-8.
+pub fn read_markdown(path: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let answer = markitai_app::markdown_body(&serde_json::json!({ "markdown": text }).to_string());
+    let body = serde_json::from_str::<serde_json::Value>(&answer)
+        .ok()
+        .and_then(|answer| Some(answer["result"]["markdown"].as_str()?.to_owned()));
+    Some(body.unwrap_or(text))
+}
+
 impl Entry {
     /// Whether the title or source contains `query`, ignoring case.
     pub fn matches(&self, query: &str) -> bool {
@@ -220,6 +231,32 @@ mod tests {
         history.save().unwrap();
         assert!(entry.markdown_path.exists());
         assert!(History::load(dir.path(), "x").0.is_empty());
+    }
+
+    /// DESIGN.md 3.3: an entry shows the Markdown its Convert item did, also
+    /// from a file edited since.
+    #[test]
+    fn an_entry_reads_its_markdown_without_front_matter() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("doc.md");
+        for (file, shown) in [
+            ("---\ntitle: Report\n---\n\n# Report\n", "# Report\n"),
+            (
+                "---\n\nIntro after a rule.\n\n---\n\nSecond part.\n",
+                "---\n\nIntro after a rule.\n\n---\n\nSecond part.\n",
+            ),
+            (
+                "---\r\ntitle: CRLF\r\n---\r\n\r\n# CRLF body\r\n",
+                "# CRLF body\r\n",
+            ),
+            ("\u{feff}---\ntitle: BOM\n---\n\n# BOM body\n", "# BOM body\n"),
+            ("---\ntitle: Only\n---\n", ""),
+        ] {
+            std::fs::write(&path, file).unwrap();
+            assert_eq!(read_markdown(&path).as_deref(), Some(shown), "{file:?}");
+        }
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(read_markdown(&path), None);
     }
 
     #[test]

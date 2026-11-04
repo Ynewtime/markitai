@@ -17,7 +17,7 @@ import (
 )
 
 // ABIVersion is the MARKITAI_APP_ABI_VERSION this app was written against.
-const ABIVersion = 1
+const ABIVersion = 2
 
 // ErrABI reports a library whose ABI version is not ABIVersion.
 var ErrABI = errors.New("core: ABI version mismatch")
@@ -38,6 +38,7 @@ type Lib struct {
 	prepareEnvironment func(*byte, uintptr) buffer
 	convertJSON        func(*byte, uintptr) buffer
 	previewHTML        func(*byte, uintptr) buffer
+	markdownBody       func(*byte, uintptr) buffer
 	claimOutputFolder  func(*byte, uintptr) buffer
 	configFile         func() buffer
 	bufferFree         func(*buffer)
@@ -79,8 +80,9 @@ var loaded struct {
 }
 
 // Load opens the library at path once per process and checks its ABI
-// version: a mismatch returns the Lib with ErrABI, which the app shows as
-// the fatal.abi message.
+// version before it looks up the other functions: a mismatch, such as a
+// library from before a function this app calls, returns ErrABI, which the
+// app shows as the fatal.abi message.
 func Load(path string) (*Lib, error) {
 	loaded.Lock()
 	defer loaded.Unlock()
@@ -92,27 +94,33 @@ func Load(path string) (*Lib, error) {
 		return nil, fmt.Errorf("core: open %s: %w", path, err)
 	}
 	l := &Lib{Path: path}
-	for _, f := range []struct {
-		name string
-		fn   any
-	}{
-		{"markitai_app_abi_version", &l.abiVersion},
-		{"markitai_app_version", &l.version},
-		{"markitai_app_prepare_environment", &l.prepareEnvironment},
-		{"markitai_app_convert_json", &l.convertJSON},
-		{"markitai_app_preview_html", &l.previewHTML},
-		{"markitai_app_claim_output_folder", &l.claimOutputFolder},
-		{"markitai_app_config_file", &l.configFile},
-		{"markitai_app_buffer_free", &l.bufferFree},
-	} {
-		addr, err := sym(h, f.name)
+	register := func(name string, fn any) error {
+		addr, err := sym(h, name)
 		if err != nil || addr == 0 {
-			return nil, fmt.Errorf("core: %s: missing %s: %v", path, f.name, err)
+			return fmt.Errorf("core: %s: missing %s: %v", path, name, err)
 		}
-		purego.RegisterFunc(f.fn, addr)
+		purego.RegisterFunc(fn, addr)
+		return nil
+	}
+	if err := register("markitai_app_abi_version", &l.abiVersion); err != nil {
+		return nil, err
 	}
 	if v := l.abiVersion(); v != ABIVersion {
-		return l, fmt.Errorf("%w: library %d, app %d", ErrABI, v, ABIVersion)
+		return nil, fmt.Errorf("%w: library %d, app %d", ErrABI, v, ABIVersion)
+	}
+	for name, fn := range map[string]any{
+		"markitai_app_version":             &l.version,
+		"markitai_app_prepare_environment": &l.prepareEnvironment,
+		"markitai_app_convert_json":        &l.convertJSON,
+		"markitai_app_preview_html":        &l.previewHTML,
+		"markitai_app_markdown_body":       &l.markdownBody,
+		"markitai_app_claim_output_folder": &l.claimOutputFolder,
+		"markitai_app_config_file":         &l.configFile,
+		"markitai_app_buffer_free":         &l.bufferFree,
+	} {
+		if err := register(name, fn); err != nil {
+			return nil, err
+		}
 	}
 	if loaded.libs == nil {
 		loaded.libs = map[string]*Lib{}
@@ -208,6 +216,20 @@ func (l *Lib) PreviewHTML(markdown, theme string, baseDir *string) (string, erro
 	}
 	err = json.Unmarshal(raw, &out)
 	return out.HTML, err
+}
+
+// MarkdownBody is the text of a Markdown file the core wrote without its
+// front matter, as the conversion's markdown field had it (DESIGN 3.3).
+func (l *Lib) MarkdownBody(text string) (string, error) {
+	raw, err := l.call(l.markdownBody, map[string]string{"markdown": text})
+	if err != nil {
+		return "", err
+	}
+	var out struct {
+		Markdown string `json:"markdown"`
+	}
+	err = json.Unmarshal(raw, &out)
+	return out.Markdown, err
 }
 
 // Folder is a conversion's output folder, claimed and created.

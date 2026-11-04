@@ -238,7 +238,7 @@ final class AppModel: ObservableObject {
     func load(_ document: Document) async -> Loaded {
         let path = document.markdownPath
         let loaded = await Task.detached(priority: .userInitiated) {
-            (try? String(contentsOfFile: path, encoding: .utf8)).map(Loaded.text) ?? .missing
+            History.markdown(at: path).map(Loaded.text) ?? .missing
         }.value
         if self.document?.markdownPath == path {
             loadedMarkdown = (path, loaded)

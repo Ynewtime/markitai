@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -24,6 +25,7 @@ type coreLib interface {
 	ClaimOutputFolder(parent, source string) (core.Folder, error)
 	ConvertJSON(request any) (json.RawMessage, error)
 	PreviewHTML(markdown, theme string, baseDir *string) (string, error)
+	MarkdownBody(text string) (string, error)
 	ConfigFile() (core.ConfigFile, error)
 	Version() string
 }
@@ -549,35 +551,23 @@ func (a *app) markdown(e model.Entry) *markdownFile {
 	id, path := e.ID, e.MarkdownPath
 	go func() {
 		data, err := os.ReadFile(path)
+		text := string(data)
+		if err == nil {
+			// Without its front matter, as Convert showed it (DESIGN 3.3).
+			if body, err := a.core.MarkdownBody(text); err == nil {
+				text = body
+			} else {
+				log.Printf("markdown_body: %v", err)
+			}
+		}
 		a.post(func() {
 			if a.markdowns[id] != md {
 				return
 			}
-			md.read, md.missing, md.text = true, err != nil, withoutFrontMatter(string(data))
+			md.read, md.missing, md.text = true, err != nil, text
 		})
 	}()
 	return md
-}
-
-// withoutFrontMatter is a written Markdown file's text after its YAML
-// front matter, as the core leaves it out of a result's markdown (DESIGN
-// 3.3), so that History shows, copies and saves what Convert did.
-func withoutFrontMatter(text string) string {
-	rest, ok := strings.CutPrefix(text, "---\n")
-	if !ok {
-		return text
-	}
-	for offset := 0; offset < len(rest); {
-		line := rest[offset:]
-		if end := strings.IndexByte(line, '\n'); end >= 0 {
-			line = line[:end+1]
-		}
-		if line == "---\n" || line == "---" {
-			return strings.TrimLeft(rest[offset+len(line):], "\n")
-		}
-		offset += len(line)
-	}
-	return text
 }
 
 // matches applies History's search: a case-insensitive substring of the

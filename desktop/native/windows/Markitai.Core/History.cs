@@ -23,6 +23,14 @@ public sealed record HistoryEntry(
     public static HistoryEntry From(ConversionItem item, Done done, string markitaiVersion, DateTimeOffset finishedAt) => new(
         item.Id.ToString(), item.Source.Value, item.Source.Kind, item.Title, done.Folder, done.Result.MarkdownPath,
         finishedAt, done.Result.Duration, done.Result.Warnings, done.Result.Usage, item.Options, markitaiVersion);
+
+    /// <summary>The Markdown its Convert item showed: the file at <paramref name="path"/> without its front matter (desktop/DESIGN.md 3.3).</summary>
+    public static string ReadMarkdown(string path)
+    {
+        var text = File.ReadAllText(path);
+        var answer = CoreJson.Parse(NativeCore.MarkdownBody(CoreJson.BodyRequest(text)));
+        return answer.Ok ? CoreJson.Text(answer.Result, "markdown") ?? text : text;
+    }
 }
 
 public sealed record HistoryFile(int Version, IReadOnlyList<HistoryEntry> Entries);

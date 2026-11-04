@@ -17,8 +17,8 @@ public enum AppLanguage: String, Sendable {
         return ["zh-Hans"] + preferred
     }
 
-    /// The locale dates and numbers are written in: the app's language with
-    /// the user's region, so a 24-hour region keeps its clock.
+    /// The locale numbers are written in: the app's language with the user's
+    /// region, for its digit grouping.
     public var locale: Locale {
         let region = Locale.current.region?.identifier
         switch self {
@@ -26,6 +26,11 @@ public enum AppLanguage: String, Sendable {
         case .simplifiedChinese: return Locale(identifier: "zh-Hans" + (region.map { "_\($0)" } ?? "_CN"))
         }
     }
+
+    /// The locale dates are written in: the app's language alone, so the clock
+    /// is the language's whatever the region (DESIGN.md 6.5: 12-hour in
+    /// English, 24-hour in Chinese).
+    public var dateLocale: Locale { Locale(identifier: rawValue) }
 }
 
 /// Every user-visible string, from `desktop/strings.json` (DESIGN.md section 10),

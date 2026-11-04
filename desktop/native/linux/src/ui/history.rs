@@ -201,7 +201,7 @@ impl Win {
         let path = entry.markdown_path.clone();
         let win = self.clone();
         glib::spawn_future_local(async move {
-            let text = gio::spawn_blocking(move || std::fs::read_to_string(path).ok())
+            let text = gio::spawn_blocking(move || crate::model::history::read_markdown(&path))
                 .await
                 .ok()
                 .flatten();

@@ -95,6 +95,13 @@ public final class History: ObservableObject {
         }
     }
 
+    /// An entry's Markdown as its Convert item showed it: the file without its
+    /// front matter (DESIGN.md 3.3). Nil when the file is gone or not UTF-8.
+    nonisolated public static func markdown(at path: String) -> String? {
+        guard let text = try? String(contentsOfFile: path, encoding: .utf8) else { return nil }
+        return Core.markdownBody(text) ?? text
+    }
+
     public func add(_ entry: HistoryEntry) {
         entries.insert(entry, at: 0)
         if entries.count > History.limit {

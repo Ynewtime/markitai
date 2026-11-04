@@ -40,6 +40,23 @@ struct CopyTests {
         }
     }
 
+    /// DESIGN.md 6.5: the medium date and short time of the app's language,
+    /// with that language's clock whatever the region.
+    @Test func historyTimesUseTheLanguagesClock() throws {
+        let date = Date(timeIntervalSince1970: 1_793_760_138)
+        let later = date.addingTimeInterval(3 * 86_400)
+        let twelve = try Regex(#"\d{1,2}:\d{2}\s?[AP]M"#)
+        let twentyFour = try Regex(#"(^|[^\d])\d{2}:\d{2}$"#)
+        #expect(Format.finished(date, now: later, strings: english).contains(twelve))
+        #expect(Format.finished(date, now: date, strings: english).hasPrefix("Today, "))
+        #expect(Format.finished(date, now: date, strings: english).contains(twelve))
+        let zh = Format.finished(date, now: later, strings: chinese)
+        #expect(zh.contains("年") && zh.contains(twentyFour), "\(zh)")
+        for marker in ["上午", "下午", "晚上", "凌晨", "中午", "早上", "AM", "PM"] {
+            #expect(!zh.contains(marker), "\(zh)")
+        }
+    }
+
     @Test func languageChoice() {
         #expect(AppLanguage.choose(from: ["zh-Hant-TW", "en"]) == .simplifiedChinese)
         #expect(AppLanguage.choose(from: ["zh-Hans-CN"]) == .simplifiedChinese)

@@ -13,7 +13,7 @@ public interface IConverter
 /// <summary>markitai_app.dll (crates/markitai-app/include/markitai_app.h). Each call takes and answers JSON text.</summary>
 public sealed unsafe partial class NativeCore : IConverter
 {
-    public const uint ExpectedAbiVersion = 1;
+    public const uint ExpectedAbiVersion = 2;
     const string Library = "markitai_app";
 
     public static NativeCore Instance { get; } = new();
@@ -27,6 +27,8 @@ public sealed unsafe partial class NativeCore : IConverter
     public static string PrepareEnvironment(string request) => Call(&markitai_app_prepare_environment, request);
 
     public static string PreviewHtml(string request) => Call(&markitai_app_preview_html, request);
+
+    public static string MarkdownBody(string request) => Call(&markitai_app_markdown_body, request);
 
     public static string ConfigFile()
     {
@@ -81,6 +83,9 @@ public sealed unsafe partial class NativeCore : IConverter
 
     [LibraryImport(Library)]
     private static partial Buffer markitai_app_preview_html(byte* request, nuint length);
+
+    [LibraryImport(Library)]
+    private static partial Buffer markitai_app_markdown_body(byte* request, nuint length);
 
     [LibraryImport(Library)]
     private static partial Buffer markitai_app_claim_output_folder(byte* request, nuint length);

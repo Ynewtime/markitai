@@ -9,7 +9,7 @@ use std::path::Path;
 
 /// The app is linked with the core it was built against, so a mismatch is a
 /// build error here rather than the `fatal.abi.*` window.
-const ABI_VERSION: u32 = 1;
+const ABI_VERSION: u32 = 2;
 const _: () = assert!(markitai_app::ABI_VERSION == ABI_VERSION);
 
 fn main() -> gtk::glib::ExitCode {

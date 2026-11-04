@@ -10,7 +10,7 @@
 extern "C" {
 #endif
 
-#define MARKITAI_APP_ABI_VERSION 1u
+#define MARKITAI_APP_ABI_VERSION 2u
 
 /* Owns len bytes of UTF-8 JSON, without a trailing NUL. Release it exactly once
    with markitai_app_buffer_free. Do not copy this ownership handle. */
@@ -33,6 +33,7 @@ const char *markitai_app_version(void);
 MarkitaiAppBuffer markitai_app_prepare_environment(const uint8_t *request, size_t len);
 MarkitaiAppBuffer markitai_app_convert_json(const uint8_t *request, size_t len);
 MarkitaiAppBuffer markitai_app_preview_html(const uint8_t *request, size_t len);
+MarkitaiAppBuffer markitai_app_markdown_body(const uint8_t *request, size_t len);
 MarkitaiAppBuffer markitai_app_claim_output_folder(const uint8_t *request, size_t len);
 MarkitaiAppBuffer markitai_app_config_file(void);
 

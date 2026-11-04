@@ -69,6 +69,8 @@ public static class CoreJson
     public static string PreviewRequest(string markdown, bool dark, string? baseDir) =>
         new JsonObject { ["markdown"] = markdown, ["theme"] = dark ? "dark" : "light", ["base_dir"] = baseDir }.ToJsonString();
 
+    public static string BodyRequest(string markdown) => new JsonObject { ["markdown"] = markdown }.ToJsonString();
+
     /// <summary>A convert_json envelope as the item's final state (desktop/DESIGN.md 4.1, step 4).</summary>
     public static ItemState Conversion(string json, string folder)
     {

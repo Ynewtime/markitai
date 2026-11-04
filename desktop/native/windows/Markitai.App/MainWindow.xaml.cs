@@ -28,7 +28,7 @@ public sealed record Finished(string Title, string Folder, string MarkdownPath, 
 
     public static Finished Of(HistoryEntry entry) => new(entry.Title, entry.Folder, entry.MarkdownPath, null);
 
-    public async Task<string> ReadAsync() => Markdown ?? await Task.Run(() => File.ReadAllText(MarkdownPath));
+    public async Task<string> ReadAsync() => Markdown ?? await Task.Run(() => HistoryEntry.ReadMarkdown(MarkdownPath));
 }
 
 /// <summary>A section 11 shortcut of the window. Forwarded ones also work with focus in the preview.</summary>

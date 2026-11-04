@@ -78,7 +78,7 @@ struct EmptyConvert: View {
                 line
             }
             .accessibilityHidden(true)
-            URLRow()
+            URLRow(glyph: false)
             NoticeLines()
         }
         .padding(40)
@@ -89,7 +89,10 @@ struct EmptyConvert: View {
         .padding(.horizontal, 20)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(.bottom, 52)
-        .onAppear { chooseFocused = true }
+        // Choose Files… first (DESIGN.md 6.2). A button takes focus only with
+        // keyboard navigation on; asked for without it, SwiftUI hands focus to
+        // the URL field instead, so then nothing has focus.
+        .onAppear { if NSApp.isFullKeyboardAccessEnabled { chooseFocused = true } }
     }
 
     private var line: some View {
@@ -97,15 +100,20 @@ struct EmptyConvert: View {
     }
 }
 
+/// The URL field and Add. The empty page's field has no leading glyph
+/// (DESIGN.md 6.2), the list's has the link glyph (6.3).
 struct URLRow: View {
     @EnvironmentObject private var model: AppModel
     @FocusState private var focused: Bool
+    let glyph: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 HStack(spacing: 6) {
-                    Image(systemName: "link").foregroundStyle(.secondary).accessibilityHidden(true)
+                    if glyph {
+                        Image(systemName: "link").foregroundStyle(.secondary).accessibilityHidden(true)
+                    }
                     TextField(L["convert.url.label"], text: $model.urlText, prompt: Text(L["convert.url.placeholder"]))
                         .textFieldStyle(.plain)
                         .labelsHidden()
@@ -182,7 +190,7 @@ struct ConvertListColumn: View {
             .modifier(DropBorder())
             .accessibilityElement(children: .contain)
             .accessibilityLabel(L["a11y.drop_zone"])
-            URLRow()
+            URLRow(glyph: true)
             NoticeLines()
             List(selection: $workbench.selection) {
                 ForEach(workbench.items) { item in

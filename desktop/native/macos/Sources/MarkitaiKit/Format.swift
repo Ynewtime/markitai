@@ -48,9 +48,10 @@ public enum Format {
         return parts.joined(separator: " · ")
     }
 
-    /// `Today, 10:42`, `Yesterday, 16:05` or the medium date and short time.
+    /// `Today, 10:42 AM`, `Yesterday, 4:05 PM` or the medium date and short
+    /// time, in the app language's clock.
     public static func finished(_ date: Date, now: Date = Date(), strings: Strings = L) -> String {
-        let locale = strings.language.locale
+        let locale = strings.language.dateLocale
         var calendar = Calendar.current
         calendar.locale = locale
         let time = DateFormatter()

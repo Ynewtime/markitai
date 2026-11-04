@@ -11,7 +11,7 @@ public enum Envelope {
 /// Each call takes and answers JSON; this file is the only place that crosses
 /// the C boundary.
 public enum Core {
-    public static let abiVersion: UInt32 = 1
+    public static let abiVersion: UInt32 = 2
 
     public static var abiMatches: Bool { markitai_app_abi_version() == abiVersion }
 
@@ -36,6 +36,13 @@ public enum Core {
         ]
         guard case .ok(let result) = call(markitai_app_preview_html, request) else { return nil }
         return result["html"] as? String
+    }
+
+    /// The text of a Markdown file the core wrote without its front matter,
+    /// as the conversion's `markdown` field had it (DESIGN.md 3.3).
+    public static func markdownBody(_ text: String) -> String? {
+        guard case .ok(let result) = call(markitai_app_markdown_body, ["markdown": text]) else { return nil }
+        return result["markdown"] as? String
     }
 
     /// Creates the conversion's own folder under `parent`.

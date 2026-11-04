@@ -88,7 +88,7 @@ not a public binding and is not documented in `docs/bindings.md`.
 extern "C" {
 #endif
 
-#define MARKITAI_APP_ABI_VERSION 1u
+#define MARKITAI_APP_ABI_VERSION 2u
 
 /* Owns len bytes of UTF-8 JSON, without a trailing NUL. Release it exactly once
    with markitai_app_buffer_free. Do not copy this ownership handle. */
@@ -108,6 +108,7 @@ const char *markitai_app_version(void);
 MarkitaiAppBuffer markitai_app_prepare_environment(const uint8_t *request, size_t len);
 MarkitaiAppBuffer markitai_app_convert_json(const uint8_t *request, size_t len);
 MarkitaiAppBuffer markitai_app_preview_html(const uint8_t *request, size_t len);
+MarkitaiAppBuffer markitai_app_markdown_body(const uint8_t *request, size_t len);
 MarkitaiAppBuffer markitai_app_claim_output_folder(const uint8_t *request, size_t len);
 MarkitaiAppBuffer markitai_app_config_file(void);
 
@@ -120,9 +121,11 @@ void markitai_app_buffer_free(MarkitaiAppBuffer *buffer);
 #endif
 ```
 
-`markitai_app_abi_version` returns `1`. Each app compares it with its own
+`markitai_app_abi_version` returns `2`. Each app compares it with its own
 constant at launch. A mismatch shows only the `fatal.abi.*` message and a Quit
-button.
+button. The version goes up with every function added and every call that
+changes, so an app never runs on a library that lacks a call it makes; version
+2 added `markdown_body`.
 
 ### 3.2 Rust API for the Linux app
 
@@ -131,11 +134,12 @@ take and return the same JSON as the C functions, so all three apps share one
 contract.
 
 ```rust
-pub const ABI_VERSION: u32 = 1;
+pub const ABI_VERSION: u32 = 2;
 pub fn version() -> &'static str;
 pub fn prepare_environment(request: &str) -> String;
 pub fn convert_json(request: &str) -> String;
 pub fn preview_html(request: &str) -> String;
+pub fn markdown_body(request: &str) -> String;
 pub fn claim_output_folder(request: &str) -> String;
 pub fn config_file() -> String;
 ```
@@ -149,6 +153,7 @@ Each C function is a thin wrapper over the Rust function of the same name.
 | `prepare_environment` | `{"data_dir": "<app data folder>"}` | `{"login_environment": "imported" \| "inherited" \| "failed", "detail": null \| "<reason>"}` | Once, first, from `main`, before the UI framework starts. Blocks up to 10 s |
 | `convert_json` | Exactly `markitai_convert_json`'s request (`docs/bindings.md`, Shared contract) | Exactly its envelope | Per conversion, on a worker thread. Blocks until done. Cannot be canceled |
 | `preview_html` | `{"markdown": "...", "theme": "light" \| "dark", "base_dir": "<folder>" \| null}` | `{"html": "<!doctype html>..."}` | Each time a Preview is shown or the appearance changes, on a worker thread |
+| `markdown_body` | `{"markdown": "<text of a Markdown file the core wrote>"}` | `{"markdown": "<that text without its front matter>"}` | Each time History reads an entry's `markdown_path`, on the same worker thread |
 | `claim_output_folder` | `{"parent": "<output folder>", "source": "<path or URL>"}` | `{"path": "<new folder>", "name": "<its name>"}` | Right before each conversion |
 | `config_file` | none | `{"path": "<file>", "exists": true \| false}` | Each time Settings opens |
 
@@ -172,7 +177,7 @@ Each C function is a thin wrapper over the Rust function of the same name.
 |---|---|
 | Parser | `pulldown-cmark` with `ENABLE_TABLES`, `ENABLE_STRIKETHROUGH`, `ENABLE_TASKLISTS`, `ENABLE_FOOTNOTES`, `ENABLE_YAML_STYLE_METADATA_BLOCKS` |
 | Raw HTML | `Event::Html` and `Event::InlineHtml` become `Event::Text`, so the HTML shows escaped |
-| Front matter | The YAML block is left out of the preview, and out of the Markdown the apps show, copy and save (4.2): the result's `markdown` field has none, and History leaves out a leading `---` block it reads from `markdown_path` |
+| Front matter | The YAML block is left out of the preview, and out of the Markdown the apps show, copy and save (4.2): the result's `markdown` field has none, and History reads `markdown_path` through `markdown_body` |
 | Images | `data:` sources stay. A `file:` source (no host, or `localhost`) and a relative source (against `base_dir`) resolve to a path, decoding percent escapes and resolving `.` and `..`; if that path is inside `base_dir`, the image loads from its canonical `file://` URL, so the web view loads exactly the path that was checked. Every other source (http, https, `//`, absolute paths, `file:` or `..` outside `base_dir`, any `base_dir` of null) becomes `<span class="img-remote" title="<source>"><alt or source></span>` |
 | Links | Kept as written. The app decides what a click does (section 8) |
 | Base | No `<base>` element, so footnote links stay in the same document |
@@ -199,6 +204,16 @@ The document skeleton:
 `style-src 'unsafe-inline'` is needed because `pulldown-cmark` writes table
 alignment as `style` attributes. It carries no risk here because raw HTML is
 escaped. `data-theme` and `color-scheme` take the request's `theme`.
+
+`markdown_body` leaves out what the core itself reads as front matter when it
+writes a file (`markitai_core::output::split_frontmatter`): a first line `---`,
+lines that parse as a YAML mapping, a line `---`, and the blank lines after
+it. Anything else stays, such as a leading thematic break, a block that is
+not a mapping, or a block never closed. A byte-order mark at the start is
+dropped, as the core drops it when it reads a text file, and a CRLF counts as
+one line break, so a file an editor saved again with Windows line endings
+still loses its front matter. The rest keeps its bytes. For a file the core
+wrote, the answer is the conversion's `markdown` field.
 
 `claim_output_folder` names and creates the conversion's folder:
 
@@ -488,7 +503,7 @@ List row anatomy, the same on every platform:
 
 History entries use the Done column. Their status line is `state.done`, then
 ` · ` and the finish date as in History rows (6.5). The Markdown is read from
-`markdown_path` off the main thread, without its front matter (3.3), so that an
+`markdown_path` off the main thread, through `markdown_body` (3.3), so that an
 entry shows, copies and saves the same Markdown as its Convert item did.
 
 Platform controls for these parts:
@@ -618,7 +633,7 @@ On a change, the Preview is rendered again with the new `theme`.
 
 | Concern | macOS `WKWebView` | Windows `WebView2` | GNOME WebKitGTK 6 |
 |---|---|---|---|
-| Load | `loadHTMLString(html, baseURL:)` with the file URL of `base_dir` (trailing slash), which grants read access to that folder | Write the document to `%LOCALAPPDATA%\Markitai Native\Preview\current.html`, then `Navigate` to its file URI | `load_html(html, Some(<file URI of base_dir>))` |
+| Load | `loadHTMLString(html, baseURL:)` with the file URL of `base_dir` (trailing slash). That call grants the page no read access to the folder, so the result's images would not load: for a new `base_dir` the app first calls `loadFileURL(<Markdown file>, allowingReadAccessTo: <base_dir>)`, keeps the web view hidden, and loads the HTML when that load ends. WebKit keeps the access for later documents with that base | Write the document to `%LOCALAPPDATA%\Markitai Native\Preview\current.html`, then `Navigate` to its file URI | `load_html(html, Some(<file URI of base_dir>))` |
 | Scripts | `WKWebpagePreferences.allowsContentJavaScript = false` | `CoreWebView2.Settings.IsScriptEnabled = true` for one host script, added with `AddScriptToExecuteOnDocumentCreatedAsync`, that forwards section 11 keys pressed in the preview. The page's own scripts never run: the document's CSP `default-src 'none'` blocks them, and navigation never leaves `current.html` | `WebKitSettings` `enable-javascript` false |
 | Network | CSP, plus a `WKContentRuleList` that blocks `^https?://` and `^wss?://`. `websiteDataStore` `.nonPersistent()` | CSP, plus `AddWebResourceRequestedFilter("*", All)` answering every non-`file:` request with 403 | CSP, plus an ephemeral `WebKitNetworkSession` |
 | Navigation | Allow the initial load and same-document fragment links. Open `http`, `https` and `mailto` links with `NSWorkspace.open` and cancel. Cancel all else | `NavigationStarting` and `NewWindowRequested` with the same rule, opening with `Launcher.LaunchUriAsync` | `decide-policy` with the same rule, opening with `GtkUriLauncher` |
@@ -847,7 +862,7 @@ registers app actions with `set_accels_for_action`.
 | Labels | Every icon-only button has an accessible name equal to its tooltip (the copy key of its action). The URL field is labeled `convert.url.label`. The drop zone's name is `a11y.drop_zone`. Lists are named `a11y.conversions` and `nav.history`. The view switch is a group named `detail.view`. The warnings box is named `a11y.warnings`. A toolbar of commands with no visible title (a Windows `CommandBar`) is named `a11y.actions` |
 | Row names | `<title>, <subtitle>`, such as "Quarterly Report Q3 2026.pdf, Done in 18.6 s · 2 warnings" |
 | State changes | Done and Failed are announced politely: macOS `NSAccessibility.post` with `.announcementRequested`, Windows `AutomationPeer.RaiseNotificationEvent`, GNOME `gtk::Accessible::announce` |
-| Focus order | Navigation, then the drop bar's Choose Files… button, the URL field, Add, the list, then the detail: view switch, actions, warnings disclosure, content, footer. Empty Convert focuses Choose Files… first |
+| Focus order | Navigation, then the drop bar's Choose Files… button, the URL field, Add, the list, then the detail: view switch, actions, warnings disclosure, content, footer. Empty Convert focuses Choose Files… first. On macOS a button takes focus only with keyboard navigation on; with it off, the empty page starts with nothing focused, and the URL field takes focus from Tab, a click or Add Web Address |
 | Keyboard | Every action has a keyboard path (section 11 or Tab). No action is drag-only |
 | Contrast | Text 4.5:1 or more against its background. Status colors appear only on glyphs, always next to text that says the state. Informative text (errors, warnings) is primary text, never secondary |
 | Color | States differ by glyph shape as well as color |
@@ -1044,7 +1059,7 @@ hr { margin: 24px 0; border: 0; border-top: 1px solid var(--rule); }
 | Preview parity | The same `preview_html` request gives byte-identical HTML in all three apps (it is one Rust function). Test it in `markitai-app` with fixtures for tables, task lists, footnotes, raw HTML, relative and remote images, and both themes |
 | States | Each of Queued, Converting, Done (with and without warnings, with and without AI usage) and Failed (every row of section 9) is reachable with repository fixtures and an isolated `HOME` and `MARKITAI_HOME` |
 | Folders | Two sources with one label give `label` and `label (2)`. A failed conversion leaves no folder |
-| History | 501 additions keep 500. Remove and Clear leave the files. A corrupt file is renamed and reported once |
+| History | 501 additions keep 500. Remove and Clear leave the files. A corrupt file is renamed and reported once. An entry shows the Markdown its Convert item did, also from a file saved again with CRLF or a byte-order mark, and keeps a leading thematic break |
 | Quit | With one item Converting, every quit path shows the quit dialog. Cancel keeps it running |
 | Copy | Every visible string comes from `desktop/strings.json`, in both languages |
 | Accessibility | Keyboard-only run through every flow. VoiceOver, Narrator and Orca read row names and announcements |

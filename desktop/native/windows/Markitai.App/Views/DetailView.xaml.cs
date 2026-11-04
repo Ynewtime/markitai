@@ -159,7 +159,7 @@ public sealed partial class DetailView : UserControl
         string? text;
         try
         {
-            text = await Task.Run(() => File.ReadAllText(entry.MarkdownPath));
+            text = await Task.Run(() => HistoryEntry.ReadMarkdown(entry.MarkdownPath));
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {

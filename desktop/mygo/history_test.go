@@ -48,6 +48,34 @@ func (h *harness) entry(title string) *model.Entry {
 	return nil
 }
 
+// DESIGN 3.3: History copies a file without the front matter the core
+// reads, also when the file was edited after the conversion, and keeps a
+// leading rule that is not front matter.
+func TestHistoryLeavesOutOnlyTheFrontMatter(t *testing.T) {
+	h := start(t, l10n.En)
+	cases := []struct{ name, file, want string }{
+		{"rule.md", "---\n\nIntro after a rule.\n\n---\n\nSecond part.\n", "---\n\nIntro after a rule.\n\n---\n\nSecond part.\n"},
+		{"crlf.md", "---\r\ntitle: CRLF\r\n---\r\n\r\n# CRLF body\r\n", "# CRLF body\r\n"},
+		{"bom.md", "\ufeff---\ntitle: BOM\n---\n\n# BOM body\n", "# BOM body\n"},
+	}
+	for _, c := range cases {
+		h.convert(h.write(c.name, "# "+c.name+"\n"))
+	}
+	h.click(h.T("nav.history"))
+	for _, c := range cases {
+		e := h.entry(c.name)
+		if err := os.WriteFile(e.MarkdownPath, []byte(c.file), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		h.click(h.entryLabel(c.name))
+		h.until(c.name+"'s Markdown", func() bool { md := h.a.markdowns[e.ID]; return md != nil && md.read })
+		h.click(h.T("detail.copy"))
+		if got := h.tt.Clipboard(); got != c.want {
+			t.Errorf("%s: History copied %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
 func TestHistory(t *testing.T) {
 	h := start(t, l10n.En)
 	alpha, beta := h.write("alpha.md", "# Alpha\n"), h.write("beta.md", "# Beta\n")

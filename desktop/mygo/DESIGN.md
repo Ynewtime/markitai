@@ -142,8 +142,9 @@ app {
    first and exits (`single_instance.go:50-73`). On Windows the lock is taken
    in the data folder (section 10.6).
 5. `App.SetLanguages("en", "zh-Hans")` and `App.SetLocale` (section 10.5).
-6. `core.Load(core.Find(resources))`. An ABI mismatch shows only the fatal
-   screen (section 6.9).
+6. `core.Load(core.Find(resources))`. It checks the ABI version before it
+   looks up the other functions, so a library without one of them is refused
+   the same way: an ABI mismatch shows only the fatal screen (section 6.9).
 7. `PrepareEnvironment(data folder)`, before `App.Run`. It blocks up to 10 s
    (DESIGN 3.3).
 8. Load settings and history.
@@ -407,8 +408,8 @@ pane: detail bar, content, footer.
 
 History entries use the Done column (DESIGN 6.4), their status line followed
 by ` · ` and the finish date of section 6.5. The Markdown is read from
-`markdown_path` on a goroutine, without a leading YAML front matter block
-(DESIGN 3.3), so the entry shows, copies and saves what its Convert item did.
+`markdown_path` on a goroutine, through the core's `markdown_body` (DESIGN
+3.3), so the entry shows, copies and saves what its Convert item did.
 A missing file shows `detail.missing.title` (detail title style) and
 `detail.missing.body` in `Text` (DESIGN 12), and only Remove from History
 stays enabled.
@@ -939,7 +940,7 @@ isolated environment of section 15 again with `t.Setenv`.
 | Copy | Every visible string comes from `strings.json` in both languages: a test walks every screen and checks `Tester.Texts` against the catalog's values, allowing file names, paths, numbers and the core's text |
 | Images | The preview's base URL is the result folder, and the file loaded first for read access is the Markdown file in it (section 8.1). Remote images are not loaded (the HTML from `preview_html` holds `img-remote`). The web view is filled with the detail's background |
 | Library | `internal/core/ship_test.go` reads the staged core: on macOS its install name is `@rpath/libmarkitai_app.dylib` and it links only `/usr/lib` and `/System/Library`; on Windows it imports no `vcruntime`, `msvcp` or `api-ms-win-crt-` DLL; on Linux it needs only `lib*` sonames |
-| Fixes of the first review | `fixes_test.go`: paste takes only `http` and `https` text, a Chromium link drop (`text/x-moz-url` in UTF-16), a notice stays on its page, a failed preview shows `preview.failed` and renders again, ⌘⌫'s menu key leaves text fields, the menu bar's order, Settings reads the configuration file once per visit. `windowstate_test.go`: frames fitted to work areas. `layout_test.go`: empty Convert fits and centers at 640 × 480 and 1200 × 780. `history_test.go`: History's Markdown leaves the file's front matter out. A cleanup in `startWith` waits for conversions still running, so Windows can remove the test's folder |
+| Fixes of the first review | `fixes_test.go`: paste takes only `http` and `https` text, a Chromium link drop (`text/x-moz-url` in UTF-16), a notice stays on its page, a failed preview shows `preview.failed` and renders again, ⌘⌫'s menu key leaves text fields, the menu bar's order, Settings reads the configuration file once per visit. `windowstate_test.go`: frames fitted to work areas. `layout_test.go`: empty Convert fits and centers at 640 × 480 and 1200 × 780. `history_test.go`: History's Markdown leaves the file's front matter out, also from a file saved again with CRLF or a byte-order mark, and keeps a leading thematic break. A cleanup in `startWith` waits for conversions still running, so Windows can remove the test's folder |
 | Design shots | `design_test.go`, only with `MARKITAI_MYGO_DESIGN_SHOTS` naming a folder: every screen and state of section 6, light and dark, English and zh-Hans, as PNGs from the `Tester` for review |
 
 The real window. `internal/e2e` (build tag `e2e`) drives the `--e2e` build

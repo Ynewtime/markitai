@@ -125,6 +125,19 @@ public sealed class NativeTests : IDisposable
         Assert.False(config.Result.GetProperty("exists").GetBoolean());
     }
 
+    /// <summary>DESIGN.md 3.3: an entry shows the Markdown its Convert item did, also from a file edited since.</summary>
+    [Theory]
+    [InlineData("---\ntitle: Report\n---\n\n# Report\n", "# Report\n")]
+    [InlineData("---\n\nIntro after a rule.\n\n---\n\nSecond part.\n", "---\n\nIntro after a rule.\n\n---\n\nSecond part.\n")]
+    [InlineData("---\r\ntitle: CRLF\r\n---\r\n\r\n# CRLF body\r\n", "# CRLF body\r\n")]
+    [InlineData("\uFEFF---\ntitle: BOM\n---\n\n# BOM body\n", "# BOM body\n")]
+    [InlineData("---\ntitle: Only\n---\n", "")]
+    public void A_history_entry_reads_its_markdown_without_front_matter(string file, string shown)
+    {
+        var path = Author("doc.md", file);
+        Assert.Equal(shown, HistoryEntry.ReadMarkdown(path));
+    }
+
     /// <summary>DESIGN.md 16, States and Folders: Done with and without warnings, and every Failed row a real input reaches.</summary>
     [Fact]
     public void Repository_fixtures_reach_done_and_each_failure_and_failures_leave_no_folder()

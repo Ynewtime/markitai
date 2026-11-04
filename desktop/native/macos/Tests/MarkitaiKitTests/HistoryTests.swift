@@ -51,6 +51,23 @@ struct HistoryTests {
         }
     }
 
+    /// DESIGN.md 3.3: an entry shows the Markdown its Convert item did, also
+    /// from a file edited since, and keeps a leading rule that is not front matter.
+    @Test(arguments: [
+        ("---\ntitle: Report\n---\n\n# Report\n", "# Report\n"),
+        ("---\n\nIntro after a rule.\n\n---\n\nSecond part.\n", "---\n\nIntro after a rule.\n\n---\n\nSecond part.\n"),
+        ("---\r\ntitle: CRLF\r\n---\r\n\r\n# CRLF body\r\n", "# CRLF body\r\n"),
+        ("\u{feff}---\ntitle: BOM\n---\n\n# BOM body\n", "# BOM body\n"),
+        ("---\ntitle: Only\n---\n", ""),
+    ])
+    func anEntryShowsItsMarkdownWithoutFrontMatter(_ file: String, _ shown: String) throws {
+        let path = try temporaryFolder("history").appendingPathComponent("doc.md")
+        try Data(file.utf8).write(to: path)
+        #expect(History.markdown(at: path.path) == shown)
+        try FileManager.default.removeItem(at: path)
+        #expect(History.markdown(at: path.path) == nil, "a missing file has no Markdown")
+    }
+
     @Test(arguments: ["{not json", #"{"version": 2, "entries": []}"#])
     func anUnreadableFileIsKeptAsideAndReportedOnce(_ contents: String) throws {
         let folder = try temporaryFolder("history")
