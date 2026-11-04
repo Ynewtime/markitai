@@ -188,6 +188,9 @@ impl Win {
 
     /// Start Queued items while fewer than two convert (DESIGN.md 4.1).
     pub fn pump(self: &Rc<Self>) {
+        if self.runs.quitting() {
+            return;
+        }
         loop {
             let Some(id) = self.queue.borrow().next_to_start() else {
                 break;
@@ -213,20 +216,29 @@ impl Win {
             self.queue.borrow_mut().start(id, Instant::now(), folder.clone());
             let request = convert_request(&source, &folder, &options);
             let win = self.clone();
+            let runs = self.runs.clone();
             glib::spawn_future_local(async move {
                 let claimed = folder.clone();
-                let outcome = gio::spawn_blocking(move || {
+                let ended = gio::spawn_blocking(move || {
                     let outcome = map_envelope(&markitai_app::convert_json(&request));
                     if matches!(outcome, Outcome::Failed(_)) {
                         let _ = std::fs::remove_dir_all(&claimed);
                     }
-                    outcome
+                    if !runs.end(id, claimed.clone(), outcome) {
+                        let _ = std::fs::remove_dir_all(&claimed);
+                    }
                 })
-                .await
-                .unwrap_or_else(|_| {
-                    Outcome::Failed(Failure::new("internal_error", "The conversion thread stopped."))
-                });
-                win.finish(id, folder, outcome);
+                .await;
+                let finished = match ended {
+                    Ok(()) => win.runs.take(id),
+                    Err(_) => Some((
+                        folder,
+                        Outcome::Failed(Failure::new("internal_error", "The conversion thread stopped.")),
+                    )),
+                };
+                if let Some((folder, outcome)) = finished {
+                    win.finish(id, folder, outcome);
+                }
             });
         }
         self.refresh_convert();
@@ -259,7 +271,7 @@ impl Win {
         self.inhibit.set(renewed);
     }
 
-    fn finish(self: &Rc<Self>, id: Uuid, folder: PathBuf, outcome: Outcome) {
+    pub(super) fn finish(self: &Rc<Self>, id: Uuid, folder: PathBuf, outcome: Outcome) {
         match outcome {
             Outcome::Done(converted) => {
                 let entry = {

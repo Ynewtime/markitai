@@ -13,11 +13,11 @@ use super::window::{Page, Win};
 use crate::model::APP_ID;
 use crate::model::queue::State;
 use crate::model::settings::clamp_zoom;
-use crate::strings::tr;
+use crate::strings::{tr, trf};
 
-/// The shown Markdown and where it came from.
+/// The shown Markdown, when it is in memory, and where it came from.
 pub struct Current {
-    pub markdown: Rc<String>,
+    pub markdown: Option<Rc<String>>,
     pub markdown_path: PathBuf,
     pub folder: PathBuf,
 }
@@ -267,7 +267,7 @@ impl Win {
                 let item = queue.get(queue.selected()?)?;
                 match &item.state {
                     State::Done { entry, markdown } => Some(Current {
-                        markdown: markdown.clone(),
+                        markdown: Some(markdown.clone()),
                         markdown_path: entry.markdown_path.clone(),
                         folder: entry.folder.clone(),
                     }),
@@ -280,11 +280,8 @@ impl Win {
                 if !entry.markdown_path.is_file() {
                     return None;
                 }
-                let markdown = self
-                    .history_text(id)
-                    .or_else(|| std::fs::read_to_string(&entry.markdown_path).ok().map(Rc::new))?;
                 Some(Current {
-                    markdown,
+                    markdown: self.history_text(id),
                     markdown_path: entry.markdown_path,
                     folder: entry.folder,
                 })
@@ -383,19 +380,47 @@ impl Win {
         });
     }
 
-    pub fn copy_markdown(&self) {
-        if let Some(current) = self.current() {
-            self.window.clipboard().set_text(&current.markdown);
-            self.toast(&tr("notice.copied"), 2);
+    /// Run `then` with the current item's Markdown. History's is read off
+    /// the main thread when its detail has not loaded it yet (DESIGN.md 6.4).
+    fn with_markdown(self: &Rc<Self>, then: impl FnOnce(&Rc<Win>, Rc<String>, Current) + 'static) {
+        let Some(current) = self.current() else {
+            return;
+        };
+        if let Some(markdown) = current.markdown.clone() {
+            then(self, markdown, current);
+            return;
         }
+        let win = self.clone();
+        let path = current.markdown_path.clone();
+        glib::spawn_future_local(async move {
+            let text = gio::spawn_blocking(move || std::fs::read_to_string(path).ok())
+                .await
+                .ok()
+                .flatten();
+            match text {
+                Some(text) => then(&win, Rc::new(text), current),
+                None => {
+                    let name = current.markdown_path.file_name().unwrap_or_default().to_string_lossy();
+                    win.notice(&trf("error.open_failed", &[("name", &name)]));
+                }
+            }
+        });
+    }
+
+    pub fn copy_markdown(self: &Rc<Self>) {
+        self.with_markdown(|win, markdown, _| {
+            win.window.clipboard().set_text(&markdown);
+            win.toast(&tr("notice.copied"), 2);
+        });
     }
 
     /// Save the shown Markdown, and its `.markitai` folder beside it when the
     /// text refers to it (DESIGN.md 7.2).
     pub fn save_as(self: &Rc<Self>) {
-        let Some(current) = self.current() else {
-            return;
-        };
+        self.with_markdown(|win, markdown, current| win.save_markdown_as(markdown, current));
+    }
+
+    fn save_markdown_as(self: &Rc<Self>, markdown: Rc<String>, current: Current) {
         let label = current
             .folder
             .file_name()
@@ -414,7 +439,7 @@ impl Win {
             let Some(path) = file.path() else {
                 return;
             };
-            let markdown = current.markdown.as_str().to_owned();
+            let markdown = markdown.as_str().to_owned();
             let folder = current.folder.clone();
             let saved = gio::spawn_blocking(move || save_copy(&path, &markdown, &folder))
                 .await

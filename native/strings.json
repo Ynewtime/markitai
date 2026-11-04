@@ -531,6 +531,10 @@
   "en": "Warnings",
   "zh-Hans": "警告"
  },
+ "a11y.actions": {
+  "en": "Actions",
+  "zh-Hans": "操作"
+ },
  "a11y.done": {
   "en": "{title} converted",
   "zh-Hans": "{title} 已转换"

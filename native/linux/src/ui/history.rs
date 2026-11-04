@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 use super::convert::{done_status, footer_text};
 use super::detail::{Body, Shown};
-use super::rows::{Row, Trailing, row_id};
+use super::rows::{Row, Trailing, fade_in, fade_out, row_id};
 use super::window::{Page, Win};
 use crate::model::history::Entry;
 use crate::model::source::Kind;
@@ -111,7 +111,7 @@ impl Win {
         rows.retain(|id, row| {
             let keep = history.get(*id).is_some();
             if !keep {
-                self.history_list.remove(&row.row);
+                fade_out(&self.history_list, &row.row);
             }
             keep
         });
@@ -119,6 +119,7 @@ impl Win {
             let row = rows.entry(entry.id).or_insert_with(|| {
                 let row = Row::new(entry.id);
                 self.history_list.insert(&row.row, index as i32);
+                fade_in(&row.row);
                 row
             });
             let trailing = if entry.warnings.is_empty() {
@@ -222,17 +223,8 @@ impl Win {
     }
 
     pub fn remove_history_entry(self: &Rc<Self>, id: Uuid) {
-        let next = {
-            let history = self.history.borrow();
-            let entries = history.entries();
-            let at = entries.iter().position(|e| e.id == id);
-            at.and_then(|at| {
-                entries
-                    .get(at + 1)
-                    .or_else(|| at.checked_sub(1).and_then(|i| entries.get(i)))
-                    .map(|e| e.id)
-            })
-        };
+        let query = self.history_search.text();
+        let next = self.history.borrow().neighbor(id, |entry| entry.matches(&query));
         if self.history.borrow_mut().remove(id) {
             let _ = self.history.borrow().save();
             if self.history_selected.get() == Some(id) {

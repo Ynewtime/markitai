@@ -15,6 +15,7 @@ use super::detail::{Detail, Shared, View};
 use super::rows::Row;
 use crate::model::history::History;
 use crate::model::queue::Queue;
+use crate::model::runs::Runs;
 use crate::model::settings::Settings;
 use crate::model::{self, compact_utc};
 use crate::strings::{tr, trf};
@@ -78,12 +79,17 @@ pub struct Win {
     pub inhibit: Cell<Option<(u32, usize)>>,
     /// The quit dialog while it shows, so its count can follow the queue.
     pub quit_dialog: RefCell<Option<adw::AlertDialog>>,
+    /// Conversions on worker threads, shared with Quit.
+    pub runs: Runs,
     pub default_output: PathBuf,
 }
 
+/// A header bar showing `title`, named by it (DESIGN.md 12).
 fn header(title: &str) -> adw::HeaderBar {
     let bar = adw::HeaderBar::new();
     bar.set_title_widget(Some(&adw::WindowTitle::new(title, "")));
+    bar.upcast_ref::<gtk::Widget>()
+        .update_property(&[gtk::accessible::Property::Label(title)]);
     bar
 }
 
@@ -141,7 +147,9 @@ fn nav_row(icon: &str, key: &str) -> gtk::ListBoxRow {
     let line = gtk::Box::new(gtk::Orientation::Horizontal, 12);
     line.append(&gtk::Image::from_icon_name(icon));
     line.append(&gtk::Label::new(Some(&tr(key))));
-    gtk::ListBoxRow::builder().child(&line).build()
+    let row = gtk::ListBoxRow::builder().child(&line).build();
+    row.update_property(&[gtk::accessible::Property::Label(&tr(key))]);
+    row
 }
 
 fn inner_split(sidebar: &adw::NavigationPage, content: &adw::NavigationPage) -> adw::NavigationSplitView {
@@ -187,6 +195,7 @@ impl Win {
         let nav_list = gtk::ListBox::builder()
             .css_classes(["navigation-sidebar"])
             .build();
+        nav_list.update_property(&[gtk::accessible::Property::Label(&tr("app.name"))]);
         nav_list.append(&nav_row("x-office-document-symbolic", "nav.convert"));
         nav_list.append(&nav_row("document-open-recent-symbolic", "nav.history"));
         let menu = gio::Menu::new();
@@ -477,6 +486,7 @@ impl Win {
             ticking: Cell::new(false),
             inhibit: Cell::new(None),
             quit_dialog: RefCell::new(None),
+            runs: Runs::default(),
             default_output,
         });
 
@@ -520,40 +530,46 @@ impl Win {
         win
     }
 
+    /// Tab walks the rows and the selection follows it; only activation (a
+    /// click, Return or Space) changes the page, so Tab goes on to the page's
+    /// own controls (DESIGN.md 12). Until then the selection stays on the
+    /// page that shows.
     fn connect_navigation(self: &Rc<Self>) {
         let weak = Rc::downgrade(self);
-        self.nav_list.connect_row_selected(move |_, row| {
-            let (Some(win), Some(row)) = (weak.upgrade(), row) else {
-                return;
-            };
-            if win.syncing.get() {
-                return;
+        self.nav_list.connect_row_selected(move |_, _| {
+            if let Some(win) = weak.upgrade()
+                && !win.syncing.get()
+            {
+                win.select_nav_row();
             }
-            let page = if row.index() == 1 {
-                Page::History
-            } else {
-                Page::Convert
-            };
-            win.select_page(page);
         });
         let weak = Rc::downgrade(self);
-        self.nav_list.connect_row_activated(move |_, _| {
+        self.nav_list.connect_row_activated(move |_, row| {
             if let Some(win) = weak.upgrade() {
+                win.select_page(if row.index() == 1 {
+                    Page::History
+                } else {
+                    Page::Convert
+                });
                 win.outer.set_show_content(true);
             }
         });
     }
 
-    /// Show Convert or History.
-    pub fn select_page(&self, page: Page) {
-        self.page.set(page);
-        let index = match page {
+    fn select_nav_row(&self) {
+        let index = match self.page.get() {
             Page::Convert => 0,
             Page::History => 1,
         };
         self.syncing.set(true);
         self.nav_list.select_row(self.nav_list.row_at_index(index).as_ref());
         self.syncing.set(false);
+    }
+
+    /// Show Convert or History.
+    pub fn select_page(&self, page: Page) {
+        self.page.set(page);
+        self.select_nav_row();
         self.content_page.set_title(&tr(match page {
             Page::Convert => "nav.convert",
             Page::History => "nav.history",
@@ -701,12 +717,13 @@ impl Win {
     /// The quit dialog while anything converts (DESIGN.md 6.7 and 7.3).
     pub fn ask_to_quit(self: &Rc<Self>) {
         // Asked already: a second Ctrl+Q or close leaves that dialog up.
-        if self
-            .window
-            .visible_dialog()
-            .is_some_and(|dialog| dialog.is::<adw::AlertDialog>())
-        {
+        if self.quit_dialog.borrow().is_some() {
             return;
+        }
+        // Any other dialog (Clear History, Preferences, About) closes first,
+        // as its Cancel or Close would.
+        if let Some(other) = self.window.visible_dialog() {
+            other.close();
         }
         let dialog = adw::AlertDialog::new(Some(&tr("quit.title")), None);
         dialog.add_responses(&[("cancel", &tr("common.cancel")), ("quit", &tr("quit.confirm"))]);
@@ -717,8 +734,6 @@ impl Win {
         dialog.connect_response(None, move |_, response| {
             win.quit_dialog.replace(None);
             if response == "quit" {
-                // A conversion that finished while the dialog was up is
-                // already in History; only the unfinished ones are dropped.
                 win.discard_converting();
                 win.save_window_state();
                 win.app.quit();
@@ -750,11 +765,15 @@ impl Win {
         self.app.quit();
     }
 
-    /// Delete the folders claimed for items still Converting (DESIGN.md
-    /// 7.3). Their conversions end with the process. `run` calls it again
-    /// after the main loop stops, in case a conversion thread wrote into a
-    /// folder after the first pass.
-    pub fn discard_converting(&self) {
+    /// Quit confirmed (DESIGN.md 7.3): a run that ended on its worker before
+    /// now reaches the list and History with its folder; the folders of
+    /// items still Converting are deleted, and their conversions end with the
+    /// process. `run` calls it again after the main loop stops, in case a
+    /// conversion thread wrote into a folder after the first pass.
+    pub fn discard_converting(self: &Rc<Self>) {
+        for (id, folder, outcome) in self.runs.quit() {
+            self.finish(id, folder, outcome);
+        }
         for folder in self.queue.borrow().converting_folders() {
             let _ = std::fs::remove_dir_all(folder);
         }

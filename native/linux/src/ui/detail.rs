@@ -197,6 +197,9 @@ impl Detail {
         let header = adw::HeaderBar::new();
         header.set_title_widget(Some(&title_stack));
         header.pack_end(&actions);
+        header
+            .upcast_ref::<gtk::Widget>()
+            .update_property(&[gtk::accessible::Property::Label(&tr("a11y.actions"))]);
 
         let title = gtk::Label::builder()
             .xalign(0.0)
@@ -679,6 +682,36 @@ pub fn elapsed_status(started: Instant) -> String {
     )
 }
 
+/// Tab and Shift+Tab leave the preview, one stop in the focus order
+/// (DESIGN.md 12); WebKit would keep them inside the page. Arrow keys and
+/// Page Up and Down still scroll it.
+fn tab_out() -> gtk::EventControllerKey {
+    let keys = gtk::EventControllerKey::new();
+    keys.set_propagation_phase(gtk::PropagationPhase::Capture);
+    keys.connect_key_pressed(|keys, key, _, state| {
+        let direction = match key {
+            gdk::Key::Tab | gdk::Key::KP_Tab => gtk::DirectionType::TabForward,
+            gdk::Key::ISO_Left_Tab => gtk::DirectionType::TabBackward,
+            _ => return glib::Propagation::Proceed,
+        };
+        let direction = if state.contains(gdk::ModifierType::SHIFT_MASK) {
+            gtk::DirectionType::TabBackward
+        } else {
+            direction
+        };
+        let (Some(web), Some(root)) = (keys.widget(), keys.widget().and_then(|w| w.root())) else {
+            return glib::Propagation::Proceed;
+        };
+        // Not focusable for the moment, the view is passed over and the
+        // window moves focus to the widget before or after it.
+        web.set_can_focus(false);
+        root.child_focus(direction);
+        web.set_can_focus(true);
+        glib::Propagation::Stop
+    });
+    keys
+}
+
 /// Scripts off, no developer tools, a transparent background, only Copy in
 /// the context menu, and links handed to the desktop (DESIGN.md section 8).
 fn configure_web(web: &webkit6::WebView) {
@@ -688,6 +721,7 @@ fn configure_web(web: &webkit6::WebView) {
     }
     web.set_background_color(&gdk::RGBA::new(0.0, 0.0, 0.0, 0.0));
     web.update_property(&[gtk::accessible::Property::Label(&tr("a11y.preview"))]);
+    web.add_controller(tab_out());
     web.connect_context_menu(|_, menu, _| {
         for item in menu.items() {
             if item.stock_action() != webkit6::ContextMenuAction::Copy {

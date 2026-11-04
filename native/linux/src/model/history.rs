@@ -96,6 +96,17 @@ impl History {
         self.entries.truncate(LIMIT);
     }
 
+    /// The entry to select once `id` is removed: the next one `shown`, else
+    /// the previous one.
+    pub fn neighbor(&self, id: Uuid, shown: impl Fn(&Entry) -> bool) -> Option<Uuid> {
+        let at = self.entries.iter().position(|e| e.id == id)?;
+        self.entries[at + 1..]
+            .iter()
+            .find(|e| shown(e))
+            .or_else(|| self.entries[..at].iter().rev().find(|e| shown(e)))
+            .map(|e| e.id)
+    }
+
     pub fn remove(&mut self, id: Uuid) -> bool {
         let before = self.entries.len();
         self.entries.retain(|e| e.id != id);
@@ -168,6 +179,29 @@ mod tests {
         assert_eq!(text["entries"][0]["kind"], "file");
         assert_eq!(text["entries"][0]["usage"], serde_json::Value::Null);
         assert_eq!(text["entries"][0]["options"]["config"], "user");
+    }
+
+    #[test]
+    fn removing_selects_the_next_entry_the_search_shows() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut history, _) = History::load(dir.path(), "x");
+        let mut add = |title: &str| {
+            let mut entry = sample(0, dir.path());
+            entry.title = title.into();
+            entry.source = format!("/in/{title}");
+            history.add(entry.clone());
+            entry.id
+        };
+        let alpha = add("Alpha Note.md");
+        let beta = add("Beta.md");
+        let gamma = add("Gamma Note.md");
+        let note = |e: &Entry| e.matches("note");
+        assert_eq!(history.neighbor(gamma, note), Some(alpha), "Beta is filtered out");
+        assert_eq!(history.neighbor(alpha, note), Some(gamma), "the previous shown one");
+        assert_eq!(history.neighbor(gamma, |_| true), Some(beta));
+        assert_eq!(history.neighbor(beta, note), Some(alpha));
+        assert_eq!(history.neighbor(gamma, |e| e.id == gamma), None);
+        assert_eq!(history.neighbor(Uuid::new_v4(), |_| true), None);
     }
 
     #[test]

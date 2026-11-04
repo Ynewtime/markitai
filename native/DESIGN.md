@@ -588,6 +588,7 @@ On a change, the Preview is rendered again with the new `theme`.
 | Source | macOS `Locale.preferredLanguages`, Windows `Windows.System.UserProfile.GlobalizationPreferences.Languages`, Linux `glib::language_names()` |
 | Strings | `native/strings.json`, generated from section 10 by `native/scripts/strings.py`, which also fails when the two differ. Each app embeds the JSON and looks keys up at run time |
 | Shape | `{"<key>": {"en": "...", "zh-Hans": "..."}}`. Placeholders are `{name}`. Plural pairs end in `.one` and `.other`, chosen by count == 1 |
+| Toolkit text | The platform's own words (system menus, panels, built-in control labels) follow the app's language, so a zh-Hant or zh-TW user sees zh-Hans throughout. macOS puts `zh-Hans` first in `AppleLanguages` in the argument domain at launch; Windows sets `ApplicationLanguages.PrimaryLanguageOverride` to `zh-Hans`; GNOME sets `LANGUAGE` to `zh_CN` before GTK starts |
 | Not translated | The core's warnings and raw error messages, file names, URLs |
 
 ### 7.6 Single instance
@@ -778,6 +779,7 @@ Every user-visible string. The table is the source of `native/strings.json`.
 | `a11y.preview` | Markdown preview | Markdown 预览 |
 | `a11y.markdown_text` | Markdown text | Markdown 文本 |
 | `a11y.warnings` | Warnings | 警告 |
+| `a11y.actions` | Actions | 操作 |
 | `a11y.done` | {title} converted | {title} 已转换 |
 | `a11y.failed` | {title} failed | {title} 转换失败 |
 | `plist.documents` | Markitai saves converted Markdown in your Documents folder. | Markitai 会把转换后的 Markdown 保存到“文稿”文件夹。 |
@@ -817,7 +819,7 @@ registers app actions with `set_accels_for_action`.
 
 | Topic | Rule |
 |---|---|
-| Labels | Every icon-only button has an accessible name equal to its tooltip (the copy key of its action). The URL field is labeled `convert.url.label`. The drop zone's name is `a11y.drop_zone`. Lists are named `a11y.conversions` and `nav.history`. The view switch is a group named `detail.view`. The warnings box is named `a11y.warnings` |
+| Labels | Every icon-only button has an accessible name equal to its tooltip (the copy key of its action). The URL field is labeled `convert.url.label`. The drop zone's name is `a11y.drop_zone`. Lists are named `a11y.conversions` and `nav.history`. The view switch is a group named `detail.view`. The warnings box is named `a11y.warnings`. A toolbar of commands with no visible title (a Windows `CommandBar`) is named `a11y.actions` |
 | Row names | `<title>, <subtitle>`, such as "Quarterly Report Q3 2026.pdf, Done in 18.6 s · 2 warnings" |
 | State changes | Done and Failed are announced politely: macOS `NSAccessibility.post` with `.announcementRequested`, Windows `AutomationPeer.RaiseNotificationEvent`, GNOME `gtk::Accessible::announce` |
 | Focus order | Navigation, then the drop bar's Choose Files… button, the URL field, Add, the list, then the detail: view switch, actions, warnings disclosure, content, footer. Empty Convert focuses Choose Files… first |

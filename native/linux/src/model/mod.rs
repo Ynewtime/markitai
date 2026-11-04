@@ -7,6 +7,7 @@ pub mod format;
 pub mod history;
 pub mod outcome;
 pub mod queue;
+pub mod runs;
 pub mod settings;
 pub mod source;
 
