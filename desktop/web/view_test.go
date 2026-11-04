@@ -42,10 +42,14 @@ func TestRender(t *testing.T) {
 			has: []string{`data-phase="stopping"`}, hasNot: []string{"markitai-web:"}},
 		{name: "Chinese", phase: Failed{Cause: Exited{Code: 2}}, texts: zh,
 			has: []string{`lang="zh-CN"`, "重试", "代码 2"}},
+		{name: "Japanese", phase: Failed{Cause: Exited{Code: 2}}, texts: ja,
+			has: []string{`lang="ja"`}},
+		{name: "killed by a signal", phase: Failed{Cause: Exited{Code: -1, Signal: "SIGKILL"}}, texts: en,
+			has: []string{"SIGKILL"}, hasNot: []string{"code -1"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			pg := render(tc.phase, tc.texts)
+			pg := render(tc.phase, tc.texts, 3)
 			if pg.URL != tc.workURL {
 				t.Errorf("URL = %q; want %q", pg.URL, tc.workURL)
 			}
@@ -55,7 +59,7 @@ func TestRender(t *testing.T) {
 				}
 				return
 			}
-			for _, s := range tc.has {
+			for _, s := range append(tc.has, `data-paint="3"`) {
 				if !strings.Contains(pg.HTML, s) {
 					t.Errorf("page lacks %q:\n%s", s, pg.HTML)
 				}
@@ -70,7 +74,7 @@ func TestRender(t *testing.T) {
 			}
 		})
 	}
-	if pg := render(Stopped{}, en); pg != (page{}) {
+	if pg := render(Stopped{}, en, 1); pg != (page{}) {
 		t.Errorf("Stopped renders %v", pg)
 	}
 }
@@ -85,7 +89,7 @@ func TestOffersAreThePagesButtons(t *testing.T) {
 	hrefs := regexp.MustCompile(`href="(markitai-web:[a-z-]+)"`)
 	for _, p := range phases {
 		var shown []request
-		for _, m := range hrefs.FindAllStringSubmatch(render(p, en).HTML, -1) {
+		for _, m := range hrefs.FindAllStringSubmatch(render(p, en, 1).HTML, -1) {
 			shown = append(shown, route(m[1]))
 		}
 		if !slices.Equal(shown, offers(p)) {
@@ -141,7 +145,7 @@ func TestStaysOnThePageItShows(t *testing.T) {
 		Stopping{Mode: WhenDone, PID: 7}, Stopping{Mode: Now, PID: 7}, Failed{Cause: Exited{Code: 1}},
 		Failed{Cause: NotReady{}, Dying: 7}, Failed{Cause: NoProgram{Path: "/x"}}, Failed{Cause: SpawnFailed{Err: "e"}}}
 	for _, p := range phases {
-		pg := render(p, en)
+		pg := render(p, en, 1)
 		address := pg.URL
 		switch {
 		case pg.HTML != "" && runtime.GOOS == "windows":

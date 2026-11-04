@@ -41,17 +41,38 @@ later, [on a Mac](#building-from-source), [on Linux](#linux) or
 
 ## How it differs from a browser
 
-- Downloads and exports ask where to save.
+- Downloads and exports ask where to save, offering the file's type (PDF,
+  Markdown and so on). A name typed without an extension gets the suggested
+  one, and the app asks before replacing a file of that name.
 - Export PDF saves an A4 PDF, laid out as the workbench prints, where you
   choose. There is no print dialog and no printing to a printer. Only the
   workbench starts it: a link in converted content cannot.
+- There is no Back or Forward, and no Reload but View > Reload on a Mac: the
+  window shows the app's current page, and the mouse's back and forward
+  buttons do nothing. The right-click menu offers editing in a text field and
+  Copy for selected text, and nothing elsewhere.
+- The window's title ends in "Markitai Web", as the Dock, the taskbar and the
+  window switcher show it.
+- The app's own pages, dialogs and, on a Mac, menus, and the window's light
+  or dark title bar, follow the language and theme chosen in the workbench's
+  Settings, and keep them for the next launch. Until you choose, the
+  workbench and the app's pages follow the system's languages: on a Mac the
+  first of them, any Chinese as Simplified Chinese and a language the
+  workbench lacks as English, while the menus take the first of them that is
+  English, Simplified Chinese or Japanese; on Linux and Windows the first of
+  them the workbench has, else English.
+- On Linux and Windows, zoom with Ctrl+= or Ctrl++, Ctrl+- and Ctrl+0, or
+  Ctrl with the mouse wheel, and switch full screen with F11. On a Mac, View
+  has them: Zoom In (Cmd++), Zoom Out (Cmd+-), Actual Size (Cmd+0) and Enter
+  Full Screen. Each launch starts at actual size.
 - Links to other sites open in your default browser, and `mailto:` links in
   your mail app, when you click them; a page cannot open them by itself. The
   window shows only the workbench and the app's own pages: a link that would
   take it elsewhere opens in the browser instead.
 - The workbench has no Access token page and no update entry: the token is
   the app's, and a newer app brings a newer `markitai`.
-- Closing the window quits the app. With no unfinished conversion (running,
+- Closing the window quits the app, as do Cmd+Q on a Mac and Ctrl+Q on
+  Linux; Alt+F4 closes the window on Windows. With no unfinished conversion (running,
   queued, or a file still uploading) it quits at once. Otherwise it asks, also
   when the server cannot say how many are unfinished: Quit When Done lets
   running conversions finish and cancels queued ones (the window says so, with
@@ -129,15 +150,31 @@ sh desktop/web/build/linux-amd64/install.sh
 with `bin/markitai` and `licenses/` beside it), the archive
 `markitai-web-<version>-linux-amd64.tar.gz`, the Debian package
 `markitai-web_<version>_amd64.deb` (it installs in
-`/opt/markitai-web`), a `PKGBUILD` and `install.sh`. `install.sh` puts the
-archive beside it in `~/.local/markitai-web.app` with an entry in the
-applications menu; run it again to update, or with `--uninstall` to remove the
-app and leave its settings and data.
+`/opt/markitai-web`, with the command `markitai-web` in `/usr/bin`), a
+`PKGBUILD` (its package keeps the licences in
+`/usr/share/licenses/markitai-web`) and `install.sh`. `install.sh` puts the
+archive beside it in `~/.local/markitai-web.app`, with the command
+`markitai-web` in `~/.local/bin` and an entry in the applications menu; run it
+again to update, or with `--uninstall` to remove the app and leave its
+settings and data. Every package installs the menu entry as
+`dev.markitai.web.desktop`, the app's ID, which its window's class matches.
 
-On Linux the server's log is `~/.config/Markitai Web/logs/serve.log` (under
-`XDG_CONFIG_HOME`), beside the app's settings; the window's web data is in
-`~/.local/share/markitai-web` and `~/.cache/markitai-web`. There is no
-application menu: closing the window is how the app quits.
+On Linux the app's settings and the server's log are in
+`~/.config/dev.markitai.web` (`logs/serve.log`, under `XDG_CONFIG_HOME`); the
+window's web data is in `~/.local/share/dev.markitai.web` and
+`~/.cache/dev.markitai.web`. There is no application menu: Ctrl+Q or closing
+the window quits the app. Save and export use the desktop's file chooser
+through its portal (`xdg-desktop-portal`) when it has one, in the desktop's
+theme and language; otherwise GTK's own, fitted to the screen. While the app
+follows the system's theme it follows the desktop's dark preference. GTK's
+own words, as those of its file chooser, take a language chosen in the
+workbench at the next launch.
+
+When the session ends (logging out, restarting or shutting down), the system
+asks the app to quit with SIGTERM and does not wait for an answer: the app
+asks nothing and quits as Quit When Done does, so conversions the session
+ends before they finish stop and show as interrupted when the app next
+starts.
 
 ## Windows
 
@@ -161,9 +198,13 @@ which makes the installer, into `%LOCALAPPDATA%\mygo`, unless NSIS is
 installed. The installer needs no administrator rights: it installs the app
 for your user in `%LOCALAPPDATA%\Programs\Markitai Web`, with a Start menu
 shortcut and an entry in Settings > Apps that uninstalls it and leaves its
-settings and data. To update, run a newer installer; it asks to close a
-running app, closes its window as you would, and stops what still runs 10
-seconds later, conversions included.
+settings and data. Uninstalling removes the install folder with everything in
+it, so the installer installs only in an empty folder or in the one the app
+is already in: for any other folder it leaves Install off and says why, and a
+silent install (`/S /D=...`) fails. To update, run a newer installer; if the
+app is running, the installer (and the uninstaller) says it will quit it and
+stop its unfinished conversions, and on OK quits it at once, without the
+app's own question.
 
 Signing out, restarting or shutting down Windows does not wait for the app:
 unfinished conversions stop at once and the workbench shows them as
@@ -173,12 +214,19 @@ The installer and the app are not signed. SmartScreen may stop an installer
 that came through a browser with "Windows protected your PC": once you are
 sure where it came from, choose More info, then Run anyway.
 
-The app starts its server with the environment Windows gives the programs it
-starts: your user and system variables, as a new terminal has them.
-`MARKITAI_HOME` is `%USERPROFILE%\.markitai` unless one of them sets
-another. The server's log is `%APPDATA%\Markitai Web\logs\serve.log`, beside the
+The app starts its server with the environment the app starts with: from the
+Start menu, your user and system variables, as a new terminal has them; from
+a terminal, that terminal's. `MARKITAI_HOME` is `.markitai` in `HOME`, or in
+`%USERPROFILE%` when `HOME` is not set, unless that environment sets another.
+The server's log is `%APPDATA%\Markitai Web\logs\serve.log`, beside the
 app's settings in `%APPDATA%\Markitai Web`; the window's web data is in
-`%LOCALAPPDATA%\Markitai Web\WebView2`.
+`%LOCALAPPDATA%\Markitai Web\WebView2`. Downloads and exports start in your
+Downloads folder wherever you moved it, OneDrive included. The system's file
+dialogs speak the language chosen in the workbench.
+
+Choosing a folder to convert first shows the web view's own question, "Upload
+N files to this site?", whose default is Cancel: the files go only to the
+app's own server on this computer, so choose Upload.
 
 ## Limits
 

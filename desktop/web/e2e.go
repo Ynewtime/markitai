@@ -21,7 +21,8 @@ import (
 // logs and downloads. The web view's data (localStorage, cookies) lives
 // outside DIR, under the app's identifier, so each launch clears it before
 // the first page loads; on macOS it refuses to start unless its identifier
-// is its own (ending in .e2e), never clearing an installed Markitai Web's. Save
+// is its own (ending in .e2e), never clearing an installed Markitai Web's;
+// on Linux its name is dev.markitai.web.e2e, whose data it clears. Save
 // panels answer DIR/saved/<name>, or cancel when
 // MARKITAI_WEB_E2E_SAVE=cancel; the busy-quit question answers
 // MARKITAI_WEB_E2E_QUIT (when-done, the default; now; cancel) and
@@ -36,6 +37,10 @@ func init() {
 		log.Fatalf("markitai web e2e: the identifier %q is not an e2e build's, whose web data it would clear", id)
 	}
 	mygo.App.SetName("Markitai Web E2E")
+	// On Linux the name is the identifier (nameApp), and the web view's
+	// data goes under it: the e2e build's own.
+	appID += ".e2e"
+	downloadsChosen = true
 	for name, sub := range map[mygo.PathName]string{mygo.PathUserData: "data", mygo.PathCache: "cache",
 		mygo.PathLogs: "logs", mygo.PathDownloads: "downloads"} {
 		mygo.App.SetPath(name, filepath.Join(dir, sub))

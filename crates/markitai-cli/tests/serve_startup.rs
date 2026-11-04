@@ -283,3 +283,33 @@ fn a_port_that_is_taken_is_named_with_the_way_out() {
         assert!(!text.contains("listening on"), "{text}");
     }
 }
+
+#[test]
+fn a_second_server_on_the_same_home_is_refused_with_the_way_out() {
+    let temp = tempfile::tempdir().unwrap();
+    let first = Serve::start(temp.path(), None, &["--host", "127.0.0.1", "--port", "0"]);
+    first.until("Ctrl-C");
+    for (language, expected, absent) in [
+        (
+            None,
+            "another serve instance is using this MARKITAI_HOME; stop it before starting a new server",
+            "另一个",
+        ),
+        (
+            Some("zh"),
+            "另一个 serve 实例正在使用这个 MARKITAI_HOME；请先停止它，再启动新的服务",
+            "another serve instance",
+        ),
+    ] {
+        let serve = Serve::start(
+            temp.path(),
+            language,
+            &["--host", "127.0.0.1", "--port", "0"],
+        );
+        let (code, lines) = serve.finish();
+        assert_eq!(code, Some(1), "{lines:?}");
+        let text = lines.join("\n");
+        assert!(text.contains(expected), "{text}");
+        assert!(!text.contains(absent), "{text}");
+    }
+}

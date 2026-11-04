@@ -26,11 +26,14 @@ const loginTimeout = 10 * time.Second
 // launchers start apps with PATH=/usr/bin:/bin:/usr/sbin:/sbin and none of
 // the user's startup files, which would leave serve without Homebrew,
 // ~/.local/bin, the subscription CLIs, exported keys and MARKITAI_HOME. An
-// app started from a terminal (TERM is set) already has that environment.
-// On failure it returns fallbackEnv and why, naming the shell.
+// app started from a terminal, which is its controlling terminal, already
+// has that environment. TERM does not tell: a desktop started from a
+// console by exec (Hyprland, sway) hands TERM=linux to the apps it starts,
+// in sessions of their own, which have no terminal. On failure it returns
+// fallbackEnv and why, naming the shell.
 func loginEnv(ctx context.Context) ([]string, error) {
-	if os.Getenv("TERM") != "" {
-		return os.Environ(), nil
+	if hasTerminal() {
+		return userEnv(os.Environ()), nil
 	}
 	shell := os.Getenv("SHELL")
 	if shell == "" {
@@ -64,6 +67,7 @@ func shellEnv(ctx context.Context, shell string) ([]string, error) {
 		cmd = exec.CommandContext(ctx, shell, "-l")
 		cmd.Stdin = strings.NewReader(script + "\n")
 	}
+	cmd.Env = userEnv(os.Environ())
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	stdout, err := newOutput()
@@ -134,7 +138,7 @@ func (o *output) until(end time.Time) []byte {
 // fallbackEnv is the app's own environment with the usual tool directories
 // added to PATH.
 func fallbackEnv() []string {
-	env := os.Environ()
+	env := userEnv(os.Environ())
 	path := filepath.SplitList(value(env, "PATH"))
 	for _, dir := range []string{"/opt/homebrew/bin", "/usr/local/bin", filepath.Join(os.Getenv("HOME"), ".local", "bin")} {
 		if !slices.Contains(path, dir) {
@@ -142,4 +146,16 @@ func fallbackEnv() []string {
 		}
 	}
 	return append(env, "PATH="+strings.Join(path, string(filepath.ListSeparator)))
+}
+
+// hasTerminal reports whether the app has a controlling terminal: it was
+// started from one, in its session. A variable for the tests, which run
+// from a terminal or not.
+var hasTerminal = func() bool {
+	fd, err := syscall.Open("/dev/tty", syscall.O_RDWR|syscall.O_CLOEXEC, 0)
+	if err != nil {
+		return false
+	}
+	syscall.Close(fd)
+	return true
 }

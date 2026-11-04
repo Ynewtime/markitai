@@ -15,9 +15,11 @@ import (
 )
 
 // launchedFromFinder runs loginEnv as a launch from Finder or a desktop
-// launcher does: no TERM, the user's SHELL, and a HOME holding files.
+// launcher does: no terminal, no TERM, the user's SHELL, and a HOME holding
+// files.
 func launchedFromFinder(t *testing.T, ctx context.Context, shell string, files map[string]string) ([]string, error) {
 	t.Helper()
+	withTerminal(t, false)
 	if _, err := os.Stat(shell); err != nil {
 		t.Skipf("%s is not installed", shell)
 	}
@@ -40,6 +42,34 @@ func launchedFromFinder(t *testing.T, ctx context.Context, shell string, files m
 	}
 	t.Setenv("MARKITAI_PROBE", "")
 	return loginEnv(ctx)
+}
+
+// withTerminal has the app started from a terminal or not.
+func withTerminal(t *testing.T, has bool) {
+	saved := hasTerminal
+	t.Cleanup(func() { hasTerminal = saved })
+	hasTerminal = func() bool { return has }
+}
+
+// A desktop that a console started by exec (Hyprland, sway) hands its apps
+// TERM=linux but no terminal: they get the login shell's environment, and
+// an app started from a terminal keeps the terminal's.
+func TestLoginEnvGoesByTheTerminalNotTERM(t *testing.T) {
+	env, err := launchedFromFinder(t, context.Background(), "/bin/sh", map[string]string{".profile": "export MARKITAI_PROBE=profile\n"})
+	if err != nil || value(env, "MARKITAI_PROBE") != "profile" {
+		t.Fatalf("without TERM: %v, %v", err, value(env, "MARKITAI_PROBE"))
+	}
+	t.Setenv("TERM", "linux")
+	env, err = loginEnv(context.Background())
+	if err != nil || value(env, "MARKITAI_PROBE") != "profile" {
+		t.Errorf("TERM=linux without a terminal skipped the login shell: %v, %q", err, value(env, "MARKITAI_PROBE"))
+	}
+	withTerminal(t, true)
+	t.Setenv("MARKITAI_PROBE", "terminal")
+	env, err = loginEnv(context.Background())
+	if err != nil || value(env, "MARKITAI_PROBE") != "terminal" {
+		t.Errorf("from a terminal: %v, %q", err, value(env, "MARKITAI_PROBE"))
+	}
 }
 
 func unsetenv(t *testing.T, name string) {

@@ -580,6 +580,10 @@ const RULES: &[(&str, &str)] = &[
     ),
     // The service's own diagnostics.
     (
+        "another serve instance is using this MARKITAI_HOME; stop it before starting a new server",
+        "另一个 serve 实例正在使用这个 MARKITAI_HOME；请先停止它，再启动新的服务",
+    ),
+    (
         "Access tokens {} were written by a newer markitai (format {}, this markitai reads {}) and are left unchanged; upgrade markitai to serve with them, or start it with another MARKITAI_HOME",
         "访问令牌文件 {} 由更新版本的 markitai 写入（格式 {}，当前版本只能读取 {}），未做任何改动；请升级 markitai 后再启动服务，或换一个 MARKITAI_HOME 启动",
     ),

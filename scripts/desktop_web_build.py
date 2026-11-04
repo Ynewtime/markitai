@@ -12,12 +12,14 @@
         desktop/web/build/<goos>-<goarch>/: Markitai Web.app and
         markitai-web-<version>-arm64.dmg for macOS; the markitai-web
         executable with bin/ and licenses/ beside it,
-        markitai-web_<version>_amd64.deb and
-        markitai-web-<version>-linux-amd64.tar.gz for Linux; Markitai Web.exe
+        markitai-web_<version>_amd64.deb,
+        markitai-web-<version>-linux-amd64.tar.gz with install.sh, and a
+        PKGBUILD for Linux, each installing the desktop entry as
+        dev.markitai.web.desktop (finish_linux); Markitai Web.exe
         with bin/ and licenses/ beside it and the installer
         markitai-web-setup-<version>-amd64.exe for Windows. --e2e makes
-        the -debug build with the automation plugin, without the disk image or
-        the installer, in desktop/web/build/e2e/, for
+        the -debug build with the automation plugin, without the disk image,
+        the installer or the Linux packages, in desktop/web/build/e2e/, for
         scripts/desktop_web_e2e.py: from the project
         desktop/web/build/e2e-project/, desktop/web/mygo.json with its own
         identifier (".e2e" added), so it keeps no web view data where an
@@ -35,13 +37,18 @@ the CLI's updater and setup scripts match.
 from pathlib import Path
 import argparse
 import hashlib
+import io
 import json
 import os
 import platform as host
+import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
+import textwrap
+import tomllib
 
 from package_cli_target import workspace_version
 from release_build import TARGETS, archive_attribution, archive_name, extract_release_archive
@@ -69,6 +76,19 @@ STAMP = ".stage.json"
 # The e2e build's mygo project, within APP_DIR, and what it adds to the app's identifier.
 E2E_PROJECT = "build/e2e-project"
 E2E_IDENTIFIER = ".e2e"
+# APP_DIR/mygo.json's slug, which names the artifacts, and identifier, the app's on Linux
+# (toolkit_linux.go): its window's class and the name of its installed desktop entry.
+SLUG = "markitai-web"
+APP_ID = "dev.markitai.web"
+# The Linux entry is Markitai Native's: keys mygo build writes from APP_DIR/mygo.json, which must
+# be Native's, by the field that sets each, and keys mygo build writes none of, taken as they are.
+NATIVE_ENTRY = "desktop/native/linux/data/dev.markitai.native.desktop"
+SAME_AS_NATIVE = {"Comment": "linux.comment", "Categories": "linux.categories"}
+FROM_NATIVE = ("Comment[zh_CN]", "Keywords", "StartupNotify")
+# The Debian package's long description, where mygo build writes "Markitai Web is a desktop application."
+DEB_DESCRIPTION = ("Markitai Web opens the markitai workbench in a window of its own. The markitai bundled with it "
+                   "serves the workbench on this computer and converts documents, web pages and images to "
+                   "Markdown, as the CLI of the same version does.")
 
 
 def resources_dir(platform):
@@ -234,8 +254,9 @@ def check_artifacts(names):
 
 def mygo_build_command(platform, e2e, goflags=""):
     """`go tool mygo build` arguments, run in APP_DIR, and the extra environment; the e2e build of
-    E2E_PROJECT keeps the inspector the automation plugin needs, makes no disk image or installer,
-    goes to build/e2e and adds its tag to `goflags`: mygo build takes tags from GOFLAGS only."""
+    E2E_PROJECT keeps the inspector the automation plugin needs, makes no disk image or installer
+    (mygo build has no flag to skip the Linux packages, which build deletes), goes to build/e2e and
+    adds its tag to `goflags`: mygo build takes tags from GOFLAGS only."""
     arguments = ["tool", "mygo", "build", "-platform", platform]
     if e2e:
         return (arguments + ["-debug", "-skip-dmg", "-skip-installer", "-o", "../e2e", E2E_PROJECT],
@@ -276,19 +297,175 @@ def deb_version(version):
 
 def layout(platform, version):
     """What `mygo build` writes to APP_DIR/build/<goos>-<goarch>/ for `platform`: the app as it runs,
-    its markitai relative to that directory, and the packages only a release build makes."""
+    its markitai relative to that directory, and the packages, with the files they are made from,
+    that only a release build keeps. On Linux mygo build makes them with the e2e build too, and build
+    deletes them there; the app's icon and desktop entry beside it are the app's, as install.sh
+    installs it."""
     goos, goarch = platform.split("/")
     program = program_name(platform)
     if goos == "darwin":
         return "Markitai Web.app", f"Markitai Web.app/Contents/Resources/bin/{program}", {
-            f"markitai-web-{version}-{goarch}.dmg"}
+            f"{SLUG}-{version}-{goarch}.dmg"}
     if goos == "linux":
-        return "markitai-web", f"bin/{program}", {
-            f"markitai-web_{deb_version(version)}_{goarch}.deb",
-            f"markitai-web-{version}-linux-{goarch}.tar.gz"}
+        return SLUG, f"bin/{program}", {
+            f"{SLUG}_{deb_version(version)}_{goarch}.deb", f"{SLUG}-{version}-linux-{goarch}.tar.gz",
+            "install.sh", "PKGBUILD", f"{SLUG}-256x256.png", f"{SLUG}-512x512.png"}
     if goos == "windows":
-        return "Markitai Web.exe", f"bin/{program}", {f"markitai-web-setup-{version}-{goarch}.exe"}
+        return "Markitai Web.exe", f"bin/{program}", {f"{SLUG}-setup-{version}-{goarch}.exe"}
     raise SystemExit(f"No app layout for {platform}")
+
+
+def native_entry(root):
+    """Markitai Native's desktop entry, key -> value."""
+    lines = (root / NATIVE_ENTRY).read_text(encoding="utf-8").splitlines()
+    return dict(line.split("=", 1) for line in lines if "=" in line)
+
+
+def desktop_entry(text, native):
+    """text, a desktop entry as mygo build writes it, with Native's keys and the window's class."""
+    lines = text.rstrip("\n").split("\n")
+    for key, field in SAME_AS_NATIVE.items():
+        if [line for line in lines if line.startswith(key + "=")] != [f"{key}={native[key]}"]:
+            raise SystemExit(f"the desktop entry's {key} is not Markitai Native's {native[key]!r}: "
+                             f"make {field} of {APP_DIR}/mygo.json match")
+    for key in (*FROM_NATIVE, "StartupWMClass"):
+        if any(line.startswith(key + "=") for line in lines):
+            raise SystemExit(f"mygo build now writes {key} in the desktop entry: drop it from desktop_web_build.py")
+    lines.insert(lines.index("Comment=" + native["Comment"]) + 1, "Comment[zh_CN]=" + native["Comment[zh_CN]"])
+    lines += [f"Keywords={native['Keywords']}", f"StartupNotify={native['StartupNotify']}",
+              f"StartupWMClass={APP_ID}"]
+    return "\n".join(lines) + "\n"
+
+
+def replace_once(text, old, new, where):
+    if text.count(old) != 1:
+        raise SystemExit(f"{where}: expected {old!r} once, as mygo build writes it")
+    return text.replace(old, new)
+
+
+def rewrite_tar(data, changes, where):
+    """data, a .tar.gz, with each regular file `changes` names as its change(body) -> (name, body)
+    makes it, and the other members as they were. Each named file must be there."""
+    out, seen = io.BytesIO(), set()
+    with (tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as source,
+          tarfile.open(fileobj=out, mode="w:gz", format=tarfile.PAX_FORMAT) as target):
+        for member in source.getmembers():
+            body = source.extractfile(member).read() if member.isfile() else None
+            if member.isfile() and member.name in changes:
+                seen.add(member.name)
+                member.name, body = changes[member.name](body)
+                member.size = len(body)
+            target.addfile(member, None if body is None else io.BytesIO(body))
+    if seen != changes.keys():
+        raise SystemExit(f"{where}: no {', '.join(sorted(changes.keys() - seen))}, as mygo build writes it")
+    return out.getvalue()
+
+
+def read_ar(data, where):
+    """The (header, body) members of an ar archive, as a Debian package is."""
+    if not data.startswith(b"!<arch>\n"):
+        raise SystemExit(f"{where} is not an ar archive")
+    members, at = [], 8
+    while at < len(data):
+        header = data[at:at + 60]
+        size = int(header[48:58])
+        members.append((header, data[at + 60:at + 60 + size]))
+        at += 60 + size + size % 2
+    return members
+
+
+def write_ar(members):
+    out = bytearray(b"!<arch>\n")
+    for header, body in members:
+        out += header[:48] + str(len(body)).encode().ljust(10) + header[58:60] + body
+        if len(body) % 2:
+            out += b"\n"
+    return bytes(out)
+
+
+def finish_linux(out, version, root=ROOT):
+    """mygo build's Linux packages in `out` as Native's are. The app runs as APP_ID (toolkit_linux.go),
+    but mygo build names the desktop entry after the slug, which cannot hold a dot, and writes no
+    Comment[zh_CN], Keywords, StartupNotify or StartupWMClass (linuxDesktopEntry, cmd/mygo/build.go).
+    Every copy of the entry gets those keys: beside the app and in the .tar.gz, where install.sh and
+    mygo's updater read it by the slug's name, and where install.sh, the Debian package and the
+    PKGBUILD install it, as APP_ID.desktop. The Debian package gets the app's long description, the
+    PKGBUILD the workspace's licence, which mygo build reads from a package.json the app does not
+    have, with the app's licences in /usr/share/licenses/SLUG, and install.sh --uninstall removes the
+    MIME cache it leaves with no type in it. It fails rather than guess when mygo build writes any
+    of them differently, and writes nothing until all of them hold."""
+    native = native_entry(root)
+    with open(root / "Cargo.toml", "rb") as file:
+        licence = tomllib.load(file)["workspace"]["package"]["license"]
+    goarch = out.name.removeprefix("linux-")
+    template = f"{SLUG}.desktop"
+    installed = f"usr/share/applications/{SLUG}.desktop"
+    renamed = f"usr/share/applications/{APP_ID}.desktop"
+
+    def entry(body):
+        return desktop_entry(body.decode("utf-8"), native).encode("utf-8")
+
+    written = {out / template: entry((out / template).read_bytes())}
+    archive = out / f"{SLUG}-{version}-linux-{goarch}.tar.gz"
+    before = archive.read_bytes()
+    written[archive] = rewrite_tar(before, {template: lambda body: (template, entry(body))}, archive.name)
+
+    script = out / "install.sh"
+    text = replace_once(script.read_bytes().decode("utf-8"), 'desktop_file="$data_home/applications/$name.desktop"',
+                        f'desktop_file="$data_home/applications/{APP_ID}.desktop"', script.name)
+    written[script] = replace_once(text, '\tupdate_databases\n\techo "Uninstalled $app_name.', (
+        '\tupdate_databases\n'
+        "\t# update-desktop-database, as install.sh ran it, made the cache; with no entry left that\n"
+        "\t# lists a type, it holds only its header.\n"
+        '\tcache="$data_home/applications/mimeinfo.cache"\n'
+        "\tif [ -f \"$cache\" ] && [ \"$(cat \"$cache\")\" = '[MIME Cache]' ]; then\n"
+        '\t\trm -f "$cache"\n'
+        "\tfi\n"
+        '\techo "Uninstalled $app_name.'), script.name).encode("utf-8")
+
+    pkgbuild = out / "PKGBUILD"
+    text = replace_once(pkgbuild.read_bytes().decode("utf-8"), "license=('LicenseRef-custom')",
+                        f"license=('{licence}')", pkgbuild.name)
+    copy = f'\tcp -dR -- bin licenses {SLUG} "$pkgdir"/opt/{SLUG}/\n'
+    text = replace_once(text, copy, copy + '\tinstall -d "$pkgdir"/usr/share/licenses\n'
+                        f'\tln -s ../../../opt/{SLUG}/licenses "$pkgdir"/usr/share/licenses/{SLUG}\n', pkgbuild.name)
+    inline = re.search(r"printf '%s' '(\[Desktop Entry\]\n.*?)' \|", text, re.S)
+    if not inline:
+        raise SystemExit(f"{pkgbuild.name}: no desktop entry as mygo build writes it")
+    quoted = desktop_entry(inline.group(1), native).replace("'", "'\\''")
+    text = replace_once(text[:inline.start(1)] + quoted + text[inline.end(1):], f'"$pkgdir"/{installed}',
+                        f'"$pkgdir"/{renamed}', pkgbuild.name)
+    written[pkgbuild] = replace_once(text, hashlib.sha256(before).hexdigest(),
+                                     hashlib.sha256(written[archive]).hexdigest(), pkgbuild.name).encode("utf-8")
+
+    deb = out / f"{SLUG}_{deb_version(version)}_{goarch}.deb"
+    members = read_ar(deb.read_bytes(), deb.name)
+    if [header[:16].decode().strip() for header, _ in members] != ["debian-binary", "control.tar.gz", "data.tar.gz"]:
+        raise SystemExit(f"{deb.name}: not the members mygo build writes")
+    data = rewrite_tar(members[2][1], {"./" + installed: lambda body: ("./" + renamed, entry(body))}, deb.name)
+    with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as files:
+        digest = hashlib.md5(files.extractfile("./" + renamed).read()).hexdigest()
+
+    def in_control(body):
+        text = body.decode("utf-8")
+        if not re.search(r"^Maintainer: [^<>\n]+ <[^<>@\s]+@[^<>\s]+>$", text, re.M):
+            raise SystemExit(f"{deb.name}: its Maintainer is not 'Name <email>': set linux.maintainer of "
+                             f"{APP_DIR}/mygo.json")
+        description = "".join(f" {line}\n" for line in textwrap.wrap(DEB_DESCRIPTION, 76))
+        return "./control", replace_once(text, " Markitai Web is a desktop application.\n", description,
+                                         f"{deb.name} control").encode("utf-8")
+
+    def in_md5sums(body):
+        text, found = re.subn(rf"^[0-9a-f]{{32}}  {re.escape(installed)}$", f"{digest}  {renamed}",
+                              body.decode("utf-8"), flags=re.M)
+        if found != 1:
+            raise SystemExit(f"{deb.name}: md5sums names {installed} {found} times")
+        return "./md5sums", text.encode("utf-8")
+
+    control = rewrite_tar(members[1][1], {"./control": in_control, "./md5sums": in_md5sums}, deb.name)
+    written[deb] = write_ar([members[0], (members[1][0], control), (members[2][0], data)])
+    for path, body in written.items():
+        path.write_bytes(body)
 
 
 def build(platform, e2e=False, *, root=ROOT):
@@ -309,15 +486,19 @@ def build(platform, e2e=False, *, root=ROOT):
     if e2e:
         e2e_project(root)
     go(arguments, cwd=root / APP_DIR, environment=dict(os.environ, **extra))
+    app, program, packages = layout(platform, version)
+    if e2e:
+        for name in packages:
+            (out / name).unlink(missing_ok=True)
     names = sorted(path.name for path in out.iterdir())
     check_artifacts(names)
-    app, program, packages = layout(platform, version)
-    expected = {app} | (set() if e2e else packages)
-    if not expected <= set(names):
-        raise SystemExit(f"{out} has {names}; expected {sorted(expected)}")
+    if app not in names or packages & set(names) != (set() if e2e else packages):
+        raise SystemExit(f"{out} has {names}; expected {app} and {'none' if e2e else 'all'} of {sorted(packages)}")
     bundled = out / program
     if not os.access(bundled, os.X_OK):
         raise SystemExit(f"{bundled} is missing or not executable")
+    if platform.startswith("linux/") and not e2e:
+        finish_linux(out, version, root)
     for name in names:
         print(out / name)
     return out

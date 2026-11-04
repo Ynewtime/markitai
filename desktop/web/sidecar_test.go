@@ -11,9 +11,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -25,8 +27,14 @@ import (
 // stubborn ignores drain and stdin's end, as a serve with long conversions
 // would; deaf ignores stdin, as a hung serve would. Modes combine with
 // commas. sleep stands in for a login shell whose startup files take a
-// minute.
+// minute. Every mode ends with the test binary that started it, and after
+// fakeLifetime at the latest (dieWithParent): a test binary that a timeout
+// or an interrupt ends runs no cleanup, and a fake serve left behind would
+// hold its port.
 const fakeServeMode = "MARKITAI_WEB_FAKE_SERVE"
+
+// fakeLifetime is the longest a fake serve lives.
+const fakeLifetime = 90 * time.Second
 
 func TestMain(m *testing.M) {
 	if mode := os.Getenv(fakeServeMode); mode != "" {
@@ -36,6 +44,7 @@ func TestMain(m *testing.M) {
 }
 
 func fakeServe(mode string, args []string) int {
+	dieWithParent()
 	if mode == "sleep" {
 		time.Sleep(time.Minute)
 		return 0
@@ -144,8 +153,8 @@ func harnessConfig(t *testing.T, mode string, extra ...string) Config {
 	return Config{
 		Program:      os.Args[0],
 		LogPath:      filepath.Join(dir, "logs", "serve.log"),
-		MemoryPath:   filepath.Join(dir, "data", "web.json"),
-		Texts:        en,
+		Memory:       openMemory(filepath.Join(dir, "data", "web.json")),
+		Texts:        func() Texts { return en },
 		Env:          func(context.Context) ([]string, error) { return env, nil },
 		ReadyTimeout: 3 * time.Second,
 	}
@@ -153,15 +162,71 @@ func harnessConfig(t *testing.T, mode string, extra ...string) Config {
 
 func startHarness(t *testing.T, cfg Config) *harness {
 	h := &harness{t: t, cfg: cfg, phases: make(chan Phase, 64)}
-	h.sc = NewSidecar(cfg, func(p Phase) { h.phases <- p })
+	var mu sync.Mutex
+	var pids []int
+	h.sc = NewSidecar(cfg, func(p Phase) {
+		if pid := childPID(p); pid != 0 {
+			mu.Lock()
+			pids = append(pids, pid)
+			mu.Unlock()
+		}
+		h.phases <- p
+	})
 	go h.sc.Run()
 	t.Cleanup(func() {
 		h.sc.Stop(Now)
-		if !h.sc.Wait(10 * time.Second) {
-			t.Error("the sidecar did not stop")
+		if h.sc.Wait(10 * time.Second) {
+			return
+		}
+		t.Error("the sidecar did not stop")
+		// Its children are not reaped yet, so their PIDs are still theirs.
+		mu.Lock()
+		defer mu.Unlock()
+		for _, pid := range pids {
+			if p, err := os.FindProcess(pid); err == nil {
+				_ = p.Kill()
+			}
 		}
 	})
 	return h
+}
+
+// childPID is the PID of the child a phase shows starting or ready, 0 for
+// none.
+func childPID(p Phase) int {
+	switch p := p.(type) {
+	case Starting:
+		return p.Child.PID
+	case Ready:
+		return p.Child.PID
+	}
+	return 0
+}
+
+// dieWithParent ends a fake serve as its parent, the test binary, ends, or
+// after fakeLifetime: at once on Linux (dieWithParentNow), else as soon as
+// it sees the parent gone.
+func dieWithParent() {
+	time.AfterFunc(fakeLifetime, func() { os.Exit(3) })
+	parent := os.Getppid()
+	dieWithParentNow(parent)
+	if runtime.GOOS == "windows" {
+		// A process outlives its parent's PID there: wait on the parent.
+		if p, err := os.FindProcess(parent); err == nil {
+			go func() {
+				_, _ = p.Wait()
+				os.Exit(3)
+			}()
+		}
+		return
+	}
+	go func() {
+		for range time.Tick(100 * time.Millisecond) {
+			if os.Getppid() != parent {
+				os.Exit(3)
+			}
+		}
+	}()
 }
 
 // await returns the first phase shown from now on that ok accepts.
@@ -200,7 +265,7 @@ func TestSidecarStartsAndDrains(t *testing.T) {
 	h.sc.Stop(WhenDone)
 	h.await("Stopping", func(p Phase) bool { return p == Stopping{Mode: WhenDone, PID: r.Child.PID} })
 	h.await("Stopped", is[Stopped])
-	if m := loadMemory(h.cfg.MemoryPath); m.Port != r.Child.Port {
+	if m := openMemory(h.cfg.Memory.path).Get(); m.Port != r.Child.Port {
 		t.Errorf("remembered %v; ready on %d", m, r.Child.Port)
 	}
 	if !h.sc.Wait(time.Second) {
@@ -216,7 +281,9 @@ func TestSidecarKeepsThePortAcrossLaunches(t *testing.T) {
 	port := first.ready().Child.Port
 	first.sc.Stop(WhenDone)
 	first.await("Stopped", is[Stopped])
-	second := startHarness(t, first.cfg)
+	cfg := first.cfg
+	cfg.Memory = openMemory(cfg.Memory.path)
+	second := startHarness(t, cfg)
 	if got := second.ready().Child.Port; got != port {
 		t.Errorf("second launch on %d; the first was on %d", got, port)
 	}

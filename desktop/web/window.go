@@ -3,6 +3,8 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"log"
+	"maps"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -16,10 +18,13 @@ import (
 	"github.com/egoist/mygo"
 )
 
-// A page reaches Go through one channel: window.open of a markitai-web:
-// URL, or a target="_blank" link to one, which SetWindowOpenHandler sees
-// without saying which frame asked. The app binds no Go service; it honors
-// a request only in a phase whose page offers it (offers in view.go).
+// A status page's buttons reach Go as window.open of a markitai-web: URL, a
+// target="_blank" link to one, which SetWindowOpenHandler sees without
+// saying which frame asked; so does Export PDF (openPrint). The app honors
+// such a request only in a phase whose page offers it (offers in view.go).
+// What the preload says of the page goes through the one service the app
+// binds, MarkitaiWeb (pages.go), which mygo's bridge offers the main frame
+// alone.
 const (
 	openRetry   = "markitai-web:retry"
 	openStopNow = "markitai-web:stop-now"
@@ -29,14 +34,9 @@ const (
 // openPrint is Export PDF's request, offered while the workbench shows,
 // beside converted content: a link in that content reaches window.open too
 // (the snapshot frame lets pop-ups out of its sandbox). It carries a key of
-// this launch that only the preload knows, which runs in the main frame
-// alone and before the workbench's scripts.
+// this launch that only the preload knows, which replaces window.print in
+// the main frame alone and before the workbench's scripts.
 var openPrint = "markitai-web:print?" + string(newToken())
-
-// preload replaces window.print, which the web view ignores (it returns at
-// once, with no panel and no afterprint), so the workbench's PDF export
-// reaches exportPDF.
-var preload = `window.print = () => { window.open("` + openPrint + `"); };`
 
 // request is what a window.open asks of the app.
 type request int
@@ -140,32 +140,65 @@ var a4Margins = mygo.Margins{Top: 14 / 25.4, Right: 12 / 25.4, Bottom: 14 / 25.4
 type window struct {
 	w         *mygo.Window
 	sc        *Sidecar
-	texts     Texts
+	mem       *memory
 	logPath   string
 	downloads string
 
-	mu     sync.Mutex
-	phases chan Phase // the phase to show next; the newest replaces an unshown one
-	kept   string     // the origin whose documents the content rules keep; paint's alone
+	mu      sync.Mutex
+	phases  chan Phase // the phase to show next; the newest replaces an unshown one
+	paints  int        // the status pages painted so far
+	latest  sight      // the page painted last
+	settled bool       // the main frame said it shows latest, and nothing was painted since
+	kept    string     // the origin whose documents the content rules keep; paint's alone
+
+	// turn takes the preload's calls one at a time, which mygo makes
+	// each in a goroutine of its own: Look and Key.
+	turn  sync.Mutex
+	looks reports // the workbench's look reported last
 }
 
-func openWindow(sc *Sidecar, t Texts, logPath, downloads string) *window {
-	w := &window{sc: sc, texts: t, logPath: logPath, downloads: downloads, phases: make(chan Phase, 1)}
+// sight is a page the window paints: a status page by its paint, numbered
+// from 1, or the workbench of a child by its token.
+type sight struct {
+	Paint int
+	Token Token
+}
+
+// minWidth and minHeight are the window's smallest size: the workbench lays
+// itself out for a phone from 480 wide down, and below 300 high a tiling
+// window manager's tile would leave too little of the page. A tile smaller
+// than the window gets its content squeezed, as Hyprland does.
+const minWidth, minHeight = 480, 300
+
+func openWindow(sc *Sidecar, mem *memory, logPath, downloads string) *window {
+	w := &window{sc: sc, mem: mem, logPath: logPath, downloads: downloads, phases: make(chan Phase, 1)}
+	mygo.Bind(&MarkitaiWeb{w: w})
 	w.w = mygo.NewWindow(mygo.WindowOptions{
 		Title:           "Markitai Web",
 		Width:           1280,
 		Height:          860,
-		MinWidth:        480,
-		MinHeight:       400,
+		MinWidth:        minWidth,
+		MinHeight:       minHeight,
 		BackgroundColor: "light-dark(#fafafa, #09090b)",
 		StateKey:        "main",
-		Page:            mygo.PageOptions{PreloadScript: preload},
+		// The main frame stays on the app's pages (willNavigate): every
+		// origin it shows may call MarkitaiWeb, the workbench's of a port
+		// chosen after the window opens among them.
+		Page: mygo.PageOptions{PreloadScript: preload, PreloadAllFrames: true, TrustedOrigins: []string{"*"}},
 	})
 	page := w.w.Page()
+	// Trusted pages get every permission they ask for by default; the
+	// workbench asks for none, and gets none, as before it was trusted.
+	page.SetPermissionHandler(func(mygo.PermissionRequest) bool { return false })
 	page.SetWindowOpenHandler(w.open)
 	page.OnWillNavigate(w.willNavigate)
 	page.OnWillDownload(w.willDownload)
 	page.OnDownloadDone(w.downloadDone)
+	page.OnContextMenu(contextMenu)
+	page.OnPageTitleUpdated(func(e *mygo.TitleEvent) {
+		e.PreventDefault()
+		w.w.SetTitle(windowTitle(e.Title))
+	})
 	page.OnRenderProcessGone(func(string) { w.Show(sc.Phase()) })
 	go w.paint()
 	return w
@@ -185,13 +218,90 @@ func (w *window) Show(p Phase) {
 
 func (w *window) paint() {
 	for p := range w.phases {
-		switch pg := render(p, w.texts); {
+		w.mu.Lock()
+		paint := w.paints + 1
+		w.mu.Unlock()
+		pg := render(p, shownTexts(), paint)
+		var s sight
+		switch {
 		case pg.URL != "":
+			s = sight{Token: p.(Ready).Child.Token}
+		case pg.HTML != "":
+			s = sight{Paint: paint}
+		default:
+			continue
+		}
+		w.mu.Lock()
+		w.paints = max(w.paints, s.Paint)
+		w.latest, w.settled = s, false
+		w.mu.Unlock()
+		if pg.URL != "" {
 			w.keepDocuments(origin(pg.URL))
 			_ = w.w.Page().LoadURL(pg.URL)
-		case pg.HTML != "":
+		} else {
 			w.w.Page().LoadHTML(pg.HTML, "")
 		}
+	}
+}
+
+// shown is what the main frame says it shows, as each page shows, also as
+// the history brings back one it showed before: mygo loads the history's
+// pages unasked (willNavigate), as with the mouse's back button or a
+// context menu's Back where the web view has them. A page other than the
+// one painted last, a status page whose buttons the phase no longer
+// honors or a workbench whose server is gone, is painted over with the
+// phase's. Until the latest page says it shows, what the others say is
+// the window's own loads overtaking each other, and goes unanswered.
+func (w *window) shown(s sight) {
+	w.mu.Lock()
+	current := s == w.latest
+	stale := w.settled && !current
+	w.settled = current
+	w.mu.Unlock()
+	if stale {
+		w.Show(w.sc.Phase())
+	}
+}
+
+// look takes the workbench's language and theme (Look), when they are the
+// latest reported.
+func (w *window) look(doc string, n int, l Look) {
+	w.turn.Lock()
+	defer w.turn.Unlock()
+	if !w.looks.newer(doc, n) {
+		return
+	}
+	if l.Lang != "" {
+		if workbenchLang(mygo.App.Locale()) != l.Lang {
+			mygo.App.SetLocale(locale(l.Lang))
+		}
+		chose.Store(true)
+	}
+	if err := w.mem.Update(func(m *Memory) { m.Theme = l.Theme }); err != nil {
+		log.Printf("markitai web: %v", err)
+	}
+	if source := themeSource(l.Theme); mygo.Theme.Source() != source {
+		mygo.Theme.SetSource(source)
+	}
+}
+
+// key does what a shortcut keys lists for this system does.
+func (w *window) key(k key) {
+	if !slices.Contains(slices.Collect(maps.Values(keys(runtime.GOOS))), k) {
+		return
+	}
+	w.turn.Lock()
+	defer w.turn.Unlock()
+	page := w.w.Page()
+	switch k {
+	case keyZoomIn, keyZoomOut:
+		page.SetZoomFactor(nextZoom(page.ZoomFactor(), k == keyZoomIn))
+	case keyZoomReset:
+		page.SetZoomFactor(1)
+	case keyFullScreen:
+		w.w.SetFullScreen(!w.w.IsFullScreen())
+	case keyQuit:
+		mygo.App.Quit()
 	}
 }
 
@@ -251,6 +361,64 @@ func (w *window) willNavigate(e *mygo.NavigateEvent) {
 	}
 }
 
+// editItems are the web view's items a text field's context menu keeps.
+var editItems = []string{mygo.ContextMenuUndo, mygo.ContextMenuRedo, mygo.ContextMenuCut, mygo.ContextMenuCopy,
+	mygo.ContextMenuPaste, mygo.ContextMenuPasteAndMatchStyle, mygo.ContextMenuDelete, mygo.ContextMenuSelectAll,
+	mygo.ContextMenuSpellingGuess, mygo.ContextMenuEmoji}
+
+// contextMenu keeps the web view's context menu to what an app's text has,
+// as Markitai Mygo's: a text field's editing items, Copy over a selection,
+// and no menu elsewhere. A browser's items, as Back, Reload, Print, Save As
+// or Share, never show; the items it keeps say what they do in the app's
+// language.
+func contextMenu(e *mygo.ContextMenuEvent) {
+	if e.Menu == nil {
+		return
+	}
+	labels := shownTexts().MenuItems
+	shows := false
+	for _, it := range e.Menu.Items() {
+		switch {
+		case it.Type == mygo.MenuItemSeparator:
+		case menuKeeps(e.Editable, e.SelectionText != "", it.ID):
+			shows = true
+			if label := labels[it.ID]; label != "" {
+				it.SetLabel(label)
+			}
+		default:
+			it.SetVisible(false)
+		}
+	}
+	if !shows {
+		e.PreventDefault()
+	}
+}
+
+// menuKeeps is whether the context menu keeps the web view's item id: a
+// text field's keeps its editing items, a selection Copy alone, anything
+// else none.
+func menuKeeps(editable, selection bool, id string) bool {
+	if editable {
+		return slices.Contains(editItems, id)
+	}
+	return selection && id == mygo.ContextMenuCopy
+}
+
+// windowTitle names the app in the page's title, as the taskbar, the Dock
+// and the window switcher show it: the workbench's "… · Markitai" ends in
+// "Markitai Web", which neither Markitai Native's nor Markitai Mygo's does.
+func windowTitle(title string) string {
+	switch {
+	case strings.TrimSpace(title) == "":
+		return "Markitai Web"
+	case strings.HasSuffix(title, "Markitai Web"):
+		return title
+	case strings.HasSuffix(title, "Markitai"):
+		return title + " Web"
+	}
+	return title + " · Markitai Web"
+}
+
 // exportPDF is the workbench's Export PDF: A4 with the workbench's margins
 // and backgrounds, afterprint at once so the workbench restores its page,
 // then a Save panel named after the title the workbench set for printing.
@@ -267,7 +435,7 @@ func (w *window) exportPDF() {
 		err = os.WriteFile(path, pdf, 0o644)
 	}
 	if err != nil {
-		w.warn(w.texts.SaveFailed, err)
+		w.warn(shownTexts().SaveFailed, err)
 	}
 }
 
@@ -285,7 +453,7 @@ func (w *window) willDownload(e *mygo.DownloadEvent) {
 
 func (w *window) downloadDone(d *mygo.Download) {
 	if d.Err != nil && !errors.Is(d.Err, mygo.ErrCanceled) {
-		go w.warn(w.texts.DownloadFailed, d.Err)
+		go w.warn(shownTexts().DownloadFailed, d.Err)
 	}
 }
 
@@ -301,17 +469,63 @@ func (w *window) focus() {
 
 // openExternal hands url to the system's handler for its scheme. A
 // variable so the e2e build can record it instead.
-var openExternal = func(url string) { _ = mygo.Shell.OpenExternal(url) }
+var openExternal = func(url string) { _ = openURL(url) }
 
 // saveAs asks where to save, starting at suggested; "" when canceled. A
 // variable so the e2e build can answer without a panel.
 var saveAs = func(parent *mygo.Window, suggested string) string {
-	path, err := mygo.Dialog.Save(mygo.SaveDialogOptions{Parent: parent, DefaultPath: suggested, CreateDirectories: true})
-	if err != nil {
-		return ""
-	}
-	return path
+	return askSavePath(suggested, func(at string) (string, error) {
+		return mygo.Dialog.Save(mygo.SaveDialogOptions{Parent: parent, DefaultPath: at, CreateDirectories: true,
+			Filters: saveFilters(suggested)})
+	}, func(path string) bool {
+		t := shownTexts()
+		r, err := mygo.Dialog.Message(mygo.MessageOptions{Parent: parent, Type: mygo.MessageWarning,
+			Message: t.Exists(filepath.Base(path)), Detail: t.ExistsDetail, Buttons: []string{t.Replace, t.Cancel},
+			DefaultButton: 1, CancelButton: 1, DestructiveButtons: []int{0}})
+		return err == nil && r.Button == 0
+	})
 }
+
+// askSavePath is the path the user chose with ask, the panel, starting at
+// suggested; "" when canceled. A name typed without suggested's extension
+// gets it, as the panel of macOS gives it: one that names a file already
+// there is asked about with replace, the panel having asked about the name
+// as typed, and the panel comes back at it unless replaced.
+func askSavePath(suggested string, ask func(at string) (string, error), replace func(path string) bool) string {
+	ext := filepath.Ext(suggested)
+	for at := suggested; ; {
+		path, err := ask(at)
+		if err != nil || path == "" {
+			return ""
+		}
+		if ext == "" || filepath.Ext(path) != "" {
+			return path
+		}
+		path += ext
+		if _, err := os.Lstat(path); err != nil || replace(path) {
+			return path
+		}
+		at = path
+	}
+}
+
+// saveFilters is the panel's file type for suggested's extension, which
+// names its format; none without one.
+func saveFilters(suggested string) []mygo.FileFilter {
+	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(suggested), "."))
+	if ext == "" {
+		return nil
+	}
+	name, ok := formats[ext]
+	if !ok {
+		name = strings.ToUpper(ext)
+	}
+	return []mygo.FileFilter{{Name: name, Extensions: []string{ext}}}
+}
+
+// formats name the formats the workbench saves, by extension.
+var formats = map[string]string{"pdf": "PDF", "md": "Markdown", "zip": "ZIP", "html": "HTML", "json": "JSON",
+	"txt": "Text"}
 
 // fileName makes a page title a file name on every system: no separators or
 // reserved characters, and room for an extension within 255 bytes.
