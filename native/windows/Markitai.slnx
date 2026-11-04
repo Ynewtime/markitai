@@ -1,0 +1,8 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+  </Configurations>
+  <Project Path="Markitai.Core/Markitai.Core.csproj" />
+  <Project Path="Markitai.Core.Tests/Markitai.Core.Tests.csproj" />
+  <Project Path="Markitai.App/Markitai.App.csproj" />
+</Solution>

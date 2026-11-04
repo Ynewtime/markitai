@@ -1,0 +1,35 @@
+.drop-zone {
+  border: 1.5px dashed alpha(currentColor, 0.28);
+  border-radius: 12px;
+  padding: 8px 16px;
+}
+
+.drop-zone statuspage image.icon {
+  -gtk-icon-size: 48px;
+  opacity: 0.55;
+}
+
+.drop-bar {
+  border: 1.5px dashed alpha(currentColor, 0.28);
+  border-radius: 12px;
+  min-height: 45px;
+  padding: 0 6px 0 12px;
+}
+
+.drop-hover .drop-zone,
+.drop-hover .drop-bar {
+  border-style: solid;
+  border-color: var(--accent-bg-color);
+}
+
+.item-row {
+  min-height: 58px;
+}
+
+.raw-message {
+  padding: 12px 14px;
+}
+
+.list-pane-top {
+  padding: 2px 12px 10px 12px;
+}
