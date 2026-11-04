@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -35,10 +36,11 @@ type Config struct {
 	// crashes. It holds one launch: the previous one's is beside it as
 	// serve.previous.log.
 	LogPath string
-	// MemoryPath is PathUserData/web.json.
-	MemoryPath string
-	// Texts' Lang is the child's LANG when the login environment has none.
-	Texts Texts
+	// Memory is PathUserData/web.json, which the window shares.
+	Memory *memory
+	// Texts are the app's words as they are now: their Lang is the child's
+	// LANG when the login environment has none.
+	Texts func() Texts
 	// Env returns the login environment, or a fallback and why; it may take
 	// seconds, and ends early when its context does.
 	Env func(context.Context) ([]string, error)
@@ -62,7 +64,6 @@ type Sidecar struct {
 	phase   Phase
 	env     []string
 	envErr  error
-	memory  Memory
 	procs   map[int]*proc
 	rotated bool // serve.log is this launch's
 }
@@ -85,13 +86,12 @@ func NewSidecar(cfg Config, show func(Phase)) *Sidecar {
 	return s
 }
 
-// Run is the loop, the only writer of the phase and of Memory. It returns
+// Run is the loop, the only writer of the phase and of the port. It returns
 // once the phase is Stopped, ending the login shell if it still runs.
 func (s *Sidecar) Run() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	s.ctx = ctx
-	s.memory = loadMemory(s.cfg.MemoryPath)
 	p, effects := start()
 	for _, e := range s.apply(p, effects) {
 		s.step(e)
@@ -145,8 +145,7 @@ func (s *Sidecar) do(f effect) event {
 	case doStop:
 		s.stop(f.PID, f.Mode)
 	case doRemember:
-		s.memory.Port = f.Port
-		if err := s.memory.save(s.cfg.MemoryPath); err != nil {
+		if err := s.cfg.Memory.Update(func(m *Memory) { m.Port = f.Port }); err != nil {
 			log.Printf("markitai web: %v", err)
 		}
 	}
@@ -172,7 +171,7 @@ func (s *Sidecar) spawn() event {
 	if err := os.MkdirAll(home, 0o700); err != nil {
 		return failed(err)
 	}
-	port, err := pickPort(s.memory.Port)
+	port, err := pickPort(s.cfg.Memory.Get().Port)
 	if err != nil {
 		return failed(err)
 	}
@@ -186,13 +185,14 @@ func (s *Sidecar) spawn() event {
 		return failed(err)
 	}
 	from := info.Size()
+	texts := s.cfg.Texts()
 	if s.envErr != nil {
-		fmt.Fprintln(logFile, s.cfg.Texts.LoginEnvFailed(s.envErr.Error()))
+		fmt.Fprintln(logFile, texts.LoginEnvFailed(s.envErr.Error()))
 	}
 	token := newToken()
 	cmd := exec.Command(s.cfg.Program, "serve", "--supervised", "--host", "127.0.0.1", "--port", port.String())
 	cmd.Dir = home
-	cmd.Env = childEnv(s.env, token, s.cfg.Texts.Lang, home)
+	cmd.Env = childEnv(s.env, token, texts.Lang, home)
 	cmd.Stdout, cmd.Stderr = logFile, logFile
 	cmd.SysProcAttr = procAttr()
 	stdin, err := cmd.StdinPipe()
@@ -207,9 +207,9 @@ func (s *Sidecar) spawn() event {
 	ctx, cancel := context.WithCancel(s.ctx)
 	go s.awaitReady(ctx, c, from)
 	go func() {
-		code := exitCode(cmd.Wait())
+		exit := exitOf(cmd.Wait())
 		cancel()
-		s.post(evExited{PID: c.PID, Code: code, Tail: s.tail(token, from)})
+		s.post(evExited{PID: c.PID, Exit: exit, Tail: s.tail(token, from)})
 	}()
 	return evSpawned{Child: c}
 }
@@ -308,15 +308,29 @@ func logTail(b []byte, cut bool, token Token) string {
 	return text
 }
 
-func exitCode(err error) int {
+// exitOf is how a child's Wait ended.
+func exitOf(err error) Exited {
 	var exit *exec.ExitError
 	if errors.As(err, &exit) {
-		return exit.ExitCode()
+		if name := signalName(exit.ProcessState); name != "" {
+			return Exited{Code: -1, Signal: name}
+		}
+		return Exited{Code: exit.ExitCode()}
 	}
 	if err != nil {
-		return -1
+		return Exited{Code: -1}
 	}
-	return 0
+	return Exited{}
+}
+
+// codeText writes an exit code as goos does: Windows' codes from 0x80000000
+// on are NTSTATUS values, as 0xC0000005, or a TerminateProcess with -1, which
+// read as hexadecimal.
+func codeText(goos string, code int) string {
+	if goos == "windows" && code >= 0x80000000 {
+		return fmt.Sprintf("0x%08X", uint32(code))
+	}
+	return strconv.Itoa(code)
 }
 
 func (s *Sidecar) post(e event) {

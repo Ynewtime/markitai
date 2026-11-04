@@ -114,7 +114,10 @@ and `markitai-web-<version>-arm64.dmg` on an Apple silicon Mac, or the app,
 its `.tar.gz`, `.deb`, `PKGBUILD` and `install.sh` in
 `desktop/web/build/linux-amd64/` on x86-64 Linux
 ([Linux](desktop-web.md#linux)), from the `x86_64-unknown-linux-gnu` archive
-the manylinux_2_28 image builds, or `Markitai Web.exe` and the installer
+the manylinux_2_28 image builds (after `mygo build`, the script installs the
+menu entry of every package as `dev.markitai.web.desktop`, with Native's
+`Comment[zh_CN]`, `Keywords` and `StartupNotify` and the window's class, and
+fails where mygo writes them otherwise), or `Markitai Web.exe` and the installer
 `markitai-web-setup-<version>-amd64.exe` in `desktop/web/build/windows-amd64/`
 on x86-64 Windows ([Windows](desktop-web.md#windows)). No
 artifact may be named like a CLI archive (`markitai-v…`). `--e2e` builds with
@@ -122,14 +125,17 @@ the `e2e` tag, mygo's automation plugin and the web inspector, without
 packages or installer, into `desktop/web/build/e2e/`, from a generated project
 (`desktop/web/build/e2e-project/`) whose identifier is the app's
 (`dev.markitai.web`) plus `.e2e`: on macOS web data is kept by identifier
-outside `HOME`, and an e2e run must not share an installed app's.
+outside `HOME`, on Linux under the app's name, which is that identifier
+there, and an e2e run must not share an installed app's.
 `desktop_web_e2e.py` drives that build over the automation socket through the
 scenarios its docstring lists, each with its own
 `HOME` (with the XDG directories on Linux, and `USERPROFILE`, `APPDATA`,
 `LOCALAPPDATA` and `TEMP` on Windows), `MARKITAI_HOME` and app data, and
 keeps the evidence in `.local/desktop-web-e2e/ROUND/`; the bundled `markitai` must
 have `serve --supervised`. On Linux it runs in a Hyprland session and quits by
-closing the window with `hyprctl`, as there is no application menu; on
+closing the window with `hyprctl`, as there is no application menu, also
+where a quit must ask (SIGTERM there is the session's end, which asks
+nothing); on
 Windows it runs in a desktop session and closes the window with `WM_CLOSE`
 (signals become window messages and `TerminateProcess`, the automation socket
 is Winsock's `AF_UNIX`). The native Save panel and quit question are answered

@@ -8,12 +8,51 @@ import (
 	"strings"
 )
 
+// appEnv holds the variables the app sets for its own toolkit before it
+// starts (toolkit_linux.go), each with the value the user's environment gave
+// it, nil for none: serve, the login shell and the programs the app opens
+// get those back (userEnv).
+var appEnv = map[string]*string{}
+
+// setAppEnv sets key for the app's own use, before anything else runs.
+func setAppEnv(key, value string) {
+	if _, ok := appEnv[key]; !ok {
+		if v, ok := os.LookupEnv(key); ok {
+			appEnv[key] = &v
+		} else {
+			appEnv[key] = nil
+		}
+	}
+	os.Setenv(key, value)
+}
+
+// userEnv is env with the user's values of the variables the app set for
+// itself (appEnv).
+func userEnv(env []string) []string {
+	if len(appEnv) == 0 {
+		return env
+	}
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		name, _, _ := strings.Cut(kv, "=")
+		if _, ok := appEnv[name]; !ok {
+			out = append(out, kv)
+		}
+	}
+	for key, user := range appEnv {
+		if user != nil {
+			out = append(out, key+"="+*user)
+		}
+	}
+	return out
+}
+
 // childEnv is markitai serve's environment: the user's login environment, so
 // what works after `markitai serve` in their terminal works here (PATH for
 // Chrome, LibreOffice and the subscription CLIs, exported keys, proxies),
 // without the variables only a parent markitai hands a server
 // (MARKITAI_SERVE_*) and the app's own (MYGO_*, such as the automation
-// socket), plus:
+// socket, and appEnv's, which get the user's values back), plus:
 //
 //   - MARKITAI_SERVE_TOKEN, this launch's token;
 //   - MARKITAI_HOME as home, an absolute path, when the login environment
@@ -22,6 +61,7 @@ import (
 //     and MARKITAI_LANG is set, so serve's messages, and the log tail a
 //     failure shows, follow the system language.
 func childEnv(login []string, token Token, lang, home string) []string {
+	login = userEnv(login)
 	env := make([]string, 0, len(login)+2)
 	for _, kv := range login {
 		name, _, _ := strings.Cut(kv, "=")

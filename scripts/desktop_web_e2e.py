@@ -36,12 +36,14 @@ Scenarios (all by default):
   quit-idle    SIGTERM to the app (on Windows, WM_CLOSE to its window): the app
                exits 0, serve drains, its PID is gone, its control file removed
   quit-uncounted
-               SIGTERM while serve cannot answer (suspended): the app asks with
+               a quit (SIGTERM, which mygo takes as Cmd-Q, on macOS; closing
+               the window on Linux, where SIGTERM asks nothing; WM_CLOSE on
+               Windows) while serve cannot answer (suspended): the app asks with
                no count; Cancel keeps it working; with nothing unfinished,
                Quit from the menu (on Linux and Windows, closing the window)
                then asks nothing
   quit-busy-when-done, quit-busy-now, quit-busy-then-now
-               SIGTERM while a URL conversion is held open by a local page: the
+               that quit while a URL conversion is held open by a local page: the
                question answers "Quit When Done" (the Stopping page offers Stop
                Now alone, the app waits, serve drains and the conversion
                finishes in it), "Stop and Quit" (serve stops at once with the
@@ -58,6 +60,15 @@ Scenarios (all by default):
                why, with Try Again and Show Log; once it stops, Try Again
                brings the workbench, its serve's output after the failed one's
                in the launch's serve.log
+  history      the history's Back from the workbench to the Starting page it
+               replaced: the app shows the workbench again, not a stale page
+  look         the workbench's language and theme reach the app: web.json keeps
+               the theme, and the next launch's pages take the language
+               (navigator.language), as do the application menu's items on
+               macOS, back to the system's when it follows it
+  session-end  Linux only: SIGTERM, as a session that ends sends it, while a
+               URL conversion is held: the app asks nothing, quits as Quit When
+               Done does (the Stopping page), and the conversion finishes
   logout       Windows only: signing out while a URL conversion is held, as
                WM_QUERYENDSESSION and WM_ENDSESSION to the app's windows: no
                window holds the session up, the app asks nothing, serve has
@@ -123,7 +134,7 @@ BUILDS = {
     ("Darwin", "arm64"): Build("darwin/arm64", "desktop/web/build/e2e/darwin-arm64/Markitai Web.app",
                                "Contents/MacOS/Markitai Web", "Contents/Resources/bin/markitai",
                                ("-AppleLanguages", "(en)"), {}, {}, "/bin/zsh", "menu"),
-    # No application menu on Linux; its window's class is the executable's name.
+    # No application menu on Linux; its window's class is the app's name, dev.markitai.web.e2e (e2e.go).
     ("Linux", "x86_64"): Build("linux/amd64", "desktop/web/build/e2e/linux-amd64", "markitai-web", "bin/markitai", (),
                                {"LANGUAGE": "en"},
                                {"XDG_CONFIG_HOME": ".config", "XDG_DATA_HOME": ".local/share",
@@ -475,14 +486,15 @@ AUTH = f"const H = {{Authorization: 'Bearer ' + sessionStorage.getItem({json.dum
 class App:
     """One launch of the e2e build in a scenario's sandbox."""
 
-    def __init__(self, scenario, index, **environment):
+    def __init__(self, scenario, index, english=True, **environment):
+        """english: the arguments that make the app English whatever it chose before (BUILD)."""
         self.scenario = scenario
         self.index = index
         executable = scenario.run.app / BUILD.executable
         socket_name = f"a{index}.sock"
         self.output = open(scenario.dir / f"app-{index}.log", "wb")
         self.process = subprocess.Popen(
-            [str(executable), *BUILD.arguments], cwd=scenario.dir, stdin=subprocess.DEVNULL,
+            [str(executable), *(BUILD.arguments if english else ())], cwd=scenario.dir, stdin=subprocess.DEVNULL,
             stdout=self.output, stderr=subprocess.STDOUT, start_new_session=True,
             env=scenario.environment(MYGO_AUTOMATION=socket_name, MARKITAI_WEB_E2E=str(scenario.app_data),
                                      **environment))
@@ -532,6 +544,23 @@ class App:
         """The system's request to quit: SIGTERM, which mygo takes as Quit (as Cmd-Q), or WM_CLOSE."""
         SYSTEM.request_quit(self.process)
 
+    def ask_quit(self):
+        """A quit that asks about unfinished conversions, without waiting: SIGTERM on macOS, which
+        mygo takes as Cmd-Q; on Linux, where SIGTERM is the session's end and asks nothing (the
+        app's session_linux.go), closing the window; WM_CLOSE on Windows."""
+        if BUILD.quit == "hyprctl":
+            self.close_window()
+        else:
+            SYSTEM.request_quit(self.process)
+
+    def close_window(self):
+        """Hyprland's close of the app's window, as Super+W does."""
+        closed = subprocess.run(["hyprctl", "dispatch",
+                                 f'hl.dsp.window.close({{ window = "pid:{self.process.pid}" }})'],
+                                capture_output=True, text=True, timeout=10)
+        if closed.returncode or closed.stdout.strip() != "ok":
+            raise Failure(f"hyprctl could not close the window: {closed.stdout}{closed.stderr}".strip())
+
     def exited(self, timeout):
         try:
             return self.process.wait(timeout)
@@ -556,11 +585,7 @@ class App:
             elif BUILD.quit == "close":
                 SYSTEM.close(self.process)
             else:
-                closed = subprocess.run(["hyprctl", "dispatch",
-                                         f'hl.dsp.window.close({{ window = "pid:{self.process.pid}" }})'],
-                                        capture_output=True, text=True, timeout=10)
-                if closed.returncode or closed.stdout.strip() != "ok":
-                    raise Failure(f"hyprctl could not close the window: {closed.stdout}{closed.stderr}".strip())
+                self.close_window()
         except AutomationError:
             pass  # the app may have quit before answering
         code = self.exited(30)
@@ -679,8 +704,8 @@ class Scenario:
             environment["SHELL"] = BUILD.shell
         return environment
 
-    def launch(self, **environment):
-        app = App(self, len(self.apps) + 1, **environment)
+    def launch(self, english=True, **environment):
+        app = App(self, len(self.apps) + 1, english, **environment)
         self.apps.append(app)
         app.connect()
         return app
@@ -1044,7 +1069,7 @@ def quit_uncounted(s):
     asked = s.app_data / "asked"
     SYSTEM.suspend(pid)
     try:
-        app.request_quit()
+        app.ask_quit()
         answer = eventually("the quit question", lambda: asked.is_file() and asked.read_text(), 10)
     finally:
         SYSTEM.resume(pid)
@@ -1082,7 +1107,7 @@ def ask_to_quit(s, choice):
     origin = app.ready()
     held, job = hold_a_conversion(s, app, origin, app.token())
     pid = s.control()
-    app.request_quit()
+    app.ask_quit()
     asked = s.app_data / "asked"
     answer = eventually("the quit question", lambda: asked.is_file() and asked.read_text(), 10)
     s.check("the app asked about the one unfinished conversion", answer == "1", answer)
@@ -1176,6 +1201,134 @@ def crash(s):
     again.quit()
 
 
+def history_back(s):
+    """W2: the window's history holds the Starting page the workbench replaced; Back to it shows
+    the workbench again (the app repaints what it shows), never the stale page."""
+    app = s.launch()
+    origin = app.ready()
+    token = app.token()
+    app.ui.eval("setTimeout(() => history.back(), 100); return true;")
+    time.sleep(3)
+    state = wait_for("the workbench again", lambda: (state := app.page())["url"].startswith(origin)
+                     and state["phase"] is None and state["sidebar"] and state, 15)
+    app.capture("after-back")
+    s.check("Back from the workbench shows the workbench again, with the token", bool(state) and state["token"],
+            state)
+    s.check("the same server serves it", app.token() == token)
+    app.ui.eval("setTimeout(() => history.forward(), 100); return true;")
+    time.sleep(2)
+    state = app.page()
+    s.check("Forward leaves the workbench in place", state["url"].startswith(origin) and state["phase"] is None,
+            state["url"])
+    s.check("the app quits with 0", app.quit() == 0)
+
+
+def look(s):
+    """Decision 2: the workbench's own language and theme become the app's."""
+    if BUILD.quit != "menu":
+        return look_here(s)
+    # On macOS mygo keeps the app's language in the app's own defaults, through cfprefsd, which takes
+    # neither HOME nor CFFIXED_USER_HOME: the account's defaults of the e2e build's identifier, apart
+    # from the installed app's. The scenario leaves them as it found them: without a language.
+    import pwd  # macOS alone comes here
+    domain = plistlib.loads((s.run.app / "Contents/Info.plist").read_bytes())["CFBundleIdentifier"]
+    forget = lambda: subprocess.run(["defaults", "delete", domain, "AppleLanguages"], capture_output=True)
+    forget()
+    try:
+        look_here(s)
+    finally:
+        forget()
+        # Deleting the last key leaves an empty property list, which the scenario made, in the
+        # account's home: not HOME, which may be a sandbox's.
+        plist = Path(pwd.getpwuid(os.getuid()).pw_dir) / "Library/Preferences" / f"{domain}.plist"
+        try:
+            if plistlib.loads(plist.read_bytes()) == {}:
+                plist.unlink()
+        except (OSError, ValueError, plistlib.InvalidFileException):
+            pass
+        s.check("the e2e build's defaults keep no language after the scenario",
+                "AppleLanguages" not in subprocess.run(["defaults", "read", domain], capture_output=True,
+                                                       text=True).stdout, "no file" if not plist.exists() else plist)
+
+
+def look_here(s):
+    memory = s.app_data / "data" / "web.json"
+
+    def kept_theme():
+        try:
+            return json.loads(memory.read_text(encoding="utf-8")).get("theme")
+        except (OSError, ValueError):
+            return None
+
+    app = s.launch()
+    app.ready()
+    app.ui.eval('localStorage.setItem("markitai.lang", "zh"); localStorage.setItem("markitai.theme", "dark"); '
+                'return true;')
+    s.check("web.json keeps the workbench's dark theme", eventually("the theme kept", lambda: kept_theme() == "dark",
+                                                                   10), kept_theme())
+    s.check("the app quits with 0", app.quit() == 0)
+    # The e2e build clears the web view's data at each launch: the next workbench has no language of its
+    # own and takes the page's, which is the app's.
+    again = s.launch(english=False)
+    again.ready()
+    language = again.ui.eval("return navigator.language")
+    s.check("the next launch's pages take the language the workbench chose", str(language).lower().startswith("zh"),
+            language)
+    shown = again.ui.eval("return document.documentElement.lang")
+    s.check("and its workbench shows Chinese", str(shown).lower().startswith("zh"), shown)
+    if MENUS:
+        s.check("and the app's menus are in Chinese", chosen_in_menu(again, ["显示", "实际大小"]))
+    s.check("a workbench that follows the system theme leaves web.json without one",
+            eventually("the theme dropped", lambda: kept_theme() is None, 10), kept_theme())
+    again.ui.eval('localStorage.setItem("markitai.lang", "en"); return true;')
+    time.sleep(1)
+    s.check("the app quits with 0", again.quit() == 0)
+    third = s.launch(english=False)
+    third.ready()
+    language = third.ui.eval("return navigator.language")
+    s.check("English chosen in the workbench is the next launch's language", str(language).lower().startswith("en"),
+            language)
+    if MENUS:
+        s.check("and the app's menus are in English", chosen_in_menu(third, ["View", "Actual Size"]))
+    s.check("the app quits with 0", third.quit() == 0)
+
+
+# Only the Mac's app has an application menu.
+MENUS = BUILD is not None and BUILD.platform.startswith("darwin")
+
+
+def chosen_in_menu(app, path):
+    """Whether the application menu has the item at path, by its titles: chosen as the menu bar does."""
+    try:
+        app.ui.call("menu", window=app.ui.window(), path=path)
+        return True
+    except Exception:  # noqa: BLE001 - no such item: the menu speaks another language
+        return False
+
+
+def session_end(s):
+    """L5: SIGTERM on Linux, as a session that ends sends it before SIGKILL, asks nothing."""
+    app = s.launch(MARKITAI_WEB_E2E_QUIT="now")
+    origin = app.ready()
+    held, job = hold_a_conversion(s, app, origin, app.token())
+    pid = s.control()
+    SYSTEM.terminate(app.process.pid)
+    page = app.phase("stopping", 15)
+    app.capture("stopping")
+    s.check("SIGTERM asks nothing", not (s.app_data / "asked").exists())
+    s.check("the app quits as Quit When Done: the Stopping page offers Stop Now alone", page["actions"] == [STOP_NOW],
+            page["actions"])
+    s.check("serve drains, its conversion held",
+            eventually("serve's drain", lambda: DRAINING in s.log(), 5) and app.process.poll() is None and alive(pid))
+    held.release.set()
+    s.check("the app quits with 0 once serve has drained", app.exited(90) == 0)
+    s.check("serve ended and removed its control file", s.serve_ended(pid, 15), pid)
+    again = s.launch()
+    s.check("the next launch is ready on the same origin", again.ready() == origin)
+    s.require("the held conversion finished", finished(origin, again.token(), job=job, timeout=10), job)
+    again.quit()
+
+
 def logout(s):
     app = s.launch()
     origin = app.ready()
@@ -1230,10 +1383,12 @@ SCENARIOS = {
     "ready": ready, "convert": convert, "download": download, "pdf": pdf, "port": port,
     "quit-idle": quit_idle, "quit-uncounted": quit_uncounted, "quit-busy-when-done": quit_busy_when_done,
     "quit-busy-now": quit_busy_now, "quit-busy-then-now": quit_busy_then_now, "crash": crash,
-    "home-busy": home_busy,
+    "home-busy": home_busy, "history": history_back, "look": look,
 }
 if os.name == "nt":
     SCENARIOS["logout"] = logout
+if BUILD and BUILD.quit == "hyprctl":
+    SCENARIOS["session-end"] = session_end
 
 
 class Run:

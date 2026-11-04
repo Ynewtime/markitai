@@ -48,9 +48,13 @@ func (r Ready) URL() string { return r.Child.origin() + "/#token=" + string(r.Ch
 // Cause says why no server of ours runs.
 type Cause interface{ isCause() }
 
-// Exited: the child exited by itself; serve.log says why (a busy home or
-// port, a broken configuration).
-type Exited struct{ Code int }
+// Exited: the child exited by itself, or was ended from outside; serve.log
+// says why (a busy home or port, a broken configuration). Signal names the
+// Unix signal that ended it, as SIGKILL, and Code is then -1.
+type Exited struct {
+	Code   int
+	Signal string
+}
 
 // NotReady: the child ran but never answered as a supervised server.
 type NotReady struct{}
@@ -103,7 +107,7 @@ type (
 	}
 	evExited struct {
 		PID  int
-		Code int
+		Exit Exited
 		Tail string
 	}
 	evRetry struct{}
@@ -189,7 +193,7 @@ func next(p Phase, e event) (Phase, []effect) {
 			}
 		case evExited:
 			if e.PID == c.PID {
-				return Failed{Cause: Exited{Code: e.Code}, Tail: e.Tail}, nil
+				return Failed{Cause: e.Exit, Tail: e.Tail}, nil
 			}
 		case evStop:
 			return Stopping{Mode: e.Mode, PID: c.PID}, []effect{doStop{PID: c.PID, Mode: e.Mode}}
@@ -199,7 +203,7 @@ func next(p Phase, e event) (Phase, []effect) {
 		switch e := e.(type) {
 		case evExited:
 			if e.PID == c.PID {
-				return Failed{Cause: Exited{Code: e.Code}, Tail: e.Tail}, nil
+				return Failed{Cause: e.Exit, Tail: e.Tail}, nil
 			}
 		case evStop:
 			return Stopping{Mode: e.Mode, PID: c.PID}, []effect{doStop{PID: c.PID, Mode: e.Mode}}

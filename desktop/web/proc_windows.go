@@ -33,3 +33,6 @@ func openAppend(path string) (*os.File, error) {
 	}
 	return os.NewFile(uintptr(h), path), nil
 }
+
+// signalName is "" on Windows, which ends processes with exit codes.
+func signalName(*os.ProcessState) string { return "" }

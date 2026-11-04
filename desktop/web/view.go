@@ -19,9 +19,11 @@ type page struct {
 }
 
 // status is the template's data. Phase and Cause become data-phase and
-// data-cause on <body>, which scripts/desktop_web_e2e.py reads.
+// data-cause on <body>, which scripts/desktop_web_e2e.py reads; Paint
+// data-paint, which the preload reports as the page shows (pages.go).
 type status struct {
 	Lang    string
+	Paint   int
 	Phase   string
 	Cause   string
 	Title   string
@@ -61,12 +63,10 @@ func offers(p Phase) []request {
 	return nil
 }
 
-// render maps a phase to what the window shows.
-func render(p Phase, t Texts) page {
-	s := status{Lang: "en"}
-	if t.Lang == "zh" {
-		s.Lang = "zh-CN"
-	}
+// render maps a phase to what the window shows; a status page is the
+// window's paint-th.
+func render(p Phase, t Texts, paint int) page {
+	s := status{Lang: t.HTMLTag, Paint: paint}
 	switch p := p.(type) {
 	case Ready:
 		return page{URL: p.URL()}
@@ -84,7 +84,7 @@ func render(p Phase, t Texts) page {
 		switch c := p.Cause.(type) {
 		case Exited:
 			s.Cause, s.Title = "exited", t.ExitedTitle
-			s.Body = []string{t.ExitedBody(c.Code), t.ExitedHint}
+			s.Body = []string{t.ExitedBody(c), t.ExitedHint}
 		case NotReady:
 			s.Cause, s.Title = "not-ready", t.NotReadyTitle
 			s.Body = []string{t.NotReadyBody(int(readyTimeout.Seconds()))}

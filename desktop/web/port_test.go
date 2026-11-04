@@ -75,22 +75,49 @@ func TestPickPortNeverTakesTheCLIPort(t *testing.T) {
 	}
 }
 
-func TestMemoryRoundTrip(t *testing.T) {
+func TestMemoryKeepsThePortAndTheThemeApart(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "data", "web.json")
-	if m := loadMemory(path); m != (Memory{}) {
+	if m := openMemory(path).Get(); m != (Memory{}) {
 		t.Errorf("a missing file loads %v", m)
 	}
-	if err := (Memory{Port: 51234}).save(path); err != nil {
+	shared := openMemory(path)
+	if err := shared.Update(func(m *Memory) { m.Port = 51234 }); err != nil {
 		t.Fatal(err)
 	}
-	if m := loadMemory(path); m.Port != 51234 {
-		t.Errorf("loadMemory = %v", m)
+	if err := shared.Update(func(m *Memory) { m.Theme = "dark" }); err != nil {
+		t.Fatal(err)
+	}
+	want := Memory{Port: 51234, Theme: "dark"}
+	if m := openMemory(path).Get(); m != want {
+		t.Errorf("the next launch reads %+v; want %+v", m, want)
 	}
 	if err := os.WriteFile(path, []byte("{not json"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if m := loadMemory(path); m != (Memory{}) {
+	if m := openMemory(path).Get(); m != (Memory{}) {
 		t.Errorf("a broken file loads %v", m)
+	}
+}
+
+func TestMemorySavesWhatAFailedSaveLeftOut(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "data")
+	path := filepath.Join(dir, "web.json")
+	// A file where the folder belongs fails the save.
+	if err := os.WriteFile(dir, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m := openMemory(path)
+	if err := m.Update(func(m *Memory) { m.Theme = "dark" }); err == nil {
+		t.Fatal("the save succeeded with no folder for it")
+	}
+	if err := os.Remove(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Update(func(m *Memory) { m.Theme = "dark" }); err != nil {
+		t.Fatal(err)
+	}
+	if got := openMemory(path).Get(); got.Theme != "dark" {
+		t.Errorf("after a failed save, the same change saved %+v; want the dark theme", got)
 	}
 }
 

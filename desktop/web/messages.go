@@ -2,18 +2,21 @@ package main
 
 import (
 	"fmt"
-	"strings"
+	"runtime"
+
+	"github.com/egoist/mygo"
 )
 
-// Texts are the app's own words, in the workbench's two languages: the
-// status pages, the quit question, save errors and what the app writes to
-// serve.log.
+// Texts are the app's own words, in the workbench's three languages: the
+// status pages, the quit question, the save questions and errors, and what
+// the app writes to serve.log.
 type Texts struct {
-	Lang string // "en" or "zh", the status page's lang and the child's LANG
+	Lang    string // "en", "zh" or "ja", as the workbench names it; serve speaks Chinese or English
+	HTMLTag string // the status page's lang, as the workbench's <html lang>
 
 	Starting       string
 	ExitedTitle    string
-	ExitedBody     func(code int) string
+	ExitedBody     func(e Exited) string
 	ExitedHint     string
 	NotReadyTitle  string
 	NotReadyBody   func(seconds int) string
@@ -36,15 +39,45 @@ type Texts struct {
 
 	SaveFailed     string
 	DownloadFailed string
+	Exists         func(name string) string
+	ExistsDetail   string
+	Replace        string
+
+	// MenuItems name the web view's items a context menu keeps, by their
+	// IDs (contextMenu).
+	MenuItems map[string]string
 
 	LoginEnvFailed func(reason string) string
 }
 
+// menuItems names a context menu's editing items, in their order.
+func menuItems(undo, redo, cut, copy, paste, pasteAndMatchStyle, del, selectAll string) map[string]string {
+	return map[string]string{mygo.ContextMenuUndo: undo, mygo.ContextMenuRedo: redo, mygo.ContextMenuCut: cut,
+		mygo.ContextMenuCopy: copy, mygo.ContextMenuPaste: paste, mygo.ContextMenuPasteAndMatchStyle: pasteAndMatchStyle,
+		mygo.ContextMenuDelete: del, mygo.ContextMenuSelectAll: selectAll}
+}
+
+// texts are the app's words by the workbench's language.
+var texts = map[string]Texts{"en": en, "zh": zh, "ja": ja}
+
+// exitText is how serve ended, for the Failed page: by a signal, or with a
+// code as the system writes it.
+func exitText(e Exited, signal, code func(string) string) string {
+	if e.Signal != "" {
+		return signal(e.Signal)
+	}
+	return code(codeText(runtime.GOOS, e.Code))
+}
+
 var en = Texts{
-	Lang:          "en",
-	Starting:      "Starting Markitai Web…",
-	ExitedTitle:   "Markitai Web's server stopped",
-	ExitedBody:    func(code int) string { return fmt.Sprintf("It exited with code %d.", code) },
+	Lang:        "en",
+	HTMLTag:     "en",
+	Starting:    "Starting Markitai Web…",
+	ExitedTitle: "Markitai Web's server stopped",
+	ExitedBody: func(e Exited) string {
+		return exitText(e, func(s string) string { return "It was ended by " + s + "." },
+			func(c string) string { return "It exited with code " + c + "." })
+	},
 	ExitedHint:    "If Markitai Web quit unexpectedly a moment ago, it may still be finishing conversions; try again shortly.",
 	NotReadyTitle: "Markitai Web's server did not start",
 	NotReadyBody: func(seconds int) string {
@@ -77,6 +110,11 @@ var en = Texts{
 
 	SaveFailed:     "The PDF could not be saved.",
 	DownloadFailed: "The download failed.",
+	Exists:         func(name string) string { return "“" + name + "” already exists. Do you want to replace it?" },
+	ExistsDetail:   "Replacing it overwrites what it holds.",
+	Replace:        "Replace",
+
+	MenuItems: menuItems("Undo", "Redo", "Cut", "Copy", "Paste", "Paste and Match Style", "Delete", "Select All"),
 
 	LoginEnvFailed: func(reason string) string {
 		return "Markitai Web could not read your login shell's environment (" + reason + "). The server runs " +
@@ -86,10 +124,14 @@ var en = Texts{
 }
 
 var zh = Texts{
-	Lang:          "zh",
-	Starting:      "正在启动 Markitai Web…",
-	ExitedTitle:   "Markitai Web 的服务已停止",
-	ExitedBody:    func(code int) string { return fmt.Sprintf("服务以代码 %d 退出。", code) },
+	Lang:        "zh",
+	HTMLTag:     "zh-CN",
+	Starting:    "正在启动 Markitai Web…",
+	ExitedTitle: "Markitai Web 的服务已停止",
+	ExitedBody: func(e Exited) string {
+		return exitText(e, func(s string) string { return "服务被信号 " + s + " 终止。" },
+			func(c string) string { return "服务以代码 " + c + " 退出。" })
+	},
 	ExitedHint:    "如果 Markitai Web 刚刚意外退出，它可能还在完成转换，请稍后再试。",
 	NotReadyTitle: "Markitai Web 的服务未能启动",
 	NotReadyBody: func(seconds int) string {
@@ -119,6 +161,11 @@ var zh = Texts{
 
 	SaveFailed:     "无法保存 PDF。",
 	DownloadFailed: "下载失败。",
+	Exists:         func(name string) string { return "“" + name + "”已存在。要替换它吗？" },
+	ExistsDetail:   "替换会覆盖其中的内容。",
+	Replace:        "替换",
+
+	MenuItems: menuItems("撤销", "重做", "剪切", "复制", "粘贴", "粘贴并匹配样式", "删除", "全选"),
 
 	LoginEnvFailed: func(reason string) string {
 		return "Markitai Web 无法读取登录 shell 的环境（" + reason + "）。服务在没有它的情况下运行：" +
@@ -126,10 +173,55 @@ var zh = Texts{
 	},
 }
 
-// textsFor picks Chinese when the first preferred language is Chinese.
-func textsFor(preferred []string) Texts {
-	if len(preferred) > 0 && (preferred[0] == "zh" || strings.HasPrefix(preferred[0], "zh-")) {
-		return zh
-	}
-	return en
+var ja = Texts{
+	Lang:        "ja",
+	HTMLTag:     "ja",
+	Starting:    "Markitai Web を起動しています…",
+	ExitedTitle: "Markitai Web のサーバーが停止しました",
+	ExitedBody: func(e Exited) string {
+		return exitText(e, func(s string) string { return "シグナル " + s + " で終了しました。" },
+			func(c string) string { return "コード " + c + " で終了しました。" })
+	},
+	ExitedHint:    "Markitai Web が少し前に予期せず終了した場合は、まだ変換を完了させている途中かもしれません。しばらくしてから再試行してください。",
+	NotReadyTitle: "Markitai Web のサーバーが起動しませんでした",
+	NotReadyBody: func(seconds int) string {
+		return fmt.Sprintf("%d 秒以内に応答がなかったため、停止しました。", seconds)
+	},
+	NoProgramTitle: "この Markitai Web は不完全です",
+	NoProgramBody:  func(path string) string { return "サーバープログラムがありません：" + path },
+	SpawnTitle:     "Markitai Web はサーバーを起動できませんでした",
+	SpawnBody:      func(err string) string { return err },
+	StoppingTitle:  "変換を完了しています…",
+	StoppingBody:   "実行中の変換が終わると、Markitai Web は終了します。",
+	StoppingNow:    "停止しています…",
+	Retry:          "再試行",
+	ShowLog:        "ログを表示",
+	StopNow:        "今すぐ停止して終了",
+
+	Unfinished: func(b busy) string {
+		if !b.Known {
+			return "未完了の変換があるかもしれません。Markitai Web はその数を確認できませんでした。"
+		}
+		return fmt.Sprintf("未完了の変換が %d 件あります。", b.N)
+	},
+	QuitDetail:   "「完了後に終了」は実行中の変換を完了させ、待機中の変換を取り消します。「停止して終了」はすべてを今すぐ停止します。",
+	QuitWhenDone: "完了後に終了",
+	StopAndQuit:  "停止して終了",
+	Cancel:       "キャンセル",
+
+	SaveFailed:     "PDF を保存できませんでした。",
+	DownloadFailed: "ダウンロードに失敗しました。",
+	Exists: func(name string) string {
+		return "「" + name + "」はすでに存在します。置き換えますか？"
+	},
+	ExistsDetail: "置き換えると、その内容は上書きされます。",
+	Replace:      "置き換える",
+
+	MenuItems: menuItems("取り消す", "やり直す", "カット", "コピー", "ペースト", "ペーストしてスタイルを合わせる", "削除",
+		"すべてを選択"),
+
+	LoginEnvFailed: func(reason string) string {
+		return "Markitai Web はログインシェルの環境を読み取れませんでした（" + reason + "）。サーバーはその環境なしで動作します。" +
+			"PATH 上のプログラム、エクスポートしたキー、シェルの起動ファイルで設定した MARKITAI_HOME は使えません。"
+	},
 }
