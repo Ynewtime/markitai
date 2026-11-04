@@ -379,7 +379,9 @@ public sealed partial class DetailView : UserControl
         }
         var core = Preview.CoreWebView2;
         var settings = core.Settings;
-        settings.IsScriptEnabled = false;
+        // On for ForwardKeysScript alone: the document's CSP (default-src 'none') blocks the page's
+        // own scripts, and navigation never leaves that document (PreviewRules.Navigation).
+        settings.IsScriptEnabled = true;
         settings.AreDefaultScriptDialogsEnabled = false;
         settings.AreDevToolsEnabled = false;
         settings.AreBrowserAcceleratorKeysEnabled = false;
@@ -425,8 +427,9 @@ public sealed partial class DetailView : UserControl
     /// <summary>
     /// Section 11 with focus in the preview: keys go to the web view's own process, past the
     /// window's keyboard accelerators, and WinUI's WebView2 does not raise AcceleratorKeyPressed.
-    /// A script the host adds (page scripts stay off) posts the app's shortcut keys back, and
-    /// cancels them in the page; every other key, Ctrl+C and Ctrl+A among them, stays with the page.
+    /// A script the host adds, the only script that runs in the page, posts the app's shortcut keys
+    /// back and cancels them in the page; every other key, Ctrl+C and Ctrl+A among them, stays with
+    /// the page.
     /// </summary>
     string ForwardKeysScript()
     {

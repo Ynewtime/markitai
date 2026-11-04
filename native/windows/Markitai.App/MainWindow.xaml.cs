@@ -50,7 +50,7 @@ public sealed partial class MainWindow : Window
     ContentDialog? quitDialog;
     bool nothingLeftToLose;
     bool blockingSessionEnd;
-    bool queueHadItems;
+    UIElement? region;
     readonly List<Shortcut> shortcuts = [];
     static nint previousWindowProc;
 
@@ -93,31 +93,68 @@ public sealed partial class MainWindow : Window
 
     nint Hwnd => WinRT.Interop.WindowNative.GetWindowHandle(this);
 
-    /// <summary>DESIGN.md 6.2: Choose Files… has focus once the window is up (focus set before activation does not stick).</summary>
+    /// <summary>Focus goes into the region once the window is up: Choose Files… on an empty Convert (DESIGN.md 6.2). Focus set before activation does not stick.</summary>
     void FocusAtLaunch(object sender, WindowActivatedEventArgs args)
     {
         if (args.WindowActivationState == WindowActivationState.Deactivated)
             return;
         Activated -= FocusAtLaunch;
-        DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
-        {
-            if (page == Page.Convert && bench.Queue.Items.Count == 0)
-                ConvertEmptyView.FocusChoose();
-        });
+        FocusRegionLater();
+    }
+
+    void FocusRegionLater() => DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, FocusRegion);
+
+    /// <summary>
+    /// Puts focus on the first stop of the region that shows: Choose Files… (DESIGN.md 6.2), the
+    /// list's selected row, the first setting, or the History item when History is empty. Focus
+    /// a shortcut already put in the region, such as Ctrl+L's on the URL field, stays.
+    /// </summary>
+    void FocusRegion()
+    {
+        if (region is null || FocusWithin(region))
+            return;
+        if (region == ConvertEmptyView)
+            ConvertEmptyView.FocusChoose();
+        else if (region == ConvertPane)
+            ConvertPane.FocusList();
+        else if (region == HistoryPane)
+            HistoryPane.FocusList();
+        else if (region == HistoryEmptyView)
+            HistoryItem.Focus(FocusState.Programmatic);
+        else if (FocusManager.FindFirstFocusableElement(region) is UIElement first)
+            first.Focus(FocusState.Programmatic);
+    }
+
+    /// <summary>Whether keyboard focus is inside the element. Files passed at launch arrive before the window's content has a XamlRoot, and nothing has focus then.</summary>
+    bool FocusWithin(UIElement ancestor)
+    {
+        if (Root.XamlRoot is not { } xamlRoot)
+            return false;
+        for (var e = FocusManager.GetFocusedElement(xamlRoot) as DependencyObject; e is not null; e = VisualTreeHelper.GetParent(e))
+            if (e == ancestor)
+                return true;
+        return false;
     }
 
     public static new MainWindow Current { get; private set; } = null!;
 
     public Page Page => page;
 
+    /// <summary>
+    /// Shows a page for a shortcut or the app itself, and moves focus into it. A page chosen in
+    /// the navigation pane leaves focus there instead.
+    /// </summary>
     public void Go(Page target)
     {
+        if (target == page)
+            return;
         Nav.SelectedItem = target switch
         {
             Page.Convert => ConvertItem,
             Page.History => HistoryItem,
             _ => SettingsItem,
         };
+        FocusRegionLater();
     }
 
     void Nav_SelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
@@ -166,24 +203,32 @@ public sealed partial class MainWindow : Window
         SetForegroundWindow(Hwnd);
     }
 
-    /// <summary>Which of list, detail, empty states and Settings show, and whether list and detail stack.</summary>
+    /// <summary>
+    /// Which of list, detail, empty states and Settings show, and whether list and detail stack.
+    /// When the queue or History replaces the region that held focus, focus moves into the new
+    /// one; WinUI would otherwise hand it to the navigation's first button.
+    /// </summary>
     void ShowRegions()
     {
-        var convertEmpty = page == Page.Convert && bench.Queue.Items.Count == 0;
-        if (convertEmpty && queueHadItems)
-            DispatcherQueue.TryEnqueue(() => ConvertEmptyView.FocusChoose());
-        queueHadItems = bench.Queue.Items.Count > 0;
-        var historyEmpty = page == Page.History && bench.History.Entries.Count == 0;
-        var panes = page != Page.Settings && !convertEmpty && !historyEmpty;
+        UIElement shown = page switch
+        {
+            Page.Settings => SettingsView,
+            Page.Convert => bench.Queue.Items.Count == 0 ? ConvertEmptyView : ConvertPane,
+            _ => bench.History.Entries.Count == 0 ? HistoryEmptyView : HistoryPane,
+        };
+        if (region is not null && shown != region && FocusWithin(Workspace))
+            FocusRegionLater();
+        region = shown;
+        var panes = shown == ConvertPane || shown == HistoryPane;
         stacked = Workspace.ActualWidth > 0 && Workspace.ActualWidth < StackBelow;
         if (!panes || !stacked)
             detailShown = false;
         Panes.Visibility = Ui.Show(panes);
-        ConvertPane.Visibility = Ui.Show(page == Page.Convert);
-        HistoryPane.Visibility = Ui.Show(page == Page.History);
-        ConvertEmptyView.Visibility = Ui.Show(convertEmpty);
-        HistoryEmptyView.Visibility = Ui.Show(historyEmpty);
-        SettingsView.Visibility = Ui.Show(page == Page.Settings);
+        ConvertPane.Visibility = Ui.Show(shown == ConvertPane);
+        HistoryPane.Visibility = Ui.Show(shown == HistoryPane);
+        ConvertEmptyView.Visibility = Ui.Show(shown == ConvertEmptyView);
+        HistoryEmptyView.Visibility = Ui.Show(shown == HistoryEmptyView);
+        SettingsView.Visibility = Ui.Show(shown == SettingsView);
         ListColumn.Width = !stacked ? new GridLength(320) : detailShown ? new GridLength(0) : new GridLength(1, GridUnitType.Star);
         DetailColumn.Width = stacked && !detailShown ? new GridLength(0) : new GridLength(1, GridUnitType.Star);
         Detail.Visibility = Ui.Show(!stacked || detailShown);
@@ -297,9 +342,22 @@ public sealed partial class MainWindow : Window
 
     public void Retry(ConversionItem item) => bench.Retry(item);
 
-    public void Remove(ConversionItem item) => ConvertPane.Remove(item);
+    public void Remove(ConversionItem item) => Removing(() => ConvertPane.Remove(item));
 
-    public void Remove(HistoryEntry entry) => HistoryPane.Remove(entry);
+    public void Remove(HistoryEntry entry) => Removing(() => HistoryPane.Remove(entry));
+
+    /// <summary>
+    /// A removed row that had focus hands it to the navigation's first button, so focus goes back
+    /// into the region: to the row that took the removed one's place, or to the empty state.
+    /// </summary>
+    bool Removing(Func<bool> remove)
+    {
+        var focusInRegion = region is not null && FocusWithin(region);
+        var removed = remove();
+        if (removed && focusInRegion)
+            FocusRegionLater();
+        return removed;
+    }
 
     async void AppWindow_Closing(AppWindow sender, AppWindowClosingEventArgs args)
     {
@@ -570,9 +628,9 @@ public sealed partial class MainWindow : Window
         if (Ui.FocusInText(Root.XamlRoot))
             return false;
         if (page == Page.Convert && ConvertPane.SelectedItem is { } item)
-            return ConvertPane.Remove(item);
+            return Removing(() => ConvertPane.Remove(item));
         if (page == Page.History && HistoryPane.SelectedEntry is { } entry)
-            return HistoryPane.Remove(entry);
+            return Removing(() => HistoryPane.Remove(entry));
         return false;
     }
 

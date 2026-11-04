@@ -1,5 +1,4 @@
 using System.Collections.ObjectModel;
-using System.Collections.Specialized;
 using Markitai.Core;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -17,7 +16,7 @@ public sealed partial class HistoryList : UserControl
     public HistoryList()
     {
         InitializeComponent();
-        bench.History.Entries.CollectionChanged += Entries_CollectionChanged;
+        bench.History.Entries.CollectionChanged += (_, _) => ShowMatches();
         ShowMatches();
     }
 
@@ -48,35 +47,39 @@ public sealed partial class HistoryList : UserControl
         entry.Title.Contains(text, StringComparison.CurrentCultureIgnoreCase)
         || entry.Source.Contains(text, StringComparison.CurrentCultureIgnoreCase);
 
-    /// <summary>Binds the list to History itself when there is no query (so rows animate in place), else to the matches.</summary>
+    /// <summary>Binds the list to History itself when there is no query, else to the matches.</summary>
     void ShowMatches()
     {
-        var selected = SelectedEntry;
         if (query.Length > 0)
-        {
-            matches.Clear();
-            foreach (var entry in bench.History.Entries)
-                if (Matches(entry, query))
-                    matches.Add(entry);
-        }
+            UpdateMatches();
         var source = Shown;
         if (!ReferenceEquals(List.ItemsSource, source))
+        {
+            var selected = SelectedEntry;
             List.ItemsSource = source;
-        if (selected is not null && source.Contains(selected))
-            List.SelectedItem = selected;
+            if (selected is not null && source.Contains(selected))
+                List.SelectedItem = selected;
+        }
         NoResults.Text = App.Strings.Format("history.no_results", ("query", query));
         NoResults.Visibility = Ui.Show(query.Length > 0 && matches.Count == 0 && bench.History.Entries.Count > 0);
         ClearHistory.IsEnabled = bench.History.Entries.Count > 0;
     }
 
-    void Entries_CollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    /// <summary>
+    /// Removes and inserts only the rows that changed, so the selected row stays selected and
+    /// rows animate in place. History never reorders its entries, so the rows that stay are
+    /// already in History's order.
+    /// </summary>
+    void UpdateMatches()
     {
-        if (query.Length == 0)
-        {
-            ClearHistory.IsEnabled = bench.History.Entries.Count > 0;
-            return;
-        }
-        ShowMatches();
+        var wanted = bench.History.Entries.Where(entry => Matches(entry, query)).ToList();
+        var keep = new HashSet<HistoryEntry>(wanted, ReferenceEqualityComparer.Instance);
+        for (var i = matches.Count - 1; i >= 0; i--)
+            if (!keep.Contains(matches[i]))
+                matches.RemoveAt(i);
+        for (var i = 0; i < wanted.Count; i++)
+            if (i == matches.Count || !ReferenceEquals(matches[i], wanted[i]))
+                matches.Insert(i, wanted[i]);
     }
 
     void Search_TextChanged(AutoSuggestBox sender, AutoSuggestBoxTextChangedEventArgs args)

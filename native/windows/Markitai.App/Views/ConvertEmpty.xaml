@@ -11,8 +11,11 @@
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
         <TextBlock Text="{m:S Key=nav.convert}" Style="{StaticResource TitleTextBlockStyle}" Margin="0,8,0,0" />
-        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
-            <Grid MaxWidth="560" HorizontalAlignment="Stretch" VerticalAlignment="Center" Margin="0,24">
+        <ScrollViewer x:Name="Scroller" Grid.Row="1" VerticalScrollBarVisibility="Auto">
+            <!-- The ScrollViewer centers its content by the width the content measured, so the zone's
+                 width is set outright: the viewport's, capped at 560. Stretched, the zone was drawn
+                 wider than it measured and landed off center, past the right edge when narrow. -->
+            <Grid Width="{x:Bind Scroller.ViewportWidth, Mode=OneWay}" MaxWidth="560" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,24">
                 <Rectangle
                     x:Name="Zone"
                     RadiusX="8"

@@ -604,7 +604,7 @@ On a change, the Preview is rendered again with the new `theme`.
 | Concern | macOS `WKWebView` | Windows `WebView2` | GNOME WebKitGTK 6 |
 |---|---|---|---|
 | Load | `loadHTMLString(html, baseURL:)` with the file URL of `base_dir` (trailing slash), which grants read access to that folder | Write the document to `%LOCALAPPDATA%\Markitai\Preview\current.html`, then `Navigate` to its file URI | `load_html(html, Some(<file URI of base_dir>))` |
-| Scripts | `WKWebpagePreferences.allowsContentJavaScript = false` | `CoreWebView2.Settings.IsScriptEnabled = false` | `WebKitSettings` `enable-javascript` false |
+| Scripts | `WKWebpagePreferences.allowsContentJavaScript = false` | `CoreWebView2.Settings.IsScriptEnabled = true` for one host script, added with `AddScriptToExecuteOnDocumentCreatedAsync`, that forwards section 11 keys pressed in the preview. The page's own scripts never run: the document's CSP `default-src 'none'` blocks them, and navigation never leaves `current.html` | `WebKitSettings` `enable-javascript` false |
 | Network | CSP, plus a `WKContentRuleList` that blocks `^https?://` and `^wss?://`. `websiteDataStore` `.nonPersistent()` | CSP, plus `AddWebResourceRequestedFilter("*", All)` answering every non-`file:` request with 403 | CSP, plus an ephemeral `WebKitNetworkSession` |
 | Navigation | Allow the initial load and same-document fragment links. Open `http`, `https` and `mailto` links with `NSWorkspace.open` and cancel. Cancel all else | `NavigationStarting` and `NewWindowRequested` with the same rule, opening with `Launcher.LaunchUriAsync` | `decide-policy` with the same rule, opening with `GtkUriLauncher` |
 | Context menu | Only Copy | Only Copy (`ContextMenuRequested`) | Only Copy (`context-menu`) |
