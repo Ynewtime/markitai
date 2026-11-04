@@ -94,7 +94,7 @@ func (a *app) detailBar(c *ui.Context, t *target, stacked bool) {
 			}
 			label := a.lang.T("detail.copy")
 			if ui.Button(c.Key("detail.copy"), "").Label(label).Tooltip(label).Disabled(!done).Size(32, 32).Padding(0).Children(func() {
-				ui.Icon(c, copyIcon).FontSize(16).ContentTransition(ui.ContentTransition{})
+				ui.Icon(c, copyIcon).FontSize(16)
 			}).Clicked() {
 				a.copyMarkdown(c)
 			}

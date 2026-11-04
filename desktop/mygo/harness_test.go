@@ -34,10 +34,11 @@ type fakeDesk struct {
 	opened   []string
 	external []string
 	openErr  error
-	suggests []string
-	quits    int
-	closes   int
-	shows    int
+	// starts are where the folder and save dialogs started.
+	starts []string
+	quits  int
+	closes int
+	shows  int
 }
 
 func (d *fakeDesk) chooseFiles(done func([]string)) {
@@ -46,14 +47,15 @@ func (d *fakeDesk) chooseFiles(done func([]string)) {
 	}
 }
 
-func (d *fakeDesk) chooseFolder(done func(string)) {
+func (d *fakeDesk) chooseFolder(start string, done func(string)) {
+	d.starts = append(d.starts, start)
 	if dir := d.folder; dir != "" {
 		d.post(func() { done(dir) })
 	}
 }
 
-func (d *fakeDesk) saveAs(name string, done func(string)) {
-	d.suggests = append(d.suggests, name)
+func (d *fakeDesk) saveAs(start string, done func(string)) {
+	d.starts = append(d.starts, start)
 	if path := d.saveTo; path != "" {
 		d.post(func() { done(path) })
 	}
@@ -119,6 +121,9 @@ type harness struct {
 	pane  *fakePreview
 	home  string
 	lib   *core.Lib
+	// frame, when set, runs as each frame starts, before the app builds
+	// it: the Tester still shows the frame before.
+	frame func()
 }
 
 // start runs the app's view in a Tester over the real core, in an
@@ -165,7 +170,12 @@ func startWith(t *testing.T, lang l10n.Lang, prepare func(home string, f files))
 			}
 		}
 	})
-	h.tt = ui.NewTester(h.a.view, 1200, 780)
+	h.tt = ui.NewTester(func(c *ui.Context) {
+		if h.frame != nil {
+			h.frame()
+		}
+		h.a.view(c)
+	}, 1200, 780)
 	h.tt.SetLocale(string(lang))
 	h.tt.Frame()
 	return h

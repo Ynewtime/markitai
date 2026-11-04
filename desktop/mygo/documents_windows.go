@@ -29,7 +29,7 @@ func documentsFolder() string {
 		return fallback
 	}
 	if dir, ok := knownFolder(&folderIDDocuments); ok {
-		return dir
+		return filepath.Clean(dir)
 	}
 	return fallback
 }

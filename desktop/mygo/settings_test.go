@@ -67,6 +67,7 @@ func TestSettings(t *testing.T) {
 	locked := filepath.Join(h.home, "Locked")
 	lockFolder(t, locked)
 	h.desk.folder = locked
+	os.MkdirAll(h.a.files.output, 0o755)
 	h.click(h.T("settings.output.change"))
 	h.wantText(h.T("settings.output.unwritable"))
 	if h.a.settings.OutputFolder != nil {
@@ -78,6 +79,9 @@ func TestSettings(t *testing.T) {
 	h.click(h.T("settings.output.change"))
 	if h.a.output() != out || h.savedSettings()["output.folder"] != out {
 		t.Fatalf("output %q", h.a.output())
+	}
+	if starts := h.desk.starts; len(starts) != 2 || starts[0] != h.a.files.output || starts[1] != h.a.files.output {
+		t.Errorf("Change… started at %q, want the output folder %q", starts, h.a.files.output)
 	}
 	h.wantNoText(h.T("settings.output.unwritable"))
 	h.wantText(h.a.abbreviated(out))

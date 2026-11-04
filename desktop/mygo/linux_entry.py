@@ -10,12 +10,20 @@ copy of the entry and installs it as dev.markitai.mygo.desktop: in the files
 next to the app, the .tar.gz, install.sh, the Debian package and the PKGBUILD.
 It also gives the Debian package Native's long description, where mygo writes
 "<Name> is a desktop application.", and the PKGBUILD the workspace's license,
-which mygo reads from a package.json the app does not have. It fails rather
-than guess when mygo writes any of them differently."""
+which mygo reads from a package.json the app does not have. mygo installs the
+icon at 256 and 512 pixels only (linuxIcons, cmd/mygo/deb.go:248); the
+packages also get Native's icons at the smaller sizes Native installs, made
+from the same desktop/icon.png, which menus and docks show without scaling a
+large one down; install.sh's entry shows the archive's original by its path,
+as mygo writes it. It fails rather than guess when mygo writes any of them
+differently. Its output depends only on its input: the archives it writes
+again keep their members' times and the gzip header's."""
 from pathlib import Path
+import gzip
 import hashlib
 import io
 import re
+import struct
 import tarfile
 import textwrap
 import tomllib
@@ -25,6 +33,9 @@ SLUG = "markitai-mygo"
 REPO = Path(__file__).resolve().parents[2]
 NATIVE = REPO / "desktop" / "native" / "linux" / "data" / "dev.markitai.native.desktop"
 METAINFO = NATIVE.with_name("dev.markitai.native.metainfo.xml")
+NATIVE_ICONS = NATIVE.parent / "icons" / "hicolor"
+# The sizes Native installs that mygo build does not, which come from Native.
+ICON_SIZES = (16, 32, 48, 64, 128)
 # Keys the entry takes from Native's, as they are there.
 FROM_NATIVE = ("Comment[zh_CN]", "Keywords", "StartupNotify")
 INSTALLED = f"usr/share/applications/{SLUG}.desktop"
@@ -62,24 +73,58 @@ def entry(text, keys):
     return "\n".join(lines) + "\n"
 
 
+def icons():
+    """Native's icon at each of ICON_SIZES: [(size, png)]."""
+    found = []
+    for px in ICON_SIZES:
+        path = NATIVE_ICONS / f"{px}x{px}" / "apps" / "dev.markitai.native.png"
+        if not path.is_file():
+            raise SystemExit(f"no {path.relative_to(REPO)}")
+        found.append((px, path.read_bytes()))
+    return found
+
+
+def icon_dir(px):
+    return f"usr/share/icons/hicolor/{px}x{px}/apps"
+
+
 def replace_once(text, old, new, where):
     if text.count(old) != 1:
         raise SystemExit(f"{where}: expected {old!r} once, as mygo build wrote it")
     return text.replace(old, new)
 
 
-def rewrite_tar(data, change):
+def rewrite_tar(data, change, before=lambda member: ()):
     """data, a .tar.gz, with change(member, bytes) -> (member, bytes) applied to
-    each regular file; the others as they were."""
+    each regular file, the others as they were, and the members before(member)
+    returns, as (member, bytes or None), ahead of it. The gzip header keeps
+    data's time, as tarfile would write the time of the run."""
     out = io.BytesIO()
-    with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as src, tarfile.open(fileobj=out, mode="w:gz", format=src.format) as dst:
+    mtime = struct.unpack("<I", data[4:8])[0]
+    with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as src, \
+            gzip.GzipFile(fileobj=out, mode="wb", mtime=mtime) as packed, \
+            tarfile.open(fileobj=packed, mode="w", format=src.format) as dst:
         for member in src.getmembers():
+            for extra, body in before(member):
+                dst.addfile(extra, io.BytesIO(body) if body is not None else None)
             body = src.extractfile(member).read() if member.isfile() else None
             if body is not None:
                 member, body = change(member, body)
                 member.size = len(body)
             dst.addfile(member, io.BytesIO(body) if body is not None else None)
     return out.getvalue()
+
+
+def like(member, name, body=None):
+    """A member named name, a directory without body, with member's owner and
+    time: a member of the same archive."""
+    new = tarfile.TarInfo(name)
+    new.uid, new.gid, new.uname, new.gname, new.mtime = member.uid, member.gid, member.uname, member.gname, member.mtime
+    if body is None:
+        new.type, new.mode = tarfile.DIRTYPE, 0o755
+    else:
+        new.mode, new.size = 0o644, len(body)
+    return new
 
 
 def read_ar(data):
@@ -142,6 +187,24 @@ def finish(folder, version, keys=None):
     text = text[:inline.start(1)] + entry(inline.group(1), keys) + text[inline.end(1):]
     text = replace_once(text, f'"$pkgdir"/{INSTALLED}', f'"$pkgdir"/usr/share/applications/{APP_ID}.desktop', "PKGBUILD")
     text = replace_once(text, old_sum, new_sum, "PKGBUILD")
+    # The smaller icons, as sources next to it, as mygo writes its own.
+    small = icons()
+    sources, sums, installs = [], [], []
+    for px, png in small:
+        source = f"{SLUG}-{px}x{px}.png"
+        if source in text:
+            raise SystemExit(f"mygo build now writes {source}: drop {px} from ICON_SIZES")
+        (folder / source).write_bytes(png)
+        sources.append(f"'{source}'")
+        sums.append(f"'{hashlib.sha256(png).hexdigest()}'")
+        installs.append(f'\tinstall -Dm644 {source} "$pkgdir"/{icon_dir(px)}/{SLUG}.png\n')
+    first = f"'{SLUG}-256x256.png'"
+    text = replace_once(text, first, " ".join(sources) + " " + first, "PKGBUILD")
+    sums_at = re.search(r"^sha256sums=\('[0-9a-f]{64}' ", text, re.M)
+    if not sums_at:
+        raise SystemExit("PKGBUILD: no sha256sums as mygo build writes them")
+    text = text[:sums_at.end()] + " ".join(sums) + " " + text[sums_at.end():]
+    text = replace_once(text, f'\tinstall -Dm644 {SLUG}-256x256.png', "".join(installs) + f'\tinstall -Dm644 {SLUG}-256x256.png', "PKGBUILD")
     pkgbuild.write_text(text, encoding="utf-8")
 
     if deb is None:
@@ -159,9 +222,28 @@ def finish(folder, version, keys=None):
             sums["entry"] = hashlib.md5(body).hexdigest()
         return member, body
 
-    data = rewrite_tar(members[2][1], in_data)
+    # The smaller icons go ahead of mygo's 256, each in its directories.
+    # tarfile names a directory without its closing slash.
+    def icons_before(member):
+        name = member.name.removeprefix("./")
+        if any((name + "/").startswith(f"usr/share/icons/hicolor/{px}x{px}/") for px, _ in small):
+            raise SystemExit(f"mygo build now writes {name} in {deb.name}: drop its size from ICON_SIZES")
+        if name != "usr/share/icons/hicolor/256x256":
+            return ()
+        dot = "./" if member.name.startswith("./") else ""
+        added = []
+        for px, png in small:
+            added += [(like(member, f"{dot}usr/share/icons/hicolor/{px}x{px}"), None),
+                      (like(member, f"{dot}{icon_dir(px)}"), None),
+                      (like(member, f"{dot}{icon_dir(px)}/{SLUG}.png", png), png)]
+            sums[px] = hashlib.md5(png).hexdigest()
+        return added
+
+    data = rewrite_tar(members[2][1], in_data, icons_before)
     if "entry" not in sums:
         raise SystemExit(f"{deb.name}: no {INSTALLED}")
+    if len(sums) != 1 + len(small):
+        raise SystemExit(f"{deb.name}: no usr/share/icons/hicolor/256x256 to put the smaller icons beside")
 
     def in_control(member, body):
         if member.name in ("control", "./control"):
@@ -173,6 +255,10 @@ def finish(folder, version, keys=None):
             if len(at) != 1:
                 raise SystemExit(f"{deb.name}: md5sums names {INSTALLED} {len(at)} times")
             lines[at[0]] = f"{sums['entry']}  usr/share/applications/{APP_ID}.desktop"
+            big = [i for i, line in enumerate(lines) if line.endswith(f"  {icon_dir(256)}/{SLUG}.png")]
+            if len(big) != 1:
+                raise SystemExit(f"{deb.name}: md5sums names the 256 icon {len(big)} times")
+            lines[big[0]:big[0]] = [f"{sums[px]}  {icon_dir(px)}/{SLUG}.png" for px, _ in small]
             body = ("\n".join(lines) + "\n").encode("utf-8")
         return member, body
 

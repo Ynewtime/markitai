@@ -34,8 +34,11 @@ type coreLib interface {
 // UI thread, and not at all when canceled.
 type desk interface {
 	chooseFiles(done func(paths []string))
-	chooseFolder(done func(path string))
-	saveAs(name string, done func(path string))
+	// chooseFolder and saveAs start in an absolute folder: a bare name
+	// starts the systems' dialogs in the working directory, the data
+	// folder (section 10.2).
+	chooseFolder(start string, done func(path string))
+	saveAs(start string, done func(path string))
 	showItemInFolder(path string)
 	openPath(path string) error
 	openExternal(url string) error
@@ -102,8 +105,10 @@ type app struct {
 	queue    model.Queue
 	history  *model.History
 
-	router       *ui.Router
-	page         string
+	router *ui.Router
+	page   string
+	// built is the router path the last frame built.
+	built        string
 	look         look
 	listWidth    float32
 	detail       detailView
@@ -123,8 +128,11 @@ type app struct {
 	asking       asking
 	quitting     bool
 
-	announce  []string
-	later     []action
+	announce []string
+	later    []action
+	// wheel is the notches of Ctrl and the wheel over the preview not yet
+	// stepped (wheeled).
+	wheel     float64
 	previews  previews
 	markdowns map[model.ItemID]*markdownFile
 	menu      *menuBar
@@ -143,6 +151,7 @@ func newApp(lang l10n.Lang, lib coreLib, d desk, pane previewPane, post func(fun
 		lang: lang, core: lib, desk: d, pane: pane, post: post, files: f, goos: runtime.GOOS,
 		router:       ui.NewRouter(pathConvert),
 		page:         pathConvert,
+		built:        pathConvert,
 		listWidth:    320,
 		warningsOpen: map[model.ItemID]*bool{},
 		markdowns:    map[model.ItemID]*markdownFile{},
@@ -195,7 +204,12 @@ func (a *app) abbreviated(path string) string {
 }
 
 func (a *app) setNotice(text string) {
-	a.notice = notice{text: text, at: time.Now(), page: a.page}
+	a.noticeOn(a.page, text)
+}
+
+// noticeOn shows a notice on page, where what it is about began.
+func (a *app) noticeOn(page, text string) {
+	a.notice = notice{text: text, at: time.Now(), page: page}
 	a.announce = append(a.announce, text)
 }
 
@@ -253,6 +267,23 @@ func (a *app) dropped(d transfer.Data) {
 			links = []string{mozURLLink(b)}
 		}
 	}
+	a.addLinks(links)
+}
+
+// droppedOnPreview takes a drop on the preview's page, as on the content
+// area: files, else the http and https links (8.3).
+func (a *app) droppedOnPreview(paths, links []string) {
+	a.post(func() {
+		if len(paths) > 0 {
+			a.addPaths(paths)
+			return
+		}
+		a.addLinks(links)
+	})
+}
+
+// addLinks adds the http and https links among links.
+func (a *app) addLinks(links []string) {
 	var sources []model.Source
 	for _, l := range links {
 		if s, ok := webLink(l); ok {
@@ -611,21 +642,43 @@ func (a *app) saveAs() {
 	if !ok {
 		return
 	}
-	a.desk.saveAs(filepath.Base(d.Folder)+".md", func(path string) {
+	page := a.page
+	start := filepath.Join(existingFolder(a.output()), filepath.Base(d.Folder)+".md")
+	a.desk.saveAs(start, func(path string) {
+		// The dialog asked before replacing the file it names. A name
+		// given without an extension takes .md, and replaces nothing.
+		fresh := filepath.Ext(path) == ""
+		if fresh {
+			path += ".md"
+		}
 		go func() {
-			err := save(d, path)
+			err := save(d, path, fresh)
 			a.post(func() {
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "save as: %v\n", err)
-					a.setNotice(a.lang.T("error.save_failed"))
+					a.noticeOn(page, a.lang.T("error.save_failed"))
 				}
 			})
 		}()
 	})
 }
 
-func save(d model.Done, path string) error {
-	if err := os.WriteFile(path, []byte(d.Result.Markdown), 0o644); err != nil {
+// save writes the Markdown to path, and its images beside it. fresh
+// leaves a file already at path as it is, and fails.
+func save(d model.Done, path string, fresh bool) error {
+	flags := os.O_WRONLY | os.O_CREATE | os.O_TRUNC
+	if fresh {
+		flags = os.O_WRONLY | os.O_CREATE | os.O_EXCL
+	}
+	f, err := os.OpenFile(path, flags, 0o644)
+	if err != nil {
+		return err
+	}
+	_, err = f.WriteString(d.Result.Markdown)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
 		return err
 	}
 	if !strings.Contains(d.Result.Markdown, ".markitai/") {
@@ -744,8 +797,24 @@ func (a *app) chooseFiles() {
 	})
 }
 
+// existingFolder is dir, or its nearest folder that exists, as the output
+// folder may not yet: a dialog starts there.
+func existingFolder(dir string) string {
+	for {
+		if st, err := os.Stat(dir); err == nil && st.IsDir() {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			home, _ := os.UserHomeDir()
+			return home
+		}
+		dir = parent
+	}
+}
+
 func (a *app) chooseOutput() {
-	a.desk.chooseFolder(func(dir string) {
+	a.desk.chooseFolder(existingFolder(a.output()), func(dir string) {
 		if dir != "" {
 			a.setOutput(dir)
 		}

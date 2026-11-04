@@ -54,6 +54,11 @@ type previews struct {
 	// placed and wasPlaced say whether this frame and the frame before it
 	// built the web view. view resets placed as each frame starts.
 	placed, wasPlaced bool
+	// hold leaves the web view out of the frame being built, all its
+	// passes. mygo hands the keyboard back to the content as it hides a
+	// web view that has it, and no other way (DESIGN 14): a field a focus
+	// action chooses then gets the keys.
+	hold bool
 	// failed is the document the core could not render, which is never
 	// kept. failedShown and failedWasShown say whether this frame and the
 	// frame before it showed that failure: shown again after it was not,
@@ -130,6 +135,10 @@ func (a *app) preview(c *ui.Context, t *target, d model.Done) {
 				}
 			})
 		})
+	}
+	if p.hold {
+		ui.Box(c).Grow(1).Basis(0)
+		return
 	}
 	if p.shown == page {
 		web := ui.WebView(c.Key("preview"), p.pane.View()).Grow(1).Basis(0).Label(a.lang.T("a11y.preview"))

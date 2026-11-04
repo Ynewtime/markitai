@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -70,6 +71,29 @@ func TestDropLinkFromChromium(t *testing.T) {
 	}
 }
 
+// TestDropOnThePreview adds what the preview's page forwards as a drop on
+// the content area adds it: the files, else the web links alone
+// (DESIGN 8.3).
+func TestDropOnThePreview(t *testing.T) {
+	h := start(t, l10n.En)
+	page := &previewService{goos: h.a.goos, press: h.a.pressed, drop: h.a.droppedOnPreview}
+	page.Drop(nil, []string{"javascript:alert(1)", "file:///etc/hosts", "two words"})
+	h.settle()
+	if len(h.a.queue.Items) != 0 {
+		t.Fatalf("items %+v", h.a.queue.Items)
+	}
+	page.Drop(nil, []string{"https://example.com/article"})
+	h.settle()
+	if len(h.a.queue.Items) != 1 || h.a.queue.Items[0].Source != (model.Source{Kind: model.URL, Value: "https://example.com/article"}) {
+		t.Fatalf("items %+v", h.a.queue.Items)
+	}
+	page.Drop([]string{h.write("a.md", "# A\n")}, []string{"https://example.com/other"})
+	h.settle()
+	if h.item("a.md") == nil || len(h.a.queue.Items) != 2 {
+		t.Fatalf("items %+v", h.a.queue.Items)
+	}
+}
+
 func containsFormat(fs []transfer.Format, f transfer.Format) bool {
 	for _, g := range fs {
 		if g == f {
@@ -114,6 +138,64 @@ func TestNoticeStaysOnItsPage(t *testing.T) {
 	h.a.setNotice(h.T("error.save_failed"))
 	h.tt.Frame()
 	h.wantText(h.T("error.save_failed"))
+}
+
+// TestSaveAsAndFolderDialogs start in the output folder, or its nearest
+// folder that exists, never by a bare name in the working directory, the
+// data folder. A name without an extension takes .md and replaces
+// nothing the dialog did not ask about; a failure shows on the page Save
+// As began on (DESIGN 6.7).
+func TestSaveAsAndFolderDialogs(t *testing.T) {
+	h := start(t, l10n.En)
+	h.convert(h.write("a.md", "# A\n"))
+	done := h.item("a.md").State.(model.Done)
+	saved := filepath.Join(h.home, "Saved")
+	os.MkdirAll(saved, 0o755)
+	notes := filepath.Join(saved, "notes.md")
+	saveAs := func(answer string) {
+		h.desk.saveTo = answer
+		h.tt.Key(ui.Cmd|ui.Shift, ui.KeyS)
+		h.settle()
+	}
+
+	saveAs(filepath.Join(saved, "notes"))
+	h.until("notes.md", func() bool { b, _ := os.ReadFile(notes); return string(b) == done.Result.Markdown })
+	if want := filepath.Join(h.a.output(), filepath.Base(done.Folder)+".md"); h.desk.starts[0] != want {
+		t.Errorf("Save As started at %q, want %q", h.desk.starts[0], want)
+	}
+
+	// The dialog answers once the person has gone on to Settings.
+	os.WriteFile(notes, []byte("mine"), 0o644)
+	var answer func()
+	h.desk.post = func(fn func()) { answer = fn }
+	saveAs(filepath.Join(saved, "notes"))
+	h.desk.post = func(fn func()) { h.posts <- fn }
+	h.click(h.T("nav.settings"))
+	if answer == nil {
+		t.Fatal("Save As showed no dialog")
+	}
+	h.posts <- answer
+	h.until("the failure", func() bool { return h.a.notice.text == h.T("error.save_failed") })
+	if b, _ := os.ReadFile(notes); string(b) != "mine" || h.a.notice.page != pathConvert {
+		t.Fatalf("notes.md %q, the notice on %q", b, h.a.notice.page)
+	}
+	h.click(h.T("nav.convert"))
+	h.wantText(h.T("error.save_failed"))
+
+	saveAs(notes)
+	h.until("notes.md replaced", func() bool { b, _ := os.ReadFile(notes); return string(b) == done.Result.Markdown })
+
+	missing := filepath.Join(h.home, "Gone", "Markitai")
+	h.a.settings.OutputFolder = &missing
+	h.desk.saveTo = ""
+	h.tt.Key(ui.Cmd|ui.Shift, ui.KeyS)
+	h.settle()
+	h.a.chooseOutput()
+	h.settle()
+	starts := h.desk.starts[len(h.desk.starts)-2:]
+	if want := []string{filepath.Join(h.home, filepath.Base(done.Folder)+".md"), h.home}; !slices.Equal(starts, want) {
+		t.Errorf("with the output folder gone the dialogs started at %q, want %q", starts, want)
+	}
 }
 
 // failingPreview is the core whose preview_html fails while fail holds.

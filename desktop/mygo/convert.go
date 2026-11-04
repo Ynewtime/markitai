@@ -11,10 +11,8 @@ import (
 )
 
 // rowMotion fades a row in and out while the rows below slide (section 7).
-var rowMotion = ui.ElementTransition{Duration: 150 * time.Millisecond, Ease: ui.EaseOut, Enter: &ui.Motion{}, Exit: &ui.Motion{}}
-
-// dropMotion fades the drop frame's border to the accent.
-var dropMotion = ui.ElementTransition{Colors: true, Duration: 120 * time.Millisecond}
+// Their colors, as a selection's fill, change at once.
+var rowMotion = ui.ElementTransition{Duration: 150 * time.Millisecond, Ease: ui.EaseOut, Position: true, Enter: &ui.Motion{}, Exit: &ui.Motion{}}
 
 func (a *app) convertPage(c *ui.Context, dragging, item bool) {
 	if len(a.queue.Items) == 0 {
@@ -30,7 +28,7 @@ func (a *app) convertPage(c *ui.Context, dragging, item bool) {
 // the accent while a drag is over the window.
 func (a *app) dropFrame(e ui.Element, dragging bool) ui.Element {
 	l := &a.look
-	e = e.Radius(12).Role(ui.RoleGroup).Label(a.lang.T("a11y.drop_zone")).Transition(dropMotion)
+	e = e.Radius(12).Role(ui.RoleGroup).Label(a.lang.T("a11y.drop_zone"))
 	if dragging {
 		return e.Border(1.5, l.theme.Accent)
 	}
@@ -58,7 +56,7 @@ func (a *app) emptyConvert(c *ui.Context, dragging bool) {
 						if dragging {
 							heading = a.lang.T("convert.drop.release")
 						}
-						ui.Text(c, heading).FontSize(l.size(22)).FontWeight(600).TextAlign(ui.Center).ContentTransition(ui.ContentTransition{})
+						ui.Text(c, heading).FontSize(l.size(22)).FontWeight(600).TextAlign(ui.Center)
 						ui.Text(c, a.lang.T("convert.empty.body", "folder", a.abbreviated(a.output()))).TextColor(l.theme.TextMuted).TextAlign(ui.Center)
 						ui.PrimaryButton(c.Key("convert.choose"), a.lang.T("convert.choose")).AutoFocus().OnClick(a.chooseFiles)
 						ui.Row(c).FillWidth().Gap(12).AlignItems(ui.Center).Children(func() {
@@ -131,7 +129,7 @@ func (a *app) convertList(c *ui.Context, dragging, stacked bool) {
 			if dragging {
 				label = a.lang.T("convert.drop.release")
 			}
-			ui.Text(c, label).TextColor(l.theme.TextMuted).SingleLine().Grow(1).Basis(0).ContentTransition(ui.ContentTransition{})
+			ui.Text(c, label).TextColor(l.theme.TextMuted).SingleLine().Grow(1).Basis(0)
 			if ui.Button(c.Key("convert.choose"), a.lang.T("convert.choose")).Clicked() {
 				a.chooseFiles()
 			}
@@ -203,7 +201,7 @@ func (a *app) row(c *ui.Context, it *model.Item, selected bool) ui.Element {
 	case row.Hovered():
 		fill = l.rowHover
 	}
-	row.Background(row.AnimateColor("fill", fill, ui.Animation{Duration: 120 * time.Millisecond, Ease: ui.EaseOut})).TextColor(l.theme.Text)
+	row.Background(fill).TextColor(l.theme.Text)
 	a.leadingBar(row, selected)
 	row.ContextMenu(func(m *ui.Menu) { a.rowMenu(c, m, it) })
 	row.Children(func() {
@@ -218,19 +216,19 @@ func (a *app) row(c *ui.Context, it *model.Item, selected bool) ui.Element {
 			} else {
 				ui.Text(c, it.Title).SingleLine()
 			}
-			ui.Text(c, subtitle).FontSize(l.b - 2).SingleLine().TextColor(l.theme.TextMuted).ContentTransition(ui.ContentTransition{})
+			ui.Text(c, subtitle).FontSize(l.b - 2).SingleLine().TextColor(l.theme.TextMuted)
 		})
 		switch s := it.State.(type) {
 		case model.Queued:
-			ui.Icon(c, iconQueued).FontSize(14).TextColor(l.theme.TextMuted).ContentTransition(ui.ContentTransition{})
+			ui.Icon(c, iconQueued).FontSize(14).TextColor(l.theme.TextMuted)
 		case model.Converting:
 			ui.Spinner(c).Label(a.lang.T("state.converting"))
 		case model.Done:
 			if len(s.Result.Warnings) > 0 {
-				ui.Icon(c, iconWarning).FontSize(14).TextColor(l.theme.Warning).ContentTransition(ui.ContentTransition{})
+				ui.Icon(c, iconWarning).FontSize(14).TextColor(l.theme.Warning)
 			}
 		case model.Failed:
-			ui.Icon(c, iconFailed).FontSize(14).TextColor(l.theme.Danger).ContentTransition(ui.ContentTransition{})
+			ui.Icon(c, iconFailed).FontSize(14).TextColor(l.theme.Danger)
 		}
 	})
 	return row

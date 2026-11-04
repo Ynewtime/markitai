@@ -83,6 +83,78 @@ func TestStackedLayout(t *testing.T) {
 	}
 }
 
+// TestWideningFromAStackedItem shows the list and the item side by side
+// once the window widens: from an item page that came in, and while it
+// still moves in or out. The page going away and the one shown built the
+// History list in one frame: "a ListState shown by two Lists".
+func TestWideningFromAStackedItem(t *testing.T) {
+	for _, moment := range []string{"shown", "pushing", "popping"} {
+		t.Run(moment, func(t *testing.T) {
+			h := start(t, l10n.En)
+			h.convert(h.write("a.md", "# A\n"))
+			h.tt.SetSize(800, 780)
+			h.click(h.T("nav.history"))
+			h.rest()
+			h.click(h.entryLabel("a.md"))
+			h.tt.Frame()
+			switch moment {
+			case "shown":
+				h.rest()
+			case "popping":
+				h.rest()
+				h.tt.Key(0, ui.KeyEscape)
+				h.tt.Frame()
+			}
+			if moment != "shown" && !h.tt.FramePending() {
+				t.Fatalf("%s: no page moves", moment)
+			}
+			h.tt.SetSize(1200, 780)
+			h.tt.Frame()
+			h.rest()
+			if h.a.router.Path() != pathHistory || h.a.historyID != h.entry("a.md").ID {
+				t.Fatalf("widening: %s", h.a.router.Path())
+			}
+			h.find(h.entryLabel("a.md"))
+			// The entry's Markdown is read off the UI thread: on Windows
+			// it was still being read here.
+			h.until("a.md's Markdown", func() bool { return h.has(h.T("detail.preview")) })
+		})
+	}
+}
+
+// TestStackedClickOnTheChosenRow pushes the item page for a click on the
+// row chosen already, in History as in Convert (6.10).
+func TestStackedClickOnTheChosenRow(t *testing.T) {
+	h := start(t, l10n.En)
+	h.convert(h.write("a.md", "# A\n"))
+	h.tt.SetSize(800, 780)
+	h.rest()
+	h.click(h.rowLabel("a.md"))
+	h.rest()
+	h.click(h.T("common.back"))
+	h.rest()
+	h.click(h.rowLabel("a.md"))
+	h.rest()
+	if h.a.router.Path() != pathConvertItem {
+		t.Fatalf("Convert: %s", h.a.router.Path())
+	}
+
+	h.click(h.T("nav.history"))
+	h.rest()
+	h.click(h.entryLabel("a.md"))
+	h.rest()
+	h.click(h.T("common.back"))
+	h.rest()
+	if h.a.router.Path() != pathHistory || h.a.historyID != h.entry("a.md").ID {
+		t.Fatalf("back: %s", h.a.router.Path())
+	}
+	h.click(h.entryLabel("a.md"))
+	h.rest()
+	if h.a.router.Path() != pathHistoryItem {
+		t.Fatalf("History: a click on the chosen row left %s", h.a.router.Path())
+	}
+}
+
 func TestNarrowWindow(t *testing.T) {
 	h := start(t, l10n.En)
 	h.tt.SetSize(640, 480)
@@ -96,8 +168,8 @@ func TestNarrowWindow(t *testing.T) {
 }
 
 // TestEmptyConvertFits keeps the empty page's drop zone 560 wide, or as
-// wide as the room, centered (DESIGN 6.2), and its URL row reachable at
-// the smallest window, by scrolling.
+// wide as the room, centered (DESIGN 6.2), and all of it in the smallest
+// content, 640 by 480, without scrolling (section 6.10).
 func TestEmptyConvertFits(t *testing.T) {
 	for _, lang := range []l10n.Lang{l10n.En, l10n.ZhHans} {
 		t.Run(string(lang), func(t *testing.T) {
@@ -118,20 +190,12 @@ func TestEmptyConvertFits(t *testing.T) {
 			h.tt.SetSize(640, 480)
 			h.rest()
 			zone = h.find(h.T("a11y.drop_zone"))
-			if zone.X < sidebarWidth || zone.X+zone.W > 640 {
-				t.Errorf("at 640x480 the zone %v reaches out of the content", zone)
+			if zone.X < sidebarWidth || zone.X+zone.W > 640 || zone.Y < title.Y+title.H || zone.Y+zone.H > 480 {
+				t.Errorf("at 640x480 the zone %v is not all in the content", zone)
 			}
 			add := h.find(h.T("convert.url.add"))
-			if add.X < sidebarWidth || add.X+add.W > 640 {
-				t.Fatalf("at 640x480 Add %v is off the window's side", add)
-			}
-			if add.Y+add.H > 480 {
-				h.tt.Scroll(zone.X+zone.W/2, 300, 0, add.Y+add.H-480+24)
-				h.rest()
-				add = h.find(h.T("convert.url.add"))
-			}
-			if add.Y < 0 || add.Y+add.H > 480 {
-				t.Errorf("at 640x480 Add %v cannot be scrolled into the window", add)
+			if add.X < sidebarWidth || add.X+add.W > 640 || add.Y < zone.Y || add.Y+add.H > zone.Y+zone.H {
+				t.Errorf("at 640x480 Add %v is not in the zone %v", add, zone)
 			}
 		})
 	}
@@ -185,6 +249,38 @@ func TestMotion(t *testing.T) {
 		if moving == reduce {
 			t.Errorf("reduce %v: at 50 ms the row was at %v, between %v and %v: %v", reduce, mid.Y, before.Y, after.Y, moving)
 		}
+	}
+}
+
+// TestMotionKeptToTheSpec moves only what DESIGN 7 keeps: a sidebar
+// page, a row's selection and a drag's highlight show at once; the stacked
+// layout's push slides.
+func TestMotionKeptToTheSpec(t *testing.T) {
+	h := start(t, l10n.En)
+	h.convert(h.write("a.md", "# A\n"), h.write("b.md", "# B\n"))
+	steps := []struct {
+		name   string
+		do     func()
+		moving bool
+	}{
+		{"history", func() { h.click(h.T("nav.history")) }, false},
+		{"convert", func() { h.click(h.T("nav.convert")) }, false},
+		{"selection", func() {
+			// The pointer comes first: mygo's sidebar item fades its own
+			// hover as the pointer leaves it.
+			r := h.find(h.rowLabel("b.md"))
+			h.tt.Move(r.X+r.W/2, r.Y+r.H/2)
+			h.rest()
+			h.click(h.rowLabel("b.md"))
+		}, false},
+		{"stacked push", func() { h.tt.SetSize(800, 780); h.rest(); h.click(h.rowLabel("a.md")) }, true},
+	}
+	for _, s := range steps {
+		s.do()
+		if h.tt.FramePending() != s.moving {
+			t.Errorf("%s: moving %v, want %v", s.name, h.tt.FramePending(), s.moving)
+		}
+		h.rest()
 	}
 }
 

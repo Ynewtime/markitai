@@ -190,12 +190,15 @@ the module's embedded copies of `desktop/strings.json` and `desktop/icon.png`
 differ from them or `mygo.json`'s version from the workspace's, and runs
 `go vet` and `go test` with `HOME`, `MARKITAI_HOME`, the XDG folders,
 `USERPROFILE`, `APPDATA`, `LOCALAPPDATA`, `TEMP` and `TMP` in a temporary
-folder. It builds no app and writes no tracked file. Without `--check`,
+folder. The preview script's tests run it in Node and skip when `node` is not
+on the `PATH`. It builds no app and writes no tracked file. Without `--check`,
 `build.py` refreshes those copies and builds the app into
 `desktop/mygo/build/<goos>-<goarch>/`. On Linux, `desktop/mygo/linux_entry.py`
 then gives every copy of the desktop entry (beside the app, in the `.tar.gz`,
 `install.sh`, the Debian package and the `PKGBUILD`) Markitai Native's keys and
-the name `dev.markitai.mygo.desktop`, which `mygo build` cannot, and fails when
+the name `dev.markitai.mygo.desktop`, which `mygo build` cannot, adds Markitai
+Native's 16 to 128 pixel icons to the Debian package and the `PKGBUILD`, keeps
+the archives' times so that the same build gives the same bytes, and fails when
 `mygo build` writes them differently. The
 Windows core links the C runtime statically and builds in
 `target/mygo-windows`; the macOS core's install name is

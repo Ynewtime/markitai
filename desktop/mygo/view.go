@@ -66,7 +66,15 @@ func (a *app) view(c *ui.Context) {
 			dragging = over || content.FileDragOver()
 		}
 		content.Children(func() {
+			// Pages move only as the stacked layout pushes and pops; any
+			// other change shows at once (section 7), as does the stacked
+			// item page that a wider window replaces with the list.
+			a.router.Transition = ui.TransitionNone
+			if a.stacked(c) && top(a.router.Path()) == top(a.built) {
+				a.router.Transition = ui.TransitionAuto
+			}
 			a.router.View(c, func(r *ui.Route) { a.route(c, r, dragging) }).Grow(1)
+			a.built = a.router.Path()
 		})
 	})
 	a.alerts(c)
@@ -144,7 +152,8 @@ func (a *app) listAndDetail(c *ui.Context, item bool, list func(stacked bool), d
 }
 
 // sidebar is the navigation: the pages, then Settings at the bottom, two
-// sidebars on one page path (section 14).
+// sidebars on one page path (section 14), each a tree named for assistive
+// technology (section 11).
 func (a *app) sidebar(c *ui.Context) {
 	l := &a.look
 	ui.Themed(c, &l.quiet).Width(sidebarWidth).Shrink(0).Background(l.sidebarFill).BorderWidth(0, 1, 0, 0).BorderColor(l.rule).
@@ -153,13 +162,13 @@ func (a *app) sidebar(c *ui.Context) {
 		if ui.Sidebar(c.Key("nav"), &page, func() {
 			a.sidebarItem(c, pathConvert, iconConvert, "nav.convert")
 			a.sidebarItem(c, pathHistory, iconHistory, "nav.history")
-		}).Grow(1).Background(l.sidebarFill).Changed() {
+		}).Grow(1).Background(l.sidebarFill).Label(a.lang.T("app.name.mygo")).Changed() {
 			a.show(page)
 		}
 		footer := a.page
 		if ui.Sidebar(c.Key("nav.footer"), &footer, func() {
 			a.sidebarItem(c, pathSettings, iconSettings, "nav.settings")
-		}).Background(l.sidebarFill).Changed() {
+		}).Background(l.sidebarFill).Label(a.lang.T("nav.settings")).Changed() {
 			a.show(footer)
 		}
 	})
@@ -218,7 +227,6 @@ func (a *app) noticeLine(c *ui.Context, page string) {
 	c.After(left)
 	l := &a.look
 	ui.Row(c.Key("notice")).Gap(6).AlignItems(ui.Center).Role(ui.RoleStatus).
-		Transition(ui.ElementTransition{Duration: 150 * time.Millisecond, Enter: &ui.Motion{Y: -4}, Exit: &ui.Motion{}}).
 		Children(func() {
 			ui.Icon(c, iconWarning).FontSize(14).TextColor(l.theme.Warning)
 			ui.Text(c, a.notice.text).Grow(1).Basis(0)

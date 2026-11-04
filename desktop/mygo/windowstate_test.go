@@ -32,3 +32,24 @@ func TestFitWindow(t *testing.T) {
 		t.Errorf("first size on a large screen: %dx%d", w, h)
 	}
 }
+
+// TestKeepFrame: a zoomed state whose frame covers its work area is saved
+// by the frame (macOS, the review's 1728x994 at 0,33); a window zoomed from
+// a smaller frame, and one full screen, keep their flags.
+func TestKeepFrame(t *testing.T) {
+	areas := []mygo.Rectangle{{X: 0, Y: 33, Width: 1728, Height: 994}, {X: 1728, Y: -400, Width: 2560, Height: 1415}}
+	for _, c := range []struct {
+		name     string
+		in, want mygo.WindowState
+	}{
+		{"fills the work area", mygo.WindowState{X: 0, Y: 33, Width: 1728, Height: 994, Maximized: true}, mygo.WindowState{X: 0, Y: 33, Width: 1728, Height: 994}},
+		{"fills the second display's", mygo.WindowState{X: 1728, Y: -400, Width: 2560, Height: 1415, Maximized: true}, mygo.WindowState{X: 1728, Y: -400, Width: 2560, Height: 1415}},
+		{"zoomed from a smaller frame", mygo.WindowState{X: 100, Y: 120, Width: 900, Height: 640, Maximized: true}, mygo.WindowState{X: 100, Y: 120, Width: 900, Height: 640, Maximized: true}},
+		{"full screen", mygo.WindowState{X: 0, Y: 33, Width: 1728, Height: 994, Maximized: true, FullScreen: true}, mygo.WindowState{X: 0, Y: 33, Width: 1728, Height: 994, Maximized: true, FullScreen: true}},
+		{"not zoomed", mygo.WindowState{X: 0, Y: 33, Width: 1728, Height: 994}, mygo.WindowState{X: 0, Y: 33, Width: 1728, Height: 994}},
+	} {
+		if got := keepFrame(c.in, areas); got != c.want {
+			t.Errorf("%s: %+v, want %+v", c.name, got, c.want)
+		}
+	}
+}

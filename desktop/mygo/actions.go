@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"math"
 	"strings"
 
 	"github.com/egoist/mygo/ui"
@@ -206,8 +207,11 @@ func (a *app) shortcuts(c *ui.Context) {
 	}
 }
 
-// previewKeysJS forwards the page's keys of section 8.3 to PreviewKeys.Press.
-func previewKeysJS(goos string) string {
+// previewJS is the preview's script (section 8.3). The page's keys of
+// section 9.2 go to Preview.Press, as does the mouse's back button; links
+// and files dropped on the page go to Preview.Drop; on Windows, Ctrl with
+// the wheel goes to Preview.Wheel. The document itself can be tabbed to.
+func previewJS(goos string) string {
 	type key struct {
 		Code   string `json:"code"`
 		Mod    bool   `json:"mod"`
@@ -233,56 +237,149 @@ func previewKeysJS(goos string) string {
 		mod, other = "e.metaKey", "e.ctrlKey"
 	}
 	// WebView2 zooms the page itself on Ctrl and the wheel, apart from
-	// view.zoom (DESIGN 8): the wheel steps view.zoom instead, a notch, or
-	// a touchpad's 100 pixels, a step.
+	// view.zoom (DESIGN 8): the page hands the wheel to the app instead,
+	// which steps view.zoom (wheeled).
 	wheel := ""
 	if goos == "windows" {
 		wheel = `
-  let wheel = 0;
   addEventListener("wheel", (e) => {
-    if (!e.ctrlKey || e.metaKey || e.deltaY === 0) return;
+    if (!e.ctrlKey || e.metaKey || !e.wheelDeltaY) return;
     e.preventDefault();
     e.stopPropagation();
-    if (e.deltaMode !== 0 || Math.abs(e.deltaY) >= 50) {
-      wheel = e.deltaY;
-    } else {
-      wheel += e.deltaY;
-      if (Math.abs(wheel) < 100) return;
-    }
-    globalThis.mygo?.call("PreviewKeys.Press", wheel < 0 ? "zoom_in" : "zoom_out");
-    wheel = 0;
+    call("Wheel", e.wheelDeltaY);
   }, {capture: true, passive: false});`
 	}
 	return `(() => {
+  const call = (method, ...args) => globalThis.mygo?.call("Preview." + method, ...args);
   const keys = ` + string(table) + `;
+  // A key goes by the US key that types what it types, as mygo takes the
+  // native keys (platform.KeyForRune), on any keyboard layout: AZERTY
+  // types A at KeyQ's place and a comma at KeyM's. A key that types none,
+  // as a Cyrillic letter, goes by its place.
+  const us = {"-": "Minus", "=": "Equal", ",": "Comma", ".": "Period", "/": "Slash", ";": "Semicolon", "'": "Quote",
+    "[": "BracketLeft", "]": "BracketRight", "\\": "Backslash", "\x60": "Backquote"};
+  const place = (e) => /^[a-z]$/i.test(e.key) ? "Key" + e.key.toUpperCase() : /^[0-9]$/.test(e.key) ? "Digit" + e.key : us[e.key] ?? e.code;
   addEventListener("keydown", (e) => {
     if (` + other + `) return;
+    const code = place(e);
     for (const k of keys) {
-      if (e.code === k.code && ` + mod + ` === k.mod && e.altKey === k.alt && (k.shift === null || e.shiftKey === k.shift)) {
+      if (code === k.code && ` + mod + ` === k.mod && e.altKey === k.alt && (k.shift === null || e.shiftKey === k.shift)) {
         e.preventDefault();
         e.stopPropagation();
-        globalThis.mygo?.call("PreviewKeys.Press", k.action);
+        call("Press", k.action);
         return;
       }
     }
-  }, true);` + wheel + `
+  }, true);
+  // The mouse's back button is the app's Back and its forward button does
+  // nothing: neither moves the page's own history. WebKitGTK gives the
+  // page neither as such (toolkitReady takes the back button there).
+  for (const type of ["mousedown", "mouseup", "auxclick"]) {
+    addEventListener(type, (e) => {
+      if (e.button !== 3 && e.button !== 4) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (type === "mouseup" && e.button === 3) call("Press", "back");
+    }, true);
+  }
+  // What is dropped on the page goes to the app, as on the list (10.1),
+  // and the page never opens it: links here, files once mygo has their
+  // paths (mygo:file-drop). A drag from the page itself is the page's.
+  const kinds = ["Files", "text/uri-list", "text/x-moz-url", "text/plain"];
+  let inside = false;
+  addEventListener("dragstart", () => { inside = true; }, true);
+  addEventListener("dragend", () => { inside = false; }, true);
+  const takes = (dt) => !inside && !!dt && Array.from(dt.types).some((t) => kinds.includes(t));
+  addEventListener("dragover", (e) => {
+    if (!takes(e.dataTransfer)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+  }, true);
+  addEventListener("drop", (e) => {
+    const dt = e.dataTransfer;
+    if (!takes(dt)) return;
+    e.preventDefault();
+    if (Array.from(dt.types).includes("Files")) return;
+    for (const type of kinds.slice(1)) {
+      const lines = (dt.getData(type) || "").split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith("#"));
+      // text/x-moz-url is a URL and its title, a line each.
+      const links = type === "text/x-moz-url" ? lines.filter((_, i) => i % 2 === 0) : lines;
+      if (links.length > 0) {
+        call("Drop", [], links);
+        return;
+      }
+    }
+  }, true);
+  globalThis.mygo?.on("mygo:file-drop", (e) => call("Drop", e.paths, []));
+  // The document takes the focus, and its arrows scroll it, when Tab
+  // comes to the page and it has nothing else to stop at.
+  const focusable = () => { if (document.body) document.body.tabIndex = 0; };
+  if (document.readyState === "loading") addEventListener("DOMContentLoaded", focusable, {once: true});
+  else focusable();` + wheel + `
 })();`
 }
 
-// previewKeys is the service the preview's script calls (8.3).
-type previewKeys struct {
+// previewService is what the preview's script calls (8.3).
+type previewService struct {
 	goos  string
 	press func(action)
+	drop  func(paths, links []string)
+	wheel func(delta float64)
 }
 
 // Press runs a forwarded key's action. It runs on a goroutine of its own.
-func (p *previewKeys) Press(name string) {
+func (p *previewService) Press(name string) {
 	for _, b := range bindings(p.goos) {
 		if b.page && string(b.act) == name {
 			p.press(b.act)
 			return
 		}
 	}
+}
+
+// Drop takes the files, else the links, dropped on the page. It runs on a
+// goroutine of its own.
+func (p *previewService) Drop(paths, links []string) {
+	p.drop(paths, links)
+}
+
+// Wheel takes Ctrl with the wheel over the page, on Windows: the event's
+// wheelDeltaY. It runs on a goroutine of its own.
+func (p *previewService) Wheel(delta float64) {
+	p.wheel(delta)
+}
+
+// wheelSlack is how far short of a notch the wheel may come and still
+// step: the page gets the wheel in whole pixels, so at zoom z a notch can
+// come up to z/120 of a notch short.
+const wheelSlack = 0.05
+
+// wheeled steps view.zoom once for each notch of Ctrl and the wheel over
+// the preview (8.3). WebView2 gives the page the wheel in the page's own
+// pixels, 120 a notch divided by the page's zoom: at 2.0 a notch came as
+// 60, and counting 120 of them stepped every other notch (found in the
+// Windows run). So delta times the zoom the web view has is the wheel's
+// own. Turning the wheel the other way starts the count again.
+func (a *app) wheeled(delta float64) {
+	a.post(func() {
+		z := a.previews.zoom
+		if z == 0 {
+			z = a.settings.Zoom
+		}
+		n := delta * z / 120
+		if n*a.wheel < 0 {
+			a.wheel = 0
+		}
+		a.wheel += n
+		for math.Abs(a.wheel) >= 1-wheelSlack {
+			act, notch := actZoomIn, 1.0
+			if a.wheel < 0 {
+				act, notch = actZoomOut, -1
+			}
+			a.later = append(a.later, act)
+			a.wheel -= notch
+		}
+	})
 }
 
 // pressed queues an action from outside a frame: the next frame runs it.
@@ -299,6 +396,15 @@ func (a *app) runLater(c *ui.Context) {
 		if t := a.target(); t != nil && t.loading && (act == actCopy || act == actSaveAs || act == actShow) {
 			a.later = append(a.later, act)
 			continue
+		}
+		// A key forwarded from the preview, or a menu item chosen while it
+		// has the keyboard: the web view keeps the keyboard from the field
+		// this focuses, unless it leaves this frame (8.3).
+		if act == actAddURL || act == actSearch {
+			// Work posted now runs once this frame has ended: the next
+			// one shows the web view again.
+			a.previews.hold = true
+			a.post(func() { a.previews.hold = false })
 		}
 		a.run(c, act)
 	}

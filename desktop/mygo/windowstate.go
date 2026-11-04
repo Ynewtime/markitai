@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"runtime"
 
 	"github.com/egoist/mygo"
 )
@@ -40,17 +41,48 @@ func (s windowStates) LoadWindowStates() (map[string]mygo.WindowState, error) {
 	if err := json.Unmarshal(data, &states); err != nil {
 		return nil, err // the window gets its options; the next save mends the file
 	}
-	var areas []mygo.Rectangle
-	for _, d := range mygo.Screen.Displays() {
-		areas = append(areas, d.WorkArea)
-	}
+	areas := workAreas()
 	for key, st := range states {
 		states[key] = fitWindow(st, areas)
 	}
 	return states, nil
 }
 
+// workAreas are the displays' work areas.
+func workAreas() []mygo.Rectangle {
+	var areas []mygo.Rectangle
+	for _, d := range mygo.Screen.Displays() {
+		areas = append(areas, d.WorkArea)
+	}
+	return areas
+}
+
+// keepFrame drops Maximized from a state whose frame covers a work area
+// already: its frame alone shows it as it was.
+func keepFrame(st mygo.WindowState, areas []mygo.Rectangle) mygo.WindowState {
+	if !st.Maximized || st.FullScreen {
+		return st
+	}
+	for _, a := range areas {
+		if a.Width > 0 && a.Height > 0 && st.X <= a.X && st.Y <= a.Y && st.X+st.Width >= a.X+a.Width && st.Y+st.Height >= a.Y+a.Height {
+			st.Maximized = false
+		}
+	}
+	return st
+}
+
+// SaveWindowStates writes the states, mygo's copy of them. On macOS a
+// window whose frame fills its work area is saved by its frame alone:
+// AppKit calls any window at its standard frame zoomed (isZoomed), as one
+// fitWindow fitted to the screen is, and zooming that frame again on the
+// next launch would make it smaller instead (section 6.1).
 func (s windowStates) SaveWindowStates(states map[string]mygo.WindowState) error {
+	if runtime.GOOS == "darwin" {
+		areas := workAreas()
+		for key, st := range states {
+			states[key] = keepFrame(st, areas)
+		}
+	}
 	data, err := json.MarshalIndent(states, "", "  ")
 	if err != nil {
 		return err

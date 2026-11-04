@@ -33,7 +33,7 @@ func init() {
 
 // pageEvents waits for the driver's file at trigger, removes it, and
 // dispatches the keydown it names in page, as the system would deliver the
-// key: the check of the page's script (previewKeysJS) and its mygo.call
+// key: the check of the page's script (previewJS) and its mygo.call
 // where the driver cannot press keys, as on macOS without the
 // Accessibility permission (DESIGN 16).
 func pageEvents(trigger string, page *mygo.Page) {

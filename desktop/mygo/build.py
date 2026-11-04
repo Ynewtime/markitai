@@ -140,7 +140,8 @@ def isolated_env(root, library):
         XDG_STATE_HOME=str(root / "state"),
         APPDATA=str(root / "AppData" / "Roaming"),
         LOCALAPPDATA=str(root / "AppData" / "Local"),
-        # Short: on Windows mygo binds its single-instance socket under TEMP, in under 100 bytes.
+        # Short: on Windows the single-instance lock falls back to a socket under TEMP when the data
+        # folder takes no file, which mygo binds only in under 100 bytes (DESIGN 10.6).
         TEMP=str(root / "t"),
         TMP=str(root / "t"),
         TERM="dumb",

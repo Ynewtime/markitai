@@ -866,7 +866,7 @@ registers app actions with `set_accels_for_action`.
 | Keyboard | Every action has a keyboard path (section 11 or Tab). No action is drag-only |
 | Contrast | Text 4.5:1 or more against its background. Status colors appear only on glyphs, always next to text that says the state. Informative text (errors, warnings) is primary text, never secondary |
 | Color | States differ by glyph shape as well as color |
-| Reduced motion | List insertion and removal fade over 150 ms, and not at all with the platform's reduce-motion setting. No other custom animation. The platforms' spinners are kept |
+| Reduced motion | List insertion and removal fade over 150 ms, and not at all with the platform's reduce-motion setting. The platform controls' own motion stays where it shows the change it makes: the stacked layout's push and pop, a disclosure's opening and its arrow, a segmented control's selection. An app that draws these controls itself, as Markitai Mygo does, gives them that motion and none with the reduce-motion setting. No other custom animation, as of a hover, a selection, a drop highlight, a status glyph or a notice. The platforms' spinners are kept |
 | Text size | Native text follows the platform. `view.zoom` scales the preview and the Markdown text |
 | High contrast | Windows high-contrast themes use system colors: skip the accent override there. GNOME and macOS keep their own contrast modes |
 
@@ -967,6 +967,9 @@ stroke. Each platform builds its icon files from it.
 | Minimum | 640 × 480 | 640 × 480 | 360 × 480 |
 | Navigation collapses | `NavigationSplitView` hides the sidebar when narrow. The toolbar's sidebar button shows it | `PaneDisplayMode="Auto"`: expanded from 1008, compact (48 px icons) from 641, minimal below | `AdwBreakpoint` `max-width: 640sp` collapses the outer split view |
 | Stacked list and detail | When the area right of the navigation is narrower than 760, the list fills it and choosing a row shows the detail in its place, with a back button | Same rule, using the `NavigationView` back button | `AdwBreakpoint` `max-width: 960sp` collapses the inner split view |
+
+The minimum is the content area's, below the title bar and inside the window's
+frame, which add to the window's size where the platform counts them in it.
 
 In the stacked layout, Back, Esc and the back shortcut return to the list with the
 row still selected. Empty Convert, empty History and Settings never stack.

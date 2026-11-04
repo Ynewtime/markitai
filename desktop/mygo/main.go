@@ -20,6 +20,9 @@ import (
 const noNetwork = `[{"trigger":{"url-filter":"^https?://"},"action":{"type":"block"}},` +
 	`{"trigger":{"url-filter":"^wss?://"},"action":{"type":"block"}}]`
 
+// minWidth and minHeight are the content's least size (section 6.10).
+const minWidth, minHeight = 640, 480
+
 // main launches the app in section 2.3's order.
 func main() {
 	home, err := os.UserHomeDir()
@@ -48,6 +51,7 @@ func main() {
 	}
 	mygo.App.SetLanguages(string(l10n.En), string(l10n.ZhHans))
 	mygo.App.SetLocale(string(lang))
+	l10n.ChangeMygoText()
 	log.Printf("language %s, from %v", lang, preferred)
 
 	resources, _ := mygo.App.Path(mygo.PathResources)
@@ -79,7 +83,7 @@ func main() {
 			output: filepath.Join(documentsFolder(), "Markitai"),
 		})
 		a.version = mygo.App.Version()
-		mygo.BindAs("PreviewKeys", &previewKeys{goos: runtime.GOOS, press: a.pressed})
+		mygo.BindAs("Preview", &previewService{goos: runtime.GOOS, press: a.pressed, drop: a.droppedOnPreview, wheel: a.wheeled})
 	}
 
 	opened := fileArgs(os.Args[1:], wd)
@@ -126,16 +130,22 @@ func main() {
 	mygo.App.WhenReady(func() {
 		// After Run gave the backend the app's languages, which the
 		// system's dialogs on Windows do not all resolve (10.5).
-		localizeSystemDialogs(lang)
+		localizeSystemDialogs()
+		var back func()
+		if !fatal {
+			back = func() { a.pressed(actBack) }
+		}
+		toolkitReady(back)
 		// The window shows once the preview's web view is in it: on Linux,
 		// mygo makes room for the first web view by moving the content's
 		// widget, and a shown window that is not active yet loses its
 		// keyboard focus that way (DESIGN 14).
 		width, height := firstSize(mygo.Screen.PrimaryDisplay().WorkArea)
 		win = mygo.NewWindow(mygo.WindowOptions{
-			Title: lang.T("app.name.mygo"), Width: width, Height: height, MinWidth: 640, MinHeight: 480,
+			Title: lang.T("app.name.mygo"), Width: width, Height: height, MinWidth: minWidth, MinHeight: minHeight,
 			StateKey: "main", Content: ui.View(a.view), Hidden: true,
 		})
+		contentMinimum(win)
 		defer win.Show()
 		log.Printf("window created at %d ms since the epoch", time.Now().UnixMilli())
 		win.OnReadyToShow(func() { log.Printf("first frame at %d ms since the epoch", time.Now().UnixMilli()) })
@@ -213,7 +223,7 @@ var e2ePreview func(page *mygo.Page)
 // attachPreview makes the window's web view (8.1). Without one, the
 // Preview tab says so.
 func (a *app) attachPreview(win *mygo.Window, rules *mygo.ContentRules) {
-	page := mygo.PageOptions{DevTools: mygo.DevToolsDisabled, Session: mygo.NewEphemeralSession(), PreloadScript: previewKeysJS(runtime.GOOS)}
+	page := mygo.PageOptions{DevTools: mygo.DevToolsDisabled, Session: mygo.NewEphemeralSession(), PreloadScript: previewJS(runtime.GOOS)}
 	if rules != nil {
 		page.ContentRules = []*mygo.ContentRules{rules}
 	}
@@ -232,7 +242,7 @@ func (a *app) attachPreview(win *mygo.Window, rules *mygo.ContentRules) {
 			e.PreventDefault()
 		}
 		if external {
-			if err := mygo.Shell.OpenExternal(e.URL); err != nil {
+			if err := a.desk.openExternal(e.URL); err != nil {
 				log.Printf("open %s: %v", e.URL, err)
 			}
 		}

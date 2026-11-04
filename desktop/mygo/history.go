@@ -52,6 +52,13 @@ func (a *app) historyColumn(c *ui.Context, stacked bool) {
 // historyRows is the History list: a ui.List whose choice is held by the
 // entry's ID, so that it follows the entry through searches.
 func (a *app) historyRows(c *ui.Context, stacked bool) {
+	if a.leaving && !stacked {
+		// One List a frame shows a ListState (ui/list.go:474). Side by
+		// side, the page shown has the list too: a window that widens
+		// while the stacked pages move builds both that way.
+		ui.Box(c).Grow(1).Basis(0)
+		return
+	}
 	l := &a.look
 	entries := a.filtered()
 	a.historySel = -1
@@ -63,11 +70,11 @@ func (a *app) historyRows(c *ui.Context, stacked bool) {
 	a.historyList.Selected = &a.historySel
 	a.historyList.Key = func(i int) any { return entries[i].ID }
 	a.historyList.Label = func(i int) string { return entries[i].Title + ", " + a.entrySubtitle(c, entries[i]) }
-	hovered := -1
+	clicked := -1
 	ui.Themed(c, &l.quiet).Background(ui.Transparent).Grow(1).Basis(0).AlignItems(ui.Stretch).Children(func() {
 		list := ui.List(c.Key("history.list"), &a.historyList, len(entries), func(i int) {
-			if a.entryRow(c, entries[i], i == a.historySel).Hovered() {
-				hovered = i
+			if a.entryRow(c, entries[i], i == a.historySel).Clicked() {
+				clicked = i
 			}
 		}).Grow(1).Basis(0).Label(a.lang.T("nav.history")).Children(func() {
 			if len(entries) == 0 {
@@ -79,15 +86,19 @@ func (a *app) historyRows(c *ui.Context, stacked bool) {
 			a.run(c, actRemove)
 		}
 		chosen := a.historySel >= 0 && a.historySel < len(entries)
-		if list.Changed() && chosen {
-			a.historyID = entries[a.historySel].ID
-			// A click chooses the row under the pointer; Up and Down only
-			// move the choice (6.10).
-			if stacked && hovered == a.historySel {
+		switch {
+		case clicked >= 0:
+			// The row takes the click, as a Convert row does: chosen
+			// already or not, it opens its page in the stacked layout,
+			// where Up and Down only move the choice (6.10).
+			a.historyID = entries[clicked].ID
+			list.Focus()
+			if stacked {
 				a.router.Push(pathHistoryItem)
 			}
-		}
-		if list.Submitted() && chosen && stacked {
+		case list.Changed() && chosen:
+			a.historyID = entries[a.historySel].ID
+		case list.Submitted() && chosen && stacked:
 			a.historyID = entries[a.historySel].ID
 			a.router.Push(pathHistoryItem)
 		}

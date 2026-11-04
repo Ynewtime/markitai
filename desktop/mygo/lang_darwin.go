@@ -51,7 +51,7 @@ func appleLanguages() []string {
 
 // localizeSystemDialogs has nothing to add on macOS: the dialogs are
 // AppKit's.
-func localizeSystemDialogs(l10n.Lang) {}
+func localizeSystemDialogs() {}
 
 func goString(p *byte) string {
 	if p == nil {

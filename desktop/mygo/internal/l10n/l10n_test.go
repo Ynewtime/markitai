@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"os"
 	"testing"
+	"testing/fstest"
 	"time"
+
+	"github.com/egoist/mygo/i18n"
 )
 
 func TestCopyMatchesDesktopStrings(t *testing.T) {
@@ -109,5 +112,30 @@ func TestErrorKeys(t *testing.T) {
 			_ = En.Raw(string(e.second))
 		}
 		_ = code
+	}
+}
+
+// TestMygoTextChanged: a library's catalog of namespace mygo, written as
+// mygo's own menu strings are, says Hide and Quit with the space once the
+// app changed them, and the rest as mygo wrote them.
+func TestMygoTextChanged(t *testing.T) {
+	ChangeMygoText()
+	lib, err := i18n.NewLibraryCatalog(fstest.MapFS{
+		"en.json":      {Data: []byte(`{"menuHide": "Hide {app}", "menuQuitApp": "Quit {app}", "menuAbout": "About {app}"}`)},
+		"zh-Hans.json": {Data: []byte(`{"menuHide": "隐藏{app}", "menuQuitApp": "退出{app}", "menuAbout": "关于{app}"}`)},
+	}, "en", "mygo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct{ locale, key, want string }{
+		{"zh-Hans", "menuHide", "隐藏 Markitai Mygo"},
+		{"zh-Hans", "menuQuitApp", "退出 Markitai Mygo"},
+		{"zh-Hans", "menuAbout", "关于Markitai Mygo"},
+		{"en", "menuHide", "Hide Markitai Mygo"},
+		{"en", "menuQuitApp", "Quit Markitai Mygo"},
+	} {
+		if got := lib.Format(c.locale, c.key, map[string]any{"app": "Markitai Mygo"}); got != c.want {
+			t.Errorf("%s %s: %q, want %q", c.locale, c.key, got, c.want)
+		}
 	}
 }

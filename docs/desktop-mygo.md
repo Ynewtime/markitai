@@ -35,6 +35,8 @@ and its web view keep is in folders named `dev.markitai.mygo`: the blocking
 rules and a cookie store the preview does not use in
 `$XDG_CONFIG_HOME/dev.markitai.mygo/`, and WebKitGTK's own data in
 `$XDG_DATA_HOME/dev.markitai.mygo/` and `$XDG_CACHE_HOME/dev.markitai.mygo/`.
+As in any GTK app, once a file dialog has shown, GTK also updates the shared
+`recently-used.xbel` and `gvfs-metadata/` in `$XDG_DATA_HOME`.
 
 ## What the app shares with the CLI
 
@@ -85,8 +87,12 @@ app embeds a copy that its tests keep equal. A system language starting with
 `zh` gets Simplified Chinese. Every other language gets English. On macOS and
 Windows, the system's open and save dialogs and, on macOS, the About panel and
 the menu items the system adds follow the app's language. On Linux, as in
-Markitai Native, the file dialogs are the desktop's: their title follows the
-app, and the rest the desktop's language and style.
+Markitai Native, the file dialogs are the desktop's when its portal has them:
+their title follows the app, and the rest the desktop's language and style.
+Without them, GTK's own dialogs show, within the screen and in the app's
+language. The programs the app opens on Linux, as the browser for a link or
+the editor for the configuration file, start with your own environment, not
+the language and toolkit settings the app sets for itself.
 
 ## Limits
 

@@ -242,10 +242,11 @@ func launch(t *testing.T, run string, args func(home string) []string) *session 
 		t.Fatal(err)
 	}
 	// A folder of this run's own under a short path: the automation socket,
-	// and Windows' temporary folder. mygo's single-instance lock is a socket
-	// in the temporary folder, and mygo skips the lock on Windows when that
-	// path reaches 100 bytes, as it does under the run's home on a runner
-	// (DESIGN 14).
+	// whose path a Unix socket keeps under about 100 bytes, and Windows'
+	// temporary folder. The single-instance lock is a socket in the data
+	// folder, by a relative name, and falls back to the temporary folder
+	// when the data folder takes no file, where mygo skips the lock at 100
+	// bytes, as under the run's home on a runner (DESIGN 10.6).
 	short, err := os.MkdirTemp("", "mkmygo-")
 	if err != nil {
 		t.Fatal(err)
@@ -274,6 +275,15 @@ func launch(t *testing.T, run string, args func(home string) []string) *session 
 		default:
 			s.cmd.Process.Kill()
 			<-s.exited
+			// A killed app leaves its single-instance socket in the data
+			// folder, under the evidence the job uploads, which cannot read
+			// a socket on Windows (EACCES).
+			filepath.WalkDir(s.home, func(path string, d fs.DirEntry, err error) error {
+				if err == nil && !d.IsDir() && strings.HasSuffix(d.Name(), ".sock") {
+					os.Remove(path)
+				}
+				return nil
+			})
 		}
 		s.writeReport()
 	})
@@ -612,7 +622,9 @@ func realWindow(t *testing.T, run, base string) {
 	}
 	s.shot("04-convert-url")
 
-	c.press("History", byLabel("", l.T("nav.history")))
+	// The sidebars' items by role: the Settings sidebar is named as its
+	// item, and History's list as the History item.
+	c.press("History", byLabel("treeItem", l.T("nav.history")))
 	s.shot("05-history")
 	search, ok := find(c.tree(), func(n node) bool { return n.Role == "textField" && n.Label == l.T("history.search") })
 	if ok {
@@ -625,12 +637,12 @@ func realWindow(t *testing.T, run, base string) {
 		t.Errorf("no History search field")
 	}
 
-	c.press("Settings", byLabel("", l.T("nav.settings")))
+	c.press("Settings", byLabel("treeItem", l.T("nav.settings")))
 	s.shot("08-settings")
 	c.press("the OCR switch", byKey("settings.ocr"))
 	s.report["settings_files"] = s.settingsFiles()
 
-	c.press("Convert", byLabel("", l.T("nav.convert")))
+	c.press("Convert", byLabel("treeItem", l.T("nav.convert")))
 	field, _ = find(c.tree(), byKey("convert.url"))
 	c.act(field, "setValue", base+"/slow.html")
 	c.press("Add", byKey("convert.url.add"))

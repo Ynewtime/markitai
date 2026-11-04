@@ -3,9 +3,10 @@
 package l10n
 
 import (
-	_ "embed"
+	"embed"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"math"
 	"slices"
 	"strconv"
@@ -29,6 +30,29 @@ var catalog = func() map[string]map[string]string {
 	}
 	return m
 }()
+
+// mygo/ changes mygo's own strings, by keys "mygo.<key>": in Simplified
+// Chinese, the app menu's Hide and Quit items with a space before the
+// app's name, as its About item (menu.about.mygo) and macOS's own menus
+// have; mygo's zh-Hans.json has none. en.json, the source language a
+// catalog needs, changes nothing.
+//
+//go:embed mygo/*.json
+var mygoText embed.FS
+
+// ChangeMygoText makes mygo say its strings as mygo/ changes them. main
+// calls it before it makes the menus.
+func ChangeMygoText() {
+	files, err := fs.Sub(mygoText, "mygo")
+	if err != nil {
+		panic(err)
+	}
+	c, err := i18n.NewCatalog(files, string(En))
+	if err != nil {
+		panic(err)
+	}
+	i18n.Register(c)
+}
 
 // Keys lists every copy key, sorted.
 func Keys() []string {

@@ -16,37 +16,49 @@ type systemDesk struct {
 	chooseTitle string
 }
 
+// A dialog that fails to show is one cancelled, as far as the app goes: the
+// log says why.
+
 func (d systemDesk) chooseFiles(done func([]string)) {
 	go func() {
 		paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{Parent: d.win(), Title: d.chooseTitle, Multiple: true})
+		if err != nil {
+			log.Printf("choose files: %v", err)
+		}
 		if err == nil && len(paths) > 0 {
 			d.post(func() { done(paths) })
 		}
 	}()
 }
 
-func (d systemDesk) chooseFolder(done func(string)) {
+func (d systemDesk) chooseFolder(start string, done func(string)) {
 	go func() {
-		paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{Parent: d.win(), Directory: true, CreateDirectories: true})
+		paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{Parent: d.win(), DefaultPath: start, Directory: true, CreateDirectories: true})
+		if err != nil {
+			log.Printf("choose folder: %v", err)
+		}
 		if err == nil && len(paths) > 0 {
 			d.post(func() { done(paths[0]) })
 		}
 	}()
 }
 
-func (d systemDesk) saveAs(name string, done func(string)) {
+// saveAs lists Markdown files; a name without an extension takes .md
+// from the app, as Windows and GTK leave it (section 6.7).
+func (d systemDesk) saveAs(start string, done func(string)) {
 	go func() {
-		path, err := mygo.Dialog.Save(mygo.SaveDialogOptions{Parent: d.win(), DefaultPath: name})
+		path, err := mygo.Dialog.Save(mygo.SaveDialogOptions{Parent: d.win(), DefaultPath: start,
+			Filters: []mygo.FileFilter{{Name: "Markdown", Extensions: []string{"md"}}}})
+		if err != nil {
+			log.Printf("save as: %v", err)
+		}
 		if err == nil && path != "" {
 			d.post(func() { done(path) })
 		}
 	}()
 }
 
-func (systemDesk) showItemInFolder(path string)  { mygo.Shell.ShowItemInFolder(path) }
-func (systemDesk) openPath(path string) error    { return mygo.Shell.OpenPath(path) }
-func (systemDesk) openExternal(url string) error { return mygo.Shell.OpenExternal(url) }
-func (systemDesk) quit()                         { mygo.App.Quit() }
+func (systemDesk) quit() { mygo.App.Quit() }
 
 func (d systemDesk) showWindow() {
 	if w := d.win(); w != nil {

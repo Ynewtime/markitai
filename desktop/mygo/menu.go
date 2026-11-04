@@ -57,8 +57,7 @@ func (a *app) newMenuBar(press func(action)) *mygo.Menu {
 	remove.Accelerator = removeAccelerator
 	bar.removeKey = removeAccelerator
 	about := &mygo.MenuItem{Label: a.lang.T("menu.about.mygo"), Click: func(*mygo.MenuItem, *mygo.Window) {
-		mygo.App.ShowAboutPanel(mygo.AboutPanelOptions{ApplicationName: "Markitai Mygo", ApplicationVersion: a.version,
-			Copyright: a.lang.T("settings.about.copyright")})
+		showAbout(a.lang.T("app.name.mygo"), a.lang.T("settings.about.core")+" "+a.coreVersion, a.lang.T("settings.about.copyright"))
 	}}
 	settings := item(actSettings, a.lang.T("menu.settings"))
 	a.menu = bar
