@@ -581,6 +581,21 @@ fn pass(image: &pixels::Prepared, language: &str) -> Result<Pass> {
     read
 }
 
+/// [`pass`] without Vision's language correction.
+#[cfg(target_os = "macos")]
+fn pass_uncorrected(image: &pixels::Prepared, language: &str) -> Result<Pass> {
+    let space = (image.width, image.height);
+    let mut lap = trace::Lap::start();
+    let read = pass_with(image, |image, may_enlarge| {
+        vision::recognize_uncorrected(image, language, space, may_enlarge)
+    });
+    trace::line(format_args!(
+        "vision pass {language} uncorrected ms={:.0}",
+        lap.ms()
+    ));
+    read
+}
+
 /// [`pass`] with all of Chinese, Japanese, Korean and English asked for at once
 /// and the language detected by Vision.
 #[cfg(target_os = "macos")]
@@ -636,6 +651,15 @@ fn finish(image: &pixels::Prepared, pass: Pass, language: &str, unread: bool) ->
 /// is read as that one language.
 #[cfg(target_os = "macos")]
 fn read(image: &pixels::Prepared, spelling: &str) -> Result<OcrResult> {
+    let result = read_language(image, spelling);
+    // A failed reading is left out where others stand, but what comes of a
+    // Vision that stopped responding is not a reading of the image.
+    vision::responding()?;
+    result
+}
+
+#[cfg(target_os = "macos")]
+fn read_language(image: &pixels::Prepared, spelling: &str) -> Result<OcrResult> {
     if spelling == "en" {
         // `MARKITAI_OCR_VISION_POLICY=detect`: one request asking for all the
         // languages with detection, instead of the passes below (for
@@ -670,15 +694,27 @@ const JAPANESE: &str = "ja-JP";
 /// which has its own aids. A reading that fails is not an error: the English
 /// reading stands, as it always did, and the result is marked unread when text
 /// was seen and not read.
+///
+/// English is first read without language correction, which judges an image as
+/// well, and with it only once the image seems English or its Chinese reading holds
+/// too little Chinese to use: correcting several lines of Chinese as English can
+/// stop Vision for good (`docs/ocr.md`), in about one process in ten on a busy
+/// machine.
 #[cfg(target_os = "macos")]
 fn read_default(image: &pixels::Prepared) -> Result<OcrResult> {
     use auto::Verdict;
     use cjk::Script;
-    let english = pass(image, ENGLISH)?;
-    let verdict = auto::judge(&english.lines);
-    trace_pass(ENGLISH, &Ok(&english), Some(verdict));
-    if verdict == Verdict::Sound {
-        return finish(image, english, ENGLISH, false);
+    let mut english = pass_uncorrected(image, ENGLISH)?;
+    let mut verdict = auto::judge(&english.lines);
+    trace_pass("en-US uncorrected", &Ok(&english), Some(verdict));
+    let corrected = verdict == Verdict::Sound;
+    if corrected {
+        english = pass(image, ENGLISH)?;
+        verdict = auto::judge(&english.lines);
+        trace_pass(ENGLISH, &Ok(&english), Some(verdict));
+        if verdict == Verdict::Sound {
+            return finish(image, english, ENGLISH, false);
+        }
     }
     // The strongest reading so far: its language, lines and strength.
     let mut best: Option<(&str, Pass, f32)> = None;
@@ -688,9 +724,19 @@ fn read_default(image: &pixels::Prepared) -> Result<OcrResult> {
     // failure of the conversion: English has read the image.
     let chinese = pass(image, CHINESE);
     trace_pass(CHINESE, &chinese.as_ref(), None);
+    let of_chinese =
+        matches!(&chinese, Ok(chinese) if auto::reads(&chinese.lines, Script::Japanese));
+    if !corrected && !of_chinese {
+        english = pass(image, ENGLISH)?;
+        verdict = auto::judge(&english.lines);
+        trace_pass(ENGLISH, &Ok(&english), Some(verdict));
+        if verdict == Verdict::Sound {
+            return finish(image, english, ENGLISH, false);
+        }
+    }
     if let Ok(chinese) = chinese {
         elsewhere = auto::saw(&chinese.lines, &english.lines);
-        if auto::reads(&chinese.lines, Script::Japanese) {
+        if of_chinese {
             settled = auto::credible(&chinese.lines, Script::Japanese) >= auto::CONVINCING;
             let strength = auto::strength(&chinese.lines, Script::Japanese);
             best = Some((CHINESE, chinese, strength));
@@ -2684,7 +2730,7 @@ pub(crate) mod tests {
     /// Lines drawn by the in-process SVG renderer in the macOS system font
     /// `family`, black on white, `size` pixels per em.
     #[cfg(target_os = "macos")]
-    fn system_font_lines(family: &str, lines: &[&str], size: u32) -> image::RgbImage {
+    pub(crate) fn system_font_lines(family: &str, lines: &[&str], size: u32) -> image::RgbImage {
         use resvg::{tiny_skia, usvg};
         let longest = lines.iter().map(|l| l.chars().count()).max().unwrap() as u32;
         let (width, pitch) = (size * (longest + 2), size * 3 / 2);
@@ -2956,11 +3002,9 @@ pub(crate) mod tests {
 
     /// A scan-like page of Chinese with a table: drawn in a system font, then
     /// blurred and recompressed as a poor JPEG, the way the parity corpus's
-    /// scanned pages are. Vision cannot run in a macOS virtual machine, so the
-    /// runners skip this test by name.
+    /// scanned pages are.
     #[cfg(target_os = "macos")]
-    #[test]
-    fn vision_reads_a_degraded_scan_of_chinese_with_a_table_by_default() {
+    pub(crate) fn degraded_scan() -> image::RgbImage {
         let lines = [
             "第一章 概述",
             "本文档用于测试中文文本提取、表格识别和光学字符识别。",
@@ -2977,8 +3021,15 @@ pub(crate) mod tests {
         image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 55)
             .encode_image(&blurred)
             .unwrap();
-        let scan = image::load_from_memory(&jpeg).unwrap().to_rgb8();
-        let result = recognize_rgb(scan, &json!({"ocr":{"enabled":true}}));
+        image::load_from_memory(&jpeg).unwrap().to_rgb8()
+    }
+
+    /// Vision cannot run in a macOS virtual machine, so the runners skip this
+    /// test by name.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn vision_reads_a_degraded_scan_of_chinese_with_a_table_by_default() {
+        let result = recognize_rgb(degraded_scan(), &json!({"ocr":{"enabled":true}}));
         if vision_unavailable_under_rosetta(&result) {
             return;
         }
@@ -3012,6 +3063,33 @@ pub(crate) mod tests {
         let result = recognize_rgb(image, &json!({"ocr":{"enabled":true,"lang":"en"}})).unwrap();
         assert_eq!(result.language, "zh-Hans");
         assert_eq!(squeezed(&result.text), squeezed(&line.concat()));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_default_language_corrects_english_only_of_an_image_that_seems_english() {
+        let readings = |image| {
+            vision::READINGS.take();
+            let result = recognize_rgb(image, &json!({"ocr":{"enabled":true}}));
+            (!vision_unavailable_under_rosetta(&result)).then(|| {
+                result.unwrap();
+                vision::READINGS.take()
+            })
+        };
+        let english = ("en-US".to_owned(), true);
+        if let Some(read) = readings(degraded_scan()) {
+            assert_eq!(read[0], ("en-US".to_owned(), false), "{read:?}");
+            assert!(!read.contains(&english), "{read:?}");
+        }
+        let lines = [
+            "The quick brown fox jumps over the lazy dog",
+            "Pack my box with five dozen liquor jugs",
+            "Sphinx of black quartz, judge my vow",
+            "How vexingly quick daft zebras jump",
+        ];
+        if let Some(read) = readings(system_font_lines("Helvetica", &lines, 22)) {
+            assert_eq!(read, [("en-US".to_owned(), false), english], "{read:?}");
+        }
     }
 
     #[cfg(target_os = "macos")]

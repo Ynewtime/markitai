@@ -126,10 +126,12 @@ returned.)
 
 With Vision, `ocr.lang=en` is a multilingual fallback policy, not English-only
 recognition.
-Vision first reads English, then tries supported Chinese, Japanese and Korean
-readings when the initial result is inadequate. Explicit `en-US` selects English
-alone. When no single language reads an image that is not plainly English, it is
-read once more with Chinese, Japanese, Korean and English asked for together and
+Vision first reads English without language correction to judge the image, and
+again with correction once it seems English, which costs an English image one more
+reading. It tries supported Chinese, Japanese and Korean readings when the initial
+result is inadequate. Explicit `en-US` selects English alone. When no single
+language reads an image that is not plainly English, it is read once more with
+Chinese, Japanese, Korean and English asked for together and
 Vision detecting the language (macOS 13 or later), and that reading is used if
 it holds text. An image nothing read is marked unread with a warning.
 `MARKITAI_OCR_TRACE=1` prints one line per reading (language, lines, lines Vision
@@ -143,6 +145,15 @@ above were recorded on macOS 27). Set the language (`ocr.lang: ja`, or
 `--config-json '{"ocr":{"lang":"ja"}}'`) for Japanese images there. Vision is
 opt-in (`MARKITAI_OCR_BACKEND=vision` or the fallback); the default portable
 engine does not use Vision's language detection.
+
+Known issue: on macOS 27.2, correcting several lines of Chinese as English or
+French can stop for good inside Vision, in about one process in ten on a busy
+machine, which cancelling does not undo. The default language reads an image that
+way only when its Chinese reading holds too little Chinese to use; a language
+written in `ocr.lang` always does. Requests in a process run one at a time. A
+request that does not return within 5 minutes fails with `Vision stopped
+responding`, and so does every later Vision reading in that process: run the
+program again, or use `MARKITAI_OCR_BACKEND=paddle`.
 
 ## Bounds and reading order
 

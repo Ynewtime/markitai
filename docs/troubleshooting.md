@@ -127,6 +127,8 @@ read directly and need neither.
 recognition models after installation or an update (about 20 seconds). Startup and per-page time
 depend on the OS, image and language; earlier measurements are not a timing
 guarantee. A sandbox that blocks the Vision cache can cause `missingError`.
+`Vision stopped responding` means a recognition did not return within 5 minutes
+and Vision reads nothing more in that process; see [local OCR](ocr.md).
 On Windows/Linux, run `markitai doctor` to check Paddle models and explicitly
 use `markitai doctor --fix` to prepare missing models before offline use.
 See [local OCR](ocr.md) for backend and language limits.
