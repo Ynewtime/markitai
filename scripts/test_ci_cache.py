@@ -37,6 +37,14 @@ class CrateNamesTests(unittest.TestCase):
         self.assertLessEqual({"pdf_inspector", "lopdf", "markitai_webp_sys", "build_script_build"}, vendored)
         self.assertNotIn("pdf2md", vendored)
 
+    def test_every_vendored_crate_is_a_workspace_of_its_own(self):
+        # Cargo looks past a root that excludes a crate: without the crate's own table, this
+        # checkout inside another Cargo workspace (.claude/worktrees/*) cannot read its manifest.
+        manifests = sorted((Path(ci_cache.__file__).resolve().parents[1] / "vendor").glob("*/Cargo.toml"))
+        self.assertTrue(manifests)
+        for manifest in manifests:
+            self.assertRegex(manifest.read_text(encoding="utf-8"), r"(?m)^\[workspace\]$", manifest)
+
     def test_a_cargo_failure_shows_cargos_message(self):
         failed = subprocess.CompletedProcess([], 101, stdout="", stderr="error: failed to download `x v1.0.0`\n")
         stderr = io.StringIO()

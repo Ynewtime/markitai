@@ -183,3 +183,7 @@ default-features = false
 version = "0.46.0"
 features = ["wasm_js"]
 default-features = false
+
+# markitai: a workspace of its own, as the root Cargo.toml's exclude says. Without this table
+# Cargo keeps looking upward past that root, into any checkout around this one.
+[workspace]

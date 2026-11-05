@@ -590,3 +590,10 @@ suite passes in an isolated copy (451 tests; 523 with the added ones), and so do
 `cargo clippy --all-targets -- -D warnings` after one upstream line in
 `src/formats/docx/numbering.rs` passes `level_value` by value instead of by
 reference (`needless_borrows_for_generic_args`).
+
+## Its own workspace
+
+`Cargo.toml` ends with an empty `[workspace]` table, marked `markitai`, so this
+crate is a workspace of its own wherever the checkout sits. Without it Cargo
+looks past the root that excludes this crate, and a checkout inside another
+Cargo workspace (a worktree under `.claude/worktrees`) fails.
