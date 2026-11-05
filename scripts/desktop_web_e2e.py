@@ -1014,9 +1014,10 @@ def remembered_port(s):
 
 
 def press(app, href):
-    """Clicks the status page's button for href; whether the page has it."""
+    """Clicks the status page's button for href; whether the page has it. The click waits for
+    the answer: Stop Now quits the app, whose window can close before an answer sent after it."""
     return app.ui.eval(f"""const a = document.querySelector('.actions a[href="{href}"]');
-        if (!a) return false; a.click(); return true;""")
+        if (!a) return false; setTimeout(() => a.click(), 0); return true;""")
 
 
 def port(s):
