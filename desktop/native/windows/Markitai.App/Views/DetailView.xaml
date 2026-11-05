@@ -139,6 +139,15 @@
                 Visibility="Collapsed"
                 TextWrapping="Wrap"
                 Text="{m:S Key=preview.webview2_missing}" />
+            <TextBlock
+                x:Name="PreviewFailed"
+                Margin="24"
+                HorizontalAlignment="Center"
+                VerticalAlignment="Center"
+                Visibility="Collapsed"
+                TextAlignment="Center"
+                TextWrapping="Wrap"
+                Text="{m:S Key=preview.failed}" />
             <TextBox
                 x:Name="MarkdownText"
                 Visibility="Collapsed"

@@ -9,8 +9,11 @@ struct AppCommands: Commands {
     var body: some Commands {
         CommandGroup(replacing: .appInfo) {
             Button(L["menu.about.native"]) {
+                // Empty `.version`: AppKit otherwise repeats the build
+                // number, the same 2.3.2, in brackets after the version.
                 NSApp.orderFrontStandardAboutPanel(options: [
                     .applicationName: L["app.name.native"],
+                    .version: "",
                     .credits: NSAttributedString(string: "\(L["settings.about.core"]) \(Core.version)"),
                 ])
             }

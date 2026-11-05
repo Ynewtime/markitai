@@ -373,7 +373,7 @@ impl Win {
                 return;
             }
             if let Ok(Some(text)) = clipboard.read_text_future().await
-                && let Some(url) = crate::model::source::parse_web_address(&text)
+                && let Some(url) = crate::model::source::link_text(&text)
             {
                 win.add_sources(Vec::new(), vec![url]);
             }
@@ -393,7 +393,7 @@ impl Win {
         let win = self.clone();
         let path = current.markdown_path.clone();
         glib::spawn_future_local(async move {
-            let text = gio::spawn_blocking(move || std::fs::read_to_string(path).ok())
+            let text = gio::spawn_blocking(move || crate::model::history::read_markdown(&path))
                 .await
                 .ok()
                 .flatten();
@@ -426,22 +426,36 @@ impl Win {
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| "markitai".to_owned());
+        let markdown_filter = gtk::FileFilter::new();
+        markdown_filter.set_name(Some(&tr("detail.markdown")));
+        markdown_filter.add_suffix("md");
+        let filters = gio::ListStore::new::<gtk::FileFilter>();
+        filters.append(&markdown_filter);
         let dialog = gtk::FileDialog::builder()
             .title(tr("detail.save_as"))
             .modal(true)
+            .initial_folder(&gio::File::for_path(self.output_folder()))
             .initial_name(format!("{label}.md"))
+            .filters(&filters)
+            .default_filter(&markdown_filter)
             .build();
         let win = self.clone();
         glib::spawn_future_local(async move {
             let Ok(file) = dialog.save_future(Some(&win.window)).await else {
                 return;
             };
-            let Some(path) = file.path() else {
+            let Some(mut path) = file.path() else {
                 return;
             };
+            // The dialog asked before replacing the file it names. A name
+            // given without an extension takes .md, and replaces nothing.
+            let fresh = path.extension().is_none();
+            if fresh {
+                path.as_mut_os_string().push(".md");
+            }
             let markdown = markdown.as_str().to_owned();
             let folder = current.folder.clone();
-            let saved = gio::spawn_blocking(move || save_copy(&path, &markdown, &folder))
+            let saved = gio::spawn_blocking(move || save_copy(&path, &markdown, &folder, fresh))
                 .await
                 .unwrap_or_else(|_| Err(std::io::Error::other("save thread stopped")));
             if saved.is_err() {
@@ -451,8 +465,7 @@ impl Win {
     }
 
     pub fn show_in_files(&self, path: &Path) {
-        let launcher = gtk::FileLauncher::new(Some(&gio::File::for_path(path)));
-        launcher.open_containing_folder(Some(&self.window), gio::Cancellable::NONE, |_| {});
+        super::launch::show_in_folder(&self.window, path);
     }
 
     fn retry(self: &Rc<Self>) {
@@ -500,9 +513,19 @@ impl Win {
 
 /// Write `markdown` to `path`; when it refers to `.markitai/`, copy the
 /// conversion's `.markitai` folder beside it, adding files that are not
-/// there and never replacing one.
-fn save_copy(path: &Path, markdown: &str, folder: &Path) -> std::io::Result<()> {
-    std::fs::write(path, markdown)?;
+/// there and never replacing one. `fresh` leaves a file already at `path`
+/// as it is, and fails.
+fn save_copy(path: &Path, markdown: &str, folder: &Path, fresh: bool) -> std::io::Result<()> {
+    if fresh {
+        use std::io::Write;
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)?
+            .write_all(markdown.as_bytes())?;
+    } else {
+        std::fs::write(path, markdown)?;
+    }
     let assets = folder.join(".markitai");
     if markdown.contains(".markitai/") && assets.is_dir() {
         let target = path.parent().unwrap_or(Path::new(".")).join(".markitai");
@@ -540,14 +563,28 @@ mod tests {
         std::fs::create_dir_all(out.join(".markitai/assets")).unwrap();
         std::fs::write(out.join(".markitai/assets/a.png"), b"mine").unwrap();
         let saved = out.join("Report.md");
-        save_copy(&saved, "![a](.markitai/assets/a.png)", &folder).unwrap();
+        save_copy(&saved, "![a](.markitai/assets/a.png)", &folder, false).unwrap();
         assert_eq!(std::fs::read(&saved).unwrap(), b"![a](.markitai/assets/a.png)");
         assert_eq!(std::fs::read(out.join(".markitai/assets/a.png")).unwrap(), b"mine");
         assert_eq!(std::fs::read(out.join(".markitai/assets/b.png")).unwrap(), b"new");
 
         let plain = dir.path().join("plain");
         std::fs::create_dir(&plain).unwrap();
-        save_copy(&plain.join("x.md"), "no assets", &folder).unwrap();
+        save_copy(&plain.join("x.md"), "no assets", &folder, false).unwrap();
         assert!(!plain.join(".markitai").exists());
+    }
+
+    #[test]
+    fn a_name_given_without_extension_replaces_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let taken = dir.path().join("notes.md");
+        std::fs::write(&taken, b"mine").unwrap();
+        assert!(save_copy(&taken, "new", dir.path(), true).is_err());
+        assert_eq!(std::fs::read(&taken).unwrap(), b"mine");
+        let fresh = dir.path().join("other.md");
+        save_copy(&fresh, "new", dir.path(), true).unwrap();
+        assert_eq!(std::fs::read(&fresh).unwrap(), b"new");
+        save_copy(&taken, "replaced", dir.path(), false).unwrap();
+        assert_eq!(std::fs::read(&taken).unwrap(), b"replaced");
     }
 }

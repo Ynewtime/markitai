@@ -23,6 +23,19 @@ public static class Intake
             : null;
     }
 
+    /// <summary>
+    /// Pasted or dropped text that is one http or https URL, scheme included (desktop/DESIGN.md
+    /// 7.1). "example.com" or a sentence with a dot is not one: the URL field is where a scheme is
+    /// added.
+    /// </summary>
+    public static string? Link(string? text)
+    {
+        var trimmed = text?.Trim() ?? "";
+        return trimmed.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || trimmed.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
+            ? WebAddress(trimmed)
+            : null;
+    }
+
     /// <summary>"mailto:x" and "ftp://x" have a scheme; "example.com:8080/x" is a host and port.</summary>
     static bool HasScheme(string text)
     {
@@ -81,6 +94,18 @@ public static class UserFiles
             Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
             File.Copy(file, destination, overwrite: false);
         }
+    }
+
+    /// <summary>
+    /// The folder a dialog starts in: <paramref name="folder"/>, or the nearest folder above it
+    /// that exists (the output folder may not be made yet). Null when none does.
+    /// </summary>
+    public static string? NearestFolder(string? folder)
+    {
+        for (var at = folder; !string.IsNullOrEmpty(at); at = Path.GetDirectoryName(at))
+            if (Directory.Exists(at))
+                return at;
+        return null;
     }
 
     /// <summary>Whether a test file can be created in <paramref name="folder"/> and deleted again.</summary>

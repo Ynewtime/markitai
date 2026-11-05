@@ -262,19 +262,16 @@ impl Win {
 
     /// Open a file or folder in its default app; say so when that fails.
     pub fn launch_file(&self, path: &Path) {
-        let launcher = gtk::FileLauncher::new(Some(&gio::File::for_path(path)));
         let name = self.display_path(path);
         let toasts = self.toasts.clone();
-        launcher.launch(Some(&self.window), gio::Cancellable::NONE, move |result| {
-            if result.is_err() {
-                toasts.add_toast(
-                    adw::Toast::builder()
-                        .title(crate::strings::trf("error.open_failed", &[("name", &name)]))
-                        .use_markup(false)
-                        .timeout(5)
-                        .build(),
-                );
-            }
+        super::launch::open_path(&self.window, path, move || {
+            toasts.add_toast(
+                adw::Toast::builder()
+                    .title(crate::strings::trf("error.open_failed", &[("name", &name)]))
+                    .use_markup(false)
+                    .timeout(5)
+                    .build(),
+            );
         });
     }
 }

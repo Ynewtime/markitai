@@ -1,8 +1,8 @@
 using Markitai.Core;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml.Controls;
+using Windows.Globalization;
 using Windows.Globalization.DateTimeFormatting;
-using Windows.System.UserProfile;
 
 namespace MarkitaiApp;
 
@@ -36,16 +36,20 @@ public sealed class Workbench
             ShowNotice(S.Format("history.reset", ("name", setAside)));
     }
 
-    /// <summary>The platform's medium date with short time, and short time, in the app's language.</summary>
+    /// <summary>
+    /// The medium date and short time of the app's language, with that language's clock
+    /// (desktop/DESIGN.md 6.5): en is US English with the 12-hour clock, zh-Hans is Chinese
+    /// with the 24-hour clock, whatever the region's formats or clock.
+    /// </summary>
     static (Func<DateTimeOffset, string>, Func<DateTimeOffset, string>) DateFormats(Strings strings)
     {
-        var language = strings.Language == "zh-Hans"
-            ? "zh-Hans-CN"
-            : GlobalizationPreferences.Languages.FirstOrDefault(l => l.StartsWith("en", StringComparison.OrdinalIgnoreCase)) ?? "en-US";
+        var (language, region, clock) = strings.Language == "zh-Hans"
+            ? ("zh-Hans-CN", "CN", ClockIdentifiers.TwentyFourHour)
+            : ("en-US", "US", ClockIdentifiers.TwelveHour);
         try
         {
-            var medium = new DateTimeFormatter("month.abbreviated day year hour minute", [language]);
-            var time = new DateTimeFormatter("hour minute", [language]);
+            var medium = new DateTimeFormatter("month.abbreviated day year hour minute", [language], region, CalendarIdentifiers.Gregorian, clock);
+            var time = new DateTimeFormatter("hour minute", [language], region, CalendarIdentifiers.Gregorian, clock);
             return (t => medium.Format(t), t => time.Format(t));
         }
         catch (ArgumentException)
@@ -102,10 +106,15 @@ public sealed class Workbench
             ShowNotice(S.Format("notice.folders", ("count", sorted.RefusedFolders.Count.ToString(S.Culture))));
     }
 
-    /// <summary>Adds a web address; false when the text is not one.</summary>
-    public bool AddUrl(string text)
+    /// <summary>Adds what the URL field holds as a web address; false when the text is not one.</summary>
+    public bool AddUrl(string text) => AddWebAddress(Intake.WebAddress(text));
+
+    /// <summary>Adds pasted or dropped text that is one http or https URL with its scheme; false otherwise.</summary>
+    public bool AddLink(string text) => AddWebAddress(Intake.Link(text));
+
+    bool AddWebAddress(string? url)
     {
-        if (Intake.WebAddress(text) is not { } url)
+        if (url is null)
             return false;
         SetNotice(null);
         Add([Source.Url(url)]);

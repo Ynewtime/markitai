@@ -44,6 +44,7 @@ public sealed partial class DetailView : UserControl
     // otherwise replace the newer document).
     int renderTicket;
     readonly object previewWrite = new();
+    readonly WheelSteps wheelSteps = new();
 
     public DetailView()
     {
@@ -190,6 +191,7 @@ public sealed partial class DetailView : UserControl
         {
             Preview.Visibility = Visibility.Collapsed;
             PreviewMissing.Visibility = Visibility.Collapsed;
+            PreviewFailed.Visibility = Visibility.Collapsed;
             MarkdownText.Visibility = Visibility.Collapsed;
             MarkdownText.Text = "";
             textShown = null;
@@ -306,9 +308,18 @@ public sealed partial class DetailView : UserControl
             }
             Preview.Visibility = Visibility.Collapsed;
             PreviewMissing.Visibility = Visibility.Collapsed;
+            PreviewFailed.Visibility = Visibility.Collapsed;
             return;
         }
         _ = ShowPreviewAsync(version);
+    }
+
+    /// <summary>What one render did: wrote the preview file, was overtaken by a later render, or failed.</summary>
+    enum Rendering
+    {
+        Written,
+        Stale,
+        Failed,
     }
 
     async Task ShowPreviewAsync(int expected)
@@ -319,6 +330,7 @@ public sealed partial class DetailView : UserControl
         var key = $"{expected}|{dark}|{zoom.ToString(CultureInfo.InvariantCulture)}";
         if (previewShown == key)
         {
+            PreviewFailed.Visibility = Visibility.Collapsed;
             Preview.Visibility = Visibility.Visible;
             return;
         }
@@ -334,32 +346,37 @@ public sealed partial class DetailView : UserControl
         var text = markdown!;
         var folder = baseDir;
         var file = bench.Paths.PreviewFile;
-        var written = await Task.Run(() =>
+        var render = await Task.Run(() =>
         {
             var answer = CoreJson.Parse(NativeCore.PreviewHtml(CoreJson.PreviewRequest(text, dark, folder)));
             if (!answer.Ok || CoreJson.Text(answer.Result, "html") is not { } html)
-                return false;
+                return Rendering.Failed;
             try
             {
                 lock (previewWrite)
                 {
                     if (ticket != Volatile.Read(ref renderTicket))
-                        return false;
+                        return Rendering.Stale;
                     Directory.CreateDirectory(Path.GetDirectoryName(file)!);
                     AtomicFile.Write(file, System.Text.Encoding.UTF8.GetBytes(PreviewRules.WithZoom(html, zoom)));
-                    return true;
+                    return Rendering.Written;
                 }
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException)
             {
-                return false;
+                return Rendering.Failed;
             }
         });
-        if (ticket != renderTicket || expected != version || !PreviewChosen || !written)
+        if (ticket != renderTicket || expected != version || !PreviewChosen || render == Rendering.Stale)
+            return;
+        PreviewMissing.Visibility = Visibility.Collapsed;
+        // Section 8: a failure is shown, not kept; previewShown names only a written document,
+        // so the next showing of this item renders again.
+        PreviewFailed.Visibility = Ui.Show(render == Rendering.Failed);
+        Preview.Visibility = Ui.Show(render == Rendering.Written);
+        if (render == Rendering.Failed)
             return;
         previewShown = key;
-        PreviewMissing.Visibility = Visibility.Collapsed;
-        Preview.Visibility = Visibility.Visible;
         Preview.CoreWebView2.Navigate(new Uri(file).AbsoluteUri);
     }
 
@@ -408,10 +425,10 @@ public sealed partial class DetailView : UserControl
         };
         core.WebMessageReceived += (_, args) =>
         {
-            if (PreviewRules.Navigation(args.Source, bench.Paths.PreviewFile) == LinkDecision.Allow && ForwardedKey(args.WebMessageAsJson) is var (key, modifiers))
-                RunShortcut(key, modifiers);
+            if (PreviewRules.Navigation(args.Source, bench.Paths.PreviewFile) == LinkDecision.Allow)
+                Received(PreviewMessage.Parse(args.WebMessageAsJson));
         };
-        await core.AddScriptToExecuteOnDocumentCreatedAsync(ForwardKeysScript());
+        await core.AddScriptToExecuteOnDocumentCreatedAsync(PreviewScript());
         core.ContextMenuRequested += (_, args) =>
         {
             var items = args.MenuItems;
@@ -425,46 +442,62 @@ public sealed partial class DetailView : UserControl
     }
 
     /// <summary>
-    /// Section 11 with focus in the preview: keys go to the web view's own process, past the
-    /// window's keyboard accelerators, and WinUI's WebView2 does not raise AcceleratorKeyPressed.
-    /// A script the host adds, the only script that runs in the page, posts the app's shortcut keys
-    /// back and cancels them in the page; every other key, Ctrl+C and Ctrl+A among them, stays with
-    /// the page.
+    /// The preview is part of the app, not a browser (section 8), through a script the host adds,
+    /// the only script that runs in the page:
+    /// - Section 11 with focus in the preview: keys go to the web view's own process, past the
+    ///   window's keyboard accelerators, and WinUI's WebView2 does not raise AcceleratorKeyPressed.
+    ///   The script posts the app's shortcut keys back and cancels them in the page; every other
+    ///   key, Ctrl+C and Ctrl+A among them, stays with the page. A key goes by its virtual-key
+    ///   code, which on Windows is the layout's: AZERTY's A key is VK_A wherever it sits.
+    /// - The mouse's back button (the page's button 3) is the app's Back and its forward button (4)
+    ///   does nothing: the script cancels both, so neither moves the page's history.
+    /// - Ctrl with the wheel steps view.zoom, as Ctrl+= and Ctrl+- do, not WebView2's own zoom.
+    /// Drops need no script: WinUI's WebView2 hands what another app drops on the page to the
+    /// window's drop target (MainWindow.Root_Drop), and the page never sees it.
     /// </summary>
-    string ForwardKeysScript()
+    string PreviewScript()
     {
         IEnumerable<(VirtualKey Key, VirtualKeyModifiers Modifiers)> keys = [
             .. MainWindow.Current.ForwardedShortcuts.Select(s => (s.Key, s.Modifiers)),
             .. Commands.SelectMany(c => c.Owner.KeyboardAccelerators.Select(a => (a.Key, a.Modifiers))),
         ];
         var names = JsonSerializer.Serialize(keys.Select(k => KeyName((int)k.Key, k.Modifiers)).Distinct().ToArray());
-        return "(() => { const keys = new Set(" + names + "); addEventListener('keydown', e => {"
+        return "(() => { const keys = new Set(" + names + "); const post = m => chrome.webview.postMessage(m);"
+            + " addEventListener('keydown', e => {"
             + " const name = e.keyCode + (e.ctrlKey ? '+c' : '') + (e.shiftKey ? '+s' : '') + (e.altKey ? '+a' : '');"
             + " if (!keys.has(name)) return; e.preventDefault(); e.stopPropagation();"
-            + " chrome.webview.postMessage({ key: e.keyCode, ctrl: e.ctrlKey, shift: e.shiftKey, alt: e.altKey }); }, true); })();";
+            + " post({ key: e.keyCode, ctrl: e.ctrlKey, shift: e.shiftKey, alt: e.altKey }); }, true);"
+            + " for (const type of ['mousedown', 'mouseup', 'auxclick']) addEventListener(type, e => {"
+            + " if (e.button !== 3 && e.button !== 4) return; e.preventDefault(); e.stopPropagation();"
+            + " if (type === 'mouseup' && e.button === 3) post({ back: true }); }, true);"
+            + " addEventListener('wheel', e => { if (!e.ctrlKey || !e.wheelDeltaY) return; e.preventDefault(); e.stopPropagation();"
+            + " post({ wheel: e.wheelDeltaY }); }, { capture: true, passive: false }); })();";
     }
 
     static string KeyName(int key, VirtualKeyModifiers modifiers) =>
         key + (modifiers.HasFlag(VirtualKeyModifiers.Control) ? "+c" : "") + (modifiers.HasFlag(VirtualKeyModifiers.Shift) ? "+s" : "") + (modifiers.HasFlag(VirtualKeyModifiers.Menu) ? "+a" : "");
 
-    static (VirtualKey, VirtualKeyModifiers)? ForwardedKey(string json)
+    void Received(PreviewMessage? message)
     {
-        try
+        switch (message)
         {
-            using var message = JsonDocument.Parse(json);
-            var root = message.RootElement;
-            var modifiers = VirtualKeyModifiers.None;
-            if (root.GetProperty("ctrl").GetBoolean())
-                modifiers |= VirtualKeyModifiers.Control;
-            if (root.GetProperty("shift").GetBoolean())
-                modifiers |= VirtualKeyModifiers.Shift;
-            if (root.GetProperty("alt").GetBoolean())
-                modifiers |= VirtualKeyModifiers.Menu;
-            return ((VirtualKey)root.GetProperty("key").GetInt32(), modifiers);
-        }
-        catch (Exception e) when (e is JsonException or KeyNotFoundException or InvalidOperationException or FormatException)
-        {
-            return null;
+            case PreviewMessage.Key key:
+                var modifiers = VirtualKeyModifiers.None;
+                if (key.Ctrl)
+                    modifiers |= VirtualKeyModifiers.Control;
+                if (key.Shift)
+                    modifiers |= VirtualKeyModifiers.Shift;
+                if (key.Alt)
+                    modifiers |= VirtualKeyModifiers.Menu;
+                RunShortcut((VirtualKey)key.Code, modifiers);
+                break;
+            case PreviewMessage.Back:
+                MainWindow.Current.Back();
+                break;
+            case PreviewMessage.Wheel wheel:
+                if (wheelSteps.Add(wheel.Delta) is var steps and not 0)
+                    MainWindow.Current.StepZoom(steps);
+                break;
         }
     }
 

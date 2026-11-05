@@ -79,6 +79,18 @@ pub fn parse_web_address(text: &str) -> Option<String> {
     (!host.is_empty() && host != "[]").then_some(url)
 }
 
+/// Pasted or dropped text that is one `http` or `https` URL, scheme
+/// included (DESIGN.md 7.1). `example.com` or a sentence with a dot adds
+/// nothing: the URL field is where a scheme is added.
+pub fn link_text(text: &str) -> Option<String> {
+    let lower = text.trim().to_ascii_lowercase();
+    if lower.starts_with("http://") || lower.starts_with("https://") {
+        parse_web_address(text)
+    } else {
+        None
+    }
+}
+
 /// A local path the user added, before any core call.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Added {
@@ -121,6 +133,17 @@ mod tests {
         assert_eq!(ok("https:///path"), None);
         assert_eq!(ok("https://exa mple.com"), None);
         assert_eq!(ok(""), None);
+    }
+
+    #[test]
+    fn pasted_or_dropped_text_adds_only_one_url_with_its_scheme() {
+        assert_eq!(link_text(" https://example.com/a\n"), Some("https://example.com/a".into()));
+        assert_eq!(link_text("HTTP://example.com"), Some("HTTP://example.com".into()));
+        assert_eq!(link_text("example.com"), None);
+        assert_eq!(link_text("See the notes.txt file"), None);
+        assert_eq!(link_text("https://a.example\nhttps://b.example"), None);
+        assert_eq!(link_text("ftp://example.com"), None);
+        assert_eq!(link_text("https://"), None);
     }
 
     #[test]

@@ -34,14 +34,15 @@ fn main() -> gtk::glib::ExitCode {
     let _ = unsafe { markitai_app::prepare_environment(&request) };
 
     // After the login environment, which may carry the language (DESIGN.md
-    // 7.5). The toolkit's own words follow the app's choice through gettext.
+    // 7.5). The toolkit's own words follow the app's choice through gettext;
+    // the programs the app opens keep the user's (ui::launch).
     let names = gtk::glib::language_names();
     let first = names.first().map(|s| s.as_str());
     let lang = strings::Lang::from_preferred(first.into_iter());
     if let Some(language) = lang.toolkit_language(first) {
         // SAFETY: GTK has not started; the only other threads are the login
         // import's pipe readers, which do not read the environment.
-        unsafe { std::env::set_var("LANGUAGE", language) };
+        unsafe { ui::launch::set_for_toolkit("LANGUAGE", language) };
     }
     strings::set_lang(lang);
 

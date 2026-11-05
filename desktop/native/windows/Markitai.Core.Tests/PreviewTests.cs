@@ -40,4 +40,32 @@ public sealed class PreviewTests
             PreviewRules.WithZoom(html, 1.25));
         Assert.Equal("<p>no head</p>", PreviewRules.WithZoom("<p>no head</p>", 2));
     }
+
+    [Fact]
+    public void The_page_script_posts_keys_buttons_and_the_wheel()
+    {
+        Assert.Equal(new PreviewMessage.Key(187, true, false, false), PreviewMessage.Parse("""{"key":187,"ctrl":true,"shift":false,"alt":false}"""));
+        Assert.IsType<PreviewMessage.Back>(PreviewMessage.Parse("""{"back":true}"""));
+        Assert.Equal(new PreviewMessage.Wheel(-120), PreviewMessage.Parse("""{"wheel":-120}"""));
+        Assert.Null(PreviewMessage.Parse("""{"links":["https://example.com/a"]}"""));
+        Assert.Null(PreviewMessage.Parse("""{"key":"x"}"""));
+        Assert.Null(PreviewMessage.Parse("""{"other":1}"""));
+        Assert.Null(PreviewMessage.Parse("\"text\""));
+        Assert.Null(PreviewMessage.Parse("not json"));
+    }
+
+    [Fact]
+    public void A_wheel_notch_steps_zoom_once_and_parts_of_one_add_up()
+    {
+        var wheel = new WheelSteps();
+        Assert.Equal(1, wheel.Add(120));
+        Assert.Equal(-1, wheel.Add(-120));
+        Assert.Equal(0, wheel.Add(40));
+        Assert.Equal(0, wheel.Add(40));
+        Assert.Equal(1, wheel.Add(40));
+        Assert.Equal(2, wheel.Add(240));
+        Assert.Equal(0, wheel.Add(60));
+        // The other way: the half notch kept above does not cancel the first notch back.
+        Assert.Equal(-1, wheel.Add(-120));
+    }
 }

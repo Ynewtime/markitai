@@ -32,6 +32,11 @@ public static class Ui
 
     public static string KindGlyphOf(SourceKind kind) => kind == SourceKind.Url ? WebKind : FileKind;
 
+    /// <summary>A file's title is trimmed in the middle, a URL's at the end (desktop/DESIGN.md 4.1).</summary>
+    public static bool MiddleTrimmed(Source source) => MiddleTrimmedKind(source.Kind);
+
+    public static bool MiddleTrimmedKind(SourceKind kind) => kind == SourceKind.File;
+
     public static string Subtitle(ItemState state) => App.Bench.Text.Subtitle(state, App.Bench.OutputFolder);
 
     public static string RowName(ConversionItem item) => $"{item.Title}, {Subtitle(item.State)}";

@@ -39,6 +39,9 @@ public sealed partial class MainWindow : Window
     const double StackBelow = 760;
     const uint WmQueryEndSession = 0x0011;
     const uint WmEndSession = 0x0016;
+    const uint WmDpiChanged = 0x02E0;
+    /// <summary>The title bar row of MainWindow.xaml.</summary>
+    const int TitleBarHeight = 48;
 
     readonly Workbench bench = App.Bench;
     readonly Strings s = App.Strings;
@@ -73,6 +76,7 @@ public sealed partial class MainWindow : Window
         RestoreWindow();
         AddShortcuts();
         HookSessionEnd();
+        Root.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler(Root_PointerPressed), handledEventsToo: true);
 
         Nav.SelectedItem = ConvertItem;
         bench.Queue.Items.CollectionChanged += (_, _) => ShowRegions();
@@ -242,7 +246,8 @@ public sealed partial class MainWindow : Window
 
     void Nav_BackRequested(NavigationView sender, NavigationViewBackRequestedEventArgs args) => Back();
 
-    bool Back()
+    /// <summary>Back to the list in the stacked layout (section 11); false when the list already shows.</summary>
+    public bool Back()
     {
         if (!detailShown)
             return false;
@@ -275,11 +280,14 @@ public sealed partial class MainWindow : Window
 
     public async Task SaveAsAsync(Finished finished)
     {
+        // Starts in the output folder, every time; a name without an extension gets .md.
         var picker = new Microsoft.Windows.Storage.Pickers.FileSavePicker(AppWindow.Id)
         {
             SuggestedFileName = Path.GetFileName(finished.Folder) + ".md",
             DefaultFileExtension = ".md",
         };
+        if (UserFiles.NearestFolder(bench.OutputFolder) is { } start)
+            picker.SuggestedFolder = start;
         picker.FileTypeChoices.Add(s["detail.markdown"], [".md"]);
         var target = await picker.PickSaveFileAsync();
         if (target is null)
@@ -451,6 +459,8 @@ public sealed partial class MainWindow : Window
                 return 0;
             if (message == WmEndSession)
                 Current.EndSession(wParam != 0);
+            if (message == WmDpiChanged)
+                Current.DispatcherQueue.TryEnqueue(Current.SetMinimumSize);
         }
         catch (Exception e)
         {
@@ -498,13 +508,26 @@ public sealed partial class MainWindow : Window
         var settings = bench.Settings;
         var scale = Scale;
         AppWindow.Resize(new Windows.Graphics.SizeInt32((int)(settings.WindowWidth * scale), (int)(settings.WindowHeight * scale)));
-        if (AppWindow.Presenter is OverlappedPresenter presenter)
-        {
-            presenter.PreferredMinimumWidth = (int)(640 * scale);
-            presenter.PreferredMinimumHeight = (int)(480 * scale);
-            if (settings.WindowMaximized)
-                presenter.Maximize();
-        }
+        SetMinimumSize();
+        if (settings.WindowMaximized && AppWindow.Presenter is OverlappedPresenter presenter)
+            presenter.Maximize();
+    }
+
+    /// <summary>
+    /// Section 14: the content area, below the 48-pixel title bar row and inside the frame, is at
+    /// least 640 × 480. The presenter's minimum is the window's outer size, so it adds the title
+    /// bar and the frame (the window's size less its client size) at the window's scale, again
+    /// when the scale changes.
+    /// </summary>
+    void SetMinimumSize()
+    {
+        if (AppWindow.Presenter is not OverlappedPresenter presenter)
+            return;
+        var scale = Scale;
+        var frame = AppWindow.Size;
+        var client = AppWindow.ClientSize;
+        presenter.PreferredMinimumWidth = (int)Math.Ceiling(640 * scale) + frame.Width - client.Width;
+        presenter.PreferredMinimumHeight = (int)Math.Ceiling((480 + TitleBarHeight) * scale) + frame.Height - client.Height;
     }
 
     void SaveWindow()
@@ -520,12 +543,6 @@ public sealed partial class MainWindow : Window
     void AddShortcuts()
     {
         const VirtualKeyModifiers Control = VirtualKeyModifiers.Control;
-        bool Zoom(double to)
-        {
-            bench.UpdateSettings(settings => settings with { Zoom = Math.Round(Math.Clamp(to, AppSettings.MinZoom, AppSettings.MaxZoom), 2) });
-            return true;
-        }
-
         shortcuts.AddRange([
             new(VirtualKey.O, Control, ChooseFiles),
             new(VirtualKey.L, Control, AddUrl),
@@ -534,10 +551,10 @@ public sealed partial class MainWindow : Window
             new(VirtualKey.Number2, Control, () => Go(Page.History, true)),
             new(VirtualKey.F, Control, Search),
             new((VirtualKey)188, Control, () => Go(Page.Settings, true)),
-            new((VirtualKey)187, Control, () => Zoom(bench.Settings.Zoom + 0.1)),
-            new(VirtualKey.Add, Control, () => Zoom(bench.Settings.Zoom + 0.1)),
-            new((VirtualKey)189, Control, () => Zoom(bench.Settings.Zoom - 0.1)),
-            new(VirtualKey.Subtract, Control, () => Zoom(bench.Settings.Zoom - 0.1)),
+            new((VirtualKey)187, Control, () => StepZoom(1)),
+            new(VirtualKey.Add, Control, () => StepZoom(1)),
+            new((VirtualKey)189, Control, () => StepZoom(-1)),
+            new(VirtualKey.Subtract, Control, () => StepZoom(-1)),
             new(VirtualKey.Number0, Control, () => Zoom(1.0)),
             new(VirtualKey.NumberPad0, Control, () => Zoom(1.0)),
             new(VirtualKey.Escape, VirtualKeyModifiers.None, Back),
@@ -552,12 +569,31 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    /// <summary>Zoom In (1) or Zoom Out (-1): view.zoom in steps of 0.1 from 0.5 to 3.0 (section 11).</summary>
+    public bool StepZoom(int steps) => Zoom(bench.Settings.Zoom + 0.1 * steps);
+
+    bool Zoom(double to)
+    {
+        bench.UpdateSettings(settings => settings with { Zoom = Math.Round(Math.Clamp(to, AppSettings.MinZoom, AppSettings.MaxZoom), 2) });
+        return true;
+    }
+
     /// <summary>The window shortcuts the preview forwards (its web view keeps the keys it is given).</summary>
     public IEnumerable<Shortcut> ForwardedShortcuts => shortcuts.Where(s => s.Forwarded);
 
     /// <summary>Runs a window shortcut pressed in the preview; false when none matched or it did nothing.</summary>
     public bool RunForwarded(VirtualKey key, VirtualKeyModifiers modifiers) =>
         ForwardedShortcuts.FirstOrDefault(s => s.Key == key && s.Modifiers == modifiers) is { } shortcut && shortcut.Run();
+
+    /// <summary>
+    /// The mouse's back button is Back (section 11) wherever it is pressed, buttons and lists
+    /// included; its forward button does nothing. Over the preview the page's script does the same.
+    /// </summary>
+    void Root_PointerPressed(object sender, PointerRoutedEventArgs e)
+    {
+        if (e.GetCurrentPoint(Root).Properties.PointerUpdateKind == PointerUpdateKind.XButton1Pressed && Back())
+            e.Handled = true;
+    }
 
     /// <summary>
     /// Ctrl+, from a text field: the field takes Ctrl with the comma key before keyboard
@@ -612,7 +648,7 @@ public sealed partial class MainWindow : Window
         }
         else if (content.Contains(StandardDataFormats.Text))
         {
-            bench.AddUrl(await content.GetTextAsync());
+            bench.AddLink(await content.GetTextAsync());
         }
     }
 
@@ -665,9 +701,9 @@ public sealed partial class MainWindow : Window
             if (view.Contains(StandardDataFormats.StorageItems))
                 bench.AddFiles((await view.GetStorageItemsAsync()).Select(i => i.Path), Environment.CurrentDirectory);
             else if (view.Contains(StandardDataFormats.WebLink))
-                bench.AddUrl((await view.GetWebLinkAsync()).AbsoluteUri);
+                bench.AddLink((await view.GetWebLinkAsync()).AbsoluteUri);
             else if (view.Contains(StandardDataFormats.Text))
-                bench.AddUrl(await view.GetTextAsync());
+                bench.AddLink(await view.GetTextAsync());
         }
         finally
         {
