@@ -153,8 +153,9 @@ type window struct {
 
 	// turn takes the preload's calls one at a time, which mygo makes
 	// each in a goroutine of its own: Look and Key.
-	turn  sync.Mutex
-	looks reports // the workbench's look reported last
+	turn   sync.Mutex
+	looks  reports    // the workbench's look reported last
+	wheels wheelCount // Ctrl with the wheel's notches not yet a step
 }
 
 // sight is a page the window paints: a status page by its paint, numbered
@@ -163,6 +164,10 @@ type sight struct {
 	Paint int
 	Token Token
 }
+
+// background is the web view's own color, the workbench's background in
+// its light and dark themes, which shows before a page draws.
+const background = "light-dark(#fafafa, #09090b)"
 
 // minWidth and minHeight are the window's smallest size: the workbench lays
 // itself out for a phone from 480 wide down, and below 300 high a tiling
@@ -179,7 +184,7 @@ func openWindow(sc *Sidecar, mem *memory, logPath, downloads string) *window {
 		Height:          860,
 		MinWidth:        minWidth,
 		MinHeight:       minHeight,
-		BackgroundColor: "light-dark(#fafafa, #09090b)",
+		BackgroundColor: background,
 		StateKey:        "main",
 		// The main frame stays on the app's pages (willNavigate): every
 		// origin it shows may call MarkitaiWeb, the workbench's of a port
@@ -264,11 +269,12 @@ func (w *window) shown(s sight) {
 }
 
 // look takes the workbench's language and theme (Look), when they are the
-// latest reported.
+// latest reported. The theme is kept for the next launch after the turn,
+// which the shortcuts share: saving can take seconds on Windows (replace).
 func (w *window) look(doc string, n int, l Look) {
 	w.turn.Lock()
-	defer w.turn.Unlock()
 	if !w.looks.newer(doc, n) {
+		w.turn.Unlock()
 		return
 	}
 	if l.Lang != "" {
@@ -277,11 +283,13 @@ func (w *window) look(doc string, n int, l Look) {
 		}
 		chose.Store(true)
 	}
-	if err := w.mem.Update(func(m *Memory) { m.Theme = l.Theme }); err != nil {
-		log.Printf("markitai web: %v", err)
-	}
 	if source := themeSource(l.Theme); mygo.Theme.Source() != source {
 		mygo.Theme.SetSource(source)
+	}
+	w.mem.Set(func(m *Memory) { m.Theme = l.Theme })
+	w.turn.Unlock()
+	if err := w.mem.Save(); err != nil {
+		log.Printf("markitai web: %v", err)
 	}
 }
 
@@ -303,6 +311,29 @@ func (w *window) key(k key) {
 	case keyQuit:
 		mygo.App.Quit()
 	}
+}
+
+// wheel zooms a step for each notch of Ctrl with the wheel (wheelCount),
+// wheelDeltaY of the page, where the preload takes keys.
+func (w *window) wheel(delta float64) {
+	if len(keys(runtime.GOOS)) == 0 {
+		return
+	}
+	w.turn.Lock()
+	defer w.turn.Unlock()
+	page := w.w.Page()
+	steps := w.wheels.add(runtime.GOOS, notches(runtime.GOOS, delta, page.ZoomFactor()))
+	for ; steps != 0; steps -= sign(steps) {
+		page.SetZoomFactor(nextZoom(page.ZoomFactor(), steps > 0))
+	}
+}
+
+// sign is 1 for a positive n, -1 for a negative one.
+func sign(n int) int {
+	if n < 0 {
+		return -1
+	}
+	return 1
 }
 
 // keepDocuments applies documentRules for o where keepsDocuments, before the
@@ -343,7 +374,7 @@ func (w *window) open(req mygo.WindowOpenRequest) *mygo.WindowOptions {
 	case reqStopNow:
 		w.sc.Stop(Now)
 	case reqShowLog:
-		mygo.Shell.ShowItemInFolder(w.logPath)
+		go showInFolder(w.logPath)
 	}
 	return nil
 }
@@ -422,11 +453,18 @@ func windowTitle(title string) string {
 // exportPDF is the workbench's Export PDF: A4 with the workbench's margins
 // and backgrounds, afterprint at once so the workbench restores its page,
 // then a Save panel named after the title the workbench set for printing.
+// The page is white to its edges, as the workbench's print styles promise:
+// WebView2 paints the margins, which no document draws, in the dark
+// canvas color under a dark color-scheme, else in the web view's own
+// background, so both are light while it prints.
 func (w *window) exportPDF() {
 	page := w.w.Page()
 	title, _ := mygo.EvalAs[string](page, "document.title")
+	_ = w.w.SetBackgroundColor("#ffffff")
+	_, _ = page.Eval(`document.documentElement.style.setProperty("color-scheme", "light", "important")`)
 	pdf, err := page.PrintToPDF(mygo.PDFOptions{PageSize: mygo.PageA4, Margins: &a4Margins, Background: true})
-	_, _ = page.Eval(`dispatchEvent(new Event("afterprint"))`)
+	_, _ = page.Eval(`document.documentElement.style.removeProperty("color-scheme"); dispatchEvent(new Event("afterprint"))`)
+	_ = w.w.SetBackgroundColor(background)
 	if err == nil {
 		path := saveAs(w.w, filepath.Join(w.downloads, fileName(title)+".pdf"))
 		if path == "" {
@@ -467,9 +505,14 @@ func (w *window) focus() {
 	w.w.Show()
 }
 
-// openExternal hands url to the system's handler for its scheme. A
-// variable so the e2e build can record it instead.
-var openExternal = func(url string) { _ = openURL(url) }
+// openExternal hands url to the system's handler for its scheme, and logs
+// why it could not (not the link, which may carry a secret). A variable so
+// the e2e build can record it instead.
+var openExternal = func(url string) {
+	if err := openURL(url); err != nil {
+		log.Printf("markitai web: open a link: %v", err)
+	}
+}
 
 // saveAs asks where to save, starting at suggested; "" when canceled. A
 // variable so the e2e build can answer without a panel.
@@ -487,10 +530,12 @@ var saveAs = func(parent *mygo.Window, suggested string) string {
 }
 
 // askSavePath is the path the user chose with ask, the panel, starting at
-// suggested; "" when canceled. A name typed without suggested's extension
-// gets it, as the panel of macOS gives it: one that names a file already
-// there is asked about with replace, the panel having asked about the name
-// as typed, and the panel comes back at it unless replaced.
+// suggested; "" when canceled. A name typed without an extension of
+// suggested's format (formatExts) gets suggested's, as the panel of macOS
+// gives it, also one whose last dot is part of the name ("notes 1.5", or
+// "page.html", as Explorer shows "page.html.md"): one that names a file
+// already there is asked about with replace, the panel having asked about
+// the name as typed, and the panel comes back at it unless replaced.
 func askSavePath(suggested string, ask func(at string) (string, error), replace func(path string) bool) string {
 	ext := filepath.Ext(suggested)
 	for at := suggested; ; {
@@ -498,7 +543,7 @@ func askSavePath(suggested string, ask func(at string) (string, error), replace 
 		if err != nil || path == "" {
 			return ""
 		}
-		if ext == "" || filepath.Ext(path) != "" {
+		if ext == "" || slices.Contains(formatExts(ext), strings.ToLower(filepath.Ext(path))) {
 			return path
 		}
 		path += ext
@@ -509,8 +554,19 @@ func askSavePath(suggested string, ask func(at string) (string, error), replace 
 	}
 }
 
+// formatExts are the extensions, as ".md", of the format whose extension
+// ext is, any case.
+func formatExts(ext string) []string {
+	ext = strings.ToLower(ext)
+	if ext == ".md" {
+		return []string{".md", ".markdown"}
+	}
+	return []string{ext}
+}
+
 // saveFilters is the panel's file type for suggested's extension, which
-// names its format; none without one.
+// names its format, the extension in its name, as "Markdown (*.md)", as
+// Explorer hides it; none without one.
 func saveFilters(suggested string) []mygo.FileFilter {
 	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(suggested), "."))
 	if ext == "" {
@@ -520,7 +576,7 @@ func saveFilters(suggested string) []mygo.FileFilter {
 	if !ok {
 		name = strings.ToUpper(ext)
 	}
-	return []mygo.FileFilter{{Name: name, Extensions: []string{ext}}}
+	return []mygo.FileFilter{{Name: name + " (*." + ext + ")", Extensions: []string{ext}}}
 }
 
 // formats name the formats the workbench saves, by extension.

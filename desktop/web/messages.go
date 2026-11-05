@@ -50,11 +50,14 @@ type Texts struct {
 	LoginEnvFailed func(reason string) string
 }
 
-// menuItems names a context menu's editing items, in their order.
-func menuItems(undo, redo, cut, copy, paste, pasteAndMatchStyle, del, selectAll string) map[string]string {
+// menuItems names a context menu's editing items, in their order. Emoji
+// is named too: the web view would name it in its own language, which on
+// Windows is Traditional Chinese where the app shows Simplified Chinese
+// (languagesOn).
+func menuItems(undo, redo, cut, copy, paste, pasteAndMatchStyle, del, selectAll, emoji string) map[string]string {
 	return map[string]string{mygo.ContextMenuUndo: undo, mygo.ContextMenuRedo: redo, mygo.ContextMenuCut: cut,
 		mygo.ContextMenuCopy: copy, mygo.ContextMenuPaste: paste, mygo.ContextMenuPasteAndMatchStyle: pasteAndMatchStyle,
-		mygo.ContextMenuDelete: del, mygo.ContextMenuSelectAll: selectAll}
+		mygo.ContextMenuDelete: del, mygo.ContextMenuSelectAll: selectAll, mygo.ContextMenuEmoji: emoji}
 }
 
 // texts are the app's words by the workbench's language.
@@ -114,7 +117,7 @@ var en = Texts{
 	ExistsDetail:   "Replacing it overwrites what it holds.",
 	Replace:        "Replace",
 
-	MenuItems: menuItems("Undo", "Redo", "Cut", "Copy", "Paste", "Paste and Match Style", "Delete", "Select All"),
+	MenuItems: menuItems("Undo", "Redo", "Cut", "Copy", "Paste", "Paste and Match Style", "Delete", "Select All", "Emoji"),
 
 	LoginEnvFailed: func(reason string) string {
 		return "Markitai Web could not read your login shell's environment (" + reason + "). The server runs " +
@@ -165,7 +168,7 @@ var zh = Texts{
 	ExistsDetail:   "替换会覆盖其中的内容。",
 	Replace:        "替换",
 
-	MenuItems: menuItems("撤销", "重做", "剪切", "复制", "粘贴", "粘贴并匹配样式", "删除", "全选"),
+	MenuItems: menuItems("撤销", "重做", "剪切", "复制", "粘贴", "粘贴并匹配样式", "删除", "全选", "表情符号"),
 
 	LoginEnvFailed: func(reason string) string {
 		return "Markitai Web 无法读取登录 shell 的环境（" + reason + "）。服务在没有它的情况下运行：" +
@@ -218,7 +221,7 @@ var ja = Texts{
 	Replace:      "置き換える",
 
 	MenuItems: menuItems("取り消す", "やり直す", "カット", "コピー", "ペースト", "ペーストしてスタイルを合わせる", "削除",
-		"すべてを選択"),
+		"すべてを選択", "絵文字"),
 
 	LoginEnvFailed: func(reason string) string {
 		return "Markitai Web はログインシェルの環境を読み取れませんでした（" + reason + "）。サーバーはその環境なしで動作します。" +

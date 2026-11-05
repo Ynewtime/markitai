@@ -52,6 +52,7 @@ export interface ConversionsPageProps {
   labelWords: LabelWords;
   head: { stopping: boolean; retrying: boolean; waiting: boolean; retryable: number; canZip: boolean; onStop: () => void; onRetry: () => void; onZip: () => void };
   compareAvailable: boolean;
+  supervised: boolean;
   onSelect: (key: string | null, from?: "pointer" | "keyboard") => void;
   onMode: (mode: PaneMode) => void;
   onNewConversion: () => void;
@@ -203,6 +204,7 @@ export function ConversionsPage(props: ConversionsPageProps) {
       tab={tab}
       phone={phone}
       compareAvailable={props.compareAvailable}
+      supervised={props.supervised}
       originals={props.compareAvailable}
       onDownloadAll={selectedItem ? props.downloadAll(selectedItem) : null}
       acts={acts()}

@@ -8,22 +8,29 @@ import (
 	"strings"
 )
 
-// appEnv holds the variables the app sets for its own toolkit before it
-// starts (toolkit_linux.go), each with the value the user's environment gave
-// it, nil for none: serve, the login shell and the programs the app opens
-// get those back (userEnv).
+// appEnv holds the variables the app, or mygo for WebKitGTK as it starts,
+// sets for the toolkit (toolkit_linux.go), each with the value the user's
+// environment gave it, nil for none: serve, the login shell and the
+// programs the app opens get those back (userEnv).
 var appEnv = map[string]*string{}
 
 // setAppEnv sets key for the app's own use, before anything else runs.
 func setAppEnv(key, value string) {
-	if _, ok := appEnv[key]; !ok {
-		if v, ok := os.LookupEnv(key); ok {
-			appEnv[key] = &v
-		} else {
-			appEnv[key] = nil
-		}
-	}
+	noteUserEnv(key)
 	os.Setenv(key, value)
+}
+
+// noteUserEnv keeps the user's value of key, which the toolkit is about to
+// set for itself, for serve and the programs the app opens.
+func noteUserEnv(key string) {
+	if _, ok := appEnv[key]; ok {
+		return
+	}
+	if v, ok := os.LookupEnv(key); ok {
+		appEnv[key] = &v
+	} else {
+		appEnv[key] = nil
+	}
 }
 
 // userEnv is env with the user's values of the variables the app set for

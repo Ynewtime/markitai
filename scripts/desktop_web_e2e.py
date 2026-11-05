@@ -26,10 +26,11 @@ Scenarios (all by default):
                the expected Markdown
   download     a blob download, and in the next launch a ticket download, land
                where the save panel answered, with the right content
-  pdf          Download as > PDF... > Print... in the preview writes a %PDF file
-               of A4 pages and the page receives afterprint; the bundled
-               markitai reads the file as the page's text, without the
-               workbench's sidebar
+  pdf          Download as > PDF... > Export... in the preview (the card names
+               no browser headers and footers) writes a %PDF file of A4 pages,
+               and the page receives afterprint and gets its color-scheme
+               back; the bundled markitai reads the file as the page's text,
+               without the workbench's sidebar
   port         a second launch serves the same origin, the first launch's log
                moved to serve.previous.log; with that port taken, a third
                launch takes another from 23600 to 23699 and remembers it
@@ -430,17 +431,31 @@ def sandbox(home, markitai_home):
 
 
 class Automation:
-    """mygo's automation plugin: newline-delimited JSON calls over a Unix socket."""
+    """mygo's automation plugin: newline-delimited JSON calls over a Unix socket. An answer can go
+    missing: WebKitGTK's completion of a script the window runs as it changes pages may never come.
+    A call that waits longer than its limit drops its connection for a new one and fails, and wait_for
+    tries again within its own limit."""
+
+    ANSWER_SECONDS = 10
 
     def __init__(self, path, timeout=30):
+        self.path = path
         self.socket = wait_for("automation socket", lambda: SYSTEM.connect(path), timeout, 0.1)
-        self.socket.settimeout(120)
         self.stream = self.socket.makefile("rw", encoding="utf-8", newline="\n")
         self.sent = 0
 
+    def reconnect(self):
+        self.socket.close()
+        self.socket = SYSTEM.connect(self.path)
+        self.stream = self.socket.makefile("rw", encoding="utf-8", newline="\n")
+
     def call(self, method, **params):
+        # idle waits up to its own timeout (ms) before it answers; a capture encodes a whole window.
+        limit = params.get("timeout", 0) / 1000 + self.ANSWER_SECONDS if method == "idle" else \
+            3 * self.ANSWER_SECONDS if method == "capture" else self.ANSWER_SECONDS
         self.sent += 1
         try:
+            self.socket.settimeout(limit)
             self.stream.write(json.dumps({"id": self.sent, "method": method, "params": params}) + "\n")
             self.stream.flush()
             while True:
@@ -450,6 +465,12 @@ class Automation:
                 answer = json.loads(line)
                 if answer.get("id") == self.sent:
                     break
+        except socket.timeout as error:
+            try:
+                self.reconnect()
+            except OSError as again:
+                raise AutomationError(f"{method}: no answer within {limit:g} s, and no new connection: {again}") from error
+            raise AutomationError(f"{method}: no answer within {limit:g} s; connected again") from error
         except OSError as error:
             raise AutomationError(str(error)) from error
         if "error" in answer:
@@ -970,7 +991,8 @@ const entry = await until(() => [...document.querySelectorAll('[role="menuitem"]
 if (!entry) return "no PDF... entry";
 entry.click();
 const print = await until(() => document.querySelector(".pdf-card .btn-primary"));
-if (!print) return "no Print... button";
+if (!print) return "no Export... button";
+window.__e2ePdfCard = { label: print.textContent.trim(), hint: document.querySelector("#pdf-card-hint")?.textContent ?? "" };
 print.click();
 return "printing";
 """
@@ -985,7 +1007,11 @@ def pdf(s):
     app.ui.call("idle", window=app.ui.window(), timeout=10000)
     app.capture("preview")
     step = app.ui.eval(EXPORT_PDF)
-    if not s.check("Download as > PDF... > Print... in the preview", step == "printing", step):
+    if s.check("Download as > PDF... > Export... in the preview", step == "printing", step):
+        card = app.ui.eval("return window.__e2ePdfCard")
+        s.check("the card says Export..., without the browser's headers and footers",
+                card["label"] == "Export\u2026" and "headers and footers" not in card["hint"], card)
+    else:
         step = app.ui.eval("""window.__e2eAfterprint = 0;
             addEventListener("afterprint", () => { window.__e2eAfterprint += 1; });
             document.title = "web-e2e-print"; window.print(); return "window.print";""")
@@ -999,6 +1025,8 @@ def pdf(s):
     restored = eventually("the page's restore", lambda: app.ui.eval(
         "return !document.body.classList.contains('is-printing')"), 5)
     s.check("the page received afterprint and restored itself", after and restored, f"afterprint x{after or 0}")
+    scheme = app.ui.eval("return document.documentElement.style.getPropertyValue('color-scheme')")
+    s.check("the page's color-scheme, light for the export, is its own again", scheme == "", repr(scheme))
     app.quit()
     read = subprocess.run([str(s.run.app / BUILD.program), str(saved)], capture_output=True, text=True, timeout=120,
                           cwd=s.dir, stdin=subprocess.DEVNULL, env=s.environment(MARKITAI_NO_UPDATE_CHECK="1"))

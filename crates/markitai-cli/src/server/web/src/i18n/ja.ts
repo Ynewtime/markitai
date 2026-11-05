@@ -251,6 +251,7 @@ export const ja: Dict = {
   exportPdfAsk: "PDF をエクスポート…",
   pdfFurnitureWhat: "上部に Markitai と文書名、末尾にソースを入れます。",
   pdfPrint: "印刷…",
+  pdfSave: "エクスポート…",
   pdfPreparedBy: "Markitai で作成",
   pdfSource: "出典",
   printImagesLoading: "画像をまだ読み込んでいます · プレビューの読み込みが終わってから、もう一度 PDF をエクスポートしてください",

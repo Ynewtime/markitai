@@ -240,6 +240,7 @@ export const zh: Dict = {
   exportPdfAsk: "导出 PDF…",
   pdfFurnitureWhat: "顶部显示 Markitai 和文档名，末尾显示来源。",
   pdfPrint: "打印…",
+  pdfSave: "导出…",
   pdfPreparedBy: "由 Markitai 生成",
   pdfSource: "来源",
   printImagesLoading: "图片仍在加载 · 预览加载完成后再导出 PDF",

@@ -15,8 +15,12 @@ var glib struct {
 	err  error
 
 	errorFree        func(e *gError)
+	free             func(p unsafe.Pointer)
 	variantNewString func(s string) unsafe.Pointer
 	variantNewTuple  func(children *unsafe.Pointer, n uintptr) unsafe.Pointer
+	variantNewArray  func(childType unsafe.Pointer, children *unsafe.Pointer, n uintptr) unsafe.Pointer
+	variantTypeNew   func(s string) unsafe.Pointer
+	variantTypeFree  func(t unsafe.Pointer)
 	variantUnref     func(v unsafe.Pointer)
 	objectUnref      func(o unsafe.Pointer)
 
@@ -26,6 +30,10 @@ var glib struct {
 	launchContextSetenv func(ctx unsafe.Pointer, key, value string)
 	launchContextUnset  func(ctx unsafe.Pointer, key string)
 	launchDefaultForURI func(uri string, ctx unsafe.Pointer, gerr **gError) int32
+	fileNewForPath      func(path string) unsafe.Pointer
+	fileGetURI          func(f unsafe.Pointer) *byte
+	filenameFromURI     func(uri *byte, hostname, gerr unsafe.Pointer) *byte
+	strfreev            func(v **byte)
 }
 
 // gError is GLib's GError.
@@ -54,8 +62,12 @@ func loadGLib() error {
 			name string
 		}{
 			{&glib.errorFree, g, "g_error_free"},
+			{&glib.free, g, "g_free"},
 			{&glib.variantNewString, g, "g_variant_new_string"},
 			{&glib.variantNewTuple, g, "g_variant_new_tuple"},
+			{&glib.variantNewArray, g, "g_variant_new_array"},
+			{&glib.variantTypeNew, g, "g_variant_type_new"},
+			{&glib.variantTypeFree, g, "g_variant_type_free"},
 			{&glib.variantUnref, g, "g_variant_unref"},
 			{&glib.objectUnref, o, "g_object_unref"},
 			{&glib.busGetSync, io, "g_bus_get_sync"},
@@ -64,6 +76,10 @@ func loadGLib() error {
 			{&glib.launchContextSetenv, io, "g_app_launch_context_setenv"},
 			{&glib.launchContextUnset, io, "g_app_launch_context_unsetenv"},
 			{&glib.launchDefaultForURI, io, "g_app_info_launch_default_for_uri"},
+			{&glib.fileNewForPath, io, "g_file_new_for_path"},
+			{&glib.fileGetURI, io, "g_file_get_uri"},
+			{&glib.filenameFromURI, g, "g_filename_from_uri"},
+			{&glib.strfreev, g, "g_strfreev"},
 		} {
 			purego.RegisterLibFunc(f.fn, f.lib, f.name)
 		}
@@ -78,6 +94,22 @@ func cString(p *byte) string {
 		b = append(b, *p)
 	}
 	return string(b)
+}
+
+// takeString copies the C string p, which it frees.
+func takeString(p *byte) string {
+	s := cString(p)
+	if p != nil {
+		glib.free(unsafe.Pointer(p))
+	}
+	return s
+}
+
+// fileURI is path's file: URI, as GIO escapes it. loadGLib first.
+func fileURI(path string) string {
+	f := glib.fileNewForPath(path)
+	defer glib.objectUnref(f)
+	return takeString(glib.fileGetURI(f))
 }
 
 // takeError is the GError e, which it frees.

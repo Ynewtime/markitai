@@ -130,7 +130,8 @@ func (a *app) quitNow() {
 
 // terminate is the system's request to end the app, which cannot wait for
 // an answer: on Linux, SIGTERM as the session ends. It quits as Quit When
-// Done does, without the question, also while the question is up; a second
+// Done does, without the question; while the question is up, it closes it,
+// and an answer that comes anyway changes nothing (askAndQuit). A second
 // request stops the conversions at once.
 func (a *app) terminate() {
 	if a.ending.Swap(true) {
@@ -142,6 +143,9 @@ func (a *app) terminate() {
 	if a.sc != nil && a.asking.Load() {
 		a.sc.Stop(WhenDone)
 		go a.quitWhenStopped()
+		if a.win != nil {
+			closeQuestions(a.win.w)
+		}
 		return
 	}
 	mygo.App.Quit()
@@ -272,7 +276,11 @@ func (a *app) close(e *mygo.CloseEvent) {
 }
 
 func (a *app) askAndQuit(b busy) {
-	switch askQuit(a.win.w, shownTexts(), b) {
+	choice := askQuit(a.win.w, shownTexts(), b)
+	if a.ending.Load() {
+		return // terminate quits
+	}
+	switch choice {
 	case quitCancel:
 		a.asking.Store(false)
 		return

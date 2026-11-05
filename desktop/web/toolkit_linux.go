@@ -44,7 +44,10 @@ func nameApp() {
 //     dark appearance while the app follows the system: mygo reads it from
 //     the portal but tells GTK only as the app sets its theme's source, so
 //     the app sets it again whenever the appearance changes.
+//   - mygo sets WEBKIT_DISABLE_DMABUF_RENDERER for WebKitGTK as App.Run
+//     starts, which serve and the programs the app opens do without.
 func prepareToolkit() {
+	noteUserEnv("WEBKIT_DISABLE_DMABUF_RENDERER")
 	setAppEnv("LANGUAGE", toolkitLanguage(mygo.App.Locale()))
 	nameToPortal()
 	if os.Getenv("GTK_USE_PORTAL") == "" {
@@ -117,12 +120,8 @@ func portalFileChooser() error {
 	if err := loadGLib(); err != nil {
 		return err
 	}
-	err := sessionCall("org.freedesktop.portal.Desktop", "/org/freedesktop/portal/desktop", "org.freedesktop.DBus.Properties", "Get",
+	return sessionCall("org.freedesktop.portal.Desktop", "/org/freedesktop/portal/desktop", "org.freedesktop.DBus.Properties", "Get",
 		tuple(glib.variantNewString("org.freedesktop.portal.FileChooser"), glib.variantNewString("version")), 3000)
-	if err != nil {
-		log.Printf("markitai web: GTK's own file chooser, the portal has none: %v", err)
-	}
-	return err
 }
 
 // gdkRectangle and gdkGeometry are GDK's.
@@ -136,64 +135,66 @@ type gdkGeometry struct {
 }
 
 // fileChooserMargin is the room GTK's own file chooser leaves around it
-// on its screen's work area.
+// on its screen's work area and in its window.
 const fileChooserMargin = 48
 
-// toolkitReady keeps GTK's own file chooser within the work area of its
-// window's screen, as it opens 1203 by 950 by default, past a 1280 by 720
-// screen: realize, a signal that exists once GTK has started, gives each
-// file chooser dialog a largest size before it shows.
+// fileChooserChars is the fewest characters GTK's own file chooser's
+// entries ask room for: its name entry still shows a short name whole.
+const fileChooserChars = 12
+
+// toolkitReady readies what the app adds to GTK once GTK has started, as
+// the signals it watches exist from then on: its own file chooser kept
+// within its window and screen (sizeFileChoosers), and a drop's files handed
+// to the page (watchDrops).
 func toolkitReady() {
-	gtk, err := purego.Dlopen("libgtk-3.so.0", purego.RTLD_NOW|purego.RTLD_GLOBAL)
-	if err != nil {
-		log.Printf("file chooser size: %v", err)
+	if err := loadGTK(); err != nil {
+		log.Printf("gtk: %v", err)
 		return
 	}
-	gobject, err := purego.Dlopen("libgobject-2.0.so.0", purego.RTLD_NOW|purego.RTLD_GLOBAL)
-	if err != nil {
-		log.Printf("file chooser size: %v", err)
-		return
+	gtk.classRef(gtk.widgetType())
+	sizeFileChoosers()
+	watchDrops()
+}
+
+// sizeFileChoosers keeps GTK's own file chooser within its window and the
+// work area of its window's screen, as it opens 1203 by 950 by default,
+// past a 1280 by 720 screen, and a tiling window manager centers it on its
+// window, as Hyprland does a floating dialog: one wider than a window tiled
+// at the screen's edge would reach past it. realize gives each file chooser
+// dialog a largest size before it shows. Its name and search entries ask
+// for 45 characters, which keeps it at least 736 pixels wide, wider than a
+// window tiled at half a 1280-pixel screen: they ask for fewer, down to
+// fileChooserChars, until it fits.
+func sizeFileChoosers() {
+	dialog, container, entry := gtk.fileChooserType(), gtk.containerType(), gtk.entryType()
+	var children []unsafe.Pointer
+	// void (*GtkCallback) (GtkWidget *widget, gpointer data)
+	collect := purego.NewCallback(func(w unsafe.Pointer, _ uintptr) {
+		children = append(children, w)
+	})
+	// entries is the entries inside w, its title bar's among them.
+	entries := func(w unsafe.Pointer) []unsafe.Pointer {
+		var found []unsafe.Pointer
+		for queue := []unsafe.Pointer{w}; len(queue) > 0; {
+			next := queue[0]
+			queue = queue[1:]
+			if gtk.isA(next, entry) != 0 {
+				found = append(found, next)
+			}
+			if gtk.isA(next, container) != 0 {
+				children = children[:0]
+				gtk.forall(next, collect, 0)
+				queue = append(queue, children...)
+			}
+		}
+		return found
 	}
-	var (
-		widgetType, dialogType func() uintptr
-		classRef               func(t uintptr) unsafe.Pointer
-		signalLookup           func(name string, owner uintptr) uint32
-		addEmissionHook        func(signal, detail uint32, hook, data, destroy uintptr) uint64
-		isA                    func(instance unsafe.Pointer, t uintptr) int32
-		valueGetObject         func(v unsafe.Pointer) unsafe.Pointer
-		transientFor           func(w unsafe.Pointer) unsafe.Pointer
-		widgetWindow           func(w unsafe.Pointer) unsafe.Pointer
-		displayDefault         func() unsafe.Pointer
-		monitorAtWindow        func(d, w unsafe.Pointer) unsafe.Pointer
-		monitorAt              func(d unsafe.Pointer, n int32) unsafe.Pointer
-		workarea               func(m unsafe.Pointer, r *gdkRectangle)
-		setGeometryHints       func(w, geometryWidget unsafe.Pointer, g *gdkGeometry, mask int32)
-	)
-	for _, f := range []struct {
-		fn   any
-		lib  uintptr
-		name string
-	}{
-		{&widgetType, gtk, "gtk_widget_get_type"},
-		{&dialogType, gtk, "gtk_file_chooser_dialog_get_type"},
-		{&classRef, gobject, "g_type_class_ref"},
-		{&signalLookup, gobject, "g_signal_lookup"},
-		{&addEmissionHook, gobject, "g_signal_add_emission_hook"},
-		{&isA, gobject, "g_type_check_instance_is_a"},
-		{&valueGetObject, gobject, "g_value_get_object"},
-		{&transientFor, gtk, "gtk_window_get_transient_for"},
-		{&widgetWindow, gtk, "gtk_widget_get_window"},
-		{&displayDefault, gtk, "gdk_display_get_default"},
-		{&monitorAtWindow, gtk, "gdk_display_get_monitor_at_window"},
-		{&monitorAt, gtk, "gdk_display_get_monitor"},
-		{&workarea, gtk, "gdk_monitor_get_workarea"},
-		{&setGeometryHints, gtk, "gtk_window_set_geometry_hints"},
-	} {
-		purego.RegisterLibFunc(f.fn, f.lib, f.name)
+	least := func(w unsafe.Pointer) int32 {
+		var width, natural int32
+		gtk.preferredWidth(w, &width, &natural)
+		return width
 	}
-	dialog := dialogType()
-	classRef(widgetType())
-	realize := signalLookup("realize", widgetType())
+	realize := gtk.signalLookup("realize", gtk.widgetType())
 	if realize == 0 {
 		log.Print("file chooser size: no realize signal")
 		return
@@ -202,30 +203,45 @@ func toolkitReady() {
 	// guint n_param_values, const GValue *param_values, gpointer data):
 	// the first value holds the widget.
 	hook := purego.NewCallback(func(_, _ uintptr, values unsafe.Pointer, _ uintptr) uintptr {
-		w := valueGetObject(values)
-		if w == nil || isA(w, dialog) == 0 {
+		w := gtk.valueGetObject(values)
+		if w == nil || gtk.isA(w, dialog) == 0 {
 			return 1
 		}
-		d := displayDefault()
+		d := gtk.displayDefault()
 		var monitor unsafe.Pointer
-		if parent := transientFor(w); parent != nil {
-			if win := widgetWindow(parent); win != nil {
-				monitor = monitorAtWindow(d, win)
+		width, height := int32(1<<20), int32(1<<20)
+		if parent := gtk.transientFor(w); parent != nil {
+			gtk.windowSize(parent, &width, &height)
+			if win := gtk.widgetWindow(parent); win != nil {
+				monitor = gtk.monitorAtWindow(d, win)
 			}
 		}
 		if monitor == nil {
-			monitor = monitorAt(d, 0)
+			monitor = gtk.monitorAt(d, 0)
 		}
 		if monitor == nil {
 			return 1
 		}
 		var area gdkRectangle
-		workarea(monitor, &area)
-		g := gdkGeometry{maxWidth: max(area.width-2*fileChooserMargin, 1), maxHeight: max(area.height-2*fileChooserMargin, 1)}
-		setGeometryHints(w, nil, &g, 1<<2) // GDK_HINT_MAX_SIZE
+		gtk.workarea(monitor, &area)
+		g := gdkGeometry{
+			maxWidth:  max(min(area.width, width)-2*fileChooserMargin, 1),
+			maxHeight: max(min(area.height, height)-2*fileChooserMargin, 1),
+		}
+		gtk.setGeometryHints(w, nil, &g, 1<<2) // GDK_HINT_MAX_SIZE
+		if least(w) > g.maxWidth {
+			found := entries(w)
+			for chars := int32(40); chars >= fileChooserChars && least(w) > g.maxWidth; chars -= 4 {
+				for _, e := range found {
+					if gtk.entryWidthChars(e) > chars {
+						gtk.setEntryWidth(e, chars)
+					}
+				}
+			}
+		}
 		return 1
 	})
-	addEmissionHook(realize, 0, hook, 0, 0)
+	gtk.addEmissionHook(realize, 0, hook, 0, 0)
 }
 
 // openURL opens url with its default program, in the user's environment:
@@ -235,4 +251,48 @@ func openURL(url string) error {
 	var err error
 	mygo.RunOnMain(func() { err = launchAsUser(url) })
 	return err
+}
+
+// showInFolder asks the file manager to show path, as mygo does, and else
+// opens its folder in the user's environment: mygo's own fallback opens it
+// with the app's.
+func showInFolder(path string) {
+	mygo.RunOnMain(func() {
+		if err := loadGLib(); err != nil {
+			mygo.Shell.ShowItemInFolder(path)
+			return
+		}
+		s := glib.variantTypeNew("s")
+		items := []unsafe.Pointer{glib.variantNewString(fileURI(path))}
+		uris := glib.variantNewArray(s, &items[0], 1)
+		glib.variantTypeFree(s)
+		err := sessionCall("org.freedesktop.FileManager1", "/org/freedesktop/FileManager1", "org.freedesktop.FileManager1",
+			"ShowItems", tuple(uris, glib.variantNewString("")), -1)
+		if err != nil {
+			if err := launchAsUser(fileURI(filepath.Dir(path))); err != nil {
+				log.Printf("markitai web: show %s: %v", path, err)
+			}
+		}
+	})
+}
+
+// closeQuestions answers the message dialogs that parent holds up, as the
+// quit's question, as their Cancel: the app quits as Quit When Done does
+// when the session ends (terminate), and GTK destroys a dialog left up with
+// its window, which mygo then destroys again.
+func closeQuestions(parent *mygo.Window) {
+	if err := loadGTK(); err != nil {
+		log.Printf("markitai web: close the question: %v", err)
+		return
+	}
+	mygo.RunOnMain(func() {
+		win := parent.NativeHandle()
+		list := gtk.listToplevels()
+		for l := list; l != nil; l = l.next {
+			if gtk.isA(l.data, gtk.messageDialogType()) != 0 && uintptr(gtk.transientFor(l.data)) == win {
+				gtk.dialogResponse(l.data, -4) // GTK_RESPONSE_DELETE_EVENT
+			}
+		}
+		gtk.listFree(list)
+	})
 }

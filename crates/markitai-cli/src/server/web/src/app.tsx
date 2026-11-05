@@ -896,6 +896,7 @@ export function App() {
         jobActions={jobActions}
         labelWords={labelWords}
         compareAvailable={features?.original === true}
+        supervised={caps?.supervised === true}
         head={{
           stopping: busy.has("all:stop"),
           retrying: busy.has("all:retry"),

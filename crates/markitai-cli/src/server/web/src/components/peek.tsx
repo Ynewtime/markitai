@@ -52,6 +52,8 @@ export interface PeekProps {
   tab: PeekTab;
   phone: boolean;
   compareAvailable: boolean;
+  /** Capabilities `supervised`: an app saves the exported PDF itself (PdfExportCard). */
+  supervised: boolean;
   /** The server keeps originals (`features.original`): Files lists the item's own. */
   originals: boolean;
   /** Download all .zip of the item, or null when the server offers none. */
@@ -272,7 +274,7 @@ export function Peek(props: PeekProps) {
         )}
         <ActionMenu label={t.moreActions} actions={menu} danger={acts?.danger ?? undefined} plain triggerRef={menuButton} captions={{ download: t.downloadShort }} />
         {pdfOpen && tools && (
-          <PdfExportCard t={t} anchor={menuAnchor} furniture={tools.furniture} onToggle={tools.toggleFurniture} onPrint={tools.exportPdf} onClose={closePdf} />
+          <PdfExportCard t={t} anchor={menuAnchor} furniture={tools.furniture} supervised={props.supervised} onToggle={tools.toggleFurniture} onPrint={tools.exportPdf} onClose={closePdf} />
         )}
         {!phone && (
           <button type="button" class="icon-btn" aria-pressed={full} aria-label={t.peekFullScreen} title={`${full ? t.peekExitFullScreen : t.peekFullScreen} (F)`} onClick={toggleFull}>

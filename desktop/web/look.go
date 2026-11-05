@@ -1,6 +1,7 @@
 package main
 
 import (
+	"runtime"
 	"strings"
 	"sync/atomic"
 
@@ -71,8 +72,23 @@ func (r *reports) newer(doc string, n int) bool {
 
 // webLanguages are the workbench's languages as mygo names them, its own
 // first: mygo resolves the system's languages among them, so a workbench
-// that follows the system and the app's own words agree.
-var webLanguages = []string{"en", "zh-Hans", "ja"}
+// that follows the system and the app's own words agree (languagesOn).
+var webLanguages = languagesOn(runtime.GOOS)
+
+// languagesOn are the languages mygo resolves the system's among on goos.
+// Any Chinese is Simplified Chinese, as the workbench and the app's own
+// words have it (workbenchLang) and as macOS shows it (desktop/DESIGN.md
+// section 7.5): on Linux and Windows, where mygo's language is the pages'
+// too, zh-Hant has mygo take Traditional Chinese for the workbench's
+// Chinese, which a match with zh-Hans alone does not, leaving English.
+// macOS gives the pages its own first language (pageLanguage) and the
+// menus the languages the bundle names.
+func languagesOn(goos string) []string {
+	if goos == "darwin" {
+		return []string{"en", "zh-Hans", "ja"}
+	}
+	return []string{"en", "zh-Hans", "ja", "zh-Hant"}
+}
 
 // locale is the mygo language of a workbench language.
 func locale(lang string) string {
