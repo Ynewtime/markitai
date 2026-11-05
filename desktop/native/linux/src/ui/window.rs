@@ -103,13 +103,17 @@ fn icon_button(icon: &str, key: &str, action: &str) -> gtk::Button {
     button
 }
 
-fn url_row() -> UrlRow {
+/// The URL row; the list column's field has a leading link glyph, the empty
+/// page's has none (DESIGN.md 6.2, 6.3).
+fn url_row(link_glyph: bool) -> UrlRow {
     let entry = gtk::Entry::builder()
         .placeholder_text(tr("convert.url.placeholder"))
-        .primary_icon_name("insert-link-symbolic")
         .input_purpose(gtk::InputPurpose::Url)
         .hexpand(true)
         .build();
+    if link_glyph {
+        entry.set_primary_icon_name(Some("insert-link-symbolic"));
+    }
     entry.update_property(&[gtk::accessible::Property::Label(&tr("convert.url.label"))]);
     let add = gtk::Button::with_label(&tr("convert.url.add"));
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
@@ -242,7 +246,7 @@ impl Win {
                 .build(),
         );
         or_row.append(&line());
-        let empty_url = url_row();
+        let empty_url = url_row(false);
         let empty_child = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
             .spacing(14)
@@ -299,7 +303,7 @@ impl Win {
                 .build(),
         );
         drop_bar.update_property(&[gtk::accessible::Property::Label(&tr("a11y.drop_zone"))]);
-        let list_url = url_row();
+        let list_url = url_row(true);
         let list_top = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
             .spacing(8)
@@ -593,9 +597,20 @@ impl Win {
         }
     }
 
-    /// Accept files and web links dropped anywhere on Convert or History.
+    /// Accept files and web links dropped anywhere on Convert or History,
+    /// the preview included (DESIGN.md 7.1). A browser that offers no URI
+    /// list for a link, as Chromium, offers it as text: text that is one
+    /// http or https URL becomes a URL item, other text is refused.
+    ///
+    /// The app asks for a copy, and takes a move too: a source that offers
+    /// both, as file managers and Chromium do, can reach GDK as a move alone
+    /// (Hyprland chooses the move and keeps it), and a copy-only target
+    /// would refuse it. Either way the app only reads what is dropped.
     fn connect_drop(self: &Rc<Self>) {
-        let target = gtk::DropTarget::new(glib::Type::INVALID, gdk::DragAction::COPY);
+        let target = gtk::DropTarget::new(
+            glib::Type::INVALID,
+            gdk::DragAction::COPY | gdk::DragAction::MOVE,
+        );
         target.set_types(&[gdk::FileList::static_type(), glib::Type::STRING]);
         let weak = Rc::downgrade(self);
         target.connect_enter(move |_, _, _| {
@@ -604,6 +619,7 @@ impl Win {
             }
             gdk::DragAction::COPY
         });
+        target.connect_motion(|_, _, _| gdk::DragAction::COPY);
         let weak = Rc::downgrade(self);
         target.connect_leave(move |_| {
             if let Some(win) = weak.upgrade() {
@@ -620,16 +636,11 @@ impl Win {
                 win.add_gfiles(&files.files());
                 return true;
             }
-            if let Ok(text) = value.get::<String>() {
-                let urls: Vec<String> = text
-                    .lines()
-                    .filter(|line| !line.starts_with('#'))
-                    .filter_map(crate::model::source::parse_web_address)
-                    .collect();
-                if !urls.is_empty() {
-                    win.add_sources(Vec::new(), urls);
-                    return true;
-                }
+            if let Ok(text) = value.get::<String>()
+                && let Some(url) = crate::model::source::link_text(&text)
+            {
+                win.add_sources(Vec::new(), vec![url]);
+                return true;
             }
             false
         });

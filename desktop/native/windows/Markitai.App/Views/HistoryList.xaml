@@ -55,7 +55,7 @@
                         </Grid.ColumnDefinitions>
                         <FontIcon Glyph="{x:Bind m:Ui.KindGlyphOf(Kind)}" FontSize="16" VerticalAlignment="Center" />
                         <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                            <TextBlock Text="{x:Bind Title}" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" />
+                            <m:RowTitle Middle="{x:Bind m:Ui.MiddleTrimmedKind(Kind)}" Text="{x:Bind Title}" />
                             <TextBlock
                                 Text="{x:Bind m:Ui.HistorySubtitle(FinishedAt, Warnings)}"
                                 Style="{StaticResource CaptionTextBlockStyle}"

@@ -539,7 +539,7 @@ Platform controls for these parts:
 | | `settings.screenshot` + note | same | same | same |
 | | `settings.desc` + note | same, disabled while `settings.llm` is off | same | same |
 | | `settings.alt` + note | same | same | same |
-| Output | `settings.output.folder`, note, path | `LabeledContent` with path, `settings.output.change`, `settings.output.show` | `SettingsCard`, description = path, two buttons | `AdwActionRow` (subtitle = path) with a `settings.output.change` button and a folder icon button (tooltip `detail.show.gnome`) |
+| Output | `settings.output.folder`, note, path | `LabeledContent` with path, `settings.output.change`, `settings.output.show` | `SettingsCard`, description = path, two buttons. `settings.output.change`'s `FolderPicker` starts in the output folder, or the nearest folder above it that exists (`SuggestedFolder`) | `AdwActionRow` (subtitle = path) with a `settings.output.change` button and a folder icon button (tooltip `detail.show.gnome`). The `GtkFileDialog` starts in the output folder (`initial-folder`); GTK opens the nearest folder above it that exists |
 | Configuration | Choice `settings.config.user` / `settings.config.builtin` with notes | `Picker` with `.radioGroup` style | `SettingsCard` holding two `RadioButton`s | Two `AdwActionRow`s with grouped `GtkCheckButton` prefixes |
 | | `settings.config.open` or `settings.config.create` | Button | Clickable `SettingsCard` (`IsClickEnabled`, chevron action icon) | `AdwButtonRow` |
 | About | App icon, `app.name.native`, `settings.about.app` + version, `settings.about.core` + version, `settings.about.copyright` | Rows in a section | `SettingsExpander` (expanded) | `AdwActionRow`s with `.property` style |
@@ -571,7 +571,7 @@ where it was asked. Its time runs from when it is given.
 
 | Way | Rule |
 |---|---|
-| Drop on the window | Accepted on the Convert and History pages (History switches to Convert). Files become items. Web links (a URL drag) become URL items: from the drag's URI list, else from `text/x-moz-url` where a browser offers no URI list (Chromium on Linux). Only `http` and `https` links with their scheme |
+| Drop on the window | Accepted on the Convert and History pages (History switches to Convert). Files become items. Web links (a URL drag) become URL items: from the drag's URI list, else from `text/x-moz-url` where a browser offers no URI list (Chromium on Linux). Only `http` and `https` links with their scheme. Dropped text adds a URL item only when it is one such link, as a paste does. GNOME's drop target asks for a copy and takes a move too: a source that offers both, as file managers and Chromium do, can reach GDK as a move alone (Hyprland), and the app only reads what is dropped |
 | `convert.choose` | The platform's open dialog, multiple selection, files only, no type filter |
 | URL field | Trim. With no scheme and a dot in the text, prefix `https://`. Accept only `http` and `https` URLs with a host. Clear the field after adding |
 | Paste (7.6 shortcut) | When focus is not in a text field: file references on the clipboard become items, else text that is one `http` or `https` URL, scheme included, becomes a URL item. Other text, as `example.com` or a sentence with a dot, adds nothing; the URL field is where a scheme is added |
@@ -584,8 +584,8 @@ where it was asked. Its time runs from when it is given.
 | Action | Rule |
 |---|---|
 | Copy Markdown | Puts the shown Markdown on the clipboard as plain text |
-| Save As… | Save dialog, suggested name = the folder's label + `.md`. Writes the shown Markdown. If the text contains `.markitai/`, it also copies the conversion's `.markitai` folder next to the saved file, adding files that are not there and never replacing a file |
-| Show in Finder, File Explorer, Files | macOS `NSWorkspace.activateFileViewerSelecting`, Windows `explorer.exe /select,"<file>"`, GNOME `GtkFileLauncher::open_containing_folder` |
+| Save As… | Save dialog that starts in the output folder, or the nearest folder above it that exists, and lists Markdown files (`.md`); suggested name = the folder's label + `.md`, and a name given without an extension gets `.md` without replacing a file the dialog did not ask about (Windows `FileSavePicker` with `SuggestedFolder` and `DefaultFileExtension`, GNOME `GtkFileDialog` with `initial-folder` and a Markdown filter). Writes the shown Markdown. If the text contains `.markitai/`, it also copies the conversion's `.markitai` folder next to the saved file, adding files that are not there and never replacing a file |
+| Show in Finder, File Explorer, Files | macOS `NSWorkspace.activateFileViewerSelecting`, Windows `explorer.exe /select,"<file>"`, GNOME `org.freedesktop.FileManager1.ShowItems` on the session bus, else the folder opened in its default app with the user's environment (7.5) |
 
 ### 7.3 Quit and closing the window
 
@@ -618,7 +618,7 @@ On a change, the Preview is rendered again with the new `theme`.
 | Source | macOS `Locale.preferredLanguages`, Windows `Windows.System.UserProfile.GlobalizationPreferences.Languages`, Linux `glib::language_names()` |
 | Strings | `desktop/strings.json`, generated from section 10 by `desktop/scripts/strings.py`, which also fails when the two differ. Each app embeds the JSON and looks keys up at run time |
 | Shape | `{"<key>": {"en": "...", "zh-Hans": "..."}}`. Placeholders are `{name}`. Plural pairs end in `.one` and `.other`, chosen by count == 1 |
-| Toolkit text | The platform's own words (system menus, panels, built-in control labels) follow the app's language, so a zh-Hant or zh-TW user sees zh-Hans throughout. macOS puts `zh-Hans` first in `AppleLanguages` in the argument domain at launch; Windows sets `ApplicationLanguages.PrimaryLanguageOverride` to `zh-Hans`; GNOME sets `LANGUAGE` to `zh_CN` before GTK starts |
+| Toolkit text | The platform's own words (system menus, panels, built-in control labels) follow the app's language, so a zh-Hant or zh-TW user sees zh-Hans throughout. macOS puts `zh-Hans` first in `AppleLanguages` in the argument domain at launch; Windows sets `ApplicationLanguages.PrimaryLanguageOverride` to `zh-Hans`; GNOME sets `LANGUAGE` to `zh_CN` before GTK starts, and gives what it opens (links, files, folders) the user's own value: their launch context sets the variable back, or unsets it when the user had none |
 | Not translated | The core's warnings and raw error messages, file names, URLs |
 
 ### 7.6 Single instance
@@ -634,13 +634,16 @@ On a change, the Preview is rendered again with the new `theme`.
 | Concern | macOS `WKWebView` | Windows `WebView2` | GNOME WebKitGTK 6 |
 |---|---|---|---|
 | Load | `loadHTMLString(html, baseURL:)` with the file URL of `base_dir` (trailing slash). That call grants the page no read access to the folder, so the result's images would not load: for a new `base_dir` the app first calls `loadFileURL(<Markdown file>, allowingReadAccessTo: <base_dir>)`, keeps the web view hidden, and loads the HTML when that load ends. WebKit keeps the access for later documents with that base | Write the document to `%LOCALAPPDATA%\Markitai Native\Preview\current.html`, then `Navigate` to its file URI | `load_html(html, Some(<file URI of base_dir>))` |
-| Scripts | `WKWebpagePreferences.allowsContentJavaScript = false` | `CoreWebView2.Settings.IsScriptEnabled = true` for one host script, added with `AddScriptToExecuteOnDocumentCreatedAsync`, that forwards section 11 keys pressed in the preview. The page's own scripts never run: the document's CSP `default-src 'none'` blocks them, and navigation never leaves `current.html` | `WebKitSettings` `enable-javascript` false |
+| Scripts | `WKWebpagePreferences.allowsContentJavaScript = false` | `CoreWebView2.Settings.IsScriptEnabled = true` for one host script, added with `AddScriptToExecuteOnDocumentCreatedAsync`, that forwards section 11 keys pressed in the preview and hands the app the page's mouse buttons and Ctrl with the wheel (rows below). The page's own scripts never run: the document's CSP `default-src 'none'` blocks them, and navigation never leaves `current.html` | `WebKitSettings` `enable-javascript` false |
 | Network | CSP, plus a `WKContentRuleList` that blocks `^https?://` and `^wss?://`. `websiteDataStore` `.nonPersistent()` | CSP, plus `AddWebResourceRequestedFilter("*", All)` answering every non-`file:` request with 403 | CSP, plus an ephemeral `WebKitNetworkSession` |
-| Navigation | Allow the initial load and same-document fragment links. Open `http`, `https` and `mailto` links with `NSWorkspace.open` and cancel. Cancel all else | `NavigationStarting` and `NewWindowRequested` with the same rule, opening with `Launcher.LaunchUriAsync` | `decide-policy` with the same rule, opening with `GtkUriLauncher` |
+| Navigation | Allow the initial load and same-document fragment links. Open `http`, `https` and `mailto` links with `NSWorkspace.open` and cancel. Cancel all else | `NavigationStarting` and `NewWindowRequested` with the same rule, opening with `Launcher.LaunchUriAsync` | `decide-policy` with the same rule, opening the default app for the link through a launch context with the user's environment (7.5) |
 | Context menu | Only Copy | Only Copy (`ContextMenuRequested`) | Only Copy (`context-menu`) |
 | Developer tools | Off | `AreDevToolsEnabled = false`, `AreBrowserAcceleratorKeysEnabled = false`, `IsStatusBarEnabled = false` | `enable-developer-extras` false |
 | Background | Transparent (`drawsBackground` false), so the pane's own background shows | `DefaultBackgroundColor` transparent | `set_background_color` transparent |
-| Zoom | `pageZoom = view.zoom` | `ZoomFactor = view.zoom` | `zoom_level = view.zoom` |
+| Zoom | `pageZoom = view.zoom` | CSS `zoom` on `html`, written into the document (WinUI's `WebView2` has no `ZoomFactor`). `IsZoomControlEnabled = false` | `zoom_level = view.zoom` |
+| Ctrl with the wheel | n/a | Steps `view.zoom` as Zoom In and Zoom Out do, one step a notch at any zoom: the host script cancels the page's `wheel` with Ctrl and posts its `wheelDeltaY`, 120 a notch (the page's own zoom stays 1), and the app adds them up, starting again when the wheel turns the other way | n/a |
+| Mouse buttons | WebKit's own handling, not yet reviewed | The back button is Back and the forward button does nothing, over the page and the rest of the window, and the page's history never moves: the host script cancels the page's buttons 3 and 4 (`mousedown`, `mouseup`, `auxclick`) and posts Back on button 3's `mouseup`; the window takes `XButton1Pressed` | WebKit claims GDK's buttons 8 and 9 over the page, so a capture-phase `GtkGestureClick` on the web view takes them first: 8 activates `navigation.pop`, 9 does nothing |
+| Drops | WebKit's own handling, not yet reviewed | WinUI's `WebView2` gives what another app drops on the page to the window's drop target (7.1); the page never sees it | WebKit's own `GtkDropTargetAsync` is turned off (`PropagationPhase::None`), so a drop on the page reaches the window's drop target (7.1) |
 | Missing runtime | n/a | When `CoreWebView2` fails to start, the Preview tab shows `preview.webview2_missing` and the Markdown tab works | n/a |
 | Render failure | When `preview_html` fails, the Preview tab shows `preview.failed`, centered in primary text, and the Markdown tab works. A failure is never cached: the next time the Preview tab shows that item, it renders again | same | same |
 | Accessible name | `a11y.preview` | `a11y.preview` | `a11y.preview` |
@@ -841,7 +844,7 @@ Every user-visible string. The table is the source of `desktop/strings.json`.
 | Remove from List, Remove from History | ⌘⌫ | Delete | Delete |
 | Search History | ⌘F | Ctrl+F | Ctrl+F |
 | Zoom in, out, actual size | ⌘=, ⌘-, ⌘0 | Ctrl+=, Ctrl+-, Ctrl+0 | Ctrl+plus, Ctrl+minus, Ctrl+0 |
-| Back to the list (stacked layout) | ⌘[ or Esc | Esc or Alt+Left | Esc or Alt+Left |
+| Back to the list (stacked layout) | ⌘[ or Esc | Esc or Alt+Left, the mouse's back button | Esc or Alt+Left, the mouse's back button |
 | Move in a list | ↑ ↓ | ↑ ↓ | ↑ ↓ |
 | Close the window | ⌘W | Alt+F4 | Ctrl+W |
 | Quit | ⌘Q | Alt+F4 (closing quits) | Ctrl+Q |

@@ -5,6 +5,7 @@ mod actions;
 mod convert;
 mod detail;
 mod history;
+pub mod launch;
 mod prefs;
 mod rows;
 mod window;

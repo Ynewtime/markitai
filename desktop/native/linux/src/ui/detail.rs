@@ -113,10 +113,18 @@ pub struct Detail {
     footer: gtk::Label,
     footer_bar: gtk::Box,
     shown: RefCell<Option<Shown>>,
-    rendered: RefCell<Option<(Uuid, bool, usize)>>,
+    /// The document the preview holds or is rendering.
+    rendered: Rc<Cell<Option<Rendering>>>,
+    /// The one whose render failed: the Preview tab shows `preview.failed`
+    /// for it, and renders it again the next time it shows (DESIGN.md 8).
+    failed: Rc<Cell<Option<Rendering>>>,
     generation: Rc<Cell<u64>>,
     updating_expander: Cell<bool>,
 }
+
+/// What a preview document was rendered from: the item, the appearance and
+/// the Markdown.
+type Rendering = (Uuid, bool, usize);
 
 fn icon_button(icon: &str, key: &str, action: &str) -> gtk::Button {
     let button = gtk::Button::builder()
@@ -352,8 +360,19 @@ impl Detail {
             .build();
         missing.set_child(Some(&missing_remove));
 
+        let preview_failed = gtk::Label::builder()
+            .label(tr("preview.failed"))
+            .wrap(true)
+            .justify(gtk::Justification::Center)
+            .valign(gtk::Align::Center)
+            .vexpand(true)
+            .margin_start(24)
+            .margin_end(24)
+            .build();
+
         let body = gtk::Stack::builder().hhomogeneous(false).build();
         body.add_named(&web, Some("preview"));
+        body.add_named(&preview_failed, Some("preview-failed"));
         body.add_named(&text_scroller, Some("markdown"));
         body.add_named(&note, Some("note"));
         body.add_named(&error_scroller, Some("failed"));
@@ -427,7 +446,8 @@ impl Detail {
             footer,
             footer_bar,
             shown: RefCell::new(None),
-            rendered: RefCell::new(None),
+            rendered: Rc::default(),
+            failed: Rc::default(),
             generation: Rc::new(Cell::new(0)),
             updating_expander: Cell::new(false),
         });
@@ -575,6 +595,22 @@ impl Detail {
         if self.switch.active_name().as_deref() != Some(active) {
             self.switch.set_active_name(Some(active));
         }
+        // A failed render stays failed only while its Preview tab is in
+        // view; once anything else shows, the next showing renders again.
+        let previewing = match (&shown.body, view) {
+            (Body::Done { markdown: Some(markdown), .. }, View::Preview) => {
+                Some((shown.id, is_dark(), Rc::as_ptr(markdown) as usize))
+            }
+            _ => None,
+        };
+        if let Some(failed) = self.failed.get()
+            && previewing != Some(failed)
+        {
+            self.failed.set(None);
+            if self.rendered.get() == Some(failed) {
+                self.rendered.set(None);
+            }
+        }
         match &shown.body {
             Body::Queued => {
                 self.note.set_label(&tr("detail.queued"));
@@ -602,19 +638,23 @@ impl Detail {
                         self.body.set_visible_child_name("markdown");
                     }
                     View::Preview => {
-                        if *self.rendered.borrow() != Some(identity) {
-                            *self.rendered.borrow_mut() = Some(identity);
-                            self.render(markdown.clone(), base_dir.clone());
+                        if self.rendered.get() != Some(identity) {
+                            self.rendered.set(Some(identity));
+                            self.render(identity, markdown.clone(), base_dir.clone());
                         }
-                        self.body.set_visible_child_name("preview");
+                        let failed = self.failed.get() == Some(identity);
+                        self.body
+                            .set_visible_child_name(if failed { "preview-failed" } else { "preview" });
                     }
                 }
             }
         }
     }
 
-    /// Render the preview off the main thread; a newer request wins.
-    fn render(&self, markdown: Rc<String>, base_dir: PathBuf) {
+    /// Render the preview off the main thread; a newer request wins. A
+    /// failure shows `preview.failed` while the Preview tab stays in view,
+    /// and is not kept beyond that (DESIGN.md 8).
+    fn render(&self, identity: Rendering, markdown: Rc<String>, base_dir: PathBuf) {
         let generation = self.generation.get() + 1;
         self.generation.set(generation);
         let theme = if is_dark() { "dark" } else { "light" };
@@ -625,24 +665,41 @@ impl Detail {
             .map(|uri| format!("{uri}/"))
             .ok();
         let web = self.web.clone();
+        let body = self.body.clone();
         let current = self.generation.clone();
+        let rendered = self.rendered.clone();
+        let failed = self.failed.clone();
         glib::spawn_future_local(async move {
-            let Ok(response) = gio::spawn_blocking(move || markitai_app::preview_html(&request)).await
-            else {
-                return;
-            };
+            let response = gio::spawn_blocking(move || markitai_app::preview_html(&request)).await;
             if current.get() != generation {
                 return;
             }
-            let value: serde_json::Value = serde_json::from_str(&response).unwrap_or_default();
-            let html = value["result"]["html"].as_str().unwrap_or_default();
-            web.load_html(html, base_uri.as_deref());
+            let html = response.ok().and_then(|response| {
+                let value: serde_json::Value = serde_json::from_str(&response).ok()?;
+                Some(value["result"]["html"].as_str()?.to_owned())
+            });
+            let showing = body.visible_child_name();
+            match html {
+                Some(html) => {
+                    failed.set(None);
+                    web.load_html(&html, base_uri.as_deref());
+                    if showing.as_deref() == Some("preview-failed") {
+                        body.set_visible_child_name("preview");
+                    }
+                }
+                None if matches!(showing.as_deref(), Some("preview" | "preview-failed")) => {
+                    failed.set(Some(identity));
+                    body.set_visible_child_name("preview-failed");
+                }
+                // Failed out of view: it renders again when it shows.
+                None => rendered.set(None),
+            }
         });
     }
 
     /// Render again with the current appearance.
     pub fn rerender(&self) {
-        *self.rendered.borrow_mut() = None;
+        self.rendered.set(None);
         self.refresh_body();
     }
 
@@ -712,6 +769,29 @@ fn tab_out() -> gtk::EventControllerKey {
     keys
 }
 
+/// The mouse's back and forward buttons belong to the app, not the page
+/// (DESIGN.md 8): back is the app's Back, forward does nothing.
+fn side_buttons() -> gtk::GestureClick {
+    let buttons = gtk::GestureClick::builder()
+        .button(0)
+        .propagation_phase(gtk::PropagationPhase::Capture)
+        .build();
+    buttons.connect_pressed(|gesture, _, _, _| {
+        let button = gesture.current_button();
+        if !matches!(button, 8 | 9) {
+            gesture.set_state(gtk::EventSequenceState::Denied);
+            return;
+        }
+        gesture.set_state(gtk::EventSequenceState::Claimed);
+        if button == 8
+            && let Some(web) = gesture.widget()
+        {
+            let _ = web.activate_action("navigation.pop", None);
+        }
+    });
+    buttons
+}
+
 /// Scripts off, no developer tools, a transparent background, only Copy in
 /// the context menu, and links handed to the desktop (DESIGN.md section 8).
 fn configure_web(web: &webkit6::WebView) {
@@ -722,6 +802,16 @@ fn configure_web(web: &webkit6::WebView) {
     web.set_background_color(&gdk::RGBA::new(0.0, 0.0, 0.0, 0.0));
     web.update_property(&[gtk::accessible::Property::Label(&tr("a11y.preview"))]);
     web.add_controller(tab_out());
+    web.add_controller(side_buttons());
+    // WebKit's own drop target would show a dropped file or link in place
+    // of the preview; without it, drops reach the window's (DESIGN.md 7.1).
+    let controllers = web.observe_controllers();
+    let webkit_drops: Vec<gtk::DropTargetAsync> = (0..controllers.n_items())
+        .filter_map(|i| controllers.item(i).and_downcast())
+        .collect();
+    for target in webkit_drops {
+        target.set_propagation_phase(gtk::PropagationPhase::None);
+    }
     web.connect_context_menu(|_, menu, _| {
         for item in menu.items() {
             if item.stock_action() != webkit6::ContextMenuAction::Copy {
@@ -772,8 +862,7 @@ fn configure_web(web: &webkit6::WebView) {
         decision.ignore();
         let lower = uri.to_ascii_lowercase();
         if lower.starts_with("http://") || lower.starts_with("https://") || lower.starts_with("mailto:") {
-            let window = web.root().and_downcast::<gtk::Window>();
-            gtk::UriLauncher::new(&uri).launch(window.as_ref(), gio::Cancellable::NONE, |_| {});
+            super::launch::open_uri(web, &uri, || {});
         }
         true
     });

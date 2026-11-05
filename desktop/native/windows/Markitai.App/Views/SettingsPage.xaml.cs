@@ -97,6 +97,8 @@ public sealed partial class SettingsPage : UserControl
     async void ChangeOutput_Click(object sender, RoutedEventArgs e)
     {
         var picker = new Microsoft.Windows.Storage.Pickers.FolderPicker(MainWindow.Current.AppWindow.Id);
+        if (UserFiles.NearestFolder(bench.OutputFolder) is { } start)
+            picker.SuggestedFolder = start;
         var picked = await picker.PickSingleFolderAsync();
         if (picked is null)
             return;

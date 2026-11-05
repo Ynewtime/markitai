@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Json;
 
 namespace Markitai.Core;
 
@@ -42,5 +43,65 @@ public static class PreviewRules
         if (at < 0)
             return html;
         return html.Insert(at, $"<style>html{{zoom:{zoom.ToString("0.##", CultureInfo.InvariantCulture)}}}</style>\n");
+    }
+}
+
+/// <summary>
+/// What the preview's host script posts (desktop/DESIGN.md 8): an app shortcut pressed in the
+/// page, the mouse's back button, or Ctrl with the wheel.
+/// </summary>
+public abstract record PreviewMessage
+{
+    public sealed record Key(int Code, bool Ctrl, bool Shift, bool Alt) : PreviewMessage;
+
+    public sealed record Back : PreviewMessage;
+
+    /// <summary>The wheel event's wheelDeltaY: 120 a notch, positive away from the user.</summary>
+    public sealed record Wheel(double Delta) : PreviewMessage;
+
+    /// <summary>The message, or null for anything the script does not post.</summary>
+    public static PreviewMessage? Parse(string json)
+    {
+        try
+        {
+            using var message = JsonDocument.Parse(json);
+            var root = message.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
+                return null;
+            if (root.TryGetProperty("key", out var key))
+                return new Key(key.GetInt32(), root.GetProperty("ctrl").GetBoolean(), root.GetProperty("shift").GetBoolean(), root.GetProperty("alt").GetBoolean());
+            if (root.TryGetProperty("back", out var back) && back.GetBoolean())
+                return new Back();
+            if (root.TryGetProperty("wheel", out var wheel))
+                return new Wheel(wheel.GetDouble());
+            return null;
+        }
+        catch (Exception e) when (e is JsonException or KeyNotFoundException or InvalidOperationException or FormatException)
+        {
+            return null;
+        }
+    }
+}
+
+/// <summary>
+/// Ctrl with the wheel over the preview, in steps of view.zoom: one a notch, at any zoom. The
+/// page's wheelDeltaY is 120 a notch (the preview's zoom is CSS zoom, so the page's own zoom
+/// stays 1); a precision touchpad gives parts of one, which add up. Turning the wheel the other
+/// way starts the count again.
+/// </summary>
+public sealed class WheelSteps
+{
+    double notches;
+
+    /// <summary>The steps this delta completes: positive to zoom in, negative to zoom out.</summary>
+    public int Add(double delta)
+    {
+        var turn = delta / 120;
+        if (turn * notches < 0)
+            notches = 0;
+        notches += turn;
+        var steps = (int)Math.Truncate(notches);
+        notches -= steps;
+        return steps;
     }
 }

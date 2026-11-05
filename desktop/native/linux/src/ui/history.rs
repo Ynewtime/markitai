@@ -13,38 +13,46 @@ use super::rows::{Row, Trailing, fade_in, fade_out, row_id};
 use super::window::{Page, Win};
 use crate::model::history::Entry;
 use crate::model::source::Kind;
-use crate::strings::{Lang, lang, plural, tr, trf};
+use crate::strings::{Lang, fill, lang, plural, text_in, tr, trf};
 
-/// `Today, 10:42`, `Yesterday, 10:42`, or the date and time.
+/// When an entry finished, in local time (DESIGN.md 6.5).
 pub fn finished_text(finished_at: &str) -> String {
-    let Ok(utc) = glib::DateTime::from_iso8601(finished_at, None) else {
-        return finished_at.to_owned();
-    };
-    let Ok(local) = utc.to_local() else {
-        return finished_at.to_owned();
-    };
-    let time = local.format("%R").map(|t| t.to_string()).unwrap_or_default();
-    let today = glib::DateTime::now_local().ok();
-    let same_day = |a: &glib::DateTime, b: &glib::DateTime| a.ymd() == b.ymd();
-    if let Some(today) = today {
-        if same_day(&local, &today) {
-            return trf("date.today", &[("time", &time)]);
-        }
-        if today
-            .add_days(-1)
-            .is_ok_and(|yesterday| same_day(&local, &yesterday))
-        {
-            return trf("date.yesterday", &[("time", &time)]);
-        }
+    let local = glib::DateTime::from_iso8601(finished_at, None).and_then(|utc| utc.to_local());
+    match (local, glib::DateTime::now_local()) {
+        (Ok(local), Ok(now)) => finished_in(lang(), &local, &now),
+        _ => finished_at.to_owned(),
     }
-    let pattern = match lang() {
-        Lang::En => "%b %-d, %Y, %R",
-        Lang::ZhHans => "%Y/%-m/%-d %R",
+}
+
+const MONTHS: [&str; 12] = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
+/// `date.today` or `date.yesterday` with the short time, else the medium
+/// date and short time, all in `lang` and its clock, whatever the locale's:
+/// `Today, 9:05 AM`, `Oct 2, 2026 at 2:05 PM`, `今天 09:05`,
+/// `2026年10月2日 14:05`, as Native macOS writes them.
+fn finished_in(lang: Lang, at: &glib::DateTime, now: &glib::DateTime) -> String {
+    let (hour, minute) = (at.hour(), at.minute());
+    let time = match lang {
+        Lang::En => {
+            let half = if hour < 12 { "AM" } else { "PM" };
+            format!("{}:{minute:02}\u{202f}{half}", (hour + 11) % 12 + 1)
+        }
+        Lang::ZhHans => format!("{hour:02}:{minute:02}"),
     };
-    local
-        .format(pattern)
-        .map(|t| t.to_string())
-        .unwrap_or_else(|_| finished_at.to_owned())
+    let day = at.ymd();
+    if day == now.ymd() {
+        return fill(&text_in(lang, "date.today"), &[("time", &time)]);
+    }
+    if now.add_days(-1).is_ok_and(|yesterday| yesterday.ymd() == day) {
+        return fill(&text_in(lang, "date.yesterday"), &[("time", &time)]);
+    }
+    let (year, month, date) = day;
+    match lang {
+        Lang::En => format!("{} {date}, {year} at {time}", MONTHS[(month as usize).clamp(1, 12) - 1]),
+        Lang::ZhHans => format!("{year}年{month}月{date}日 {time}"),
+    }
 }
 
 fn entry_subtitle(entry: &Entry) -> String {
@@ -261,5 +269,29 @@ impl Win {
             }
         });
         dialog.present(Some(&self.window));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn at(day: i32, hour: i32, minute: i32) -> glib::DateTime {
+        glib::DateTime::new(&glib::TimeZone::utc(), 2026, 10, day, hour, minute, 0.0).unwrap()
+    }
+
+    #[test]
+    fn times_follow_the_app_language_and_its_clock() {
+        let now = at(5, 18, 0);
+        let en = |when: &glib::DateTime| finished_in(Lang::En, when, &now);
+        let zh = |when: &glib::DateTime| finished_in(Lang::ZhHans, when, &now);
+        assert_eq!(en(&at(5, 9, 5)), "Today, 9:05\u{202f}AM");
+        assert_eq!(en(&at(4, 22, 42)), "Yesterday, 10:42\u{202f}PM");
+        assert_eq!(en(&at(2, 14, 5)), "Oct 2, 2026 at 2:05\u{202f}PM");
+        assert_eq!(en(&at(2, 0, 7)), "Oct 2, 2026 at 12:07\u{202f}AM");
+        assert_eq!(en(&at(2, 12, 0)), "Oct 2, 2026 at 12:00\u{202f}PM");
+        assert_eq!(zh(&at(5, 9, 5)), "今天 09:05");
+        assert_eq!(zh(&at(4, 22, 42)), "昨天 22:42");
+        assert_eq!(zh(&at(2, 14, 5)), "2026年10月2日 14:05");
     }
 }

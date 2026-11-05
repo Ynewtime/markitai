@@ -161,6 +161,15 @@ public sealed class StoreTests : IDisposable
     }
 
     [Fact]
+    public void Dialogs_start_in_the_nearest_folder_that_exists()
+    {
+        Assert.Equal(dir, UserFiles.NearestFolder(dir));
+        Assert.Equal(dir, UserFiles.NearestFolder(Path.Combine(dir, "Markitai", "not yet")));
+        Assert.Null(UserFiles.NearestFolder(null));
+        Assert.Null(UserFiles.NearestFolder(""));
+    }
+
+    [Fact]
     public void Writable_folders_and_the_configuration_file()
     {
         Assert.True(UserFiles.CanWrite(Path.Combine(dir, "new", "folder")));
@@ -195,6 +204,17 @@ public sealed class IntakeTests : IDisposable
     [InlineData("two words.com", null)]
     [InlineData("", null)]
     public void Web_addresses(string text, string? expected) => Assert.Equal(expected, Intake.WebAddress(text));
+
+    [Theory]
+    [InlineData(" https://example.com/a\n", "https://example.com/a")]
+    [InlineData("HTTP://example.com", "HTTP://example.com")]
+    [InlineData("example.com", null)]
+    [InlineData("See the notes.txt file", null)]
+    [InlineData("https://a.example\nhttps://b.example", null)]
+    [InlineData("ftp://example.com", null)]
+    [InlineData("https://", null)]
+    [InlineData(null, null)]
+    public void Pasted_or_dropped_text_adds_only_one_url_with_its_scheme(string? text, string? expected) => Assert.Equal(expected, Intake.Link(text));
 
     [Fact]
     public void Folders_are_refused_except_numbers_packages()
