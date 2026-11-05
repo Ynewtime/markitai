@@ -39,15 +39,6 @@ pub(super) fn exposed(address: SocketAddr) -> bool {
     !address.ip().to_canonical().is_loopback()
 }
 
-/// Best effort: the address a route to the outside would use. Connecting a UDP
-/// socket only selects the interface; nothing is sent.
-pub(super) fn network_address() -> Option<IpAddr> {
-    let socket = std::net::UdpSocket::bind(("0.0.0.0", 0)).ok()?;
-    socket.connect(("192.0.2.1", 80)).ok()?;
-    let ip = socket.local_addr().ok()?.ip();
-    (!ip.is_loopback() && !ip.is_unspecified()).then_some(ip)
-}
-
 /// How a startup line is shown.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Kind {

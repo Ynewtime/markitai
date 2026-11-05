@@ -241,7 +241,7 @@ pub(super) async fn regenerate(
         .get()
         .filter(|address| address.ip().is_unspecified())
         .and_then(|address| {
-            super::startup::network_address().map(|ip| {
+            markitai_core::platform::network_address().map(|ip| {
                 super::launch::address_url(SocketAddr::new(ip, address.port()), Some(&token))
             })
         });

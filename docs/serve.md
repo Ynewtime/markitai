@@ -905,7 +905,9 @@ CLI's [terminal style](cli.md): a title with the address it listens on
 token (`  • Access token: …`); the address to open in a browser, on a line of its
 own under `→ Open in your browser:` so it copies whole (with the token in its
 fragment for local and remote browsers alike, unless `--no-auth` was explicitly
-selected); the directory that holds jobs and history (`MARKITAI_HOME/serve/jobs`,
+selected); with `--host 0.0.0.0`, the address for another device (this computer's
+on its local network, also behind a TUN proxy or a VPN that takes all traffic);
+the directory that holds jobs and history (`MARKITAI_HOME/serve/jobs`,
 shown absolute); and a Ctrl-C hint. In every language the title ends with
 `http://ADDRESS` and the token line with the token, neither is wrapped and no
 colour code follows either value (also with `FORCE_COLOR`), so scripts can read
