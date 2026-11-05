@@ -121,6 +121,38 @@ func TestMemorySavesWhatAFailedSaveLeftOut(t *testing.T) {
 	}
 }
 
+func TestMemoryFailedSaveLeavesNoTemporaryFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "web.json")
+	// A folder that is not empty where web.json belongs fails the replace.
+	if err := os.MkdirAll(filepath.Join(path, "kept"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	m := openMemory(path)
+	if err := m.Update(func(m *Memory) { m.Theme = "dark" }); err == nil {
+		t.Fatal("web.json replaced a folder")
+	}
+	if _, err := os.Stat(path + ".tmp"); !os.IsNotExist(err) {
+		t.Errorf("the failed save left web.json.tmp: %v", err)
+	}
+}
+
+func TestMemorySavesTheLatest(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "web.json")
+	m := openMemory(path)
+	m.Set(func(m *Memory) { m.Theme = "dark" })
+	m.Set(func(m *Memory) { m.Theme = "light" })
+	if err := m.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if got := openMemory(path).Get(); got.Theme != "light" {
+		t.Errorf("the file holds %+v; want the light theme", got)
+	}
+}
+
 func TestTokenStaysOutOfLogs(t *testing.T) {
 	token := newToken()
 	if len(token) != 64 {

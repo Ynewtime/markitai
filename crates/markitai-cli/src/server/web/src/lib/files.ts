@@ -127,6 +127,27 @@ export async function walkEntries(
   return { files, hidden, truncated, unreadable, folder };
 }
 
+/** A drop a desktop app hands over through the drop input (DropOverlay), whose
+ * files a folder input chose: a folder's files carry their folder-relative paths,
+ * loose files none. Hidden and system files inside a folder are skipped and
+ * counted, and the files come in a walk's order, as a drop the page walks itself;
+ * nothing chosen is an empty folder, as the app hands over only drops of files. */
+export function handedDrop(values: File[]): Walked {
+  const { files, hidden } = selectFolderFiles(values);
+  const steps = (file: File) => relativePath(file).split("/");
+  files.sort((left, right) => {
+    const a = steps(left);
+    const b = steps(right);
+    for (let i = 0; i < Math.min(a.length, b.length); i++) {
+      const order = a[i].localeCompare(b[i]);
+      if (order) return order;
+    }
+    return a.length - b.length;
+  });
+  const folder = values.length === 0 || values.some((file) => relativePath(file).includes("/"));
+  return { files, hidden, truncated: false, unreadable: 0, folder };
+}
+
 export const oversized = (files: File[]): File[] => files.filter((file) => file.size > MAX_FILE_BYTES);
 
 /** What a chosen set of files is called while it waits for Convert: a folder, a

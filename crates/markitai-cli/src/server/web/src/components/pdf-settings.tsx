@@ -1,9 +1,11 @@
 // Export PDF asks one thing before the print dialog: whether the PDF carries
-// Markitai's own header and footer. The card points at the "⋯" button it was
-// opened from and stays inside the window's dialog (fixed position, so nothing
-// clips it), because assistive technology treats content outside an aria-modal
-// dialog as inert. Escape, ✕, Cancel or a click elsewhere close it; focus
-// returns to "⋯".
+// Markitai's own header and footer. Under an app that supervises the server
+// (capabilities `supervised`), the app saves the PDF itself, with no print
+// dialog and no browser headers and footers to turn off. The card points at
+// the "⋯" button it was opened from and stays inside the window's dialog
+// (fixed position, so nothing clips it), because assistive technology treats
+// content outside an aria-modal dialog as inert. Escape, ✕, Cancel or a click
+// elsewhere close it; focus returns to "⋯".
 import { useCallback, useEffect, useLayoutEffect, useRef } from "preact/hooks";
 import type { Dict } from "../i18n/index.ts";
 import { Icon } from "./icons.tsx";
@@ -31,6 +33,7 @@ export function PdfExportCard({
   t,
   anchor,
   furniture,
+  supervised,
   onToggle,
   onPrint,
   onClose,
@@ -39,6 +42,7 @@ export function PdfExportCard({
   /** The button the card points at, and where focus returns. */
   anchor: () => HTMLElement | null;
   furniture: boolean;
+  supervised: boolean;
   onToggle: () => void;
   onPrint: () => void;
   onClose: () => void;
@@ -149,7 +153,7 @@ export function PdfExportCard({
         <p id="pdf-card-hint" class="pdf-card-hint">
           {/* The words carry their own space between sentences (none in Chinese or Japanese). */}
           {t.pdfFurnitureWhat}
-          {furniture && t.pdfPrintDialogHint}
+          {furniture && !supervised && t.pdfPrintDialogHint}
         </p>
       </div>
       <div class="pdf-card-actions">
@@ -164,7 +168,7 @@ export function PdfExportCard({
             onPrint();
           }}
         >
-          {t.pdfPrint}
+          {supervised ? t.pdfSave : t.pdfPrint}
         </button>
       </div>
     </div>

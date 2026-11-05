@@ -255,6 +255,7 @@ export const en = {
   exportPdfAsk: "Export PDF…",
   pdfFurnitureWhat: "Markitai and the name at the top, the source at the end. ",
   pdfPrint: "Print…",
+  pdfSave: "Export…",
   pdfPreparedBy: "Prepared with Markitai",
   pdfSource: "Source",
   printImagesLoading: "Images are still loading · try Export PDF again once the preview has loaded",

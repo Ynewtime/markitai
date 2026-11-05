@@ -11,10 +11,11 @@ import (
 var setProcessPreferredUILanguages = syscall.NewLazyDLL("kernel32.dll").NewProc("SetProcessPreferredUILanguages")
 
 // localizeSystemDialogs gives the process mygo's languages again with
-// zh-CN before zh-Hans: Windows finds the system's Simplified Chinese
+// zh-CN before any Chinese: Windows finds the system's Simplified Chinese
 // texts, as those of the file dialogs, under zh-CN, not under the zh-Hans
-// mygo names, as Mygo found. Once the app runs, after mygo set the list,
-// and again whenever the app's language changes.
+// mygo names, as Mygo found, and the app shows any Chinese as Simplified
+// Chinese (languagesOn). Once the app runs, after mygo set the list, and
+// again whenever the app's language changes.
 func localizeSystemDialogs() {
 	var list []uint16
 	for _, tag := range dialogLanguages(append([]string{mygo.App.Locale()}, mygo.App.PreferredLanguages()...)) {
@@ -30,7 +31,8 @@ func localizeSystemDialogs() {
 	setProcessPreferredUILanguages.Call(muiLanguageName, uintptr(unsafe.Pointer(&list[0])), uintptr(unsafe.Pointer(&n)))
 }
 
-// dialogLanguages is tags, each once, with zh-CN put before zh-Hans.
+// dialogLanguages is tags, each once, with zh-CN put before the first
+// Chinese.
 func dialogLanguages(tags []string) []string {
 	var out []string
 	add := func(t string) {
@@ -42,7 +44,7 @@ func dialogLanguages(tags []string) []string {
 		out = append(out, t)
 	}
 	for _, t := range tags {
-		if strings.EqualFold(t, "zh-Hans") {
+		if workbenchLang(t) == "zh" {
 			add("zh-CN")
 		}
 		if t != "" {

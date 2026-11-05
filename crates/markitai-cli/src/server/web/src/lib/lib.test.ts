@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { cliCommand, shellQuote } from "./cli.ts";
 import { compareLines } from "./diff.ts";
-import { isHiddenName, selectFolderFiles, stagedBatch, walkEntries } from "./files.ts";
+import { handedDrop, isHiddenName, relativePath, selectFolderFiles, stagedBatch, walkEntries } from "./files.ts";
 import { countWords, fmtBytes, fmtCost, fmtDateTime, fmtDur, timestampMs } from "./format.ts";
 import { nameShape, shortenName, shortenShape, tailLength } from "./middle.ts";
 import { artifactPath, drawingReference, drawingValue, imageByName, loadArtifactImages, markdownPair, presentationFromStyle, rewrite, splitFrontmatter } from "./markdown.ts";
@@ -207,6 +207,19 @@ test("hidden and system files are skipped inside a chosen folder only", () => {
   const chosen = selectFolderFiles([file("top/a.md"), file("top/.git/config"), file("top/sub/Thumbs.db"), file(".hidden-root/b.md")]);
   assert.deepEqual(chosen.files.map((item) => item.name), ["a.md", "b.md"]);
   assert.equal(chosen.hidden, 2);
+});
+
+test("a drop an app hands over is taken as the page takes a drop it walks", () => {
+  const file = (path: string) => Object.assign(new File(["x"], path.split("/").pop() ?? path), { markitaiPath: path });
+  const loose = handedDrop([file("b.md"), file(".env"), file("a.pdf")]);
+  assert.equal(loose.folder, false);
+  assert.deepEqual(loose.files.map(relativePath), [".env", "a.pdf", "b.md"]);
+  assert.equal(loose.hidden, 0);
+  const tree = handedDrop([file("notes.md"), file("trip/sub/b.txt"), file("trip/z.md"), file("trip/.cache/x"), file("trip/a.md"), file("trip/sub/Thumbs.db")]);
+  assert.equal(tree.folder, true);
+  assert.deepEqual(tree.files.map(relativePath), ["notes.md", "trip/a.md", "trip/sub/b.txt", "trip/z.md"]);
+  assert.equal(tree.hidden, 2);
+  assert.deepEqual(handedDrop([]), { files: [], hidden: 0, truncated: false, unreadable: 0, folder: true });
 });
 
 test("dropped folders are walked in order, in batches, bounded and with unreadable items counted", async () => {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -8,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/egoist/mygo"
+	"github.com/egoist/mygo/i18n"
 )
 
 func TestKeysAreTheMenuBarsShortcuts(t *testing.T) {
@@ -43,6 +45,10 @@ func TestPreloadTakesKeysOnlyWhereTheyAreListed(t *testing.T) {
 		}
 		if strings.Contains(s, `"q": "quit"`) != (goos == "linux") {
 			t.Errorf("%s: the preload's Ctrl+Q is wrong:\n%s", goos, s)
+		}
+		// WebKitGTK alone keeps a drop's files from the page (drops).
+		if strings.Contains(s, `"MarkitaiWeb.Dragged"`) != (goos == "linux") {
+			t.Errorf("%s: the preload hands drops over: %v", goos, goos != "linux")
 		}
 	}
 }
@@ -98,13 +104,13 @@ func TestWindowTitleNamesMarkitaiWeb(t *testing.T) {
 }
 
 func TestSaveFiltersAndExtension(t *testing.T) {
-	if got := saveFilters("Report.pdf"); !slices.EqualFunc(got, []mygo.FileFilter{{Name: "PDF", Extensions: []string{"pdf"}}}, filterEqual) {
+	if got := saveFilters("Report.pdf"); !slices.EqualFunc(got, []mygo.FileFilter{{Name: "PDF (*.pdf)", Extensions: []string{"pdf"}}}, filterEqual) {
 		t.Errorf("saveFilters = %v", got)
 	}
-	if got := saveFilters("notes.MD"); len(got) != 1 || got[0].Name != "Markdown" || got[0].Extensions[0] != "md" {
+	if got := saveFilters("notes.MD"); len(got) != 1 || got[0].Name != "Markdown (*.md)" || got[0].Extensions[0] != "md" {
 		t.Errorf("saveFilters = %v", got)
 	}
-	if got := saveFilters("archive.tar.xz"); len(got) != 1 || got[0].Name != "XZ" {
+	if got := saveFilters("archive.tar.xz"); len(got) != 1 || got[0].Name != "XZ (*.xz)" {
 		t.Errorf("saveFilters = %v", got)
 	}
 	if got := saveFilters("README"); got != nil {
@@ -130,9 +136,23 @@ func TestSaveFiltersAndExtension(t *testing.T) {
 	if got := askSavePath(filepath.Join(dir, "Report.pdf"), ask, never); got != filepath.Join(dir, "new.pdf") {
 		t.Errorf("a name without an extension saves as %q", got)
 	}
-	ask, _ = answers(filepath.Join(dir, "new.txt"))
-	if got := askSavePath(filepath.Join(dir, "Report.pdf"), ask, never); got != filepath.Join(dir, "new.txt") {
-		t.Errorf("a name with an extension saves as %q", got)
+	for typed, want := range map[string]string{
+		"new.PDF":          "new.PDF",
+		"notes 1.5":        "notes 1.5.pdf",
+		"new.txt":          "new.txt.pdf",
+		"sample.html":      "sample.html.pdf",
+		"wr2 notes.pdf.md": "wr2 notes.pdf.md.pdf",
+	} {
+		ask, _ = answers(filepath.Join(dir, typed))
+		if got := askSavePath(filepath.Join(dir, "Report.pdf"), ask, never); got != filepath.Join(dir, want) {
+			t.Errorf("%q saves as %q; want %q", typed, got, want)
+		}
+	}
+	for typed, want := range map[string]string{"notes.markdown": "notes.markdown", "notes.Md": "notes.Md", "sample.html": "sample.html.md"} {
+		ask, _ = answers(filepath.Join(dir, typed))
+		if got := askSavePath(filepath.Join(dir, "sample.html.md"), ask, never); got != filepath.Join(dir, want) {
+			t.Errorf("%q saves as %q; want %q", typed, got, want)
+		}
 	}
 	ask, _ = answers(filepath.Join(dir, "taken"))
 	if got := askSavePath(filepath.Join(dir, "Report.pdf"), ask, func(p string) bool { return p == taken }); got != taken {
@@ -209,9 +229,24 @@ func TestEveryLanguageHasEveryText(t *testing.T) {
 		if tx.Lang != lang || tx.HTMLTag == "" || tx.Exists == nil || tx.ExistsDetail == "" || tx.Replace == "" || tx.ExitedBody == nil {
 			t.Errorf("%s lacks texts: %+v", lang, tx)
 		}
-		for _, id := range editItems[:8] {
-			if tx.MenuItems[id] == "" {
+		for _, id := range editItems {
+			if id != mygo.ContextMenuSpellingGuess && tx.MenuItems[id] == "" {
 				t.Errorf("%s has no label for %s", lang, id)
+			}
+		}
+	}
+}
+
+func TestAnyChineseShowsSimplifiedChinese(t *testing.T) {
+	cases := map[string]string{"zh-Hant-TW": "zh", "zh-HK": "zh", "zh-Hans-CN": "zh", "ja-JP": "ja", "fr-FR": "en", "en-US": "en"}
+	for _, goos := range []string{"linux", "windows"} {
+		for tag, want := range cases {
+			got := i18n.Match([]string{tag}, languagesOn(goos))
+			if got == "" {
+				got = languagesOn(goos)[0]
+			}
+			if workbenchLang(got) != want {
+				t.Errorf("%s: %s shows %s (%s); want %s", goos, tag, workbenchLang(got), got, want)
 			}
 		}
 	}
@@ -251,5 +286,45 @@ func TestUserEnvGivesTheUsersValuesBack(t *testing.T) {
 	env := childEnv([]string{"PATH=/bin", "LANG=en_US.UTF-8", "LANGUAGE=zh_CN", "GTK_USE_PORTAL=1"}, "t", "en", "/h")
 	if value(env, "LANGUAGE") != "fr_FR" || slices.ContainsFunc(env, func(kv string) bool { return strings.HasPrefix(kv, "GTK_USE_PORTAL=") }) {
 		t.Errorf("serve's environment has the app's: %v", env)
+	}
+}
+
+func TestWheelStepsOnceANotch(t *testing.T) {
+	turn := func(goos string, zoom float64, deltas ...float64) []int {
+		var c wheelCount
+		var steps []int
+		for _, d := range deltas {
+			steps = append(steps, c.add(goos, notches(goos, d, zoom)))
+		}
+		return steps
+	}
+	for _, zoom := range []float64{0.25, 0.33, 0.67, 1, 1.1, 1.75, 2, 2.5, 3, 4, 5} {
+		notch := math.Trunc(120 / zoom)
+		if got := turn("windows", zoom, notch, notch, -notch, -notch); !slices.Equal(got, []int{1, 1, -1, -1}) {
+			t.Errorf("windows at %v, notches of %v: %v", zoom, notch, got)
+		}
+	}
+	if got := turn("windows", 1, 240); !slices.Equal(got, []int{2}) {
+		t.Errorf("windows, two notches in one event: %v", got)
+	}
+	if got := turn("windows", 1, 40, 40, 40, 40); !slices.Equal(got, []int{0, 0, 1, 0}) {
+		t.Errorf("windows, a third of a notch at a time: %v", got)
+	}
+	if got := turn("windows", 3, 40, -40, -40, 40); !slices.Equal(got, []int{1, -1, -1, 1}) {
+		t.Errorf("windows at 3, turning back: %v", got)
+	}
+	if got := turn("windows", 1, 80, -120); !slices.Equal(got, []int{0, -1}) {
+		t.Errorf("windows, turning back starts the count again: %v", got)
+	}
+	for _, notch := range []float64{120, 180} {
+		if got := turn("linux", 1, notch, notch, -notch, notch); !slices.Equal(got, []int{1, 1, -1, 1}) {
+			t.Errorf("linux, notches of %v: %v", notch, got)
+		}
+		if got := turn("linux", 3, notch); !slices.Equal(got, []int{1}) {
+			t.Errorf("linux at 3, a notch of %v: %v", notch, got)
+		}
+	}
+	if got := turn("linux", 1, 30, 30, 30, 30, 30); !slices.Equal(got, []int{0, 0, 0, 1, 0}) {
+		t.Errorf("linux, a touchpad's small turns: %v", got)
 	}
 }

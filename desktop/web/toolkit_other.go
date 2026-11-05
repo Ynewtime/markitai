@@ -16,3 +16,10 @@ func toolkitReady() {}
 
 // openURL opens url with its default program.
 func openURL(url string) error { return mygo.Shell.OpenExternal(url) }
+
+// showInFolder asks the file manager to show path.
+func showInFolder(path string) { mygo.Shell.ShowItemInFolder(path) }
+
+// closeQuestions has nothing to close outside Linux, where nothing ends the
+// app without its quit (terminate).
+func closeQuestions(*mygo.Window) {}

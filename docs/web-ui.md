@@ -254,7 +254,7 @@ files wait on Convert); typing URLs is Convert's job.
 
 **Preview** is the window's first tab; it adds Copy Markdown to "⋯" and PDF…
 to Download, which opens a small card with the one choice it asks (Markitai's own header and
-footer, explained under it) and Print…, and Open the page for a URL (on Compare
+footer, explained under it) and Print… (Export… under a supervised server), and Open the page for a URL (on Compare
 the page opens from the Original header instead, so it is offered once). **Files** lists the original first (the upload, or the page as the server
 fetched it), then every file of the result, each with its own download, their
 count and size, and Download all .zip at the bottom right: one ZIP of the
@@ -674,7 +674,9 @@ browser's print dialog, on A4 with light print styles (repeated table headers,
 wrapped code, the optional Markitai header and `Prepared with Markitai · Source:
 …` footer). Links are removed from the clone, so a generated PDF embeds no
 service URL, and printing waits up to ten seconds for every image and refuses
-rather than produce an incomplete document.
+rather than produce an incomplete document. Under a supervised server the app
+that runs it saves the PDF itself, with no print dialog and no browser headers
+and footers: the button reads Export… and the hint about them is gone.
 
 ## Access token
 
@@ -858,7 +860,8 @@ on a loopback server, see [service](serve.md#updates); v1.25 `regions` on a prov
 card; v1.26 `notices`, each warning's code and subjects in the order of `warnings`;
 v1.27 `endpoints` on a provider card, its documented addresses with their area and plan; v1.28
 `checked_at`, `retry_at` and `checking` in `update` and `POST /api/update/check`; v1.29
-`supervised`, a server another app runs, which hides Access token); a
+`supervised`, a server another app runs, which hides Access token and makes Export PDF's
+button Export…); a
 missing feature hides its control instead of failing (no Stop
 remaining, no Compare, archives saved through the page, history read job by job,
 images read from the file route).
@@ -867,6 +870,13 @@ images read from the file route).
 opens the page beside an `index.md` address, or `guide/<page>` under a site root
 (`https://markitai.dev` or `https://markitai.dev/`); the subscriptions' Setup guide
 links always open markitai.dev in the page's language.
+
+A desktop app whose web view keeps a drop's files from the page (WebKitGTK 2.52
+and later) hands them over itself, through two hooks a browser never uses: it
+dispatches `markitai:drag` on `window` with the detail `enter` and `leave`, which
+show and hide the drop veil, and it chooses the dropped files and folders in the
+hidden `input[data-drop-input]` (a folder input, disabled while drops are
+ignored), which the page takes as a drop.
 
 `node scripts/package.mjs OUTDIR` packages a build for the other backend: a
 reproducible tar.gz with `index.html`, every file served under `/ui/`, the

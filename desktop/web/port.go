@@ -48,13 +48,15 @@ type Memory struct {
 }
 
 // memory is web.json, read once at launch. The sidecar writes the port and
-// the window the theme; each change rewrites the whole file under the lock,
-// so neither undoes the other's.
+// the window the theme; each save writes the whole of the latest Memory,
+// one at a time, so neither undoes the other's and a late save never
+// brings back an older value.
 type memory struct {
-	path  string
-	mu    sync.Mutex
-	m     Memory
-	saved Memory // what the file holds, as far as the app knows
+	path   string
+	mu     sync.Mutex // m and saved
+	m      Memory
+	saved  Memory     // what the file holds, as far as the app knows
+	saving sync.Mutex // the file
 }
 
 // openMemory reads path; a missing or unreadable file is the zero Memory,
@@ -74,16 +76,32 @@ func (s *memory) Get() Memory {
 	return s.m
 }
 
-// Update applies change and saves the result when it differs from what the
-// file holds: a save that failed is made by the next Update.
+// Update applies change and saves the result (Set, Save).
 func (s *memory) Update(change func(*Memory)) error {
+	s.Set(change)
+	return s.Save()
+}
+
+// Set applies change; Save keeps it.
+func (s *memory) Set(change func(*Memory)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	change(&s.m)
-	if s.m == s.saved {
+}
+
+// Save writes the latest Memory when it differs from what the file holds:
+// a save that failed is made by the next one. A failed save leaves no
+// temporary file behind.
+func (s *memory) Save() error {
+	s.saving.Lock()
+	defer s.saving.Unlock()
+	s.mu.Lock()
+	m, saved := s.m, s.saved
+	s.mu.Unlock()
+	if m == saved {
 		return nil
 	}
-	b, err := json.Marshal(s.m)
+	b, err := json.Marshal(m)
 	if err != nil {
 		return err
 	}
@@ -92,12 +110,16 @@ func (s *memory) Update(change func(*Memory)) error {
 	}
 	tmp := s.path + ".tmp"
 	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+		os.Remove(tmp)
 		return err
 	}
 	if err := replace(tmp, s.path); err != nil {
+		os.Remove(tmp)
 		return err
 	}
-	s.saved = s.m
+	s.mu.Lock()
+	s.saved = m
+	s.mu.Unlock()
 	return nil
 }
 
