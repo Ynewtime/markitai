@@ -504,7 +504,6 @@ impl Serve {
     }
 
     /// The captured log once it holds `line`.
-    #[cfg(unix)]
     fn log_with(&self, line: &str) -> String {
         let started = Instant::now();
         loop {
@@ -1724,6 +1723,29 @@ mod restart_by_cli {
         let view = server.wait("the restart", |view| view["current"] == "2.2.0");
         assert_eq!(view["updated_from"], "2.1.1", "{view}");
         assert!(!home.path("mh/update-pending.json").exists());
+    }
+
+    /// Windows hands over no socket: the new program binds its arguments again,
+    /// so `--port 0` comes back on another free port, and `markitai update`
+    /// finds it in the control file (docs/serve.md).
+    #[cfg(windows)]
+    #[test]
+    fn a_server_on_any_free_port_comes_back_on_another() {
+        let releases = Releases::start("2.2.0");
+        let home = installed(&releases, false);
+        let server = Serve::start_with(&home, &releases, OLD, None);
+        let (said, code) = update(&home, &releases);
+        assert_eq!(code, 0, "{said}");
+        assert!(said.contains("markitai serve restarted: 2.2.0"), "{said}");
+        // The restarted server's title is the log's last address.
+        let log = server.log_with("Updated from 2.1.1");
+        let port: u16 = log
+            .rsplit("http://127.0.0.1:")
+            .next()
+            .and_then(|rest| rest.split(|c: char| !c.is_ascii_digit()).next())
+            .and_then(|port| port.parse().ok())
+            .unwrap_or_else(|| panic!("{log}"));
+        assert_ne!(port, server.port, "{log}");
     }
 
     #[test]

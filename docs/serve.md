@@ -29,8 +29,9 @@ a forwarding proxy); a server reachable from the network, or under another name
 {"version"}` takes only the release the server found and updates a setup-script
 install: download and verify while conversions run, hold new ones (503
 `updating`), let running and queued ones finish, swap, restart on the same
-address with the same token. A new version that fails or is not ready within 30
-seconds puts the old one back. The workbench's update entry uses these routes ([web UI](web-ui.md#updating-the-server)). `markitai update` restarts a running server through `/api/update/restart`
+address with the same token (`--port 0` on Windows, which keeps no socket across
+the restart, comes back on another free port). A new version that fails or is not
+ready within 30 seconds puts the old one back. The workbench's update entry uses these routes ([web UI](web-ui.md#updating-the-server)). `markitai update` restarts a running server through `/api/update/restart`
 with the owner-only secret in `MARKITAI_HOME/serve/control`. These control routes
 exist on every server, exposed or not, and answer only a direct loopback
 connection that sends the secret.
