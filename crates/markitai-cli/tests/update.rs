@@ -569,10 +569,10 @@ impl Drop for Serve {
 }
 
 /// A port for a server that binds the number itself a second time: one rolled
-/// back to 2.1.0, which takes no handover, or restarted on Windows. `--port 0`
-/// would move it. Below what systems give out for port 0 and for connections
-/// (from 49152; Linux from 32768), so no parallel test can take it before the
-/// server binds it, or while it is closed for the restart.
+/// back to 2.1.0, which takes no handover (`--port 0` would move it), or
+/// restarted on Windows. Below what systems give out for port 0 and for
+/// connections (from 49152; Linux from 32768), so no parallel test can take it
+/// before the server binds it, or while it is closed for the restart.
 fn fixed_port() -> u16 {
     use std::hash::{BuildHasher, RandomState};
     (0..1000)
@@ -1743,6 +1743,44 @@ mod restart_by_cli {
         assert!(!home.path("mh/update-pending.json").exists());
     }
 
+    /// Windows hands over no socket: the new program is told the port `--port 0`
+    /// found, so an open tab keeps working (the Unix test above keeps the socket).
+    #[cfg(windows)]
+    #[test]
+    fn a_server_on_any_free_port_comes_back_on_that_port() {
+        let releases = Releases::start("2.2.0");
+        let home = installed(&releases, false);
+        let server = Serve::start_with(&home, &releases, OLD, None);
+        let (said, code) = update(&home, &releases);
+        assert_eq!(code, 0, "{said}");
+        assert!(said.contains("markitai serve restarted: 2.2.0"), "{said}");
+        // The restarted server's title is the log's last address.
+        let log = server.log_with("Updated from 2.1.1");
+        let port: u16 = log
+            .rsplit("http://127.0.0.1:")
+            .next()
+            .and_then(|rest| rest.split(|c: char| !c.is_ascii_digit()).next())
+            .and_then(|port| port.parse().ok())
+            .unwrap_or_else(|| panic!("{log}"));
+        assert_eq!(port, server.port, "{log}");
+    }
+
+    /// And the old version, serving again after its restart failed, binds it again.
+    #[cfg(windows)]
+    #[test]
+    fn a_new_version_that_does_not_start_leaves_the_old_one_on_its_free_port() {
+        let releases = Releases::start("2.2.0");
+        let home = installed(&releases, true);
+        let server = Serve::start_with(&home, &releases, OLD, None);
+        let (said, code) = update(&home, &releases);
+        assert_eq!(code, 1, "{said}");
+        assert!(said.contains("The new version didn't start"), "{said}");
+        let view = server.wait("the rollback", |view| {
+            view["current"] == "2.1.1" && view["error"]["code"] == "start_failed"
+        });
+        assert_eq!(view["error"]["rolled_back"], true, "{view}");
+    }
+
     /// The app that runs a supervised server updates and restarts it:
     /// `markitai update` neither offers a restart nor names one.
     #[cfg(unix)]
@@ -1766,29 +1804,6 @@ mod restart_by_cli {
         let (status, capabilities) = server.call("GET", "/api/capabilities", None).unwrap();
         assert_eq!((status, &capabilities["supervised"]), (200, &json!(true)));
         assert!(!home.path("mh/update-pending.json").exists());
-    }
-
-    /// Windows hands over no socket: the new program binds its arguments again,
-    /// so `--port 0` comes back on another free port, and `markitai update`
-    /// finds it in the control file (docs/serve.md).
-    #[cfg(windows)]
-    #[test]
-    fn a_server_on_any_free_port_comes_back_on_another() {
-        let releases = Releases::start("2.2.0");
-        let home = installed(&releases, false);
-        let server = Serve::start_with(&home, &releases, OLD, None);
-        let (said, code) = update(&home, &releases);
-        assert_eq!(code, 0, "{said}");
-        assert!(said.contains("markitai serve restarted: 2.2.0"), "{said}");
-        // The restarted server's title is the log's last address.
-        let log = server.log_with("Updated from 2.1.1");
-        let port: u16 = log
-            .rsplit("http://127.0.0.1:")
-            .next()
-            .and_then(|rest| rest.split(|c: char| !c.is_ascii_digit()).next())
-            .and_then(|port| port.parse().ok())
-            .unwrap_or_else(|| panic!("{log}"));
-        assert_ne!(port, server.port, "{log}");
     }
 
     #[test]

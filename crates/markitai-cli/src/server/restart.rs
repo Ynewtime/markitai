@@ -9,9 +9,11 @@
 //!
 //! Windows has no exec: the listener is closed, the new program is started
 //! with the same arguments on the same console (it binds again, retrying for
-//! up to five seconds), the token is written to its standard input, and this
-//! process waits up to 30 seconds for it to report ready in the control
-//! file. It then stays as an idle parent and exits with the child's code.
+//! up to five seconds), told the port this server is on
+//! (`MARKITAI_SERVE_RESTART_PORT`, for `--port 0`), the token is written to its
+//! standard input, and this process waits up to 30 seconds for it to report
+//! ready in the control file. It then stays as an idle parent and exits with
+//! the child's code.
 //! A child that does not get ready is ended, the files are put back, and
 //! this process serves again itself. On Unix the new version watches itself
 //! for as long ([`Watchdog`]): not ready in 30 seconds, it puts the old
@@ -28,6 +30,8 @@ const LISTEN_FD: &str = "MARKITAI_SERVE_LISTEN_FD";
 const TOKEN_FD: &str = "MARKITAI_SERVE_TOKEN_FD";
 #[cfg(windows)]
 const TOKEN_STDIN: &str = "MARKITAI_SERVE_TOKEN_STDIN";
+#[cfg(windows)]
+const RESTART_PORT: &str = "MARKITAI_SERVE_RESTART_PORT";
 const RESTARTED_FROM: &str = "MARKITAI_SERVE_RESTARTED_FROM";
 /// How long a new version may take to get ready before it is undone.
 const READY: Duration = Duration::from_secs(30);
@@ -41,6 +45,8 @@ const REBIND: Duration = Duration::from_secs(5);
 #[derive(Default)]
 pub(super) struct Handover {
     pub(super) listener: Option<std::net::TcpListener>,
+    /// The port the server before it was on (Windows: no socket to hand over).
+    pub(super) port: Option<u16>,
     pub(super) token: Option<String>,
     /// The version the previous server ran.
     pub(super) from: Option<String>,
@@ -97,22 +103,26 @@ impl Handover {
             let _ = std::io::BufRead::read_line(&mut std::io::stdin().lock(), &mut line);
             handover.token = Some(line.trim().to_owned()).filter(|token| !token.is_empty());
         }
+        #[cfg(windows)]
+        {
+            handover.port = std::env::var(RESTART_PORT)
+                .ok()
+                .and_then(|port| port.parse().ok());
+        }
         handover
     }
 
     /// What this process keeps for itself when its restart failed: the
-    /// token, so open tabs stay signed in, and on Unix the listening socket,
-    /// so the port never closes.
+    /// token, so open tabs stay signed in, and the listening socket on Unix,
+    /// so the port never closes, or on Windows the port to bind again.
     pub(super) fn again(kept: Kept, token: Option<String>) -> Self {
         #[cfg(unix)]
-        let listener = kept.listener.map(std::net::TcpListener::from);
+        let (listener, port) = (kept.listener.map(std::net::TcpListener::from), None);
         #[cfg(not(unix))]
-        let listener = {
-            let _ = kept;
-            None
-        };
+        let (listener, port) = (None, kept.port);
         Self {
             listener,
+            port,
             token,
             from: None,
             again: true,
@@ -134,9 +144,27 @@ fn close_on_exec(fd: i32, on: bool) {
     }
 }
 
-/// Bind as the server does, retrying for a moment after a Windows restart,
-/// whose parent has only just closed the port.
+/// Bind as the server does. With `--port 0`, a server bound once already takes
+/// the port it `had`, so open tabs keep working; if another program took it
+/// meanwhile, any free port still is what was asked for, and the restart goes on.
 pub(super) async fn bind(
+    host: &str,
+    port: u16,
+    had: Option<u16>,
+    restarted: bool,
+) -> std::io::Result<tokio::net::TcpListener> {
+    if port == 0
+        && let Some(had) = had
+        && let Ok(listener) = bind_port(host, had, restarted).await
+    {
+        return Ok(listener);
+    }
+    bind_port(host, port, restarted).await
+}
+
+/// Bind `port`, retrying for a moment after a Windows restart, whose parent
+/// has only just closed it.
+async fn bind_port(
     host: &str,
     port: u16,
     restarted: bool,
@@ -161,11 +189,13 @@ pub(super) async fn bind(
 }
 
 /// What the server keeps so it can be started again: a copy of the listening
-/// socket (Unix).
+/// socket (Unix), or the port it is on.
 #[derive(Default)]
 pub(super) struct Kept {
     #[cfg(unix)]
     pub(super) listener: Option<std::os::fd::OwnedFd>,
+    #[cfg(not(unix))]
+    port: Option<u16>,
 }
 
 impl Kept {
@@ -179,8 +209,9 @@ impl Kept {
         }
         #[cfg(not(unix))]
         {
-            let _ = listener;
-            Self {}
+            Self {
+                port: listener.local_addr().ok().map(|address| address.port()),
+            }
         }
     }
 }
@@ -269,10 +300,11 @@ fn relaunch_with(
     #[cfg(windows)]
     {
         // The listener closed with the server; the child binds again.
-        let _ = kept;
-        command.env_remove(TOKEN_STDIN);
+        command.env_remove(TOKEN_STDIN).env_remove(RESTART_PORT);
         if !handover {
             command.env_remove(RESTARTED_FROM);
+        } else if let Some(port) = kept.port {
+            command.env(RESTART_PORT, port.to_string());
         }
         let token = token.filter(|_| handover);
         if token.is_some() {
@@ -495,10 +527,40 @@ pub(super) fn understands_handover(version: Option<&str>) -> bool {
         .is_some_and(|version| control::supports_handover(&version))
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests {
     use super::*;
 
+    const HOST: &str = "127.0.0.1";
+
+    fn port_of(listener: &tokio::net::TcpListener) -> u16 {
+        listener.local_addr().unwrap().port()
+    }
+
+    #[tokio::test]
+    async fn any_free_port_is_the_one_the_server_had() {
+        let had = port_of(&bind(HOST, 0, None, false).await.unwrap());
+        let again = bind(HOST, 0, Some(had), true).await.unwrap();
+        assert_eq!(port_of(&again), had);
+    }
+
+    #[tokio::test]
+    async fn any_free_port_is_another_when_a_program_took_the_one_the_server_had() {
+        let other_program = bind(HOST, 0, None, false).await.unwrap();
+        let had = port_of(&other_program);
+        let again = bind(HOST, 0, Some(had), true).await.unwrap();
+        assert_ne!(port_of(&again), had);
+    }
+
+    #[tokio::test]
+    async fn a_port_asked_for_stays_the_one_asked_for() {
+        let asked = port_of(&bind(HOST, 0, None, false).await.unwrap());
+        let had = bind(HOST, 0, None, false).await.unwrap();
+        let again = bind(HOST, asked, Some(port_of(&had)), true).await.unwrap();
+        assert_eq!(port_of(&again), asked);
+    }
+
+    #[cfg(unix)]
     #[test]
     fn the_token_pipe_carries_the_token_and_closes_on_exec() {
         use std::os::fd::AsRawFd;

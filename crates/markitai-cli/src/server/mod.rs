@@ -559,6 +559,7 @@ async fn serve(
         None => restart::bind(
             &options.host,
             options.port,
+            handover.port,
             handover.from.is_some() || handover.again,
         )
         .await
