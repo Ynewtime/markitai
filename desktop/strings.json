@@ -475,6 +475,10 @@
   "en": "The document couldn't be converted. Check that it opens in its own app.",
   "zh-Hans": "无法转换此文档。请确认它能在原应用中正常打开。"
  },
+ "error.text_recognition_error": {
+  "en": "Text recognition (OCR) failed. Retry, and check the details if it happens again.",
+  "zh-Hans": "OCR 文字识别失败。请重试；如再次出现，请查看详细信息。"
+ },
  "error.fetch_error": {
   "en": "Couldn't download this page. Check the address and your internet connection.",
   "zh-Hans": "无法下载此网页。请检查网址和网络连接。"

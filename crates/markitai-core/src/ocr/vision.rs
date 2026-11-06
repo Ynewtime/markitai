@@ -703,12 +703,9 @@ mod tests {
                 cancelled.fetch_add(1, Ordering::SeqCst);
             },
         );
-        assert!(
-            stuck
-                .unwrap_err()
-                .to_string()
-                .contains("stopped responding")
-        );
+        let stuck = stuck.unwrap_err();
+        assert!(matches!(stuck, crate::Error::TextRecognition(_)), "{stuck}");
+        assert!(stuck.to_string().contains("stopped responding"));
         assert_eq!(cancelled.load(Ordering::SeqCst), 1);
         // Later requests do not start, and fail at once.
         let started = Arc::new(AtomicBool::new(false));

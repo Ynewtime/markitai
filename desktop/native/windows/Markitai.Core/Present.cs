@@ -22,6 +22,7 @@ public sealed class Present(Strings strings, Func<DateTimeOffset, string> medium
         ["invalid_input"] = ("error.invalid_input", ErrorAction.None),
         ["unsupported"] = ("error.unsupported", ErrorAction.Remove),
         ["conversion_error"] = ("error.conversion_error", ErrorAction.None),
+        ["text_recognition_error"] = ("error.text_recognition_error", ErrorAction.None),
         ["fetch_error"] = ("error.fetch_error", ErrorAction.None),
         ["config_error"] = ("error.config_error", ErrorAction.OpenConfiguration),
         ["io_error"] = ("error.io_error", ErrorAction.OpenSettings),

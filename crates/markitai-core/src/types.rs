@@ -22,6 +22,11 @@ pub enum Error {
     Conversion(String),
     #[error("{0}")]
     ImageOnly(String),
+    /// Local OCR could not read an image it was given, or could not use its models.
+    /// Its code is `conversion_error`; an app wording its own failures tells it from
+    /// a document that cannot be converted.
+    #[error("{0}")]
+    TextRecognition(String),
     #[error("{0}")]
     Fetch(String),
     #[error("{0}")]
@@ -40,7 +45,9 @@ impl Error {
             Self::NoModelConfigured | Self::MissingApiKey(_) => "no_model_configured",
             Self::InvalidInput(_) => "invalid_input",
             Self::Unsupported(_) => "unsupported",
-            Self::Conversion(_) | Self::ImageOnly(_) => "conversion_error",
+            Self::Conversion(_) | Self::ImageOnly(_) | Self::TextRecognition(_) => {
+                "conversion_error"
+            }
             Self::Fetch(_) => "fetch_error",
             Self::Config(_) => "config_error",
             Self::Io(_) => "io_error",

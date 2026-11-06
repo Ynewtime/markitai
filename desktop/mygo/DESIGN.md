@@ -1081,7 +1081,7 @@ isolated environment of section 15 again with `t.Setenv`.
 | Paste | Clipboard files add items. Clipboard text with one URL adds it. Paste in the URL field types text |
 | Two at a time | Three files: two Converting, one Queued, then all Done |
 | Duplicate | Adding a Queued source shows `notice.duplicate` |
-| Failure | `ocr/fixtures/english.png` with AI and OCR off fails with `image_only`: sentence, Retry, Open Settings goes to Settings, and the claimed folder is gone. A missing file fails with `not_found` |
+| Failure | `ocr/fixtures/english.png` with AI and OCR off fails with `image_only`: sentence, Retry, Open Settings goes to Settings, and the claimed folder is gone. A missing file fails with `not_found`. `TestFailureTitles`: Vision with every reader stopped and OCR with damaged models say `error.text_recognition_error`, a broken document `error.conversion_error`, each without the other |
 | Retry | Retry captures the current settings and queues |
 | Remove and Clear Finished | Converting rows refuse removal. Selection moves to the next row |
 | History | Done items appear newest first. Search filters, no-match text. Remove keeps files. Clear asks, Cancel keeps, Clear empties. 501 additions keep 500. A corrupt file is renamed and reported once. A missing Markdown file shows `detail.missing.*` |

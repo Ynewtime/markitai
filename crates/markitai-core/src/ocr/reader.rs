@@ -242,7 +242,7 @@ fn encode(id: u64, read: &Result<OcrResult>) -> Vec<u8> {
             out.push(1);
             put_string(&mut out, message);
         }
-        Err(Error::Conversion(message)) => {
+        Err(Error::TextRecognition(message)) => {
             out.push(2);
             put_string(&mut out, message);
         }
@@ -290,7 +290,7 @@ fn decode(input: &mut impl Read) -> Option<(u64, Reply)> {
             Reply::Lines(scale, language, unread[0] != 0, lines)
         }
         1 => Reply::Failed(Error::Unsupported(string_of(input)?)),
-        _ => Reply::Failed(Error::Conversion(string_of(input)?)),
+        _ => Reply::Failed(Error::TextRecognition(string_of(input)?)),
     };
     Some((id, reply))
 }
@@ -752,10 +752,10 @@ mod tests {
         assert!(
             matches!(reply, Reply::Failed(Error::Unsupported(message)) if message == "no language")
         );
-        let other = encode(2, &Err(Error::Conversion("not read".into())));
+        let other = encode(2, &Err(Error::TextRecognition("not read".into())));
         let (_, reply) = decode(&mut other.as_slice()).unwrap();
         assert!(
-            matches!(reply, Reply::Failed(Error::Conversion(message)) if message == "not read")
+            matches!(reply, Reply::Failed(Error::TextRecognition(message)) if message == "not read")
         );
     }
 
@@ -838,6 +838,24 @@ mod tests {
         assert_eq!(starts(&directory), 2);
         // Three more waits of the idle time before the first kill.
         assert!(began.elapsed() >= Duration::from_millis(1200));
+    }
+
+    /// Every reader stopped: the reading fails as text recognition, the kind an app
+    /// tells from a document it cannot convert, and bindings see the same code as ever.
+    #[test]
+    fn readers_that_all_stop_fail_as_text_recognition() {
+        let (client, directory) = client_of("exec sleep 100", LIMITS_NOW);
+        let exchange = client.exchange(&image(), "en");
+        assert_eq!(starts(&directory), 3);
+        let Outcome::Read(Err(error)) = outcome(exchange, &image(), &LIMITS_NOW) else {
+            panic!("not a failure");
+        };
+        assert!(matches!(error, Error::TextRecognition(_)), "{error}");
+        assert!(
+            error.to_string().contains("Vision stopped responding"),
+            "{error}"
+        );
+        assert_eq!(error.code(), "conversion_error");
     }
 
     #[test]

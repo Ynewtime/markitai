@@ -810,7 +810,12 @@ fn apply_page(
     let result = recognition
         .join()
         .unwrap_or_else(|_| Err(failure("a recognition thread failed")))
-        .map_err(|error| failure(format!("local OCR failed on page {}: {error}", page.number)))?;
+        .map_err(|error| {
+            Error::TextRecognition(format!(
+                "PDF page media: local OCR failed on page {}: {error}",
+                page.number
+            ))
+        })?;
     if result.unread {
         pages
             .document
@@ -1944,6 +1949,26 @@ mod tests {
             let prepared = prepare_with(&shifted_pdf(), "s.pdf", &cfg, false, &recognize, &never);
             assert!(prepared.is_ok());
         }
+    }
+
+    #[test]
+    fn a_page_that_cannot_be_read_fails_as_text_recognition() {
+        let recognize = |_: RgbImage, _: &Value| -> Result<ocr::OcrResult> {
+            Err(Error::TextRecognition(
+                "Local OCR: Vision stopped responding".into(),
+            ))
+        };
+        let cfg = json!({"ocr":{"enabled":true},"llm":{"enabled":false}});
+        let prepared = prepare_with(&scans(1), "s.pdf", &cfg, false, &recognize, &no_lines);
+        let Err(error) = prepared else {
+            panic!("the page was read");
+        };
+        assert!(matches!(error, Error::TextRecognition(_)), "{error}");
+        assert_eq!(
+            error.to_string(),
+            "PDF page media: local OCR failed on page 1: Local OCR: Vision stopped responding"
+        );
+        assert_eq!(error.code(), "conversion_error");
     }
 
     #[test]

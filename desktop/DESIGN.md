@@ -276,8 +276,9 @@ Running an item:
 4. Map the envelope. `ok` with `skip_reason` null is Done. `ok` with any
    `skip_reason` is Failed with code `skipped`. An error envelope is Failed with
    its `code` and `message`; `markitai-app` answers `image_only` for an image
-   with no text when neither AI nor OCR is on (the core's bindings say
-   `conversion_error`).
+   with no text when neither AI nor OCR is on, and `text_recognition_error` when
+   local OCR cannot read what it was given or cannot use its models (the core's
+   bindings say `conversion_error` for both).
 5. On Failed, delete the claimed folder and everything in it. The app created
    that folder for this item a moment earlier, and nothing else writes there.
 6. On Done, add a History entry (4.4) and announce `a11y.done`. On Failed,
@@ -661,6 +662,7 @@ message under `detail.details`. `detail.retry` is always the first button.
 | `invalid_input` | `error.invalid_input` | none |
 | `unsupported` | `error.unsupported` | `convert.remove` |
 | `conversion_error` | `error.conversion_error` | none |
+| `text_recognition_error` (`markitai-app`: local OCR could not read, as when macOS Vision stops responding) | `error.text_recognition_error` | none |
 | `fetch_error` | `error.fetch_error` | none |
 | `config_error` | `error.config_error` | `settings.config.open` |
 | `io_error` | `error.io_error` | `action.open_settings` |
@@ -799,6 +801,7 @@ Every user-visible string. The table is the source of `desktop/strings.json`.
 | `error.invalid_input` | Markitai couldn't read this input. | Markitai 无法读取此输入。 |
 | `error.unsupported` | Markitai can't convert this kind of file. | Markitai 无法转换此类文件。 |
 | `error.conversion_error` | The document couldn't be converted. Check that it opens in its own app. | 无法转换此文档。请确认它能在原应用中正常打开。 |
+| `error.text_recognition_error` | Text recognition (OCR) failed. Retry, and check the details if it happens again. | OCR 文字识别失败。请重试；如再次出现，请查看详细信息。 |
 | `error.fetch_error` | Couldn't download this page. Check the address and your internet connection. | 无法下载此网页。请检查网址和网络连接。 |
 | `error.config_error` | Your markitai configuration has a problem. | markitai 配置有问题。 |
 | `error.io_error` | Markitai couldn't read or write a file. Check that the output folder exists, can be written and has free space. | Markitai 无法读写文件。请确认输出文件夹存在、可写入且空间充足。 |
