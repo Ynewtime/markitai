@@ -68,7 +68,10 @@ sh docs/validation/drivers/windows-check-round38/check-windows.sh clippy -- -D w
 ## Implementation and documentation
 
 - Core code stays independent of Python/Node/Go runtimes. Bindings call Rust in
-  process; unsupported capabilities return explicit errors.
+  process; unsupported capabilities return explicit errors. macOS Vision is the
+  one exception to reading in process: it reads in a helper program,
+  `markitai-vision-reader`, that can be killed and restarted when a recognition
+  stops ([local OCR](docs/ocr.md)).
 - Keep user guides concise and current. Put applicable limits in the relevant
   topic guide, and public changes in the unreleased notes; avoid duplicated work logs.
 - After each user-reported fix, check all project documentation for affected

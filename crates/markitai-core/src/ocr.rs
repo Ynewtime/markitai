@@ -3012,8 +3012,8 @@ pub(crate) mod tests {
 
     /// A scan-like page of Chinese with a table: drawn in a system font, then
     /// blurred and recompressed as a poor JPEG, the way the parity corpus's
-    /// scanned pages are. Vision cannot run in a macOS virtual machine, so the
-    /// runners skip this test by name.
+    /// scanned pages are. Vision reports failure in some macOS virtual machines,
+    /// where `MARKITAI_CHECK_SKIP` leaves this test out.
     #[cfg(target_os = "macos")]
     #[test]
     fn vision_reads_a_degraded_scan_of_chinese_with_a_table_by_default() {

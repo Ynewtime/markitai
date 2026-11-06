@@ -378,6 +378,9 @@ time it was tried, or, in a program with no `markitai-vision-reader` beside it, 
 not return within 15 minutes; see [local OCR](ocr.md). Run the program again, or
 use `MARKITAI_OCR_BACKEND=paddle`.
 
+**`Vision reported failure without an error`.** Vision can fail this way in a macOS
+virtual machine; see [local OCR](ocr.md). Use `MARKITAI_OCR_BACKEND=paddle`.
+
 **`✗ ocr.lang is not supported by the installed macOS Vision text recognizer`.**
 `ocr.lang` must be a language the macOS Vision recognizer supports, such as
 `en`, `zh`, `ja` or `de`; see [local OCR](ocr.md#language-selection).

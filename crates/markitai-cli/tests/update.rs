@@ -1743,6 +1743,16 @@ mod restart_by_cli {
         assert!(!home.path("mh/update-pending.json").exists());
     }
 
+    /// `--port 0` that finds a [`fixed_port`], as a server told its port does:
+    /// a port from what systems give out could go to a parallel test while it
+    /// is closed for the restart.
+    #[cfg(windows)]
+    fn on_any_free_port(home: &Home, releases: &Releases) -> Serve {
+        let port = fixed_port().to_string();
+        let extra = [OLD[0], ("MARKITAI_SERVE_RESTART_PORT", port.as_str())];
+        Serve::start_with(home, releases, &extra, None)
+    }
+
     /// Windows hands over no socket: the new program is told the port `--port 0`
     /// found, so an open tab keeps working (the Unix test above keeps the socket).
     #[cfg(windows)]
@@ -1750,7 +1760,7 @@ mod restart_by_cli {
     fn a_server_on_any_free_port_comes_back_on_that_port() {
         let releases = Releases::start("2.2.0");
         let home = installed(&releases, false);
-        let server = Serve::start_with(&home, &releases, OLD, None);
+        let server = on_any_free_port(&home, &releases);
         let (said, code) = update(&home, &releases);
         assert_eq!(code, 0, "{said}");
         assert!(said.contains("markitai serve restarted: 2.2.0"), "{said}");
@@ -1771,7 +1781,7 @@ mod restart_by_cli {
     fn a_new_version_that_does_not_start_leaves_the_old_one_on_its_free_port() {
         let releases = Releases::start("2.2.0");
         let home = installed(&releases, true);
-        let server = Serve::start_with(&home, &releases, OLD, None);
+        let server = on_any_free_port(&home, &releases);
         let (said, code) = update(&home, &releases);
         assert_eq!(code, 1, "{said}");
         assert!(said.contains("The new version didn't start"), "{said}");

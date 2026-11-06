@@ -162,6 +162,10 @@ A program with no reader beside it reads in process, where nothing can bring bac
 a stopped recognition: a request that does not return within 15 minutes fails with
 `Vision stopped responding`, and so does every later Vision reading in that process.
 
+Vision can fail at once in a macOS virtual machine, with `Vision reported failure
+without an error`: it did on macOS 27.2 under Apple's Virtualization framework, and
+read on GitHub's hosted macOS 15 runners. The portable engine reads in both.
+
 ## Bounds and reading order
 
 Encoded image input is limited to 64 MiB, decoded images to 32 million pixels,

@@ -537,9 +537,19 @@ mod tests {
         listener.local_addr().unwrap().port()
     }
 
+    /// A free port below what systems give out for port 0, so no parallel test
+    /// takes it while it is closed.
+    fn free_port() -> u16 {
+        use std::hash::{BuildHasher, RandomState};
+        (0..1000)
+            .map(|_| 20_000 + (RandomState::new().hash_one(0) % 12_000) as u16)
+            .find(|port| std::net::TcpListener::bind((HOST, *port)).is_ok())
+            .expect("a free port from 20000 to 31999")
+    }
+
     #[tokio::test]
     async fn any_free_port_is_the_one_the_server_had() {
-        let had = port_of(&bind(HOST, 0, None, false).await.unwrap());
+        let had = free_port();
         let again = bind(HOST, 0, Some(had), true).await.unwrap();
         assert_eq!(port_of(&again), had);
     }
@@ -554,7 +564,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_port_asked_for_stays_the_one_asked_for() {
-        let asked = port_of(&bind(HOST, 0, None, false).await.unwrap());
+        let asked = free_port();
         let had = bind(HOST, 0, None, false).await.unwrap();
         let again = bind(HOST, asked, Some(port_of(&had)), true).await.unwrap();
         assert_eq!(port_of(&again), asked);
