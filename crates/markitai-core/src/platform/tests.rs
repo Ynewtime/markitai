@@ -429,3 +429,99 @@ fn restricting_to_the_owner_keeps_the_file_readable_by_it() {
         }
     }
 }
+
+fn lan(ip: &str) -> InterfaceAddress {
+    InterfaceAddress {
+        ip: ip.parse().unwrap(),
+        on_local_network: true,
+    }
+}
+fn tunnel(ip: &str) -> InterfaceAddress {
+    InterfaceAddress {
+        ip: ip.parse().unwrap(),
+        on_local_network: false,
+    }
+}
+fn network(route: Option<&str>, interfaces: &[InterfaceAddress]) -> Option<String> {
+    let route = route.map(|ip| ip.parse().unwrap());
+    choose_network_address(route, interfaces).map(|ip| ip.to_string())
+}
+
+#[test]
+fn the_network_address_is_the_routes_on_a_real_interface() {
+    let interfaces = [
+        lan("127.0.0.1"),
+        lan("192.168.1.5"),
+        lan("10.0.0.2"),
+        lan("203.0.113.5"),
+        tunnel("100.64.0.1"),
+    ];
+    for route in ["10.0.0.2", "192.168.1.5", "203.0.113.5"] {
+        assert_eq!(
+            network(Some(route), &interfaces).as_deref(),
+            Some(route),
+            "{route}"
+        );
+    }
+    // The list could not be read: the route is all there is.
+    assert_eq!(
+        network(Some("192.168.1.5"), &[]).as_deref(),
+        Some("192.168.1.5")
+    );
+}
+
+#[test]
+fn behind_a_tun_proxy_the_network_address_comes_from_the_interfaces() {
+    // Clash and Surge take 198.18.0.1, sing-box a private 172.19.0.1.
+    for proxy in ["198.18.0.1", "172.19.0.1"] {
+        let interfaces = [lan("127.0.0.1"), tunnel(proxy), lan("192.168.1.5")];
+        assert_eq!(
+            network(Some(proxy), &interfaces).as_deref(),
+            Some("192.168.1.5"),
+            "{proxy}"
+        );
+    }
+    // A proxy's interface that does not say it is a tunnel (a TAP adapter).
+    assert_eq!(
+        network(Some("198.18.0.1"), &[lan("198.18.0.1"), lan("192.168.1.5")]).as_deref(),
+        Some("192.168.1.5")
+    );
+}
+
+#[test]
+fn the_interfaces_offer_a_private_address_first_and_never_one_no_device_can_reach() {
+    let interfaces = [
+        lan("127.0.0.1"),
+        lan("169.254.10.1"),
+        lan("203.0.113.5"),
+        lan("192.168.1.5"),
+    ];
+    assert_eq!(network(None, &interfaces).as_deref(), Some("192.168.1.5"));
+    assert_eq!(
+        network(None, &[lan("203.0.113.5")]).as_deref(),
+        Some("203.0.113.5")
+    );
+    for nothing in [
+        network(None, &[]),
+        network(None, &[lan("127.0.0.1"), lan("169.254.10.1")]),
+        network(Some("127.0.0.1"), &[lan("127.0.0.1")]),
+        network(Some("0.0.0.0"), &[]),
+        network(Some("172.19.0.1"), &[tunnel("172.19.0.1")]),
+    ] {
+        assert_eq!(nothing, None);
+    }
+}
+
+#[test]
+fn every_system_lists_its_interfaces() {
+    let interfaces = imp::interface_addresses();
+    assert!(
+        interfaces.iter().any(|found| found.ip.is_loopback()),
+        "{interfaces:?}"
+    );
+    // A hosted runner has a network: the tests that stand a server on this
+    // address must not skip there.
+    if std::env::var_os("GITHUB_ACTIONS").is_some() {
+        assert!(network_address().is_some(), "{interfaces:?}");
+    }
+}

@@ -801,7 +801,7 @@ fn print_startup(
             network: address
                 .ip()
                 .is_unspecified()
-                .then(startup::network_address)
+                .then(markitai_core::platform::network_address)
                 .flatten(),
             newer: newer.as_ref().map(|(latest, current, command)| {
                 (latest.to_string(), current.to_string(), command.clone())

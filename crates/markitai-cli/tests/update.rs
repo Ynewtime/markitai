@@ -421,15 +421,11 @@ const POSE: &str = "markitai-test-pose";
 const TOKEN: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
 impl Serve {
-    /// On a free port with a known token.
+    /// On any free port (the system picks it as the server binds), with a known
+    /// token.
     #[cfg(unix)]
     fn start(home: &Home, releases: &Releases) -> Self {
-        Self::start_with(
-            home,
-            releases,
-            &[("MARKITAI_SERVE_TOKEN", TOKEN)],
-            Some(free_port()),
-        )
+        Self::start_with(home, releases, &[("MARKITAI_SERVE_TOKEN", TOKEN)], None)
     }
 
     /// With `extra` environment, on `port` (`None`: any).
@@ -456,7 +452,7 @@ impl Serve {
         let mut command = home.command(releases, extra);
         command
             .env("MARKITAI_SERVE_TOKEN", TOKEN)
-            .args(["serve", "--supervised", "--port", &free_port().to_string()])
+            .args(["serve", "--supervised", "--port", "0"])
             .stdin(Stdio::piped());
         Self::spawn(command, Some(TOKEN))
     }
@@ -526,7 +522,6 @@ impl Serve {
     }
 
     /// The captured log once it holds `line`.
-    #[cfg(unix)]
     fn log_with(&self, line: &str) -> String {
         let started = Instant::now();
         loop {
@@ -573,12 +568,17 @@ impl Drop for Serve {
     }
 }
 
-fn free_port() -> u16 {
-    TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
+/// A port for a server that binds the number itself a second time: one rolled
+/// back to 2.1.0, which takes no handover, or restarted on Windows. `--port 0`
+/// would move it. Below what systems give out for port 0 and for connections
+/// (from 49152; Linux from 32768), so no parallel test can take it before the
+/// server binds it, or while it is closed for the restart.
+fn fixed_port() -> u16 {
+    use std::hash::{BuildHasher, RandomState};
+    (0..1000)
+        .map(|_| 20_000 + (RandomState::new().hash_one(0) % 12_000) as u16)
+        .find(|port| TcpListener::bind(("127.0.0.1", *port)).is_ok())
+        .expect("a free port from 20000 to 31999")
 }
 
 #[test]
@@ -1186,6 +1186,7 @@ mod unix {
         // only and the notice's record is followed in one without a check.
         let due = Home::plain();
         seed_cache(&due, "2.2.0", true);
+        start_once(&due, &releases);
         let mut baseline = due.command(
             &releases,
             &[
@@ -1393,8 +1394,18 @@ mod unix {
         }
     }
 
+    /// Start the program once, off the clock: the first start of a new file is
+    /// slow whatever the run does. macOS scans it then (Gatekeeper, about a
+    /// second for this debug build), and cargo leaves a new copy each time it
+    /// runs, so a test run on its own would otherwise time the scan.
+    fn start_once(home: &Home, releases: &Releases) {
+        let output = home.run(releases, &["--version"], &[]);
+        assert_eq!(output.status.code(), Some(0), "{output:?}");
+    }
+
     /// One conversion on a terminal, and how long it took.
     fn timed(home: &Home, releases: &Releases) -> (String, Duration) {
+        start_once(home, releases);
         let mut command = home.command(releases, &[("TERM", "xterm"), ("NO_COLOR", "1")]);
         command.args(["a.txt", "-o", "out"]);
         let started = std::time::Instant::now();
@@ -1569,7 +1580,12 @@ mod unix {
             false,
         );
         let home = Home::setup_sh("2.1.0");
-        let server = Serve::start(&home, &releases);
+        let server = Serve::start_with(
+            &home,
+            &releases,
+            &[("MARKITAI_SERVE_TOKEN", TOKEN)],
+            Some(fixed_port()),
+        );
         server.wait("the daily check", |view| view["latest"] == "2.2.0");
         server
             .call("POST", "/api/update", Some(json!({"version": "2.2.0"})))
@@ -1620,7 +1636,7 @@ mod unix {
                 ("MARKITAI_SERVE_TOKEN", TOKEN),
                 ("MARKITAI_TEST_UPDATE_READY_MS", "300"),
             ],
-            Some(free_port()),
+            Some(fixed_port()),
         );
         let pid = server.child.id();
         server.wait("the daily check", |view| view["latest"] == "2.2.0");
@@ -1683,7 +1699,7 @@ mod restart_by_cli {
     /// port number again.
     fn port() -> Option<u16> {
         if cfg!(windows) {
-            Some(free_port())
+            Some(fixed_port())
         } else {
             None
         }
@@ -1750,6 +1766,29 @@ mod restart_by_cli {
         let (status, capabilities) = server.call("GET", "/api/capabilities", None).unwrap();
         assert_eq!((status, &capabilities["supervised"]), (200, &json!(true)));
         assert!(!home.path("mh/update-pending.json").exists());
+    }
+
+    /// Windows hands over no socket: the new program binds its arguments again,
+    /// so `--port 0` comes back on another free port, and `markitai update`
+    /// finds it in the control file (docs/serve.md).
+    #[cfg(windows)]
+    #[test]
+    fn a_server_on_any_free_port_comes_back_on_another() {
+        let releases = Releases::start("2.2.0");
+        let home = installed(&releases, false);
+        let server = Serve::start_with(&home, &releases, OLD, None);
+        let (said, code) = update(&home, &releases);
+        assert_eq!(code, 0, "{said}");
+        assert!(said.contains("markitai serve restarted: 2.2.0"), "{said}");
+        // The restarted server's title is the log's last address.
+        let log = server.log_with("Updated from 2.1.1");
+        let port: u16 = log
+            .rsplit("http://127.0.0.1:")
+            .next()
+            .and_then(|rest| rest.split(|c: char| !c.is_ascii_digit()).next())
+            .and_then(|port| port.parse().ok())
+            .unwrap_or_else(|| panic!("{log}"));
+        assert_ne!(port, server.port, "{log}");
     }
 
     #[test]

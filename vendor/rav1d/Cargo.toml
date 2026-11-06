@@ -32,3 +32,7 @@ asm_arm64_i8mm = ["asm"]
 asm_arm64_sve2 = ["asm"]
 bitdepth_8 = []
 bitdepth_16 = []
+
+# markitai: a workspace of its own, as the root Cargo.toml's exclude says. Without this table
+# Cargo keeps looking upward past that root, into any checkout around this one.
+[workspace]

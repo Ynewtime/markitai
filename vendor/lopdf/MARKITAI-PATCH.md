@@ -196,3 +196,10 @@ unmodified 0.46.0 package and of this one, with registry dependencies and an
 empty `assets/example.pdf`: 333 and 339 passed (the six added tests), the same
 29 failed by name (all read the `assets` directory), none ignored.
 
+
+## Its own workspace
+
+`Cargo.toml` ends with an empty `[workspace]` table, marked `markitai`, so this
+crate is a workspace of its own wherever the checkout sits. Without it Cargo
+looks past the root that excludes this crate, and a checkout inside another
+Cargo workspace (a worktree under `.claude/worktrees`) fails.

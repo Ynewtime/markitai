@@ -214,3 +214,10 @@ check) compare `&*name.local` with the string instead of `as_ref()`. The
 tree construction rules `TreeWriter` follows are unchanged in 0.40. In the
 isolated copy the suite passes with the same 117 tests as before the move.
 
+
+## Its own workspace
+
+`Cargo.toml` ends with an empty `[workspace]` table, marked `markitai`, so this
+crate is a workspace of its own wherever the checkout sits. Without it Cargo
+looks past the root that excludes this crate, and a checkout inside another
+Cargo workspace (a worktree under `.claude/worktrees`) fails.

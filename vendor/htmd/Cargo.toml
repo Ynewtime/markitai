@@ -107,3 +107,7 @@ version = "1.4.1"
 
 [profile.release]
 debug = 2
+
+# markitai: a workspace of its own, as the root Cargo.toml's exclude says. Without this table
+# Cargo keeps looking upward past that root, into any checkout around this one.
+[workspace]

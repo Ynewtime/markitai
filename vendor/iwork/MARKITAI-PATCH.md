@@ -28,3 +28,10 @@ Each change is marked `markitai` in a comment.
 
 Run its own suite in a copy outside the workspace (`cargo test` in the copied
 directory); all of it passes against zip 9.
+
+## Its own workspace
+
+`Cargo.toml` ends with an empty `[workspace]` table, marked `markitai`, so this
+crate is a workspace of its own wherever the checkout sits. Without it Cargo
+looks past the root that excludes this crate, and a checkout inside another
+Cargo workspace (a worktree under `.claude/worktrees`) fails.

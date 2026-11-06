@@ -17,3 +17,7 @@ path = "lib.rs"
 
 [build-dependencies]
 cc = "1.2"
+
+# markitai: a workspace of its own, as the root Cargo.toml's exclude says. Without this table
+# Cargo keeps looking upward past that root, into any checkout around this one.
+[workspace]

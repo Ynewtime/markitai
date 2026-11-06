@@ -3,17 +3,27 @@
 //! Entries are observed through handles opened with
 //! `FILE_FLAG_BACKUP_SEMANTICS` (so directories open) and
 //! `FILE_FLAG_OPEN_REPARSE_POINT` (so a link or junction is observed itself).
-use super::{FileId, Owner, Status};
+use super::{FileId, InterfaceAddress, Owner, Status};
 use std::ffi::{OsStr, c_void};
 use std::fs::{self, DirBuilder, File, OpenOptions};
 use std::io;
 use std::mem::{MaybeUninit, size_of};
+use std::net::Ipv4Addr;
 use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
 use std::os::windows::io::AsRawHandle;
 use std::path::{Path, PathBuf};
 use std::ptr::null_mut;
 use std::sync::OnceLock;
-use windows_sys::Win32::Foundation::{CloseHandle, ERROR_SUCCESS, HANDLE, LocalFree};
+use windows_sys::Win32::Foundation::{
+    CloseHandle, ERROR_BUFFER_OVERFLOW, ERROR_SUCCESS, HANDLE, LocalFree,
+};
+use windows_sys::Win32::NetworkManagement::IpHelper::{
+    GAA_FLAG_INCLUDE_GATEWAYS, GAA_FLAG_SKIP_ANYCAST, GAA_FLAG_SKIP_DNS_SERVER,
+    GAA_FLAG_SKIP_MULTICAST, GetAdaptersAddresses, IF_TYPE_ETHERNET_CSMACD, IF_TYPE_IEEE80211,
+    IP_ADAPTER_ADDRESSES_LH,
+};
+use windows_sys::Win32::NetworkManagement::Ndis::IfOperStatusUp;
+use windows_sys::Win32::Networking::WinSock::{AF_INET, SOCKADDR_IN};
 use windows_sys::Win32::Security::Authorization::{
     GetSecurityInfo, SE_FILE_OBJECT, SetNamedSecurityInfoW,
 };
@@ -413,4 +423,71 @@ pub(super) fn resolve(path: &Path) -> io::Result<PathBuf> {
             Err(error) => return Err(error),
         }
     }
+}
+
+/// `GetAdaptersAddresses`: an adapter on the local network is Ethernet or
+/// Wi-Fi with a gateway. A tunnel is another type (Wintun is a virtual one),
+/// a virtual switch has no gateway.
+pub(super) fn interface_addresses() -> Vec<InterfaceAddress> {
+    const FLAGS: u32 = GAA_FLAG_SKIP_ANYCAST
+        | GAA_FLAG_SKIP_MULTICAST
+        | GAA_FLAG_SKIP_DNS_SERVER
+        | GAA_FLAG_INCLUDE_GATEWAYS;
+    // In 64-bit units, the alignment of the list's entries. The list may
+    // grow between the calls, so a second overflow is not an error.
+    let mut buffer = vec![0u64; 2048];
+    let mut result = ERROR_BUFFER_OVERFLOW;
+    for _ in 0..4 {
+        let mut size = (buffer.len() * size_of::<u64>()) as u32;
+        // SAFETY: `buffer` holds `size` writable bytes, aligned for the list.
+        result = unsafe {
+            GetAdaptersAddresses(
+                u32::from(AF_INET),
+                FLAGS,
+                std::ptr::null(),
+                buffer.as_mut_ptr().cast(),
+                &mut size,
+            )
+        };
+        if result != ERROR_BUFFER_OVERFLOW {
+            break;
+        }
+        buffer.resize((size as usize).div_ceil(size_of::<u64>()), 0);
+    }
+    if result != ERROR_SUCCESS {
+        return Vec::new();
+    }
+    let mut found = Vec::new();
+    let mut adapter = buffer.as_ptr().cast::<IP_ADAPTER_ADDRESSES_LH>();
+    while !adapter.is_null() {
+        // SAFETY: the list lives in `buffer`, and each `Next` points within it.
+        let current = unsafe { &*adapter };
+        adapter = current.Next;
+        if current.OperStatus != IfOperStatusUp {
+            continue;
+        }
+        let on_local_network =
+            matches!(current.IfType, IF_TYPE_ETHERNET_CSMACD | IF_TYPE_IEEE80211)
+                && !current.FirstGatewayAddress.is_null();
+        let mut unicast = current.FirstUnicastAddress;
+        while !unicast.is_null() {
+            // SAFETY: as above, for the adapter's list of addresses.
+            let entry = unsafe { &*unicast };
+            unicast = entry.Next;
+            let address = entry.Address.lpSockaddr;
+            // SAFETY: a non-null `lpSockaddr` is a socket address.
+            if address.is_null() || unsafe { (*address).sa_family } != AF_INET {
+                continue;
+            }
+            // SAFETY: a socket address of the family `AF_INET` is a `SOCKADDR_IN`.
+            let address = unsafe { address.cast::<SOCKADDR_IN>().read_unaligned() };
+            // SAFETY: every field of the union is the same four bytes.
+            let bytes = unsafe { address.sin_addr.S_un.S_addr }.to_ne_bytes();
+            found.push(InterfaceAddress {
+                ip: Ipv4Addr::from(bytes),
+                on_local_network,
+            });
+        }
+    }
+    found
 }

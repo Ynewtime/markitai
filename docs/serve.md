@@ -30,8 +30,9 @@ a forwarding proxy); a server reachable from the network, or under another name
 {"version"}` takes only the release the server found and updates a setup-script
 install: download and verify while conversions run, hold new ones (503
 `updating`), let running and queued ones finish, swap, restart on the same
-address with the same token. A new version that fails or is not ready within 30
-seconds puts the old one back. The workbench's update entry uses these routes ([web UI](web-ui.md#updating-the-server)). `markitai update` restarts a running server through `/api/update/restart`
+address with the same token (`--port 0` on Windows, which keeps no socket across
+the restart, comes back on another free port). A new version that fails or is not
+ready within 30 seconds puts the old one back. The workbench's update entry uses these routes ([web UI](web-ui.md#updating-the-server)). `markitai update` restarts a running server through `/api/update/restart`
 with the owner-only secret in `MARKITAI_HOME/serve/control`. These control routes
 exist on every server, exposed or not, and answer only a direct loopback
 connection that sends the secret.
@@ -944,7 +945,9 @@ CLI's [terminal style](cli.md): a title with the address it listens on
 token (`  • Access token: …`); the address to open in a browser, on a line of its
 own under `→ Open in your browser:` so it copies whole (with the token in its
 fragment for local and remote browsers alike, unless `--no-auth` was explicitly
-selected); the directory that holds jobs and history (`MARKITAI_HOME/serve/jobs`,
+selected); with `--host 0.0.0.0`, the address for another device (this computer's
+on its local network, also behind a TUN proxy or a VPN that takes all traffic);
+the directory that holds jobs and history (`MARKITAI_HOME/serve/jobs`,
 shown absolute); and a Ctrl-C hint. A [supervised](#running-under-another-app) server prints
 neither the token nor an address to open, and in place of the hint says that the app that
 started it stops it through standard input. In every language the title ends with

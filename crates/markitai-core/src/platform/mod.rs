@@ -27,8 +27,12 @@
 //! * **Spelling.** [`canonicalize`] returns the final spelling of an existing
 //!   path; on Windows without the `\\?\` prefix whenever the plain spelling
 //!   names the same file.
+//! * **Local network.** Outside the file system, one fact of the same kind:
+//!   [`network_address`] asks the interfaces themselves (`getifaddrs`,
+//!   `GetAdaptersAddresses`) when the route to the outside is a tunnel.
 use std::fs::{self, DirBuilder, File, Metadata, OpenOptions};
 use std::io;
+use std::net::{IpAddr, Ipv4Addr, UdpSocket};
 use std::path::{Path, PathBuf};
 
 #[cfg(unix)]
@@ -290,6 +294,60 @@ fn transient(code: i32) -> bool {
     matches!(code, 5 | 32 | 33)
 }
 
+/// An IPv4 address of a network interface that is up.
+#[derive(Clone, Copy, Debug)]
+struct InterfaceAddress {
+    ip: Ipv4Addr,
+    /// Another device on the local network can reach this interface: it is
+    /// not a tunnel (a TUN proxy's or a VPN's virtual interface).
+    on_local_network: bool,
+}
+
+/// This computer's address on its local network, when it can be found: where
+/// another device reaches a server that listens on every interface.
+///
+/// The address a route to the outside would use (connecting a UDP socket only
+/// selects the interface; nothing is sent), unless that route is a tunnel.
+/// Behind a TUN proxy it is the proxy's own address, which no other device can
+/// reach and which the proxy answers for this computer too, so the interfaces
+/// decide then.
+pub fn network_address() -> Option<IpAddr> {
+    let route = || {
+        let socket = UdpSocket::bind(("0.0.0.0", 0)).ok()?;
+        socket.connect(("192.0.2.1", 80)).ok()?;
+        Some(socket.local_addr().ok()?.ip())
+    };
+    choose_network_address(route(), &imp::interface_addresses())
+}
+
+fn choose_network_address(
+    route: Option<IpAddr>,
+    interfaces: &[InterfaceAddress],
+) -> Option<IpAddr> {
+    let reachable = |ip: IpAddr| {
+        let link_local = matches!(ip, IpAddr::V4(ip) if ip.is_link_local());
+        !(ip.is_loopback() || ip.is_unspecified() || link_local || crate::fetch::is_proxy_dns(ip))
+    };
+    let on_tunnel = |ip: IpAddr| {
+        interfaces
+            .iter()
+            .any(|found| !found.on_local_network && IpAddr::V4(found.ip) == ip)
+    };
+    route
+        .filter(|&ip| reachable(ip) && !on_tunnel(ip))
+        .or_else(|| {
+            let mut candidates = interfaces
+                .iter()
+                .filter(|found| found.on_local_network && reachable(IpAddr::V4(found.ip)))
+                .map(|found| found.ip);
+            candidates
+                .clone()
+                .find(Ipv4Addr::is_private)
+                .or_else(|| candidates.next())
+                .map(IpAddr::V4)
+        })
+}
+
 /// The final spelling of an existing path: every link resolved and, on
 /// Windows, each name in its stored case with long names for short ones.
 pub fn canonicalize(path: &Path) -> io::Result<PathBuf> {
@@ -423,6 +481,9 @@ mod imp {
     }
     pub(super) fn canonicalize(path: &Path) -> io::Result<PathBuf> {
         fs::canonicalize(path)
+    }
+    pub(super) fn interface_addresses() -> Vec<InterfaceAddress> {
+        Vec::new()
     }
 }
 

@@ -956,3 +956,10 @@ failed by name as the 1.25.1 copy (1,727 passed).
 
   Run in the isolated copy (as above), the crate's unit tests give 1,745
   passed and the same 21 failed by name.
+
+## Its own workspace
+
+`Cargo.toml` ends with an empty `[workspace]` table, marked `markitai`, so this
+crate is a workspace of its own wherever the checkout sits. Without it Cargo
+looks past the root that excludes this crate, and a checkout inside another
+Cargo workspace (a worktree under `.claude/worktrees`) fails.

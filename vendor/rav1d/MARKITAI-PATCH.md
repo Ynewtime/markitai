@@ -19,7 +19,7 @@ rustfmt leaves the upstream sources unchanged without it).
 
 Local changes:
 
-- `Cargo.toml`: the `[workspace]` (the tool), the `[lib]` crate types
+- `Cargo.toml`: the tool in `[workspace]`, the `[lib]` crate types
   (`staticlib` built a 26 MB archive nobody links), the `cc` and `nasm-rs`
   build dependencies and the profiles are removed, and the default features
   are `bitdepth_8` and `bitdepth_16` without assembly. The `asm` features
@@ -47,3 +47,10 @@ To update, copy the same file set from a newer upstream commit, record it in
 `UPSTREAM.json`, reapply the changes above, and rerun the AVIF tests
 (`images::heif`) and a mutation run over the AVIF fixtures with a release
 build, as was done when this directory was added.
+
+## Its own workspace
+
+`Cargo.toml` ends with an empty `[workspace]` table, marked `markitai`, so this
+crate is a workspace of its own wherever the checkout sits. Without it Cargo
+looks past the root that excludes this crate, and a checkout inside another
+Cargo workspace (a worktree under `.claude/worktrees`) fails.

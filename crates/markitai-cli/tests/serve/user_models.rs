@@ -121,12 +121,11 @@ fn received(endpoint: &Endpoint) -> Vec<String> {
         .collect()
 }
 /// An address of this machine that is not loopback, where a user's own
-/// model server can listen; `None` without one.
+/// model server can listen; `None` without one. Not the route to the outside:
+/// behind a TUN proxy that is the proxy's address, whose connections never
+/// reach a server here.
 fn lan_address() -> Option<std::net::IpAddr> {
-    let socket = std::net::UdpSocket::bind(("0.0.0.0", 0)).ok()?;
-    socket.connect(("192.0.2.1", 80)).ok()?;
-    let ip = socket.local_addr().ok()?.ip();
-    (!ip.is_loopback() && !ip.is_unspecified()).then_some(ip)
+    markitai_core::platform::network_address()
 }
 
 #[test]
