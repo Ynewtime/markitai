@@ -97,6 +97,15 @@ def windows_cli_build(root, target, environment):
     return command, cli_environment, directory / target / "release"
 
 
+def time_limits(host):
+    """Minutes for all of a validation, one compiling stage and any other stage.
+
+    The workflow's timeout for the lane is longer, to retain the evidence. GitHub's
+    Intel Macs were still in link-time optimization 75 minutes into the first build.
+    """
+    return (340, 240, 45) if host == "x86_64-apple-darwin" else (110, 75, 15)
+
+
 def pinned_maturin(pyproject):
     """The exact maturin version `bindings/python/pyproject.toml` builds with."""
     import re
@@ -675,10 +684,11 @@ def main():
     if target.resolve() != (root / "target").resolve():
         raise SystemExit("Native package validation currently requires CARGO_TARGET_DIR=target for Go/cgo")
     release = target / "release"
-    deadline = time.monotonic() + 110 * 60
+    budget, compiling_limit, other_limit = time_limits(args.expected_host)
+    deadline = time.monotonic() + budget * 60
     record = {
         "schema": 1,
-        "time_budget_seconds": 110 * 60,
+        "time_budget_seconds": budget * 60,
         "status": "running",
         "started_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "platform": platform.platform(),
@@ -720,7 +730,8 @@ def main():
         try:
             # Compilers retain their optimization profile. Silence is not a hang:
             # link-time optimization can legitimately write no output for minutes.
-            limit = 75 * 60 if name in {"build", "build-cli-static-crt", "python-wheel"} else 15 * 60
+            compiling = name in {"build", "build-cli-static-crt", "python-wheel"}
+            limit = (compiling_limit if compiling else other_limit) * 60
             result = run_logged(command, cwd=cwd, env=env or environment, log=log,
                                 timeout=min(limit, max(.1, deadline - time.monotonic())), progress=progress)
             exit_code = result.returncode

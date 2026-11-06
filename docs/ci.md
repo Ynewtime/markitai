@@ -8,7 +8,8 @@ control resource use: (`windows-2025`, `windows-11-arm`, `ubuntu-24.04`,
 `macos-15`, `macos-15-intel`; default Windows x86-64 and Linux), and
 `minimum_rust` adds the declared-minimum toolchain check. Each requested
 platform runs independent `checks` and `packages` lanes in parallel, with
-`fail-fast: false` and a 120-minute timeout per lane. A matrix entry
+`fail-fast: false` and a 120-minute timeout per lane (350 minutes for `packages`
+on `macos-15-intel`). A matrix entry
 describes intended coverage; it is not evidence that the job has run or that its
 artifacts work. Only a completed job and its retained logs establish that host's
 result.
@@ -33,7 +34,9 @@ and vendored build artifacts rebuild from source. Windows builds one optimized C
 all installed entry points remain tested. Package stages report elapsed
 time and log size every 30 seconds, preserve full logs, and add a timing summary
 to Actions. Build stages have a 75-minute limit, other stages 15 minutes, within
-a shared 110-minute package budget. Silent linking alone is not a failure.
+a shared 110-minute package budget. On `macos-15-intel`, still linking 75 minutes
+into its first build, these are 240, 45 and 340 minutes. Silent linking alone is
+not a failure.
 Actual cache benefit depends on the runner and cache availability; compare real
 stage times before claiming a speedup.
 

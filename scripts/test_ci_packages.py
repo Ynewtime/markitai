@@ -6,6 +6,7 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import stat
 import sys
@@ -20,7 +21,7 @@ import zipfile
 
 from ci_packages import (apply_path_remap, _sbom_without_local_paths, npm_command, packed_filename, source_snapshot, stage_node_licenses, supplement_wheel_licenses,
                          verify_node_licenses, write_cli_zip, extract_cli_zip, doctor_probe, mcp_probe, identity, package_attribution,
-                         write_single_binary_tar, extract_single_binary_tar, windows_cli_build, main, pinned_maturin)
+                         write_single_binary_tar, extract_single_binary_tar, windows_cli_build, time_limits, main, pinned_maturin)
 from cli_documentation import DOCUMENTATION_PATHS
 import bounded_run
 
@@ -73,6 +74,18 @@ class PackageValidationTests(unittest.TestCase):
                     self.assertNotIn("--bins", command)
                     self.assertEqual(command[command.index("--bin") + 1], "markitai")
                     self.assertEqual(command[command.index("-p") + 1], "markitai-cli")
+
+    def test_a_lane_outlasts_its_budget_to_retain_the_evidence(self):
+        workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/native.yml").read_text(encoding="utf-8")
+        intel, others = re.search(
+            r"timeout-minutes: \$\{\{ matrix\.os == 'macos-15-intel' && matrix\.lane == 'packages' "
+            r"&& (\d+) \|\| (\d+) \}\}", workflow).groups()
+        for host, lane in (("x86_64-apple-darwin", intel), ("aarch64-apple-darwin", others),
+                           ("x86_64-unknown-linux-gnu", others), ("x86_64-pc-windows-msvc", others)):
+            budget, compiling, other = time_limits(host)
+            self.assertGreater(int(lane), budget, host)
+            self.assertGreater(budget, compiling, host)
+            self.assertGreater(compiling, other, host)
 
     def test_the_wheel_and_ci_pin_one_exact_maturin(self):
         root = Path(__file__).resolve().parents[1]
