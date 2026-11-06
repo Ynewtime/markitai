@@ -42,6 +42,11 @@ final class Gate: @unchecked Sendable {
     }
 
     func startedSources() -> [String] { lock.withLock { started } }
+    /// The run started for the file `name`. Runs start on a concurrent queue,
+    /// so which of two starts first is not promised.
+    func source(named name: String) -> String {
+        lock.withLock { started.first { ($0 as NSString).lastPathComponent == name }! }
+    }
     /// Sources whose folder is claimed and whose conversion is held.
     func convertingSources() -> [String] { lock.withLock { converting } }
     func endedSources() -> [String] { lock.withLock { ended } }
@@ -98,7 +103,7 @@ struct QueueTests {
         workbench.add(inputs)
         #expect(workbench.items.map(\.title) == ["a.md", "b.md", "c.md"], "a batch keeps its order")
         try await eventually(5, "two started") { gate.startedSources().count == 2 }
-        #expect(gate.startedSources().map { ($0 as NSString).lastPathComponent } == ["a.md", "b.md"])
+        #expect(Set(gate.startedSources().map { ($0 as NSString).lastPathComponent }) == ["a.md", "b.md"])
         #expect(workbench.convertingCount == 2)
         #expect(workbench.items[2].state == .queued)
 
@@ -203,8 +208,8 @@ struct QueueTests {
         workbench.announce = { spoken.append($0) }
         workbench.add(try files("ok.md", "bad.md"))
         try await eventually(5, "both started") { gate.startedSources().count == 2 }
-        gate.finish(gate.startedSources()[0], Gate.done("ok"))
-        gate.finish(gate.startedSources()[1], Gate.failed("unsupported"))
+        gate.finish(gate.source(named: "ok.md"), Gate.done("ok"))
+        gate.finish(gate.source(named: "bad.md"), Gate.failed("unsupported"))
         try await eventually(5, "both finished") { !workbench.anyConverting }
         #expect(Set(spoken) == [L["a11y.done", ["title": "ok.md"]], L["a11y.failed", ["title": "bad.md"]]])
     }
@@ -216,7 +221,7 @@ struct QueueTests {
         let workbench = Workbench(settings: settings, history: history, run: gate.run)
         workbench.add(try files("a.md", "b.md", "c.md", "d.md"))
         try await eventually(5, "a and b claimed") { gate.convertingSources().count == 2 }
-        let a = gate.startedSources()[0]
+        let a = gate.source(named: "a.md")
         gate.finish(a, Gate.done("a"))
         try await eventually(5, "a done") { workbench.items.first { $0.title == "a.md" }?.conversion != nil }
         try await eventually(5, "c claimed") { gate.convertingSources().count == 3 }
