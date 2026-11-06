@@ -97,6 +97,7 @@ export const zh: Record<MessageKey, string> = {
   errOcrModelPath: "本机 OCR 安装路径不安全，或在操作期间发生了变化。请在运行服务的电脑上执行 markitai doctor，检查所指路径的所有权、权限和链接。解决路径问题后再重试；自动修复无法修复不安全路径。",
   errOcrModelDownload: "无法下载本机 OCR 模型。请检查运行服务的电脑的网络和代理，然后执行 markitai doctor --fix，或按原始错误中的校验与手动下载说明安装。",
   errOcrModelPreparation: "本机 OCR 模型准备失败。请在运行服务的电脑上执行 markitai doctor，查看原始错误后再重试。",
+  errOcrFailed: "OCR 文字识别失败。请重试；如再次出现，请查看错误详情。",
   errUnsupported: "这里不支持这项转换。",
   errFetch: "无法抓取此网页。",
   errConversion: "无法转换这个文档。请确认原文件能正常打开，具体原因见错误详情。",

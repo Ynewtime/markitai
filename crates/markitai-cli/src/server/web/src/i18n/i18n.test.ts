@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import test from "node:test";
 import { en } from "./en.ts";
-import { apiErrorText, isUnsupported, itemErrorText, MESSAGES, MESSAGES_EN, persistenceText, producibleKeys, registerMessages, serviceNote } from "./errors.ts";
+import { apiErrorText, isUnsupported, itemErrorText, message, MESSAGES, MESSAGES_EN, persistenceText, producibleKeys, registerMessages, serviceNote } from "./errors.ts";
 import { ja as jaMessages } from "./errors-ja.ts";
 import { zh as zhMessages } from "./errors-zh.ts";
 import { ja } from "./ja.ts";
@@ -146,6 +146,12 @@ test("the English phrases recognized here are still the ones the core and the se
     "installation file changed while it was held",
     "installation lock was replaced",
     "the download of {} does not match its published size and SHA-256; nothing was installed",
+    "Local OCR: {message}",
+    "PDF page media: {message}",
+    "local OCR failed on page {}: {error}",
+    "Vision stopped responding: a text recognition never returned",
+    "Vision stopped responding: a text recognition did not finish in up to {} tries",
+    "Vision text recognition failed: {detail}",
     "LLM returned HTTP {status}",
     "the model is not available in this region",
     "the account's quota or billing does not allow this request",
@@ -238,6 +244,106 @@ test("current portable OCR errors explain the right recovery and keep the origin
       assert.equal(result.hint, false);
       assert.notEqual(result.text, MESSAGES[locale].errOcrUnavailable, error);
     }
+  }
+});
+
+const VISION_STOPPED =
+  "Local OCR: Vision stopped responding: a text recognition did not finish in up to 6 tries. Run the program again, or read with the portable engine (MARKITAI_OCR_BACKEND=paddle)";
+const OCR_LOCALES = ["en", "zh", "ja"] as const;
+
+test("a reading that failed says text recognition failed, in every language", () => {
+  assert.equal(MESSAGES.en.errOcrFailed, "Text recognition (OCR) failed. Retry, and check the details if it happens again.");
+  assert.equal(MESSAGES.zh.errOcrFailed, "OCR 文字识别失败。请重试；如再次出现，请查看错误详情。");
+  const failures = [
+    // Every reader stopped, and the reading in process that never returned.
+    VISION_STOPPED,
+    "Local OCR: Vision stopped responding: a text recognition never returned, and it reads nothing more in this process. Run the program again, or read with the portable engine (MARKITAI_OCR_BACKEND=paddle)",
+    "Local OCR: Vision text recognition failed: Vision reported failure without an error",
+    "Local OCR: a Vision text recognition took more than 900 seconds and was cancelled",
+    "Local OCR: recognition model returned invalid probabilities",
+    // The reader's own words, which must not read as a conversion that took too long.
+    "Local OCR: Vision text recognition failed: The operation timed out",
+    "PDF page media: local OCR failed on page 3: Local OCR: Vision text recognition failed: The operation timed out",
+    "Conversion failed: OCRError: OCR failed on 1 of 1 page(s) of scan.pdf (pages 1): operation timed out",
+    // Pixels the core made itself are not the file's failure, though they read like one.
+    "Local OCR: cannot decode prepared OCR image",
+    "Local OCR: enlarged OCR image exceeds 32 million pixels",
+    // A scanned page, in Rust whatever stopped the reading, and in Python.
+    `PDF page media: local OCR failed on page 3: ${VISION_STOPPED}`,
+    "PDF page media: local OCR failed on page 3: PDF page media: a recognition thread failed",
+    "PDF page media: local OCR failed on page 3: Local OCR: cannot decode image",
+    "Conversion failed: OCRError: OCR failed on 5 of 5 page(s) of scan.pdf (pages 1-5): boom",
+    "Conversion failed: OCRError: OCR failed for scan.png:",
+  ];
+  for (const error of failures) {
+    for (const locale of OCR_LOCALES) {
+      const result = itemErrorText(locale, { error, error_code: "conversion_error", kind: "file" });
+      assert.equal(result.text, MESSAGES[locale].errOcrFailed, error);
+      assert.equal(result.detail, error, error);
+      assert.equal(result.hint, false, error);
+    }
+    assert.equal(isUnsupported({ error, error_code: "conversion_error" }), false, error);
+  }
+});
+
+test("a scanned page keeps the way out its cause names", () => {
+  const model = "ppocrv6-det-small";
+  const causes: [string, keyof typeof MESSAGES_EN][] = [
+    [`Local OCR needs the model ${model}, which is not installed: run \`markitai doctor --fix\``, "errOcrModelMissing"],
+    [`Local OCR download of ${model} failed (official download could not be reached); any existing damaged file was kept: run \`markitai doctor --fix\``, "errOcrModelDownload"],
+    ["Local OCR models: /state/model.onnx has 10 bytes instead of its published 99 bytes; run `markitai doctor --fix` to replace this damaged managed model; ordinary OCR will not overwrite it", "errOcrModelCorrupt"],
+    ["Local OCR models: /state/install.lock: installation lock was replaced", "errOcrModelPath"],
+    ["Local OCR models: cannot stage a download", "errOcrModelPreparation"],
+    ["Local OCR requires macOS 11 or later; no local OCR backend is available on this platform", "errOcrUnavailable"],
+    ["MARKITAI_OCR_BACKEND must be vision or paddle", "errOcrBackendSetting"],
+  ];
+  for (const [cause, key] of causes) {
+    const error = `PDF page media: local OCR failed on page 12: ${cause}`;
+    for (const locale of OCR_LOCALES) {
+      const page = itemErrorText(locale, { error, error_code: "conversion_error", kind: "file" });
+      assert.equal(page.text, MESSAGES[locale][key], error);
+      assert.equal(page.detail, error, error);
+      assert.equal(page.text, itemErrorText(locale, { error: cause, kind: "file" }).text, error);
+    }
+  }
+});
+
+test("an image turned down as given and other conversion failures do not blame text recognition", () => {
+  const generic: [string, keyof typeof MESSAGES_EN, Record<string, string>?][] = [
+    // The core's refusals of an image, each checked below against its source.
+    ["Local OCR: cannot identify image encoding", "errConversion"],
+    ["Local OCR: cannot decode TIFF image", "errConversion"],
+    ["Local OCR: cannot decode image", "errConversion"],
+    ["Local OCR: decoded image exceeds 32 million pixels", "errConversion"],
+    ["Local OCR: cannot read image orientation", "errConversion"],
+    ["Local OCR: cannot decode image pixels", "errConversion"],
+    ["Local OCR: RGB image byte length overflow", "errConversion"],
+    ["Local OCR: RGB image byte length does not match its dimensions", "errConversion"],
+    ["Local OCR: cannot prepare bounded OCR image", "errConversion"],
+    // Goes on to the size-limit shape.
+    ["Local OCR: image input is empty or exceeds 64 MiB", "errTooLarge", { limit: "64 MiB" }],
+    // The same media step, with no reading in it.
+    ["PDF page media: renderer and extractor disagree on page count", "errConversion"],
+    ["PDF page media: rendered page exceeds the 32-million-pixel limit", "errConversion"],
+    // Python's SVG with nothing to render, and its single image, of which only the
+    // reader's own exception arrives.
+    ["Conversion failed: OCRError: scan.svg has nothing to render", "errConversion"],
+    ["Conversion failed: RuntimeError: boom", "errConversion"],
+    ["Malformed XML", "errConversion"],
+  ];
+  for (const [error, key, values] of generic) {
+    for (const locale of OCR_LOCALES) {
+      const result = itemErrorText(locale, { error, error_code: "conversion_error", kind: "file" });
+      assert.equal(result.text, message(locale, key, values), error);
+      assert.notEqual(result.text, MESSAGES[locale].errOcrFailed, error);
+      assert.equal(result.detail, error, error);
+    }
+  }
+  const pixels = read("../../../markitai-core/src/ocr/pixels.rs");
+  for (const [error] of generic) {
+    if (!error.startsWith("Local OCR: ")) continue;
+    const phrase = `"${error.replace("Local OCR: ", "")}"`;
+    assert.ok(pixels.includes(phrase), `pixels.rs no longer turns an image down with ${phrase}`);
   }
 });
 
