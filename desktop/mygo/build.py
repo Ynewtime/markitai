@@ -31,6 +31,7 @@ REPO = DESKTOP.parent
 MINIMUM_MACOS = "13.0"
 
 LIBRARY = {"darwin": "libmarkitai_app.dylib", "windows": "markitai_app.dll", "linux": "libmarkitai_app.so"}
+READER = "markitai-vision-reader"
 RUST_TARGET = {
     "darwin/arm64": "aarch64-apple-darwin",
     "darwin/amd64": "x86_64-apple-darwin",
@@ -91,17 +92,28 @@ def core_library(plat):
 
 
 def stage_core(plat, build):
-    """Builds the core unless build is False, and stages it in resources/<goos>-<goarch>/."""
+    """Builds the core unless build is False, and stages it in resources/<goos>-<goarch>/. On
+    macOS Vision's reader goes beside it (docs/bindings.md), which builds alone so that it
+    takes none of the core's features."""
     library, command, env = core_library(plat)
+    built = [library]
+    commands = [command]
+    if plat.startswith("darwin/"):
+        built.append(library.with_name(READER))
+        commands.append(["cargo", "build", "-p", READER, "--release", "--locked"])
+        if plat != host_platform():
+            commands[-1] += ["--target", RUST_TARGET[plat]]
     if build:
-        run(*command, cwd=REPO, env=env)
-    if not library.exists():
-        raise SystemExit(f"{library} is missing: build the core first (drop --no-core)")
-    staged = HERE / "resources" / plat.replace("/", "-") / library.name
-    staged.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(library, staged)
-    print(f"staged {staged.relative_to(REPO)}  {staged.stat().st_size} bytes", flush=True)
-    return staged
+        for each in commands:
+            run(*each, cwd=REPO, env=env)
+    folder = HERE / "resources" / plat.replace("/", "-")
+    folder.mkdir(parents=True, exist_ok=True)
+    for path in built:
+        if not path.exists():
+            raise SystemExit(f"{path} is missing: build the core first (drop --no-core)")
+        shutil.copy2(path, folder / path.name)
+        print(f"staged {(folder / path.name).relative_to(REPO)}  {path.stat().st_size} bytes", flush=True)
+    return folder / library.name
 
 
 def check_version():

@@ -3,7 +3,7 @@ use super::{
     recognition_failure, supported_language,
 };
 use crate::system_frameworks::{self, Framework};
-use objc2::{AnyThread, rc::Retained, rc::autoreleasepool};
+use objc2::{AnyThread, Message, rc::Retained, rc::autoreleasepool};
 use objc2_foundation::{NSArray, NSData, NSDictionary, NSString};
 use objc2_vision::{
     VNImageRequestHandler, VNRecognizeTextRequest, VNRequest, VNRequestTextRecognitionLevel,
@@ -14,6 +14,10 @@ use super::{cjk, layout, pixels, pixels::MAX_PIXELS};
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use objc2_foundation::NSRange;
 use objc2_vision::VNRecognizedText;
+
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
+use std::time::Duration;
 
 /// One recognition of an image.
 pub(super) struct Reading {
@@ -71,7 +75,126 @@ fn request(languages: &NSArray<NSString>) -> Retained<VNRecognizeTextRequest> {
     request
 }
 
+/// What a request may take in a program with no reader, which has nothing else to
+/// bring it back with. A stuck one waits for good, which a slow one does not: the
+/// first use of a program, when the system compiles the models, took up to 135 s on
+/// a busy machine, and opening the Neural Engine while other processes hold all of
+/// it is tried 10 times, 15 s each.
+const STUCK_AFTER: Duration = Duration::from_secs(900);
+
+/// What a request gets to return once cancelled.
+const CANCEL_GRACE: Duration = Duration::from_secs(10);
+
+/// A request that never returns holds Vision's queue: cancelling does not free it,
+/// and every later request, of any language or level, waits behind it for good. With
+/// no reader to kill ([`super::reader`]), that is an error rather than a wait for
+/// ever, for this request and every later one.
+struct Gate {
+    stuck: AtomicBool,
+}
+
+static GATE: Gate = Gate::new();
+
+/// Handed to the thread that performs a request.
+struct Lent<T>(T);
+// SAFETY: One thread at a time uses the handler and the request: the caller
+// waits for the thread that performs the request, and goes on using them only
+// after it has returned. Meanwhile it only cancels the request, which is what
+// `cancel` is for. Objective-C reference counts are atomic.
+unsafe impl<T> Send for Lent<T> {}
+
+impl Gate {
+    const fn new() -> Self {
+        Gate {
+            stuck: AtomicBool::new(false),
+        }
+    }
+
+    /// The error of everything after a request that never returned, if one did.
+    fn responding(&self) -> Result<()> {
+        if self.stuck.load(Ordering::SeqCst) {
+            return Err(failure(
+                "Vision stopped responding: a text recognition never returned, and it reads \
+                 nothing more in this process. Run the program again, or read with the portable \
+                 engine (MARKITAI_OCR_BACKEND=paddle)",
+            ));
+        }
+        Ok(())
+    }
+
+    /// `work` on a thread of its own, given `limit` to return and, after `cancel`,
+    /// a further `grace`.
+    fn perform<T: Send + 'static>(
+        &self,
+        limit: Duration,
+        grace: Duration,
+        work: impl FnOnce() -> T + Send + 'static,
+        cancel: impl FnOnce(),
+    ) -> Result<T> {
+        self.responding()?;
+        let (done, finished) = mpsc::channel();
+        std::thread::Builder::new()
+            .name("markitai-vision".into())
+            .spawn(move || {
+                let _ = done.send(work());
+            })
+            .map_err(|error| failure(&format!("cannot start a Vision thread: {error}")))?;
+        match finished.recv_timeout(limit) {
+            Ok(result) => return Ok(result),
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                return Err(failure("the Vision thread ended without a result"));
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+        }
+        cancel();
+        // A request that returns once cancelled was slow, whatever it returned.
+        if finished.recv_timeout(grace).is_ok() {
+            return Err(failure(&format!(
+                "a Vision text recognition took more than {} seconds and was cancelled",
+                limit.as_secs()
+            )));
+        }
+        self.stuck.store(true, Ordering::SeqCst);
+        self.responding()?;
+        unreachable!("the gate was just marked stuck")
+    }
+}
+
+/// [`Gate::responding`] of this process: a reading that went on after a stuck
+/// request left that request's part out, as with any failed part.
+pub(super) fn responding() -> Result<()> {
+    GATE.responding()
+}
+
 fn perform(handler: &VNImageRequestHandler, request: &VNRecognizeTextRequest) -> Result<()> {
+    // The program a reader answers kills it when a request stops.
+    if super::reader::serving() {
+        return perform_here(handler, request);
+    }
+    perform_within(STUCK_AFTER, CANCEL_GRACE, handler, request)
+}
+
+fn perform_within(
+    limit: Duration,
+    grace: Duration,
+    handler: &VNImageRequestHandler,
+    request: &VNRecognizeTextRequest,
+) -> Result<()> {
+    let lent = Lent((handler.retain(), request.retain()));
+    GATE.perform(
+        limit,
+        grace,
+        move || {
+            let Lent((handler, request)) = { lent };
+            autoreleasepool(|_| perform_here(&handler, &request))
+        },
+        // SAFETY: The request is retained for the call, and this is what
+        // cancelling is for: it is being performed on another thread.
+        || unsafe { request.cancel() },
+    )?
+}
+
+fn perform_here(handler: &VNImageRequestHandler, request: &VNRecognizeTextRequest) -> Result<()> {
     let requests = NSArray::<VNRequest>::from_slice(&[request]);
     handler.performRequests_error(&requests).map_err(|error| {
         // objc2 substitutes an error in this domain when the method
@@ -305,8 +428,7 @@ fn recover(
             request
                 .setRegionOfInterest(CGRect::new(CGPoint::new(x, y), CGSize::new(width, height)));
         }
-        let requests = NSArray::<VNRequest>::from_slice(&[&request]);
-        if handler.performRequests_error(&requests).is_err() {
+        if perform(handler, &request).is_err() {
             continue;
         }
         let Some(observations) = request.results() else {
@@ -536,8 +658,7 @@ fn fast_lines(handler: &VNImageRequestHandler, width: u32, height: u32) -> Vec<[
     request.setRecognitionLanguages(&NSArray::from_retained_slice(&[NSString::from_str(
         "en-US",
     )]));
-    let requests = NSArray::<VNRequest>::from_slice(&[&request]);
-    if handler.performRequests_error(&requests).is_err() {
+    if perform(handler, &request).is_err() {
         return Vec::new();
     }
     let Some(observations) = request.results() else {
@@ -556,4 +677,131 @@ fn fast_lines(handler: &VNImageRequestHandler, width: u32, height: u32) -> Vec<[
                 .then(|| line.map(|side| side as f32))
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicUsize;
+
+    const LONG: Duration = Duration::from_secs(60);
+    const BRIEF: Duration = Duration::from_millis(50);
+
+    #[test]
+    fn a_request_that_never_returns_fails_and_so_does_every_later_one() {
+        let gate = Gate::new();
+        let (never_sent, never) = mpsc::channel::<()>();
+        let cancelled = AtomicUsize::new(0);
+        let stuck = gate.perform(
+            BRIEF,
+            BRIEF,
+            move || {
+                let _ = never.recv();
+            },
+            || {
+                cancelled.fetch_add(1, Ordering::SeqCst);
+            },
+        );
+        assert!(
+            stuck
+                .unwrap_err()
+                .to_string()
+                .contains("stopped responding")
+        );
+        assert_eq!(cancelled.load(Ordering::SeqCst), 1);
+        // Later requests do not start, and fail at once.
+        let started = Arc::new(AtomicBool::new(false));
+        let work = {
+            let started = started.clone();
+            move || started.store(true, Ordering::SeqCst)
+        };
+        let later = gate.perform(LONG, LONG, work, || panic!("not started"));
+        assert!(
+            later
+                .unwrap_err()
+                .to_string()
+                .contains("stopped responding")
+        );
+        assert!(!started.load(Ordering::SeqCst));
+        drop(never_sent);
+    }
+
+    #[test]
+    fn a_slow_request_that_returns_once_cancelled_leaves_the_gate_open() {
+        let gate = Gate::new();
+        let (cancel, cancelled) = mpsc::channel::<()>();
+        let slow = gate.perform(
+            BRIEF,
+            LONG,
+            move || cancelled.recv().unwrap(),
+            || cancel.send(()).unwrap(),
+        );
+        assert!(slow.unwrap_err().to_string().contains("was cancelled"));
+        assert_eq!(
+            gate.perform(LONG, LONG, || 7, || panic!("not stuck"))
+                .unwrap(),
+            7
+        );
+    }
+
+    #[test]
+    fn a_panic_in_a_request_is_an_error_and_leaves_the_gate_open() {
+        let gate = Gate::new();
+        let panicked = gate.perform(
+            LONG,
+            LONG,
+            || panic!("in the request"),
+            || panic!("no limit"),
+        );
+        assert!(
+            panicked
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("without a result")
+        );
+        assert_eq!(
+            gate.perform(LONG, LONG, || 7, || panic!("not stuck"))
+                .unwrap(),
+            7
+        );
+    }
+
+    /// Cancelling does free a real request that is merely running, and Vision
+    /// goes on reading: the limit tells a slow request from one that is stuck.
+    #[test]
+    fn cancelling_a_running_vision_request_returns_and_vision_goes_on() {
+        let page = crate::ocr::tests::system_font_lines("Helvetica", &["Read this line"], 48);
+        let image = pixels::prepare_rgb(page).unwrap();
+        system_frameworks::open(Framework::Vision).unwrap();
+        autoreleasepool(|_| {
+            let languages = NSArray::from_retained_slice(&[NSString::from_str("en-US")]);
+            let handler = |image: &Prepared| {
+                VNImageRequestHandler::initWithData_options(
+                    VNImageRequestHandler::alloc(),
+                    &NSData::with_bytes(&image.png),
+                    &NSDictionary::new(),
+                )
+            };
+            let request_now = request(&languages);
+            let cancelled = perform_within(
+                Duration::ZERO,
+                // More than the first use of a test binary, when the system
+                // compiles the models: this must not take Vision for stuck,
+                // and the other tests with it.
+                Duration::from_secs(150),
+                &handler(&image),
+                &request_now,
+            );
+            if crate::system_frameworks::translated() {
+                return;
+            }
+            assert!(cancelled.unwrap_err().to_string().contains("was cancelled"));
+            let reading = request(&languages);
+            perform(&handler(&image), &reading).unwrap();
+            let (lines, _) = observed(&reading, (image.width, image.height)).unwrap();
+            assert_eq!(lines[0].text, "Read this line");
+        });
+    }
 }

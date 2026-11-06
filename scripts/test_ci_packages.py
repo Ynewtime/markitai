@@ -598,6 +598,22 @@ for line in sys.stdin:
         with self.assertRaises(FileExistsError):
             supplement_wheel_licenses(source, target, {})
 
+    def test_a_program_added_to_a_wheel_is_executable_and_recorded(self):
+        source = self.root / "raw.whl"
+        target = self.root / "final.whl"
+        program = self.root / "reader"
+        program.write_bytes(b"program bytes")
+        with zipfile.ZipFile(source, "x") as archive:
+            archive.writestr("markitai/__init__.py", b"# fixture\n")
+            archive.writestr("markitai-1.dist-info/RECORD", b"old record\n")
+        supplement_wheel_licenses(source, target, {}, programs={"markitai/reader": program})
+        with zipfile.ZipFile(target) as archive:
+            self.assertEqual(archive.read("markitai/reader"), b"program bytes")
+            self.assertEqual((archive.getinfo("markitai/reader").external_attr >> 16) & 0o777, 0o755)
+            rows = list(csv.reader(io.StringIO(archive.read("markitai-1.dist-info/RECORD").decode())))
+            digest = base64.urlsafe_b64encode(hashlib.sha256(b"program bytes").digest()).rstrip(b"=").decode()
+            self.assertIn(["markitai/reader", "sha256=" + digest, "13"], rows)
+
 
 if __name__ == "__main__":
     unittest.main()

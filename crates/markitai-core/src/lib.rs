@@ -120,6 +120,8 @@ pub fn local_ocr_available() -> bool {
 }
 
 pub use ocr::{LocalOcrModel, LocalOcrModelState, lang_spelling as ocr_lang_spelling};
+#[cfg(target_os = "macos")]
+pub use ocr::{serve_vision_reader, start_vision_reader};
 
 /// The model files the portable OCR engine needs for the configuration's
 /// `ocr.lang`, each with whether it is installed; `None` when this process

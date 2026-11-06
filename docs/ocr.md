@@ -144,6 +144,24 @@ above were recorded on macOS 27). Set the language (`ocr.lang: ja`, or
 opt-in (`MARKITAI_OCR_BACKEND=vision` or the fallback); the default portable
 engine does not use Vision's language detection.
 
+Vision reads in a process of its own, because a recognition can stop for good
+inside it: on macOS 27.2, correcting lines of Chinese as English or French, which
+the default language also does, stopped in about one process in 100 to 300 on a
+busy machine, and cancelling does not undo it. The reader is the program started
+again; in a program that holds Markitai as a library it is `markitai-vision-reader`
+beside the library ([bindings](bindings.md)). A reader with work that uses no
+processor time for 5 seconds is killed and a new one gets what it left, which took
+about 6 seconds in all and did not change the output. Each restart in a row waits
+twice as long. After six readers, in about 4 minutes, the reading fails with
+`Vision stopped responding`: run the program again, or use
+`MARKITAI_OCR_BACKEND=paddle`. Until a reading succeeds again, each later one gets
+a single reader, about 5 seconds. A request also fails that way after 15 minutes,
+whatever the readers are doing.
+
+A program with no reader beside it reads in process, where nothing can bring back
+a stopped recognition: a request that does not return within 15 minutes fails with
+`Vision stopped responding`, and so does every later Vision reading in that process.
+
 ## Bounds and reading order
 
 Encoded image input is limited to 64 MiB, decoded images to 32 million pixels,

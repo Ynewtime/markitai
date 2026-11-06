@@ -21,6 +21,7 @@ import tomllib
 PACKAGE = Path(__file__).resolve().parent
 REPOSITORY = PACKAGE.parents[2]
 LIBRARY = REPOSITORY / "target" / "release" / "libmarkitai_app.a"
+READER = "markitai-vision-reader"
 APP = PACKAGE / "build" / "Markitai Native.app"
 EXECUTABLE = "Markitai Native"
 BUNDLE_ID = "dev.markitai.native"
@@ -37,9 +38,11 @@ def output(*command, cwd=PACKAGE):
 
 
 def build_core():
-    """The core as a static library, built for the app's minimum system."""
+    """The core as a static library and Vision's reader (docs/bindings.md), built for the
+    app's minimum system. The reader builds alone, so it takes none of the app's features."""
     env = dict(os.environ, MACOSX_DEPLOYMENT_TARGET=MINIMUM_SYSTEM)
     run("cargo", "rustc", "-p", "markitai-app", "--release", "--lib", "--crate-type", "staticlib", cwd=REPOSITORY, env=env)
+    run("cargo", "build", "-p", READER, "--release", "--locked", cwd=REPOSITORY, env=env)
 
 
 def workspace_version():
@@ -126,6 +129,8 @@ def assemble():
     (contents / "MacOS").mkdir(parents=True)
     resources.mkdir()
     shutil.copy2(binary, contents / "MacOS" / EXECUTABLE)
+    reader = contents / "MacOS" / READER
+    shutil.copy2(LIBRARY.with_name(READER), reader)
     with open(contents / "Info.plist", "wb") as file:
         plistlib.dump(info_plist(workspace_version(), copy), file)
     (contents / "PkgInfo").write_text("APPL????")
@@ -135,6 +140,7 @@ def assemble():
         (folder / "InfoPlist.strings").write_text(localized_info(copy, language), encoding="utf-8")
     with tempfile.TemporaryDirectory(prefix="markitai-icon-") as work:
         icon(resources, Path(work))
+    run("codesign", "--force", "--sign", "-", "--timestamp=none", reader)
     run("codesign", "--force", "--sign", "-", "--timestamp=none", APP)
     run("codesign", "--verify", "--strict", APP)
     run("plutil", "-lint", contents / "Info.plist")
@@ -173,8 +179,9 @@ def check():
 def main():
     if "--no-core" not in sys.argv[1:]:
         build_core()
-    if not LIBRARY.exists():
-        raise SystemExit(f"{LIBRARY} is missing: run without --no-core")
+    for built in (LIBRARY, LIBRARY.with_name(READER)):
+        if not built.exists():
+            raise SystemExit(f"{built} is missing: run without --no-core")
     assemble()
     if "--check" in sys.argv[1:]:
         check()

@@ -373,6 +373,11 @@ an image sequence coded with inter prediction, or 16-bit extended precision),
 and AVIF images built as an overlay (`iovl`) rather than a single image or a
 grid, fail with an explicit unsupported error.
 
+**`Vision stopped responding`.** A text recognition stopped in macOS Vision each
+time it was tried, or, in a program with no `markitai-vision-reader` beside it, did
+not return within 15 minutes; see [local OCR](ocr.md). Run the program again, or
+use `MARKITAI_OCR_BACKEND=paddle`.
+
 **`✗ ocr.lang is not supported by the installed macOS Vision text recognizer`.**
 `ocr.lang` must be a language the macOS Vision recognizer supports, such as
 `en`, `zh`, `ja` or `de`; see [local OCR](ocr.md#language-selection).

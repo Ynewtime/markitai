@@ -21,9 +21,33 @@ mod layout;
 pub(crate) mod paddle;
 mod page;
 mod pixels;
+#[cfg(target_os = "macos")]
+mod reader;
 pub(crate) mod trace;
 #[cfg(target_os = "macos")]
 mod vision;
+
+/// For a Markitai executable, at the very start of `main`: see [`reader::start`].
+#[cfg(target_os = "macos")]
+pub fn start_vision_reader() {
+    reader::start(|| std::env::args_os().any(|argument| argument == "--ocr") && vision_chosen());
+}
+
+/// All that `markitai-vision-reader` does: see [`reader::serve`].
+#[cfg(target_os = "macos")]
+pub fn serve_vision_reader() -> ! {
+    reader::serve()
+}
+
+#[cfg(all(target_os = "macos", not(feature = "portable-media")))]
+fn vision_chosen() -> bool {
+    available()
+}
+
+#[cfg(all(target_os = "macos", feature = "portable-media"))]
+fn vision_chosen() -> bool {
+    selected().is_ok_and(|backend| backend == Backend::Vision)
+}
 
 #[derive(Debug, Default)]
 pub(crate) struct OcrResult {
@@ -179,6 +203,7 @@ pub(crate) fn recognize(bytes: &[u8], cfg: &Value) -> Result<OcrResult> {
                 .into(),
         ));
     }
+    reader::prestart();
     let spelling = configured(cfg)?;
     let image = pixels::upright(bytes)?;
     with_pixels(
@@ -209,6 +234,7 @@ fn recognize_pixels(image: image::RgbImage, cfg: &Value, figures: bool) -> Resul
                 .into(),
         ));
     }
+    reader::prestart();
     let spelling = configured(cfg)?;
     with_pixels(
         read(&pixels::prepare_rgb(image.clone())?, &spelling),
@@ -422,6 +448,10 @@ pub(crate) fn backend() -> &'static str {
 #[cfg(any(not(target_os = "macos"), feature = "portable-media"))]
 pub(crate) fn recognize(bytes: &[u8], cfg: &Value) -> Result<OcrResult> {
     let backend = selected()?;
+    #[cfg(target_os = "macos")]
+    if backend == Backend::Vision {
+        reader::prestart();
+    }
     let spelling = configured(cfg)?;
     let image = pixels::upright(bytes)?;
     let read = match backend {
@@ -483,6 +513,10 @@ pub(crate) fn recognize_page(image: image::RgbImage, cfg: &Value) -> Result<OcrR
 #[cfg(any(not(target_os = "macos"), feature = "portable-media"))]
 fn recognize_pixels(image: image::RgbImage, cfg: &Value, figures: bool) -> Result<OcrResult> {
     let backend = selected()?;
+    #[cfg(target_os = "macos")]
+    if backend == Backend::Vision {
+        reader::prestart();
+    }
     let spelling = configured(cfg)?;
     let read = match backend {
         #[cfg(target_os = "macos")]
@@ -623,6 +657,17 @@ fn finish(image: &pixels::Prepared, pass: Pass, language: &str, unread: bool) ->
     if !unread && layout::orientation(&lines) == layout::Turn::Upright {
         vision::reread(image, language, &mut lines);
     }
+    // Vision that stopped responding is not a reading of the image.
+    vision::responding()?;
+    if reader::serving() {
+        return Ok(OcrResult {
+            raw: lines,
+            scale: pass.scale,
+            language: language.to_owned(),
+            unread,
+            ..Default::default()
+        });
+    }
     let mut result = assemble(lines, image.width, image.height)?;
     result.scale = pass.scale;
     result.language = language.to_owned();
@@ -636,6 +681,17 @@ fn finish(image: &pixels::Prepared, pass: Pass, language: &str, unread: bool) ->
 /// is read as that one language.
 #[cfg(target_os = "macos")]
 fn read(image: &pixels::Prepared, spelling: &str) -> Result<OcrResult> {
+    match reader::read(image, spelling) {
+        reader::Outcome::Read(result) => result,
+        reader::Outcome::NoReader => read_here(image, spelling),
+    }
+}
+
+/// [`read`] in this process, which a reader does; a program with no reader does
+/// it too, and then a request that never returns is the error of
+/// [`vision::responding`].
+#[cfg(target_os = "macos")]
+fn read_here(image: &pixels::Prepared, spelling: &str) -> Result<OcrResult> {
     if spelling == "en" {
         // `MARKITAI_OCR_VISION_POLICY=detect`: one request asking for all the
         // languages with detection, instead of the passes below (for
@@ -2684,7 +2740,7 @@ pub(crate) mod tests {
     /// Lines drawn by the in-process SVG renderer in the macOS system font
     /// `family`, black on white, `size` pixels per em.
     #[cfg(target_os = "macos")]
-    fn system_font_lines(family: &str, lines: &[&str], size: u32) -> image::RgbImage {
+    pub(crate) fn system_font_lines(family: &str, lines: &[&str], size: u32) -> image::RgbImage {
         use resvg::{tiny_skia, usvg};
         let longest = lines.iter().map(|l| l.chars().count()).max().unwrap() as u32;
         let (width, pitch) = (size * (longest + 2), size * 3 / 2);
