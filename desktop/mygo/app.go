@@ -24,7 +24,7 @@ import (
 type coreLib interface {
 	ClaimOutputFolder(parent, source string) (core.Folder, error)
 	ConvertJSON(request any) (json.RawMessage, error)
-	PreviewHTML(markdown, theme string, baseDir *string) (string, error)
+	PreviewHTML(markdown, theme string, baseDir, filesURL *string) (string, error)
 	MarkdownBody(text string) (string, error)
 	ConfigFile() (core.ConfigFile, error)
 	Version() string

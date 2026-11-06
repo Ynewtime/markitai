@@ -85,9 +85,6 @@ func TestDropToDone(t *testing.T) {
 	if got := h.pane.backgrounds; len(got) == 0 || got[len(got)-1] != "#ffffff" {
 		t.Errorf("the web view is filled with %v, want the light detail's #ffffff last", got)
 	}
-	if got := h.pane.inFolder[len(h.pane.inFolder)-1]; got != done.Result.MarkdownPath || filepath.Dir(got) != done.Folder {
-		t.Errorf("the load grants read access through %q, want the Markdown file in %q", got, done.Folder)
-	}
 	if html := h.pane.html[len(h.pane.html)-1]; !strings.Contains(html, `data-theme="light"`) {
 		t.Errorf("the document is not light: %.200s", html)
 	}

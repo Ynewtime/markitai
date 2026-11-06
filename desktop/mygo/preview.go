@@ -18,8 +18,7 @@ import (
 type previewPane interface {
 	View() ui.NativeWebView
 	// Load shows html at baseURL and calls done once it has loaded.
-	// inFolder is a file in the folder baseURL names, the Markdown file.
-	Load(html, baseURL, inFolder string, done func())
+	Load(html, baseURL string, done func())
 	SetZoom(f float64)
 	// SetBackground fills the web view with a #rrggbb color until the page
 	// paints.
@@ -42,7 +41,9 @@ type previewPage struct {
 // previews renders documents off the UI thread, keeps the last 8, and
 // tracks which one the web view shows (8.2).
 type previews struct {
-	pane      previewPane
+	pane previewPane
+	// folders serves result folders where the system needs it, on macOS.
+	folders   *previewFolders
 	html      map[previewKey]string
 	order     []previewKey
 	rendering map[previewKey]bool
@@ -128,7 +129,10 @@ func (a *app) preview(c *ui.Context, t *target, d model.Done) {
 	case p.shown != page && p.loading != page:
 		p.loading = page
 		base := folderURL(d.Folder)
-		p.pane.Load(onBackground(html, bg), base, d.Result.MarkdownPath, func() {
+		if p.folders != nil {
+			base = p.folders.url(d.Folder)
+		}
+		p.pane.Load(onBackground(html, bg), base, func() {
 			a.post(func() {
 				if p.loading == page {
 					p.shown = page
@@ -180,8 +184,13 @@ func (a *app) render(k previewKey, d model.Done) {
 		theme = "dark"
 	}
 	md, folder := d.Result.Markdown, d.Folder
+	var filesURL *string
+	if p.folders != nil {
+		url := p.folders.url(folder)
+		filesURL = &url
+	}
 	go func() {
-		html, err := a.core.PreviewHTML(md, theme, &folder)
+		html, err := a.core.PreviewHTML(md, theme, &folder, filesURL)
 		a.post(func() {
 			delete(p.rendering, k)
 			if err != nil {

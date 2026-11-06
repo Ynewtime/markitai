@@ -28,11 +28,12 @@ public enum Core {
         call(markitai_app_convert_json, request)
     }
 
-    public static func previewHTML(markdown: String, dark: Bool, baseDirectory: String?) -> String? {
+    public static func previewHTML(markdown: String, dark: Bool, baseDirectory: String?, filesURL: String? = nil) -> String? {
         let request: [String: Any] = [
             "markdown": markdown,
             "theme": dark ? "dark" : "light",
             "base_dir": baseDirectory ?? NSNull(),
+            "files_url": filesURL ?? NSNull(),
         ]
         guard case .ok(let result) = call(markitai_app_preview_html, request) else { return nil }
         return result["html"] as? String

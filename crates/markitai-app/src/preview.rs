@@ -26,8 +26,14 @@ impl Theme {
 /// One complete HTML document showing `markdown` in `theme`: no scripts,
 /// nothing loaded but `data:` images and files inside `base_dir` (the
 /// conversion's folder), raw HTML shown as text. Every other image is shown
-/// as its alt text.
-pub fn render(markdown: &str, theme: Theme, base_dir: Option<&Path>) -> String {
+/// as its alt text. `files_url` is where the page reads the folder's files,
+/// for an app that serves them itself; without it, the folder's `file:` URL.
+pub fn render(
+    markdown: &str,
+    theme: Theme,
+    base_dir: Option<&Path>,
+    files_url: Option<&str>,
+) -> String {
     let options = Options::ENABLE_TABLES
         | Options::ENABLE_STRIKETHROUGH
         | Options::ENABLE_TASKLISTS
@@ -43,7 +49,7 @@ pub fn render(markdown: &str, theme: Theme, base_dir: Option<&Path>) -> String {
                 dest_url,
                 title,
                 id,
-            }) => match image_url(&dest_url, base_dir) {
+            }) => match image_url(&dest_url, base_dir, files_url) {
                 Some(url) => events.push(Event::Start(Tag::Image {
                     link_type,
                     dest_url: url,
@@ -73,9 +79,10 @@ pub fn render(markdown: &str, theme: Theme, base_dir: Option<&Path>) -> String {
     let mut body = String::with_capacity(markdown.len() * 3 / 2);
     html::push_html(&mut body, events.into_iter());
     let color = theme.name();
+    let files = files_url.and_then(url_scheme).unwrap_or("file");
     format!(
         "<!doctype html>\n<html data-theme=\"{color}\">\n<head>\n<meta charset=\"utf-8\">\n\
-<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; img-src file: data:; style-src 'unsafe-inline'\">\n\
+<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; img-src {files}: data:; style-src 'unsafe-inline'\">\n\
 <meta name=\"referrer\" content=\"no-referrer\">\n<meta name=\"color-scheme\" content=\"{color}\">\n\
 <style>{PREVIEW_CSS}</style>\n</head>\n<body><main>\n{body}</main></body>\n</html>\n"
     )
@@ -98,9 +105,14 @@ fn alt_text(parser: &mut Parser) -> String {
 }
 
 /// What the preview loads for an image source: `data:` as written, and a
-/// `file:` or relative source as the `file://` URL of the file it names,
-/// if that file is inside `base_dir`. Anything else loads nothing.
-fn image_url<'a>(source: &CowStr<'a>, base_dir: Option<&Path>) -> Option<CowStr<'a>> {
+/// `file:` or relative source as the URL of the file it names under
+/// `files_url`, or as its `file://` URL, if that file is inside `base_dir`.
+/// Anything else loads nothing.
+fn image_url<'a>(
+    source: &CowStr<'a>,
+    base_dir: Option<&Path>,
+    files_url: Option<&str>,
+) -> Option<CowStr<'a>> {
     let trimmed = source.trim_start();
     let scheme = |name: &str| {
         trimmed
@@ -127,7 +139,10 @@ fn image_url<'a>(source: &CowStr<'a>, base_dir: Option<&Path>) -> Option<CowStr<
     if rest.is_empty() || rest.iter().any(|segment| segment.contains(':')) {
         return None;
     }
-    let mut url = base_url.to_owned();
+    let mut url = files_url
+        .unwrap_or(base_url)
+        .trim_end_matches('/')
+        .to_owned();
     for segment in rest {
         url.push('/');
         push_encoded(&mut url, segment);
@@ -164,16 +179,19 @@ fn segments(mut start: Vec<String>, path: &str) -> Vec<String> {
 }
 
 fn has_scheme(url: &str) -> bool {
-    let Some(end) = url.find(':') else {
-        return false;
-    };
-    let candidate = &url[..end];
+    url_scheme(url).is_some()
+}
+
+/// The scheme `url` starts with.
+pub(crate) fn url_scheme(url: &str) -> Option<&str> {
+    let candidate = &url[..url.find(':')?];
     // A drive letter (C:) is a path, not a scheme.
-    candidate.len() > 1
+    (candidate.len() > 1
         && candidate.starts_with(|c: char| c.is_ascii_alphabetic())
         && candidate
             .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.')))
+    .then_some(candidate)
 }
 
 /// `file://` URL of an absolute path, percent-encoding what a URL path may
@@ -246,6 +264,7 @@ mod tests {
             "<script>alert(1)</script>\n\nhi <img src=x onerror=alert(2)>\n",
             Theme::Light,
             None,
+            None,
         );
         let body = body(&html);
         assert!(!body.contains("<script"), "{body}");
@@ -260,6 +279,7 @@ mod tests {
         let html = render(
             "---\ntitle: T\n---\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n~~gone~~\n\n- [x] done\n\nNote[^1].\n\n[^1]: Foot.\n",
             Theme::Dark,
+            None,
             None,
         );
         let body = body(&html);
@@ -280,6 +300,7 @@ mod tests {
             "![chart](.markitai/assets/a%20b.png) ![up](../secret.png) ![net](https://example.com/x.png) ![](//cdn.example/y.png) ![abs](/etc/z.png) ![d](data:image/png;base64,AA==) ![js](javascript:alert(1))",
             Theme::Light,
             Some(base),
+            None,
         );
         let body = body(&html);
         assert!(
@@ -308,13 +329,13 @@ mod tests {
         }
         assert!(body.contains(">net</span>"), "{body}");
         assert!(body.contains(">//cdn.example/y.png</span>"), "{body}");
-        let none = render("![a](assets/a.png)", Theme::Light, None);
+        let none = render("![a](assets/a.png)", Theme::Light, None, None);
         let none = &none[none.find("<main>").unwrap()..];
         assert!(none.contains("class=\"img-remote\""));
     }
 
     fn image(source: &str, base: Option<&Path>) -> String {
-        let html = render(&format!("![i]({source})"), Theme::Light, base);
+        let html = render(&format!("![i]({source})"), Theme::Light, base, None);
         body(&html).to_owned()
     }
 
@@ -373,6 +394,32 @@ mod tests {
     }
 
     #[test]
+    fn an_app_that_serves_the_folder_gets_its_images_at_its_url() {
+        let html = render(
+            "![a](.markitai/assets/a%20b.png) ![f](file:///out/Report/x.png) ![up](../secret.png) ![d](data:image/png;base64,AA==)",
+            Theme::Light,
+            Some(Path::new("/out/Report")),
+            Some("markitai-preview://result/"),
+        );
+        assert!(html.contains("img-src markitai-preview: data:;"), "{html}");
+        let body = body(&html);
+        assert!(
+            body.contains("src=\"markitai-preview://result/.markitai/assets/a%20b.png\""),
+            "{body}"
+        );
+        assert!(
+            body.contains("src=\"markitai-preview://result/x.png\""),
+            "{body}"
+        );
+        assert!(body.contains("title=\"../secret.png\""), "{body}");
+        assert!(
+            body.contains("src=\"data:image/png;base64,AA==\""),
+            "{body}"
+        );
+        assert!(!body.contains("file:"), "{body}");
+    }
+
+    #[test]
     fn windows_drive_folders_hold_their_images() {
         let base = Some(Path::new(r"C:\Users\example\Markitai\Report"));
         for (source, loaded) in [
@@ -414,8 +461,8 @@ mod tests {
     fn the_same_request_gives_the_same_bytes() {
         let markdown = "# T\n\n| a |\n|:-:|\n| 1 |\n";
         assert_eq!(
-            render(markdown, Theme::Light, None),
-            render(markdown, Theme::Light, None)
+            render(markdown, Theme::Light, None, None),
+            render(markdown, Theme::Light, None, None)
         );
     }
 }

@@ -1,6 +1,7 @@
 import AppKit
 import MarkitaiKit
 import SwiftUI
+import UniformTypeIdentifiers
 import WebKit
 
 struct DetailHeader<Status: View>: View {
@@ -70,7 +71,7 @@ struct DocumentView: View {
                 Group {
                     switch model.mode {
                     case .preview:
-                        PreviewPane(markdown: markdown, file: document.markdownPath, baseDirectory: document.folder, zoom: settings.zoom)
+                        PreviewPane(markdown: markdown, baseDirectory: document.folder, zoom: settings.zoom)
                     case .markdown:
                         MarkdownText(text: markdown, zoom: settings.zoom)
                             .accessibilityLabel(L["a11y.markdown_text"])
@@ -184,8 +185,6 @@ extension View {
 struct PreviewPane: View {
     @Environment(\.colorScheme) private var colorScheme
     let markdown: String
-    /// The Markdown file in `baseDirectory`, loaded first for read access.
-    let file: String
     let baseDirectory: String
     let zoom: Double
     @ViewState private var rendered: Rendered?
@@ -199,7 +198,7 @@ struct PreviewPane: View {
                     .padding(20)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let rules {
-                PreviewWebView(html: rendered?.html, file: file, baseDirectory: baseDirectory, zoom: zoom, rules: rules)
+                PreviewWebView(html: rendered?.html, baseDirectory: baseDirectory, zoom: zoom, rules: rules)
             } else {
                 Color.clear
             }
@@ -210,7 +209,7 @@ struct PreviewPane: View {
             let markdown = markdown
             let base = baseDirectory
             let html = await Task.detached(priority: .userInitiated) {
-                Core.previewHTML(markdown: markdown, dark: dark, baseDirectory: base)
+                Core.previewHTML(markdown: markdown, dark: dark, baseDirectory: base, filesURL: ResultFolder.url)
             }.value
             rendered = html.map(Rendered.html) ?? .failed
         }
@@ -235,7 +234,6 @@ struct PreviewPane: View {
 
 struct PreviewWebView: NSViewRepresentable {
     let html: String?
-    let file: String
     let baseDirectory: String
     let zoom: Double
     let rules: PreviewNetworkRules.Compiled
@@ -246,6 +244,7 @@ struct PreviewWebView: NSViewRepresentable {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
         configuration.defaultWebpagePreferences.allowsContentJavaScript = false
+        configuration.setURLSchemeHandler(context.coordinator.files, forURLScheme: ResultFolder.scheme)
         if let list = rules.list {
             configuration.userContentController.add(list)
         }
@@ -260,64 +259,20 @@ struct PreviewWebView: NSViewRepresentable {
     func updateNSView(_ view: PreviewWKWebView, context: Context) {
         if view.pageZoom != zoom { view.pageZoom = zoom }
         guard let html, context.coordinator.loaded != html else { return }
-        context.coordinator.show(html, file: file, folder: URL(fileURLWithPath: baseDirectory, isDirectory: true), in: view)
+        context.coordinator.show(html, folder: URL(fileURLWithPath: baseDirectory, isDirectory: true), in: view)
     }
 
     @MainActor
     final class Coordinator: NSObject, WKNavigationDelegate {
+        let files = ResultFolderFiles()
         var loaded: String?
         var loading = false
-        /// The folder the page may read, and the document waiting for that
-        /// grant while the file load that gives it runs.
-        private var granted: URL?
-        private var grant: WKNavigation?
-        private var waiting: String?
 
-        /// `loadHTMLString` gives the page no read access to the result
-        /// folder, so its images would not load. Loading the Markdown file with
-        /// `allowingReadAccessTo:` its folder grants it, and WebKit keeps it
-        /// for later documents whose base is that folder. The view stays
-        /// hidden until the document replaces the file.
-        func show(_ html: String, file: String, folder: URL, in view: WKWebView) {
+        func show(_ html: String, folder: URL, in view: WKWebView) {
             loaded = html
-            if granted == folder, grant != nil {
-                waiting = html
-                return
-            }
             loading = true
-            if granted == folder {
-                view.loadHTMLString(html, baseURL: folder)
-                return
-            }
-            granted = folder
-            waiting = html
-            view.isHidden = true
-            grant = view.loadFileURL(URL(fileURLWithPath: file), allowingReadAccessTo: folder)
-        }
-
-        private func ended(_ navigation: WKNavigation!, in webView: WKWebView) {
-            guard navigation == grant, let html = waiting, let folder = granted else {
-                // A load that ends while another folder's grant runs, such as
-                // the grant it replaced, leaves the view hidden for that one.
-                if grant == nil { webView.isHidden = false }
-                return
-            }
-            grant = nil
-            waiting = nil
-            loading = true
-            webView.loadHTMLString(html, baseURL: folder)
-        }
-
-        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            ended(navigation, in: webView)
-        }
-
-        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-            ended(navigation, in: webView)
-        }
-
-        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-            ended(navigation, in: webView)
+            files.folder = folder
+            view.loadHTMLString(html, baseURL: URL(string: ResultFolder.url))
         }
 
         /// Allows the document's own load and same-document fragment links;
@@ -341,6 +296,30 @@ struct PreviewWebView: NSViewRepresentable {
             url.absoluteString.components(separatedBy: "#")[0]
         }
     }
+}
+
+/// Serves the result folder to its page. Only a file load WebKit can show
+/// gives a page read access to a folder, and on macOS 15 it shows no
+/// Markdown file. A folder the app serves needs no such load.
+@MainActor
+final class ResultFolderFiles: NSObject, WKURLSchemeHandler {
+    var folder: URL?
+
+    func webView(_ webView: WKWebView, start task: any WKURLSchemeTask) {
+        guard let url = task.request.url, let folder,
+              let file = ResultFolder.file(path: url.path, in: folder),
+              let data = try? Data(contentsOf: file)
+        else {
+            task.didFailWithError(URLError(.fileDoesNotExist))
+            return
+        }
+        let type = UTType(filenameExtension: file.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
+        task.didReceive(URLResponse(url: url, mimeType: type, expectedContentLength: data.count, textEncodingName: nil))
+        task.didReceive(data)
+        task.didFinish()
+    }
+
+    func webView(_ webView: WKWebView, stop task: any WKURLSchemeTask) {}
 }
 
 /// A content rule list blocking every http(s) and ws(s) request, compiled

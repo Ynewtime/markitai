@@ -83,8 +83,6 @@ type fakePreview struct {
 	view *fakeView
 	html []string
 	base []string
-	// inFolder is the file each load names in the result folder.
-	inFolder []string
 	// backgrounds are the colors the web view was filled with, in order.
 	backgrounds []string
 	zoom        float64
@@ -92,10 +90,9 @@ type fakePreview struct {
 }
 
 func (p *fakePreview) View() ui.NativeWebView { return p.view }
-func (p *fakePreview) Load(html, baseURL, inFolder string, done func()) {
+func (p *fakePreview) Load(html, baseURL string, done func()) {
 	p.html = append(p.html, html)
 	p.base = append(p.base, baseURL)
-	p.inFolder = append(p.inFolder, inFolder)
 	done()
 }
 func (p *fakePreview) SetZoom(z float64)        { p.zoom, p.zooms = z, p.zooms+1 }

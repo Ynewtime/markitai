@@ -84,6 +84,14 @@ func main() {
 		})
 		a.version = mygo.App.Version()
 		mygo.BindAs("Preview", &previewService{goos: runtime.GOOS, press: a.pressed, drop: a.droppedOnPreview, wheel: a.wheeled})
+		if runtime.GOOS == "darwin" {
+			folders := &previewFolders{}
+			if err := mygo.Protocol.Handle(previewScheme, folders); err != nil {
+				log.Printf("preview folders: %v", err)
+			} else {
+				a.previews.folders = folders
+			}
+		}
 	}
 
 	opened := fileArgs(os.Args[1:], wd)

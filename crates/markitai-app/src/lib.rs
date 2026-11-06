@@ -88,7 +88,9 @@ pub fn convert_json(request: &str) -> String {
         .to_string()
 }
 
-/// `{"markdown", "theme": "light" | "dark", "base_dir"}`: `{"html"}`.
+/// `{"markdown", "theme": "light" | "dark", "base_dir", "files_url"}`:
+/// `{"html"}`. `files_url`, optional, is where the page reads `base_dir`'s
+/// files, for an app that serves them itself.
 pub fn preview_html(request: &str) -> String {
     answer(|| {
         let request = parse(request)?;
@@ -103,7 +105,14 @@ pub fn preview_html(request: &str) -> String {
             Some(Value::String(dir)) => Some(PathBuf::from(dir)),
             Some(_) => return Err(invalid("\"base_dir\" must be a string or null")),
         };
-        Ok(json!({"html": preview::render(markdown, theme, base_dir.as_deref())}))
+        let files_url = match request.get("files_url") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(url)) if preview::url_scheme(url).is_some() => Some(url.as_str()),
+            Some(_) => return Err(invalid("\"files_url\" must be a URL or null")),
+        };
+        Ok(json!({
+            "html": preview::render(markdown, theme, base_dir.as_deref(), files_url)
+        }))
     })
 }
 

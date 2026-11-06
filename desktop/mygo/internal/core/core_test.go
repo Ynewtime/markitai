@@ -57,7 +57,7 @@ func TestCallsThroughTheLibrary(t *testing.T) {
 	if !errors.As(err, &ce) || ce.Code != "not_found" {
 		t.Errorf("a missing file: %v", err)
 	}
-	html, err := l.PreviewHTML("# Hi", "dark", nil)
+	html, err := l.PreviewHTML("# Hi", "dark", nil, nil)
 	if err != nil || !strings.Contains(html, `data-theme="dark"`) {
 		t.Errorf("preview_html: %v", err)
 	}

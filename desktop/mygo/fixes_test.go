@@ -204,11 +204,11 @@ type failingPreview struct {
 	fail *bool
 }
 
-func (f failingPreview) PreviewHTML(markdown, theme string, baseDir *string) (string, error) {
+func (f failingPreview) PreviewHTML(markdown, theme string, baseDir, filesURL *string) (string, error) {
 	if *f.fail {
 		return "", errors.New("internal_error: test")
 	}
-	return f.coreLib.PreviewHTML(markdown, theme, baseDir)
+	return f.coreLib.PreviewHTML(markdown, theme, baseDir, filesURL)
 }
 
 // TestPreviewFailure: a preview the core cannot render says so, and is

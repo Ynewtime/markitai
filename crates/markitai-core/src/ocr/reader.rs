@@ -917,7 +917,12 @@ mod tests {
     fn a_program_that_could_not_start_is_tried_again_for_the_next_image() {
         let directory = tempfile::tempdir().unwrap();
         let program = directory.path().join("reader");
-        let client = Arc::new(Client::new(program.clone(), Vec::new(), LIMITS_NOW));
+        // The first start of a new file can stop for seconds, using no CPU.
+        let limits = Limits {
+            idle: Duration::from_secs(30),
+            ..LIMITS_NOW
+        };
+        let client = Arc::new(Client::new(program.clone(), Vec::new(), limits));
         assert!(matches!(
             client.exchange(&image(), "en"),
             Exchange::Unavailable

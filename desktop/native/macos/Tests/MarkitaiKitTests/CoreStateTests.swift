@@ -223,4 +223,27 @@ struct CoreStateTests {
         #expect(!light.contains("Hidden"), "front matter is left out")
         #expect(light.contains(#"class="img-remote""#))
     }
+
+    @Test func previewReadsTheFolderAtTheURLTheAppServes() throws {
+        let html = try #require(Core.previewHTML(markdown: "![a](.markitai/assets/a.png)", dark: false, baseDirectory: inputs.path, filesURL: ResultFolder.url))
+        #expect(html.contains(#"src="\#(ResultFolder.url).markitai/assets/a.png""#))
+        #expect(html.contains("img-src \(ResultFolder.scheme): data:"))
+        #expect(!html.contains("file:"))
+    }
+
+    @Test func resultFolderServesOnlyItsOwnFiles() throws {
+        let folder = inputs.appendingPathComponent("Report Q3", isDirectory: true)
+        let assets = folder.appendingPathComponent(".markitai/assets", isDirectory: true)
+        try FileManager.default.createDirectory(at: assets, withIntermediateDirectories: true)
+        try Data("picture".utf8).write(to: assets.appendingPathComponent("a b.png"))
+        let secret = inputs.appendingPathComponent("secret.txt")
+        try Data("secret".utf8).write(to: secret)
+        try FileManager.default.createSymbolicLink(at: folder.appendingPathComponent("link.txt"), withDestinationURL: secret)
+
+        let found = try #require(ResultFolder.file(path: "/.markitai/assets/a b.png", in: folder))
+        #expect(try Data(contentsOf: found) == Data("picture".utf8))
+        for path in ["/", "/.markitai/assets", "/../secret.txt", "/link.txt", "/missing.png"] {
+            #expect(ResultFolder.file(path: path, in: folder) == nil, "\(path)")
+        }
+    }
 }

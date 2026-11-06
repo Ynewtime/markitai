@@ -4,7 +4,6 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 	"log"
-	"runtime"
 )
 
 // systemDesk is the desktop through mygo. Its dialogs block, so they run
@@ -82,36 +81,15 @@ type webPreview struct {
 
 func (p *webPreview) View() ui.NativeWebView { return p.view }
 
-// Load loads html. On macOS WebKit lets the page read the folder's
-// images only after a load with read access to it: loadHTMLString's base
-// URL grants none, loadFileURL grants the file's folder, and a later
-// loadHTMLString whose base URL is inside it keeps that access. So the
-// page first loads the Markdown file beside them, which the view never
-// shows: it builds the web view only once done runs.
-func (p *webPreview) Load(html, baseURL, inFolder string, done func()) {
+func (p *webPreview) Load(html, baseURL string, done func()) {
 	p.base = baseURL
 	page := p.view.Page()
-	show := func() {
-		var off func()
-		off = page.OnDidFinishLoad(func() {
-			off()
-			done()
-		})
-		page.LoadHTML(html, baseURL)
-	}
-	if runtime.GOOS != "darwin" || inFolder == "" {
-		show()
-		return
-	}
-	var granted func()
-	granted = page.OnDidFinishLoad(func() {
-		granted()
-		show()
+	var off func()
+	off = page.OnDidFinishLoad(func() {
+		off()
+		done()
 	})
-	if err := page.LoadFile(inFolder); err != nil {
-		granted()
-		show()
-	}
+	page.LoadHTML(html, baseURL)
 }
 
 func (p *webPreview) SetZoom(f float64) { p.view.Page().SetZoomFactor(f) }

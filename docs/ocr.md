@@ -163,8 +163,9 @@ a stopped recognition: a request that does not return within 15 minutes fails wi
 `Vision stopped responding`, and so does every later Vision reading in that process.
 
 Vision can fail at once in a macOS virtual machine, with `Vision reported failure
-without an error`: it did on macOS 27.2 under Apple's Virtualization framework, and
-read on GitHub's hosted macOS 15 runners. The portable engine reads in both.
+without an error`: it did on macOS 27.2 under Apple's Virtualization framework, and read
+on macOS 15.7 under it on the same computer and on GitHub's hosted macOS 15 runners. The
+portable engine reads on each.
 
 ## Bounds and reading order
 

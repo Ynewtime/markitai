@@ -205,9 +205,10 @@ func (l *Lib) ConvertJSON(request any) (json.RawMessage, error) {
 }
 
 // PreviewHTML renders Markdown to the preview document: theme is "light"
-// or "dark", and images load only from inside baseDir.
-func (l *Lib) PreviewHTML(markdown, theme string, baseDir *string) (string, error) {
-	raw, err := l.call(l.previewHTML, map[string]any{"markdown": markdown, "theme": theme, "base_dir": baseDir})
+// or "dark", and images load only from inside baseDir, at filesURL when the
+// app serves that folder itself.
+func (l *Lib) PreviewHTML(markdown, theme string, baseDir, filesURL *string) (string, error) {
+	raw, err := l.call(l.previewHTML, map[string]any{"markdown": markdown, "theme": theme, "base_dir": baseDir, "files_url": filesURL})
 	if err != nil {
 		return "", err
 	}
