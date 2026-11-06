@@ -2267,6 +2267,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "markitai-vision-reader"
+version = "2.3.2"
+dependencies = [
+ "markitai-core",
+]
+
+[[package]]
 name = "markitai-webp-sys"
 version = "1.6.0"
 dependencies = [

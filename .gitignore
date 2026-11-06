@@ -7,6 +7,7 @@
 **/*.pyc
 **/node_modules/
 **/*.node
+/bindings/node/markitai-vision-reader
 **/*.so
 **/*.dylib
 **/*.dll

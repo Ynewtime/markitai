@@ -724,9 +724,9 @@ pub(crate) fn capture_external_pdf(
 /// between its steps and while its last lines are read, so a quarter of the
 /// processors' worth of pages run at once (two to four). Its detections, which
 /// hold about 300 bytes per page pixel each, take turns separately, which
-/// bounds the memory. Two otherwise: Vision takes one request at a time however
-/// many pages wait (`ocr::vision`), and qppocr spreads one image over all of its
-/// own threads and its four-page concurrency was not measured.
+/// bounds the memory. Vision reads two pages at a time, and so does qppocr,
+/// which spreads one image over all of its own threads and whose four-page
+/// concurrency was not measured.
 fn ocr_pages_at_once() -> usize {
     if ocr::backend() == "paddle" && ocr::portable_engine() == "tract" {
         ocr::thread_budget().div_euclid(4).clamp(2, 4)

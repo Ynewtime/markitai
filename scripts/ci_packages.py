@@ -414,11 +414,24 @@ def _sbom_without_local_paths(data, root, environ=None, home=None, windows=None)
     return re.sub(r"path\+file://(/[^\"#\s]*)", shorten, data)
 
 
-def supplement_wheel_licenses(source, destination, licenses, root=None):
+VISION_READER = "markitai-vision-reader"
+
+
+def check_vision_reader(installed, built):
+    """An installed reader is the one built, can be run, and goes when its stdin closes."""
+    if identity(installed) != identity(built):
+        raise RuntimeError(f"{installed} is not the reader built")
+    done = subprocess.run([installed], stdin=subprocess.DEVNULL, capture_output=True, timeout=60)
+    if done.returncode != 0:
+        raise RuntimeError(f"{installed} ended with {done.returncode}")
+
+
+def supplement_wheel_licenses(source, destination, licenses, root=None, programs=None):
     """Keep the original wheel and record a separate, explicitly supplemented wheel.
 
     Native and Python bytes remain unchanged. This adds files to dist-info and
     rebuilds RECORD; it does not claim the project declares PEP 639 license-files.
+    `programs` are executables to add, by their path in the wheel.
     """
     with zipfile.ZipFile(source) as original:
         names = original.namelist()
@@ -460,6 +473,16 @@ def supplement_wheel_licenses(source, destination, licenses, root=None):
                 rows.append([info.filename, f"sha256={encoded}", str(size)])
             for name, value in additions.items():
                 result.writestr(name, value)
+                encoded = base64.urlsafe_b64encode(hashlib.sha256(value).digest()).rstrip(b"=").decode("ascii")
+                rows.append([name, f"sha256={encoded}", str(len(value))])
+            for name, path in (programs or {}).items():
+                if name in names:
+                    raise RuntimeError(f"Wheel already has {name}")
+                value = Path(path).read_bytes()
+                entry = zipfile.ZipInfo(name, date_time=(2020, 1, 1, 0, 0, 0))
+                entry.compress_type = zipfile.ZIP_DEFLATED
+                entry.external_attr = (stat.S_IFREG | 0o755) << 16
+                result.writestr(entry, value)
                 encoded = base64.urlsafe_b64encode(hashlib.sha256(value).digest()).rstrip(b"=").decode("ascii")
                 rows.append([name, f"sha256={encoded}", str(len(value))])
             rows.append([record, "", ""])
@@ -825,6 +848,11 @@ def main():
         shutil.copy2(root / "bindings/c/markitai.h", native / "markitai.h")
         artifact(ffi)
         artifact(native / "markitai.h")
+        # On macOS a library reads with Vision through this, beside it (docs/bindings.md).
+        vision_reader = release / VISION_READER if sys.platform == "darwin" else None
+        if vision_reader:
+            shutil.copy2(vision_reader, native / VISION_READER)
+            artifact(native / VISION_READER)
         for name, content in licenses.items():
             target = native / name
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -842,6 +870,8 @@ def main():
         package_json.write_text(json.dumps(package, indent=2) + "\n", encoding="utf-8")
         record["node_staging"] = {"operation": "include_attribution_and_preserve_nested_orig_evidence", "package_json": identity(package_json)}
         shutil.copy2(release / libraries[1], node_source / "markitai.node")
+        if vision_reader:
+            shutil.copy2(vision_reader, node_source / VISION_READER)
         npm = shutil.which("npm")
         if not npm:
             raise RuntimeError("npm is required for native Node package validation")
@@ -858,6 +888,8 @@ def main():
         for name in ["index.cjs", "index.d.ts", "markitai.node", *licenses]:
             if identity(installed_node / name) != identity(node_source / name):
                 raise RuntimeError(f"Installed Node package {name} differs from packed source")
+        if vision_reader:
+            check_vision_reader(installed_node / VISION_READER, vision_reader)
         record["installed_node_native"] = identity(installed_node / "markitai.node")
         tests = (root / "bindings/node/test.cjs").read_text(encoding="utf-8")
         if tests.count("require('./index.cjs')") != 1:
@@ -886,12 +918,18 @@ def main():
             raise RuntimeError("Expected exactly one native wheel")
         artifact(built[0])
         wheel = wheels / built[0].name
-        record["wheel_supplement"] = supplement_wheel_licenses(built[0], wheel, licenses, root)
+        record["wheel_supplement"] = supplement_wheel_licenses(
+            built[0], wheel, licenses, root,
+            programs={f"markitai/{VISION_READER}": vision_reader} if vision_reader else None)
         artifact(wheel)
         venv = work / "python-env"
         run("python-environment", [sys.executable, "-m", "venv", venv])
         python = venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
         run("python-install", [python, "-m", "pip", "install", "--no-index", "--no-deps", wheel])
+        if vision_reader:
+            package = run("python-package-directory",
+                          [python, "-c", "import markitai, os; print(os.path.dirname(markitai.__file__))"], cwd=work)
+            check_vision_reader(Path(package.strip()) / VISION_READER, vision_reader)
         # The commands Python markitai installed run the wheel's program.
         scripts = venv / ("Scripts" if os.name == "nt" else "bin")
         for name in ["markitai", "mkai", "markitai-mcp"]:

@@ -40,7 +40,7 @@ import tarfile
 import tempfile
 import zipfile
 
-from ci_packages import (apply_path_remap, cli_attribution, doctor_probe, identity, mcp_probe,
+from ci_packages import (VISION_READER, apply_path_remap, cli_attribution, doctor_probe, identity, mcp_probe,
                          package_attribution, pinned_maturin, supplement_wheel_licenses,
                          windows_cli_build, write_cli_zip, write_single_binary_tar)
 from cli_documentation import cli_documentation
@@ -606,12 +606,18 @@ def build_wheel(target, output):
         expected = f"-cp310-abi3-{TARGETS[target]}.whl"
         if not built[0].name.endswith(expected):
             raise SystemExit(f"{built[0].name} is not a {expected[1:]} wheel")
+        programs = None
         if target.endswith("-apple-darwin"):
             check_macos_extension(built[0], target, environment["MACOSX_DEPLOYMENT_TARGET"])
+            # What the library reads with Vision through (docs/ocr.md).
+            run(["cargo", "build", "--release", "--locked", "-p", VISION_READER, "--target", target],
+                cwd=ROOT, env=environment)
+            products = Path(environment.get("CARGO_TARGET_DIR", ROOT / "target")) / target / "release"
+            programs = {f"markitai/{VISION_READER}": products / VISION_READER}
         wheel = output / built[0].name
         if wheel.exists():
             wheel.unlink()
-        supplement_wheel_licenses(built[0], wheel, release_attribution(ROOT), ROOT)
+        supplement_wheel_licenses(built[0], wheel, release_attribution(ROOT), ROOT, programs)
     print(json.dumps({"wheel": wheel.name, **identity(wheel)}, indent=2), flush=True)
     return wheel
 
@@ -636,6 +642,11 @@ def smoke_wheel(wheel, python, run_tests, release=True):
         extension = ".exe" if windows else ""
         commands = [scripts / (name + extension) for name in ["markitai", "mkai", "markitai-mcp"]]
         results = smoke_commands(*commands, version, work, environment, windows)
+        if release and sys.platform == "darwin":
+            where = capture([interpreter, "-c", "import markitai, os; print(os.path.dirname(markitai.__file__))"],
+                            cwd=work, env=environment).strip()
+            run([Path(where) / VISION_READER], cwd=work, env=environment, stdin=subprocess.DEVNULL)
+            results["vision_reader"] = "ran"
         probe = ("import markitai, sys; result = markitai.convert(sys.argv[1]);"
                  " print(markitai.__version__); print(result.markdown, end='')")
         source = work / "api.md"

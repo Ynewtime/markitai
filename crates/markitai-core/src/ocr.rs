@@ -21,9 +21,33 @@ mod layout;
 pub(crate) mod paddle;
 mod page;
 mod pixels;
+#[cfg(target_os = "macos")]
+mod reader;
 pub(crate) mod trace;
 #[cfg(target_os = "macos")]
 mod vision;
+
+/// For a Markitai executable, at the very start of `main`: see [`reader::start`].
+#[cfg(target_os = "macos")]
+pub fn start_vision_reader() {
+    reader::start(|| std::env::args_os().any(|argument| argument == "--ocr") && vision_chosen());
+}
+
+/// All that `markitai-vision-reader` does: see [`reader::serve`].
+#[cfg(target_os = "macos")]
+pub fn serve_vision_reader() -> ! {
+    reader::serve()
+}
+
+#[cfg(all(target_os = "macos", not(feature = "portable-media")))]
+fn vision_chosen() -> bool {
+    available()
+}
+
+#[cfg(all(target_os = "macos", feature = "portable-media"))]
+fn vision_chosen() -> bool {
+    selected().is_ok_and(|backend| backend == Backend::Vision)
+}
 
 #[derive(Debug, Default)]
 pub(crate) struct OcrResult {
@@ -179,6 +203,7 @@ pub(crate) fn recognize(bytes: &[u8], cfg: &Value) -> Result<OcrResult> {
                 .into(),
         ));
     }
+    reader::prestart();
     let spelling = configured(cfg)?;
     let image = pixels::upright(bytes)?;
     with_pixels(
@@ -209,6 +234,7 @@ fn recognize_pixels(image: image::RgbImage, cfg: &Value, figures: bool) -> Resul
                 .into(),
         ));
     }
+    reader::prestart();
     let spelling = configured(cfg)?;
     with_pixels(
         read(&pixels::prepare_rgb(image.clone())?, &spelling),
@@ -422,6 +448,10 @@ pub(crate) fn backend() -> &'static str {
 #[cfg(any(not(target_os = "macos"), feature = "portable-media"))]
 pub(crate) fn recognize(bytes: &[u8], cfg: &Value) -> Result<OcrResult> {
     let backend = selected()?;
+    #[cfg(target_os = "macos")]
+    if backend == Backend::Vision {
+        reader::prestart();
+    }
     let spelling = configured(cfg)?;
     let image = pixels::upright(bytes)?;
     let read = match backend {
@@ -483,6 +513,10 @@ pub(crate) fn recognize_page(image: image::RgbImage, cfg: &Value) -> Result<OcrR
 #[cfg(any(not(target_os = "macos"), feature = "portable-media"))]
 fn recognize_pixels(image: image::RgbImage, cfg: &Value, figures: bool) -> Result<OcrResult> {
     let backend = selected()?;
+    #[cfg(target_os = "macos")]
+    if backend == Backend::Vision {
+        reader::prestart();
+    }
     let spelling = configured(cfg)?;
     let read = match backend {
         #[cfg(target_os = "macos")]
@@ -581,21 +615,6 @@ fn pass(image: &pixels::Prepared, language: &str) -> Result<Pass> {
     read
 }
 
-/// [`pass`] without Vision's language correction.
-#[cfg(target_os = "macos")]
-fn pass_uncorrected(image: &pixels::Prepared, language: &str) -> Result<Pass> {
-    let space = (image.width, image.height);
-    let mut lap = trace::Lap::start();
-    let read = pass_with(image, |image, may_enlarge| {
-        vision::recognize_uncorrected(image, language, space, may_enlarge)
-    });
-    trace::line(format_args!(
-        "vision pass {language} uncorrected ms={:.0}",
-        lap.ms()
-    ));
-    read
-}
-
 /// [`pass`] with all of Chinese, Japanese, Korean and English asked for at once
 /// and the language detected by Vision.
 #[cfg(target_os = "macos")]
@@ -638,6 +657,17 @@ fn finish(image: &pixels::Prepared, pass: Pass, language: &str, unread: bool) ->
     if !unread && layout::orientation(&lines) == layout::Turn::Upright {
         vision::reread(image, language, &mut lines);
     }
+    // Vision that stopped responding is not a reading of the image.
+    vision::responding()?;
+    if reader::serving() {
+        return Ok(OcrResult {
+            raw: lines,
+            scale: pass.scale,
+            language: language.to_owned(),
+            unread,
+            ..Default::default()
+        });
+    }
     let mut result = assemble(lines, image.width, image.height)?;
     result.scale = pass.scale;
     result.language = language.to_owned();
@@ -651,15 +681,17 @@ fn finish(image: &pixels::Prepared, pass: Pass, language: &str, unread: bool) ->
 /// is read as that one language.
 #[cfg(target_os = "macos")]
 fn read(image: &pixels::Prepared, spelling: &str) -> Result<OcrResult> {
-    let result = read_language(image, spelling);
-    // A failed reading is left out where others stand, but what comes of a
-    // Vision that stopped responding is not a reading of the image.
-    vision::responding()?;
-    result
+    match reader::read(image, spelling) {
+        reader::Outcome::Read(result) => result,
+        reader::Outcome::NoReader => read_here(image, spelling),
+    }
 }
 
+/// [`read`] in this process, which a reader does; a program with no reader does
+/// it too, and then a request that never returns is the error of
+/// [`vision::responding`].
 #[cfg(target_os = "macos")]
-fn read_language(image: &pixels::Prepared, spelling: &str) -> Result<OcrResult> {
+fn read_here(image: &pixels::Prepared, spelling: &str) -> Result<OcrResult> {
     if spelling == "en" {
         // `MARKITAI_OCR_VISION_POLICY=detect`: one request asking for all the
         // languages with detection, instead of the passes below (for
@@ -694,27 +726,15 @@ const JAPANESE: &str = "ja-JP";
 /// which has its own aids. A reading that fails is not an error: the English
 /// reading stands, as it always did, and the result is marked unread when text
 /// was seen and not read.
-///
-/// English is first read without language correction, which judges an image as
-/// well, and with it only once the image seems English or its Chinese reading holds
-/// too little Chinese to use: correcting several lines of Chinese as English can
-/// stop Vision for good (`docs/ocr.md`), in about one process in ten on a busy
-/// machine.
 #[cfg(target_os = "macos")]
 fn read_default(image: &pixels::Prepared) -> Result<OcrResult> {
     use auto::Verdict;
     use cjk::Script;
-    let mut english = pass_uncorrected(image, ENGLISH)?;
-    let mut verdict = auto::judge(&english.lines);
-    trace_pass("en-US uncorrected", &Ok(&english), Some(verdict));
-    let corrected = verdict == Verdict::Sound;
-    if corrected {
-        english = pass(image, ENGLISH)?;
-        verdict = auto::judge(&english.lines);
-        trace_pass(ENGLISH, &Ok(&english), Some(verdict));
-        if verdict == Verdict::Sound {
-            return finish(image, english, ENGLISH, false);
-        }
+    let english = pass(image, ENGLISH)?;
+    let verdict = auto::judge(&english.lines);
+    trace_pass(ENGLISH, &Ok(&english), Some(verdict));
+    if verdict == Verdict::Sound {
+        return finish(image, english, ENGLISH, false);
     }
     // The strongest reading so far: its language, lines and strength.
     let mut best: Option<(&str, Pass, f32)> = None;
@@ -724,19 +744,9 @@ fn read_default(image: &pixels::Prepared) -> Result<OcrResult> {
     // failure of the conversion: English has read the image.
     let chinese = pass(image, CHINESE);
     trace_pass(CHINESE, &chinese.as_ref(), None);
-    let of_chinese =
-        matches!(&chinese, Ok(chinese) if auto::reads(&chinese.lines, Script::Japanese));
-    if !corrected && !of_chinese {
-        english = pass(image, ENGLISH)?;
-        verdict = auto::judge(&english.lines);
-        trace_pass(ENGLISH, &Ok(&english), Some(verdict));
-        if verdict == Verdict::Sound {
-            return finish(image, english, ENGLISH, false);
-        }
-    }
     if let Ok(chinese) = chinese {
         elsewhere = auto::saw(&chinese.lines, &english.lines);
-        if of_chinese {
+        if auto::reads(&chinese.lines, Script::Japanese) {
             settled = auto::credible(&chinese.lines, Script::Japanese) >= auto::CONVINCING;
             let strength = auto::strength(&chinese.lines, Script::Japanese);
             best = Some((CHINESE, chinese, strength));
@@ -3002,9 +3012,11 @@ pub(crate) mod tests {
 
     /// A scan-like page of Chinese with a table: drawn in a system font, then
     /// blurred and recompressed as a poor JPEG, the way the parity corpus's
-    /// scanned pages are.
+    /// scanned pages are. Vision cannot run in a macOS virtual machine, so the
+    /// runners skip this test by name.
     #[cfg(target_os = "macos")]
-    pub(crate) fn degraded_scan() -> image::RgbImage {
+    #[test]
+    fn vision_reads_a_degraded_scan_of_chinese_with_a_table_by_default() {
         let lines = [
             "第一章 概述",
             "本文档用于测试中文文本提取、表格识别和光学字符识别。",
@@ -3021,15 +3033,8 @@ pub(crate) mod tests {
         image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 55)
             .encode_image(&blurred)
             .unwrap();
-        image::load_from_memory(&jpeg).unwrap().to_rgb8()
-    }
-
-    /// Vision cannot run in a macOS virtual machine, so the runners skip this
-    /// test by name.
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn vision_reads_a_degraded_scan_of_chinese_with_a_table_by_default() {
-        let result = recognize_rgb(degraded_scan(), &json!({"ocr":{"enabled":true}}));
+        let scan = image::load_from_memory(&jpeg).unwrap().to_rgb8();
+        let result = recognize_rgb(scan, &json!({"ocr":{"enabled":true}}));
         if vision_unavailable_under_rosetta(&result) {
             return;
         }
@@ -3063,33 +3068,6 @@ pub(crate) mod tests {
         let result = recognize_rgb(image, &json!({"ocr":{"enabled":true,"lang":"en"}})).unwrap();
         assert_eq!(result.language, "zh-Hans");
         assert_eq!(squeezed(&result.text), squeezed(&line.concat()));
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn the_default_language_corrects_english_only_of_an_image_that_seems_english() {
-        let readings = |image| {
-            vision::READINGS.take();
-            let result = recognize_rgb(image, &json!({"ocr":{"enabled":true}}));
-            (!vision_unavailable_under_rosetta(&result)).then(|| {
-                result.unwrap();
-                vision::READINGS.take()
-            })
-        };
-        let english = ("en-US".to_owned(), true);
-        if let Some(read) = readings(degraded_scan()) {
-            assert_eq!(read[0], ("en-US".to_owned(), false), "{read:?}");
-            assert!(!read.contains(&english), "{read:?}");
-        }
-        let lines = [
-            "The quick brown fox jumps over the lazy dog",
-            "Pack my box with five dozen liquor jugs",
-            "Sphinx of black quartz, judge my vow",
-            "How vexingly quick daft zebras jump",
-        ];
-        if let Some(read) = readings(system_font_lines("Helvetica", &lines, 22)) {
-            assert_eq!(read, [("en-US".to_owned(), false), english], "{read:?}");
-        }
     }
 
     #[cfg(target_os = "macos")]

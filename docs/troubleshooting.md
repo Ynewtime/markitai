@@ -127,8 +127,6 @@ read directly and need neither.
 recognition models after installation or an update (about 20 seconds). Startup and per-page time
 depend on the OS, image and language; earlier measurements are not a timing
 guarantee. A sandbox that blocks the Vision cache can cause `missingError`.
-`Vision stopped responding` means a recognition did not return within 5 minutes
-and Vision reads nothing more in that process; see [local OCR](ocr.md).
 On Windows/Linux, run `markitai doctor` to check Paddle models and explicitly
 use `markitai doctor --fix` to prepare missing models before offline use.
 See [local OCR](ocr.md) for backend and language limits.
@@ -374,6 +372,11 @@ HEIF/HEIC files whose coding the built-in decoder does not read (for example
 an image sequence coded with inter prediction, or 16-bit extended precision),
 and AVIF images built as an overlay (`iovl`) rather than a single image or a
 grid, fail with an explicit unsupported error.
+
+**`Vision stopped responding`.** A text recognition stopped in macOS Vision each
+time it was tried, or, in a program with no `markitai-vision-reader` beside it, did
+not return within 15 minutes; see [local OCR](ocr.md). Run the program again, or
+use `MARKITAI_OCR_BACKEND=paddle`.
 
 **`✗ ocr.lang is not supported by the installed macOS Vision text recognizer`.**
 `ocr.lang` must be a language the macOS Vision recognizer supports, such as

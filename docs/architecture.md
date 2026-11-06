@@ -20,9 +20,9 @@ buffers have explicit ownership. Expensive clients may be shared only through
 thread-safe handles; credentials never enter output metadata or logs.
 
 The CLI has no Python/Node/Go runtime dependency. Pure conversion and extraction
-use Rust libraries. Local image and PDF-page OCR use macOS Vision by default;
-Windows and Linux use the in-process portable OCR engine with separately installed
-model weights. PDF pages render through CoreGraphics on macOS and hayro on
+use Rust libraries. Local image and PDF-page OCR use the in-process portable OCR
+engine with separately installed model weights; macOS Vision, when chosen, reads in
+a process of its own. PDF pages render through CoreGraphics on macOS and hayro on
 Windows/Linux, sharing a document session and bounded page pixels. See
 [OCR](ocr.md) and [PDF rendering](pdf-rendering.md) for selection and limits.
 Typed page state keeps native text, OCR outcomes and final capture names distinct

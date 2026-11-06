@@ -126,12 +126,10 @@ returned.)
 
 With Vision, `ocr.lang=en` is a multilingual fallback policy, not English-only
 recognition.
-Vision first reads English without language correction to judge the image, and
-again with correction once it seems English, which costs an English image one more
-reading. It tries supported Chinese, Japanese and Korean readings when the initial
-result is inadequate. Explicit `en-US` selects English alone. When no single
-language reads an image that is not plainly English, it is read once more with
-Chinese, Japanese, Korean and English asked for together and
+Vision first reads English, then tries supported Chinese, Japanese and Korean
+readings when the initial result is inadequate. Explicit `en-US` selects English
+alone. When no single language reads an image that is not plainly English, it is
+read once more with Chinese, Japanese, Korean and English asked for together and
 Vision detecting the language (macOS 13 or later), and that reading is used if
 it holds text. An image nothing read is marked unread with a warning.
 `MARKITAI_OCR_TRACE=1` prints one line per reading (language, lines, lines Vision
@@ -146,14 +144,22 @@ above were recorded on macOS 27). Set the language (`ocr.lang: ja`, or
 opt-in (`MARKITAI_OCR_BACKEND=vision` or the fallback); the default portable
 engine does not use Vision's language detection.
 
-Known issue: on macOS 27.2, correcting several lines of Chinese as English or
-French can stop for good inside Vision, in about one process in ten on a busy
-machine, which cancelling does not undo. The default language reads an image that
-way only when its Chinese reading holds too little Chinese to use; a language
-written in `ocr.lang` always does. Requests in a process run one at a time. A
-request that does not return within 5 minutes fails with `Vision stopped
-responding`, and so does every later Vision reading in that process: run the
-program again, or use `MARKITAI_OCR_BACKEND=paddle`.
+Vision reads in a process of its own, because a recognition can stop for good
+inside it: on macOS 27.2, correcting lines of Chinese as English or French, which
+the default language also does, stopped in about one process in a few hundred on a
+busy machine, and cancelling does not undo it. The reader is the program started
+again; in a program that holds Markitai as a library it is `markitai-vision-reader`
+beside the library ([bindings](bindings.md)). A reader with work that uses no
+processor time for 5 seconds is killed and a new one gets what it left, which took
+about 6 seconds in all and did not change the output. Each restart in a row waits
+twice as long. After six readers, in about 4 minutes, the reading fails with
+`Vision stopped responding`: run the program again, or use
+`MARKITAI_OCR_BACKEND=paddle`. A request also fails that way after 15 minutes,
+whatever the reader is doing.
+
+A program with no reader beside it reads in process, where nothing can bring back
+a stopped recognition: a request that does not return within 15 minutes fails with
+`Vision stopped responding`, and so does every later Vision reading in that process.
 
 ## Bounds and reading order
 

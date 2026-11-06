@@ -8,6 +8,7 @@
 
 use std::cell::Cell;
 use std::fmt::Arguments;
+use std::io::Write;
 use std::time::Instant;
 
 /// The environment variable that turns the trace on.
@@ -40,6 +41,7 @@ pub(crate) fn clear_page() {
 }
 
 /// The page this thread works on, if a PDF page.
+#[cfg_attr(not(feature = "portable-media"), allow(dead_code))]
 pub(crate) fn page() -> Option<usize> {
     PAGE.with(Cell::get)
 }
@@ -50,7 +52,9 @@ pub(crate) fn line(text: Arguments<'_>) {
         let page = PAGE
             .with(Cell::get)
             .map_or(String::new(), |n| format!(" page={n}"));
-        eprintln!("ocr-trace{page} {text}");
+        // Not `eprintln!`, which panics when nobody reads any more: a trace is no
+        // reason to stop reading.
+        let _ = writeln!(std::io::stderr(), "ocr-trace{page} {text}");
     }
 }
 
