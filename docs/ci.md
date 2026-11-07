@@ -58,7 +58,8 @@ The Intel Mac does not build. Its tests are cross-compiled on an arm64 Mac
 archive uploaded with a manifest of its target, commit, size and sha256, with
 a Cargo cache of its own) and run on the Intel Mac in two shards (`intel-test`:
 `check.py --run-tests ... --partition count:N/2`, which refuses an archive of
-another commit or one that changed, and reads fixtures from its own checkout).
+another commit or one that changed, reads fixtures from its own checkout, and unpacks the
+archive into it: the integration tests spawn the binary at the `target/` path the build compiled in).
 `intel-build` lints for the x86_64 target after the upload, so the Intel Mac does
 not wait for clippy. Formatting and the helper tests (Python and Node, the same
 on every macOS) run on the arm64 Mac, not on the Intel one. The job names are

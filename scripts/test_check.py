@@ -69,6 +69,9 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(command[command.index("--workspace-remap") + 1], "repo")
         self.assertEqual(command[command.index("--partition") + 1], "count:2/3")
         self.assertIn("--no-fail-fast", command)
+        # The binaries the tests spawn are at the paths they were compiled with.
+        self.assertEqual(command[command.index("--extract-to") + 1], "repo")
+        self.assertIn("--extract-overwrite", command)
         self.assertEqual(command[-5:], ["--", "--skip", "slow_one", "--skip", "other"])
 
     def test_without_a_partition_every_test_runs(self):

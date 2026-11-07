@@ -331,9 +331,11 @@ def archive_command(archive, target):
 
 def archive_run_command(archive, root, partition, environment):
     """Run the tests of an archive against the sources in `root` (fixtures are read from them), or one
-    `partition` ("count:1/2") of them."""
-    return ["cargo", "nextest", "run", "--archive-file", str(archive), "--workspace-remap", str(root),
-            "--no-fail-fast", *(["--partition", partition] if partition else []), *test_skips(environment)]
+    `partition` ("count:1/2") of them. The archive is unpacked into `root`: the integration tests
+    spawn the binary at the `target/` path the build compiled in (`env!("CARGO_BIN_EXE_...")`),
+    which exists only there when the tests run on another machine than they were built on."""
+    return ["cargo", "nextest", "run", "--archive-file", str(archive), "--extract-to", str(root),
+            "--extract-overwrite", "--workspace-remap", str(root), "--no-fail-fast", *(["--partition", partition] if partition else []), *test_skips(environment)]
 
 
 def manifest_path(archive):
