@@ -274,6 +274,9 @@ test("a reading that failed says text recognition failed, in every language", ()
     "PDF page media: local OCR failed on page 3: Local OCR: cannot decode image",
     "Conversion failed: OCRError: OCR failed on 5 of 5 page(s) of scan.pdf (pages 1-5): boom",
     "Conversion failed: OCRError: OCR failed for scan.png:",
+    // Python's single image, whose longer cause keeps the OCRError, and its engine's own.
+    "Conversion failed: OCRError: OCR failed for english.png: Failed to download https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.9.2/onnx/PP-OCRv6/rec/PP-OCRv6_rec_small.onnx",
+    "Conversion failed: RuntimeException: [ONNXRuntimeError] : 6 : RUNTIME_EXCEPTION : Non-zero status code returned while running Conv node. std::bad_alloc",
   ];
   for (const error of failures) {
     for (const locale of OCR_LOCALES) {
@@ -325,10 +328,17 @@ test("an image turned down as given and other conversion failures do not blame t
     // The same media step, with no reading in it.
     ["PDF page media: renderer and extractor disagree on page count", "errConversion"],
     ["PDF page media: rendered page exceeds the 32-million-pixel limit", "errConversion"],
-    // Python's SVG with nothing to render, and its single image, of which only the
-    // reader's own exception arrives.
+    // Python's SVG with nothing to render, its damaged image, which a retry cannot
+    // read either, and a single image's cause that arrives alone.
     ["Conversion failed: OCRError: scan.svg has nothing to render", "errConversion"],
+    ["Conversion failed: OCRError: OCR failed for truncated.png: image file is truncated", "errConversion"],
     ["Conversion failed: RuntimeError: boom", "errConversion"],
+    ["Conversion failed: MemoryError: (736, 2016, 3)", "errConversion"],
+    // Set up without its OCR extra, as its README's server install is.
+    [
+      'Conversion failed: --ocr requires the optional OCR backend (RapidOCR), which is not installed. uv tool install "markitai[ocr]" --force',
+      "errOcrUnavailable",
+    ],
     ["Malformed XML", "errConversion"],
   ];
   for (const [error, key, values] of generic) {

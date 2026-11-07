@@ -421,9 +421,13 @@ const ITEM_SHAPES: Shape[] = [
     /^PDF page media: local OCR failed on page \d+: ([\s\S]*)$/,
     ([, cause]) => picked(cause ?? "", OCR_SETUP_SHAPES) ?? ["errOcrFailed"],
   ],
-  // Python markitai's scanned pages, verbatim. Its single image reports only the
-  // reader's own exception, which no shape can tell from another failure.
-  [/^Conversion failed: OCRError: OCR failed /, () => ["errOcrFailed"]],
+  // Python markitai, verbatim. It keeps the OCRError of a scanned page, and of a single
+  // image whose cause reads longer than it; a damaged image can arrive that way too. A
+  // shorter cause arrives alone: the engine's own says so, and others no shape can tell
+  // from another failure.
+  [/^Conversion failed: --ocr requires the optional OCR backend/, () => ["errOcrUnavailable"]],
+  [/^Conversion failed: OCRError: OCR failed (?!for [\s\S]*: image file is truncated$)/, () => ["errOcrFailed"]],
+  [/^Conversion failed: \w+: \[ONNXRuntimeError\]/, () => ["errOcrFailed"]],
   // The core may name the provider's error type after the status and ends a
   // request failure with the deployment that failed.
   [/^LLM returned HTTP (\d{3})\b(?: \([^()]*\))?(?:: (.+?))?(?: \(deployment [^()]*\))?$/, modelHttp],

@@ -560,12 +560,19 @@ func realWindow(t *testing.T, run, base string) {
 		return func(ns []node) bool { _, ok := find(ns, row(title, done, failed)); return ok }
 	}
 
-	nodes := c.wait("policy-assets.pdf finished", 2*time.Minute, finished("policy-assets.pdf"))
+	// A notice lasts 8 seconds; a first conversion can take longer.
+	folderNotice := ""
+	nodes := c.wait("policy-assets.pdf finished", 2*time.Minute, func(ns []node) bool {
+		if n, ok := find(ns, func(n node) bool { return strings.Contains(n.Label, l.T("notice.folder", "name", "A folder")) }); ok {
+			folderNotice = n.Label
+		}
+		return finished("policy-assets.pdf")(ns)
+	})
+	s.report["policy_assets_finished_ms"] = time.Since(s.launchedAt).Milliseconds()
 	r, _ := find(nodes, row("policy-assets.pdf"))
 	s.report["policy_assets_row"] = r.Label
-	notice, ok := find(nodes, func(n node) bool { return strings.Contains(n.Label, l.T("notice.folder", "name", "A folder")) })
-	s.report["folder_notice"] = notice.Label
-	if !ok {
+	s.report["folder_notice"] = folderNotice
+	if folderNotice == "" {
 		t.Errorf("no folder notice")
 	}
 	// The detail builds the web view once the page has loaded; the first

@@ -76,6 +76,10 @@ refuses another), and Go/cgo available:
 python scripts/ci_packages.py --expected-host <rustc-host-triple> --output .local/ci-artifacts
 ```
 
+Set `CARGO_PROFILE_RELEASE_LTO=off` and `CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16`,
+as the workflow does: with the release profile's fat link-time optimization, a
+build stage can outrun its 30-minute limit.
+
 The output directory must not already exist. The script creates private state
 under `.local`, isolates `HOME`, `MARKITAI_HOME` and temporary directories, and
 preserves explicit `CARGO_HOME`/`RUSTUP_HOME` for toolchain discovery. It uses an

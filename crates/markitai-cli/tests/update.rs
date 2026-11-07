@@ -425,24 +425,23 @@ impl Serve {
     /// token.
     #[cfg(unix)]
     fn start(home: &Home, releases: &Releases) -> Self {
-        Self::start_with(home, releases, &[("MARKITAI_SERVE_TOKEN", TOKEN)], None)
+        Self::start_with(home, releases, &[("MARKITAI_SERVE_TOKEN", TOKEN)], false)
     }
 
-    /// With `extra` environment, on `port` (`None`: any).
-    fn start_with(
-        home: &Home,
-        releases: &Releases,
-        extra: &[(&str, &str)],
-        port: Option<u16>,
-    ) -> Self {
-        let mut command = home.command(releases, extra);
-        command.args([
-            "serve",
-            "--port",
-            &port.unwrap_or(0).to_string(),
-            "--no-open",
-        ]);
-        Self::spawn(command, None)
+    /// With `extra` environment, on any port, or on one from `fixed_port`: any
+    /// program on this machine can take that before the server binds it.
+    fn start_with(home: &Home, releases: &Releases, extra: &[(&str, &str)], fixed: bool) -> Self {
+        for _ in 0..5 {
+            let port = if fixed { fixed_port() } else { 0 };
+            let mut command = home.command(releases, extra);
+            command.args(["serve", "--port", &port.to_string(), "--no-open"]);
+            match Self::spawn(command, None) {
+                Ok(server) => return server,
+                Err(said) if fixed && said.contains("the port is already in use") => {}
+                Err(said) => panic!("{said}"),
+            }
+        }
+        panic!("five free ports were taken before the server bound them");
     }
 
     /// `serve --supervised` from the install, as an app runs it: with the
@@ -454,19 +453,19 @@ impl Serve {
             .env("MARKITAI_SERVE_TOKEN", TOKEN)
             .args(["serve", "--supervised", "--port", "0"])
             .stdin(Stdio::piped());
-        Self::spawn(command, Some(TOKEN))
+        Self::spawn(command, Some(TOKEN)).unwrap_or_else(|said| panic!("{said}"))
     }
 
     /// Runs `command`, reading the port, and the token unless given, from
-    /// what it prints.
-    fn spawn(mut command: Command, token: Option<&str>) -> Self {
+    /// what it prints. `Err`: what it printed, if it exits first.
+    fn spawn(mut command: Command, token: Option<&str>) -> Result<Self, String> {
         // Windows: a process group of its own on this console, for Ctrl-Break.
         interrupt::interruptible(&mut command);
         command.stdout(Stdio::null()).stderr(Stdio::piped());
         let mut child = command.spawn().unwrap();
         let log = Arc::new(Mutex::new(String::new()));
         let (copy, stderr) = (log.clone(), child.stderr.take().unwrap());
-        std::thread::spawn(move || {
+        let reader = std::thread::spawn(move || {
             for line in BufReader::new(stderr).lines().map_while(Result::ok) {
                 copy.lock()
                     .unwrap_or_else(|error| error.into_inner())
@@ -474,6 +473,7 @@ impl Serve {
             }
         });
         let started = Instant::now();
+        let limit = Duration::from_secs(60);
         let after = |text: &str, marker: &str, valid: fn(char) -> bool| {
             text.split(marker)
                 .nth(1)
@@ -490,15 +490,21 @@ impl Serve {
             if let (Some(port), Some(token)) = (port, token) {
                 break (port.parse().unwrap(), token);
             }
-            assert!(started.elapsed() < Duration::from_secs(60), "{text}");
+            assert!(started.elapsed() < limit, "{text}");
+            if child.try_wait().unwrap().is_some() {
+                while !reader.is_finished() && started.elapsed() < limit {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                return Err(log.lock().unwrap().clone());
+            }
             std::thread::sleep(Duration::from_millis(20));
         };
-        Self {
+        Ok(Self {
             child,
             port,
             token,
             log,
-        }
+        })
     }
 
     fn call(&self, method: &str, path: &str, body: Option<Value>) -> Option<(u16, Value)> {
@@ -1580,12 +1586,7 @@ mod unix {
             false,
         );
         let home = Home::setup_sh("2.1.0");
-        let server = Serve::start_with(
-            &home,
-            &releases,
-            &[("MARKITAI_SERVE_TOKEN", TOKEN)],
-            Some(fixed_port()),
-        );
+        let server = Serve::start_with(&home, &releases, &[("MARKITAI_SERVE_TOKEN", TOKEN)], true);
         server.wait("the daily check", |view| view["latest"] == "2.2.0");
         server
             .call("POST", "/api/update", Some(json!({"version": "2.2.0"})))
@@ -1636,7 +1637,7 @@ mod unix {
                 ("MARKITAI_SERVE_TOKEN", TOKEN),
                 ("MARKITAI_TEST_UPDATE_READY_MS", "300"),
             ],
-            Some(fixed_port()),
+            true,
         );
         let pid = server.child.id();
         server.wait("the daily check", |view| view["latest"] == "2.2.0");
@@ -1697,13 +1698,7 @@ mod restart_by_cli {
 
     /// Unix keeps the socket, so any port stays; Windows binds the same
     /// port number again.
-    fn port() -> Option<u16> {
-        if cfg!(windows) {
-            Some(fixed_port())
-        } else {
-            None
-        }
-    }
+    const FIXED: bool = cfg!(windows);
 
     /// `markitai update`, answering Enter (yes) at the restart prompt.
     fn update(home: &Home, releases: &Releases) -> (String, i32) {
@@ -1732,7 +1727,7 @@ mod restart_by_cli {
         let releases = Releases::start("2.2.0");
         let home = installed(&releases, false);
         // The token is the server's own (none in the environment).
-        let server = Serve::start_with(&home, &releases, OLD, port());
+        let server = Serve::start_with(&home, &releases, OLD, FIXED);
         let (said, code) = update(&home, &releases);
         assert_eq!(code, 0, "{said}");
         assert!(said.contains("Restart it now? [Y/n]"), "{said}");
@@ -1750,7 +1745,7 @@ mod restart_by_cli {
     fn on_any_free_port(home: &Home, releases: &Releases) -> Serve {
         let port = fixed_port().to_string();
         let extra = [OLD[0], ("MARKITAI_SERVE_RESTART_PORT", port.as_str())];
-        Serve::start_with(home, releases, &extra, None)
+        Serve::start_with(home, releases, &extra, false)
     }
 
     /// Windows hands over no socket: the new program is told the port `--port 0`
@@ -1820,7 +1815,7 @@ mod restart_by_cli {
     fn a_new_version_that_does_not_start_leaves_the_old_one_serving() {
         let releases = Releases::start("2.2.0");
         let home = installed(&releases, true);
-        let server = Serve::start_with(&home, &releases, OLD, port());
+        let server = Serve::start_with(&home, &releases, OLD, FIXED);
         let (said, code) = update(&home, &releases);
         assert_eq!(code, 1, "{said}");
         // The failure is the new version's start, nothing earlier: else
@@ -1867,7 +1862,7 @@ mod restart_by_cli {
                 ("MARKITAI_TEST_UPDATE_AS", "2.1.1"),
                 ("MARKITAI_TEST_UPDATE_READY_MS", "300"),
             ],
-            None,
+            false,
         );
         let (said, code) = update(&home, &releases);
         assert_eq!(code, 1, "{said}");
