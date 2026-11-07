@@ -1,15 +1,16 @@
 # Native CI and package acceptance
 
-`scripts/check.py` runs the development gate without a Unix-shell dependency.
-The workflow in `.github/workflows/native.yml` selects native host jobs. It runs
-only when started by hand (`gh workflow run native.yml -f platforms='["windows-2025"]'`
-or the Actions page). The `platforms` input explicitly selects runners to
-control resource use: (`windows-2025`, `windows-11-arm`, `ubuntu-24.04`,
-`macos-15`, `macos-15-intel`; default Windows x86-64 and Linux), and
-`minimum_rust` adds the declared-minimum toolchain check. Each requested
-platform runs independent `checks` and `packages` lanes in parallel, with
-`fail-fast: false` and a 120-minute timeout per lane (350 minutes for `packages`
-on `macos-15-intel`). A matrix entry
+`scripts/check.py` runs the development gate without a Unix-shell dependency,
+and [`check.yml`](#checks) runs it on the release platforms.
+The workflow in `.github/workflows/native.yml` runs package acceptance on native
+hosts. It runs only when started by hand
+(`gh workflow run native.yml -f platforms='["windows-2025"]'` or the Actions
+page). The `platforms` input explicitly selects runners to control resource use:
+(`windows-2025`, `windows-11-arm`, `ubuntu-24.04`, `macos-15`, or `[]`; default
+Windows x86-64 and Linux), `intel_mac` adds an Intel Mac, and `minimum_rust` adds
+the declared-minimum toolchain check. Each requested platform runs with
+`fail-fast: false` and a 70-minute timeout. Start a platform for a change to
+what it exercises, not for every change. A matrix entry
 describes intended coverage; it is not evidence that the job has run or that its
 artifacts work. Only a completed job and its retained logs establish that host's
 result.
@@ -28,15 +29,24 @@ Ubuntu; it does not execute the complete test or binding suites on that compiler
 Results apply to their recorded commit and target. No Release, tag or publishing
 step is part of these drivers.
 
-The workflow caches third-party Cargo dependencies separately by runner and
-validation lane; compiler and dependency changes affect cache keys. First-party
+The workflow caches third-party Cargo dependencies separately by runner; compiler and dependency changes affect cache keys. First-party
 and vendored build artifacts rebuild from source. Windows builds one optimized CLI and copies it to the three executable names;
 all installed entry points remain tested. Package stages report elapsed
 time and log size every 30 seconds, preserve full logs, and add a timing summary
-to Actions. Build stages have a 75-minute limit, other stages 15 minutes, within
-a shared 110-minute package budget. On `macos-15-intel`, still linking 75 minutes
-into its first build, these are 240, 45 and 340 minutes. Silent linking alone is
-not a failure.
+to Actions. Build stages have a 30-minute limit, other stages 10 minutes, within
+a shared 60-minute package budget.
+
+Package lanes build without the release profile's fat link-time optimization
+(`CARGO_PROFILE_RELEASE_LTO=off`, 16 codegen units), which took 64% of the Intel
+lane. What ships is built with it and exercised by the [release workflow](#releases),
+so a package lane's binaries are not the shipped bytes, and its evidence says so.
+
+An Intel Mac does not build its packages. `intel-bundle` cross-compiles the
+workspace and the wheel on `macos-15` (30 minutes at most), and `intel-packages`
+installs and tests them on the Intel Mac (10 minutes at most), checking the
+bundle's target, commit and bytes first. This takes 19 minutes, or 13 with a
+branch's cache; compiled on the Intel Mac with fat link-time optimization, it
+took 155.
 Actual cache benefit depends on the runner and cache availability; compare real
 stage times before claiming a speedup.
 

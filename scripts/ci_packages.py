@@ -97,13 +97,128 @@ def windows_cli_build(root, target, environment):
     return command, cli_environment, directory / target / "release"
 
 
-def time_limits(host):
+def time_limits():
     """Minutes for all of a validation, one compiling stage and any other stage.
 
-    The workflow's timeout for the lane is longer, to retain the evidence. GitHub's
-    Intel Macs were still in link-time optimization 75 minutes into the first build.
+    The workflow's timeout for the lane is longer, to retain the evidence.
     """
-    return (340, 240, 45) if host == "x86_64-apple-darwin" else (110, 75, 15)
+    return 60, 30, 10
+
+
+# A bundle's build and its installation and tests on the Intel Mac: tight, so
+# that a lane that has slowed fails and is looked at.
+BUNDLE_BUILD_MINUTES = 30
+BUNDLE_TEST_MINUTES = 10
+BUNDLE = "native-bundle.tar.gz"
+VISION_READER = "markitai-vision-reader"
+BUNDLE_PROGRAMS = ("markitai", "mkai", "libmarkitai_ffi.dylib", "libmarkitai_node.dylib", VISION_READER)
+MACOS_MINIMUM = "11.0"
+
+
+def compile_dependencies_once(environment, macos):
+    """Have the workspace build and maturin's wheel agree on each dependency's
+    features and flags, as it otherwise compiles again for the wheel. On macOS maturin
+    adds these flags to every crate's. The package tests run the programs so linked,
+    and the release workflow links them strictly.
+    """
+    environment["CARGO_RESOLVER_FEATURE_UNIFICATION"] = "workspace"
+    if macos:
+        environment["CARGO_ENCODED_RUSTFLAGS"] += "\x1f" + "\x1f".join(
+            ["-C", "link-arg=-undefined", "-C", "link-arg=dynamic_lookup"])
+
+
+def release_overrides(environment):
+    """The workflow's overrides of the release profile, for the evidence."""
+    prefix = "CARGO_PROFILE_RELEASE_"
+    return {key.removeprefix(prefix).lower(): value for key, value in sorted(environment.items())
+            if key.startswith(prefix)}
+
+
+def build_bundle(root, target, output):
+    """Build on an arm64 Mac what an Intel Mac installs and tests with `--prebuilt`.
+
+    An Intel runner is half as fast, so it builds nothing, as in the release
+    workflow's `smoke-intel`. Nothing built here runs here.
+    """
+    environment = apply_path_remap(dict(os.environ, PYO3_PYTHON=sys.executable), root)
+    environment.setdefault("MACOSX_DEPLOYMENT_TARGET", MACOS_MINIMUM)
+    compile_dependencies_once(environment, target.endswith("-apple-darwin"))
+    deadline = time.monotonic() + BUNDLE_BUILD_MINUTES * 60
+    wheels = output / "wheel"
+    wheels.mkdir()
+    steps = []
+
+    def run(name, command, cwd):
+        log = output / "logs" / f"{len(steps):02}-{name}.log"
+
+        def progress(event, **fields):
+            print(json.dumps({"stage": name, "event": event, **fields}, ensure_ascii=True), flush=True)
+
+        started = time.monotonic()
+        result = run_logged([str(value) for value in command], cwd=cwd, env=environment, log=log,
+                            timeout=max(.1, deadline - time.monotonic()), progress=progress)
+        duration = time.monotonic() - started
+        progress("completed", duration_seconds=duration, exit_code=result.returncode)
+        steps.append({"name": name, "exit_code": result.returncode, "duration_seconds": duration,
+                      "log": str(log.relative_to(output))})
+        if result.returncode:
+            raise RuntimeError(f"{name} failed; inspect {log}")
+        return log.read_text(encoding="utf-8", errors="replace")
+
+    record = {"schema": 1, "target": target, "steps": steps, "status": "running",
+              "release_overrides": release_overrides(environment),
+              "macos_minimum": environment["MACOSX_DEPLOYMENT_TARGET"]}
+    try:
+        record["source_revision"] = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+        record["compiler"] = run("compiler", ["rustc", "-vV"], root)
+        run("build", ["cargo", "build", "--workspace", "--release", "--locked",
+                      "--features", "pyo3/extension-module", "--target", target], root)
+        run("python-wheel", ["maturin", "build", "--release", "--locked", "--target", target, "--out", wheels,
+                             "--interpreter", sys.executable], root / "bindings/python")
+        built = list(wheels.glob("*.whl"))
+        if len(built) != 1:
+            raise RuntimeError(f"Expected one wheel, found {len(built)}")
+        products = Path(environment.get("CARGO_TARGET_DIR", root / "target")) / target / "release"
+        members = {f"release/{name}": products / name for name in BUNDLE_PROGRAMS}
+        members[f"wheel/{built[0].name}"] = built[0]
+        record["files"] = {name: identity(path) for name, path in members.items()}
+        manifest = output / "manifest.json"
+        manifest.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+        with tarfile.open(output / BUNDLE, "w:gz", compresslevel=1) as bundle:
+            bundle.add(manifest, arcname="manifest.json")
+            for name, path in members.items():
+                bundle.add(path, arcname=name)
+        shutil.rmtree(wheels)
+        record["status"] = "passed"
+    except Exception as error:
+        record["status"] = "failed"
+        record["error"] = str(error)
+    (output / "evidence.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+    print(json.dumps({"status": record["status"], "evidence": str(output / "evidence.json")}))
+    return 0 if record["status"] == "passed" else 1
+
+
+def install_bundle(bundle, directory, release, host, revision):
+    """Unpack a `build_bundle` for this host and this commit, with the bytes it
+    recorded, into the directory a native build writes. Returns its manifest and wheel."""
+    directory.mkdir()
+    with tarfile.open(bundle) as archive:
+        archive.extractall(directory, filter="data")
+    manifest = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
+    if manifest.get("target") != host:
+        raise RuntimeError(f"The bundle is for {manifest.get('target')}, not {host}")
+    if manifest.get("source_revision") != revision:
+        raise RuntimeError(f"The bundle is of {manifest.get('source_revision')}, not {revision}")
+    for name, expected in manifest["files"].items():
+        if identity(directory / name) != expected:
+            raise RuntimeError(f"The bundle's {name} differs from what its build recorded")
+    wheels = list((directory / "wheel").glob("*.whl"))
+    if len(wheels) != 1:
+        raise RuntimeError(f"Expected one wheel in the bundle, found {len(wheels)}")
+    release.mkdir(parents=True, exist_ok=True)
+    for name in BUNDLE_PROGRAMS:
+        shutil.copy2(directory / "release" / name, release / name)
+    return manifest, wheels[0]
 
 
 def pinned_maturin(pyproject):
@@ -423,9 +538,6 @@ def _sbom_without_local_paths(data, root, environ=None, home=None, windows=None)
     return re.sub(r"path\+file://(/[^\"#\s]*)", shorten, data)
 
 
-VISION_READER = "markitai-vision-reader"
-
-
 def check_vision_reader(installed, built, environment):
     """An installed reader is the one built, can be run, and goes when its stdin closes."""
     if identity(installed) != identity(built):
@@ -642,13 +754,20 @@ def extract_single_binary_tar(archive_path, destination, binary, licenses, docum
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--expected-host", required=True)
+    parser.add_argument("--expected-host", help="Build (or take from --prebuilt), install and test for this host")
+    parser.add_argument("--build-for", help="Only build a bundle for this other target")
+    parser.add_argument("--prebuilt", type=Path, help="A bundle from --build-for to install and test instead of building")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
+    if bool(args.expected_host) == bool(args.build_for) or (args.prebuilt and args.build_for):
+        parser.error("Give --expected-host, with or without --prebuilt, or --build-for")
     root = Path(__file__).resolve().parents[1]
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
     (output / "logs").mkdir()
+    if args.build_for:
+        return build_bundle(root, args.build_for, output)
+    prebuilt = args.prebuilt.resolve() if args.prebuilt else None
     local = root / ".local"
     local.mkdir(exist_ok=True)
     work = Path(tempfile.mkdtemp(prefix="ci-packages-", dir=local))
@@ -669,6 +788,7 @@ def main():
     # Every cargo build below (workspace, the static-CRT CLI, maturin's wheel)
     # inherits this, so none ships local build paths.
     apply_path_remap(environment, root)
+    compile_dependencies_once(environment, sys.platform == "darwin")
     for key in ["PYTHONPATH", "PYTHONHOME", "NODE_PATH", "NODE_OPTIONS"]:
         environment.pop(key, None)
     environment["MARKITAI_TEST_NUMBERS_FIXTURES"] = str(root / "crates/markitai-core/src/formats/numbers/fixtures")
@@ -684,7 +804,8 @@ def main():
     if target.resolve() != (root / "target").resolve():
         raise SystemExit("Native package validation currently requires CARGO_TARGET_DIR=target for Go/cgo")
     release = target / "release"
-    budget, compiling_limit, other_limit = time_limits(args.expected_host)
+    budget, compiling_limit, other_limit = (
+        (BUNDLE_TEST_MINUTES, BUNDLE_TEST_MINUTES, BUNDLE_TEST_MINUTES) if prebuilt else time_limits())
     deadline = time.monotonic() + budget * 60
     record = {
         "schema": 1,
@@ -697,8 +818,11 @@ def main():
         "work_directory": str(work),
         "steps": [],
         "artifacts": {},
+        "release_overrides": release_overrides(os.environ),
         "limitations": ["No signing, publishing or other-host result is implied."],
     }
+    if release_overrides(os.environ):
+        record["limitations"].append("Not the shipped optimization: the release workflow builds and exercises that.")
 
     def git(*arguments):
         return subprocess.check_output(["git", *arguments], cwd=root, text=True).strip()
@@ -773,13 +897,17 @@ def main():
             raise RuntimeError(f"Expected {args.expected_host}, rustc reports {host}")
         # Windows extensions retain their normal CRT policy. Build standalone
         # CLIs separately so +crt-static cannot affect DLLs or proc-macros.
-        # Only maturin's wheel is installed and accepted below; the workspace
-        # Python library would be an unused prebuild before maturin's build.
+        # Only maturin's wheel is installed and accepted below. The workspace's
+        # Python library and its feature are there for the dependencies they share.
         workspace_build = ["cargo", "build", "--workspace", "--release", "--locked",
-                           "--exclude", "markitai-python"]
+                           "--features", "pyo3/extension-module"]
         if host in WINDOWS_TARGETS:
             workspace_build.extend(["--exclude", "markitai-cli"])
-        run("build", workspace_build)
+        if prebuilt:
+            record["prebuilt"], prebuilt_wheel = install_bundle(
+                prebuilt, work / "prebuilt", release, host, record["source_revision"])
+        else:
+            run("build", workspace_build)
         cli_release = release
         if host in WINDOWS_TARGETS:
             command, cli_environment, cli_release = windows_cli_build(root, host, environment)
@@ -912,15 +1040,18 @@ def main():
         wheels.mkdir()
         raw_wheels = wheels / "original"
         raw_wheels.mkdir()
-        pinned = pinned_maturin((root / "bindings/python/pyproject.toml").read_text(encoding="utf-8"))
-        maturin = shutil.which("maturin")
-        if not maturin:
-            raise RuntimeError(f"Install maturin=={pinned} before package validation")
-        found = run("maturin-version", [maturin, "--version"]).split()
-        if found[-1:] != [pinned]:
-            raise RuntimeError(f"The release wheel is built with maturin {pinned}, not {' '.join(found)}")
-        run("python-wheel", [maturin, "build", "--release", "--locked", "--out", raw_wheels,
-                             "--interpreter", sys.executable], cwd=root / "bindings/python")
+        if prebuilt:
+            shutil.copy2(prebuilt_wheel, raw_wheels / prebuilt_wheel.name)
+        else:
+            pinned = pinned_maturin((root / "bindings/python/pyproject.toml").read_text(encoding="utf-8"))
+            maturin = shutil.which("maturin")
+            if not maturin:
+                raise RuntimeError(f"Install maturin=={pinned} before package validation")
+            found = run("maturin-version", [maturin, "--version"]).split()
+            if found[-1:] != [pinned]:
+                raise RuntimeError(f"The release wheel is built with maturin {pinned}, not {' '.join(found)}")
+            run("python-wheel", [maturin, "build", "--release", "--locked", "--out", raw_wheels,
+                                 "--interpreter", sys.executable], cwd=root / "bindings/python")
         record["source_after_wheel_build"] = snapshot()
         if record["source_before"] != record["source_after_wheel_build"]:
             raise RuntimeError("Source bytes changed during the wheel build")
@@ -986,7 +1117,7 @@ print(json.dumps({'module': markitai.__file__, 'prefix': sys.prefix, 'licenses':
         else:
             run("go-tests", ["go", "test", "-race", "./..."], cwd=root / "bindings/go")
             record["go"] = "source_package_race_tests_passed"
-        metadata = json.loads(run("cargo-metadata", ["cargo", "metadata", "--locked", "--format-version", "1"]))
+        metadata = json.loads(run("cargo-metadata", ["cargo", "metadata", "--quiet", "--locked", "--format-version", "1"]))
         licenses = [{key: package.get(key) for key in ["name", "version", "license", "license_file", "source"]}
                     for package in metadata["packages"]]
         inventory = output / "dependency-licenses.json"

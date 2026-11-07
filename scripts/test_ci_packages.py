@@ -21,7 +21,8 @@ import zipfile
 
 from ci_packages import (apply_path_remap, _sbom_without_local_paths, npm_command, packed_filename, source_snapshot, stage_node_licenses, supplement_wheel_licenses,
                          verify_node_licenses, write_cli_zip, extract_cli_zip, doctor_probe, mcp_probe, identity, package_attribution,
-                         write_single_binary_tar, extract_single_binary_tar, windows_cli_build, time_limits, main, pinned_maturin)
+                         write_single_binary_tar, extract_single_binary_tar, windows_cli_build, time_limits, main, pinned_maturin,
+                         install_bundle, BUNDLE, BUNDLE_BUILD_MINUTES, BUNDLE_PROGRAMS, BUNDLE_TEST_MINUTES)
 from cli_documentation import DOCUMENTATION_PATHS
 import bounded_run
 
@@ -77,15 +78,138 @@ class PackageValidationTests(unittest.TestCase):
 
     def test_a_lane_outlasts_its_budget_to_retain_the_evidence(self):
         workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/native.yml").read_text(encoding="utf-8")
-        intel, others = re.search(
-            r"timeout-minutes: \$\{\{ matrix\.os == 'macos-15-intel' && matrix\.lane == 'packages' "
-            r"&& (\d+) \|\| (\d+) \}\}", workflow).groups()
-        for host, lane in (("x86_64-apple-darwin", intel), ("aarch64-apple-darwin", others),
-                           ("x86_64-unknown-linux-gnu", others), ("x86_64-pc-windows-msvc", others)):
-            budget, compiling, other = time_limits(host)
-            self.assertGreater(int(lane), budget, host)
-            self.assertGreater(budget, compiling, host)
-            self.assertGreater(compiling, other, host)
+
+        def timeout(job):
+            return int(re.search(rf"^  {job}:\n(?:(?!^  \S).*\n)*?    timeout-minutes: (\d+)$", workflow, re.M).group(1))
+
+        budget, compiling, other = time_limits()
+        self.assertGreater(timeout("native"), budget)
+        self.assertGreater(budget, compiling)
+        self.assertGreater(compiling, other)
+        self.assertGreater(timeout("intel-bundle"), BUNDLE_BUILD_MINUTES)
+        self.assertGreater(timeout("intel-packages"), BUNDLE_TEST_MINUTES)
+
+    def bundle(self, *, target="x86_64-apple-darwin", revision="authored-source-revision", changed=None):
+        """A bundle as `--build-for` writes it, of synthetic bytes."""
+        source = self.root / "bundle-source"
+        (source / "release").mkdir(parents=True)
+        (source / "wheel").mkdir()
+        members = {f"release/{name}": f"bytes of {name}".encode() for name in BUNDLE_PROGRAMS}
+        members["wheel/markitai-1-cp310-abi3-macosx_11_0_x86_64.whl"] = b"wheel bytes"
+        files = {}
+        for name, content in members.items():
+            (source / name).write_bytes(content)
+            (source / name).chmod(0o755)
+            files[name] = identity(source / name)
+        (source / "manifest.json").write_text(json.dumps(
+            {"target": target, "source_revision": revision, "files": files}), encoding="utf-8")
+        if changed:
+            (source / changed).write_bytes(b"other bytes")
+        path = self.root / BUNDLE
+        with tarfile.open(path, "w:gz") as archive:
+            for name in ["manifest.json", *members]:
+                archive.add(source / name, arcname=name)
+        return path
+
+    def test_a_bundle_lands_where_a_native_build_writes_and_stays_executable(self):
+        release = self.root / "target/release"
+        manifest, wheel = install_bundle(self.bundle(), self.root / "unpacked", release,
+                                         "x86_64-apple-darwin", "authored-source-revision")
+        self.assertEqual(manifest["target"], "x86_64-apple-darwin")
+        self.assertEqual(wheel.read_bytes(), b"wheel bytes")
+        for name in BUNDLE_PROGRAMS:
+            self.assertEqual((release / name).read_bytes(), f"bytes of {name}".encode())
+            self.assertTrue((release / name).stat().st_mode & 0o100, name)
+
+    def test_a_bundle_of_another_target_commit_or_bytes_is_refused(self):
+        host, revision = "x86_64-apple-darwin", "authored-source-revision"
+        for arguments, message in (({"target": "aarch64-apple-darwin"}, "aarch64-apple-darwin"),
+                                   ({"revision": "another-revision"}, "another-revision"),
+                                   ({"changed": "release/markitai"}, "release/markitai")):
+            with self.subTest(arguments), self.assertRaisesRegex(RuntimeError, message):
+                install_bundle(self.bundle(**arguments), self.root / "unpacked", self.root / "release", host, revision)
+            shutil.rmtree(self.root / "bundle-source")
+            shutil.rmtree(self.root / "unpacked")
+
+    def test_building_a_bundle_cross_compiles_and_records_what_it_holds(self):
+        output = self.root / "bundle-output"
+        target = "x86_64-apple-darwin"
+        root = Path(__file__).resolve().parents[1]
+        products = self.root / "cargo-target"
+        calls = []
+        environments = []
+
+        def run(command, **kwargs):
+            calls.append(command)
+            environments.append(kwargs["env"])
+            if command[0] == "cargo":
+                (products / target / "release").mkdir(parents=True)
+                for name in BUNDLE_PROGRAMS:
+                    (products / target / "release" / name).write_bytes(name.encode())
+            if command[0] == "maturin":
+                Path(command[command.index("--out") + 1], "m-1-cp310-abi3-macosx_11_0_x86_64.whl").write_bytes(b"wheel")
+            kwargs["log"].write_bytes(b"")
+            return subprocess.CompletedProcess(command, 0)
+
+        with (patch("ci_packages.sys.argv", ["ci_packages.py", "--build-for", target, "--output", str(output)]),
+              patch.dict(os.environ, {"HOME": str(self.root), "CARGO_TARGET_DIR": str(products),
+                                      "CARGO_PROFILE_RELEASE_LTO": "off"}, clear=True),
+              patch("ci_packages.subprocess.check_output", return_value="authored-source-revision\n"),
+              patch("ci_packages.run_logged", side_effect=run),
+              patch("ci_packages.print")):
+            self.assertEqual(main(), 0)
+        cargo = next(command for command in calls if command[0] == "cargo")
+        maturin = next(command for command in calls if command[0] == "maturin")
+        self.assertEqual(cargo[cargo.index("--target") + 1], target)
+        self.assertEqual(maturin[maturin.index("--target") + 1], target)
+        # The wheel's features and maturin's flags in both, so that dependencies compile once.
+        self.assertEqual(cargo[cargo.index("--features") + 1], "pyo3/extension-module")
+        self.assertNotIn("--exclude", cargo)
+        self.assertEqual(environments[1], environments[2])
+        self.assertEqual(environments[1]["CARGO_RESOLVER_FEATURE_UNIFICATION"], "workspace")
+        self.assertEqual(environments[1]["CARGO_ENCODED_RUSTFLAGS"].split("\x1f")[-4:],
+                         ["-C", "link-arg=-undefined", "-C", "link-arg=dynamic_lookup"])
+        release = self.root / "installed/release"
+        manifest, wheel = install_bundle(output / BUNDLE, self.root / "installed-unpacked", release, target,
+                                         "authored-source-revision")
+        self.assertEqual(manifest["release_overrides"], {"lto": "off"})
+        self.assertEqual(manifest["macos_minimum"], "11.0")
+        self.assertEqual(wheel.read_bytes(), b"wheel")
+        self.assertEqual({path.name for path in release.iterdir()}, set(BUNDLE_PROGRAMS))
+        self.assertEqual(json.loads((output / "evidence.json").read_text())["status"], "passed")
+
+    def test_with_a_bundle_nothing_is_compiled_on_the_intel_mac(self):
+        host = "x86_64-apple-darwin"
+        output = self.root / "native-output"
+        calls = []
+
+        def check_output(command, **kwargs):
+            if command[1] == "ls-files":
+                return b""
+            return "" if command[1] == "status" else "authored-source-revision"
+
+        def run(command, **kwargs):
+            calls.append(command)
+            kwargs["log"].write_text(f"host: {host}\n" if command[0] == "rustc" else "")
+            return subprocess.CompletedProcess(command, 0)
+
+        bundle = self.bundle()
+        with (patch("ci_packages.sys.argv", ["ci_packages.py", "--expected-host", host, "--prebuilt", str(bundle),
+                                             "--output", str(output)]),
+              patch("ci_packages.sys.platform", "darwin"),
+              patch.dict(os.environ, {"HOME": str(self.root)}, clear=True),
+              patch("ci_packages.subprocess.check_output", side_effect=check_output),
+              patch("ci_packages.run_logged", side_effect=run),
+              patch("ci_packages.package_attribution", return_value={}),
+              patch("ci_packages.platform.platform", return_value="test-platform"),
+              patch("ci_packages.shutil.copy2"),
+              patch("ci_packages.print"),
+              patch("ci_packages.verify_target_executable", side_effect=RuntimeError("stop before execution"))):
+            self.assertEqual(main(), 1)
+        self.assertEqual([command[0] for command in calls], ["rustc"])
+        record = json.loads((output / "evidence.json").read_text())
+        self.assertEqual(record["error"], "stop before execution")
+        self.assertEqual(record["prebuilt"]["target"], host)
 
     def test_the_wheel_and_ci_pin_one_exact_maturin(self):
         root = Path(__file__).resolve().parents[1]
@@ -196,7 +320,8 @@ class PackageValidationTests(unittest.TestCase):
         builds = [(command, env) for command, env in calls if command[0] == "cargo"]
         self.assertEqual(len(builds), 2)
         binding_command, binding_environment = builds[0]
-        self.assertEqual(binding_command[-4:], ["--exclude", "markitai-python", "--exclude", "markitai-cli"])
+        self.assertEqual(binding_command[-4:], ["--features", "pyo3/extension-module", "--exclude", "markitai-cli"])
+        self.assertEqual(binding_environment["CARGO_RESOLVER_FEATURE_UNIFICATION"], "workspace")
         # The original flags come first, then the rules that keep build paths
         # out of shipped files; RUSTFLAGS moves into the encoded form.
         remap = expected_remap(self.root, root)

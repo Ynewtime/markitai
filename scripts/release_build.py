@@ -42,7 +42,7 @@ import tarfile
 import tempfile
 import zipfile
 
-from ci_packages import (VISION_READER, apply_path_remap, cli_attribution, doctor_probe, identity, mcp_probe,
+from ci_packages import (MACOS_MINIMUM, VISION_READER, apply_path_remap, cli_attribution, doctor_probe, identity, mcp_probe,
                          package_attribution, pinned_maturin, supplement_wheel_licenses,
                          windows_cli_build, write_cli_zip, write_single_binary_tar)
 from cli_documentation import cli_documentation
@@ -60,7 +60,6 @@ TARGETS = {
 }
 # The oldest glibc the Linux builds (in the manylinux_2_28 image) may require.
 GLIBC_FLOOR = (2, 28)
-MACOS_MINIMUM = "11.0"
 # Targets a release builds on another host: the x86_64 macOS archive and wheel
 # are cross-compiled on the arm64 runners (same profile and minimum macOS),
 # which are much faster, and release.yml exercises them on an Intel Mac.
