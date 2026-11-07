@@ -330,3 +330,4 @@ removes what they installed and keeps `~/.markitai`. setup.ps1 runs in a script
 block of its own, so `irm | iex` leaves the user's session as it was.
 `MARKITAI_DOWNLOAD_URL` points them at another releases base, which
 `scripts/test_setup_scripts.py` uses with a local fake release.
+
