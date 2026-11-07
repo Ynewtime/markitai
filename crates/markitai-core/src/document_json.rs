@@ -682,3 +682,4 @@ pub(crate) fn plain_text(markdown: &str) -> String {
 
 #[cfg(test)]
 mod tests;
+
