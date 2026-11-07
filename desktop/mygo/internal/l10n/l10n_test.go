@@ -92,13 +92,15 @@ func TestErrorKeys(t *testing.T) {
 		sentence string
 		second   Action
 	}{
-		"not_found":          {"error.not_found", RemoveItem},
-		"image_only":         {"error.image_only", OpenSettings},
-		"config_error":       {"error.config_error", OpenConfig},
-		"fetch_error":        {"error.fetch_error", NoAction},
-		"internal_error":     {"error.internal", NoAction},
-		"something_new":      {"error.unknown", NoAction},
-		"output_unavailable": {"error.output_unavailable", OpenSettings},
+		"not_found":              {"error.not_found", RemoveItem},
+		"image_only":             {"error.image_only", OpenSettings},
+		"config_error":           {"error.config_error", OpenConfig},
+		"fetch_error":            {"error.fetch_error", NoAction},
+		"internal_error":         {"error.internal", NoAction},
+		"something_new":          {"error.unknown", NoAction},
+		"output_unavailable":     {"error.output_unavailable", OpenSettings},
+		"conversion_error":       {"error.conversion_error", NoAction},
+		"text_recognition_error": {"error.text_recognition_error", NoAction},
 	} {
 		s, a := ErrorKey(code)
 		if s != want.sentence || a != want.second {

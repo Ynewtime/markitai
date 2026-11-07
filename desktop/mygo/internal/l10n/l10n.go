@@ -168,20 +168,21 @@ var errors = map[string]struct {
 	sentence string
 	second   Action
 }{
-	"not_found":           {"error.not_found", RemoveItem},
-	"is_directory":        {"error.is_directory", RemoveItem},
-	"no_model_configured": {"error.no_model_configured", OpenSettings},
-	"invalid_input":       {"error.invalid_input", NoAction},
-	"unsupported":         {"error.unsupported", RemoveItem},
-	"conversion_error":    {"error.conversion_error", NoAction},
-	"fetch_error":         {"error.fetch_error", NoAction},
-	"config_error":        {"error.config_error", OpenConfig},
-	"io_error":            {"error.io_error", OpenSettings},
-	"output_unavailable":  {"error.output_unavailable", OpenSettings},
-	"image_only":          {"error.image_only", OpenSettings},
-	"skipped":             {"error.skipped", NoAction},
-	"invalid_json":        {"error.internal", NoAction},
-	"internal_error":      {"error.internal", NoAction},
+	"not_found":              {"error.not_found", RemoveItem},
+	"is_directory":           {"error.is_directory", RemoveItem},
+	"no_model_configured":    {"error.no_model_configured", OpenSettings},
+	"invalid_input":          {"error.invalid_input", NoAction},
+	"unsupported":            {"error.unsupported", RemoveItem},
+	"conversion_error":       {"error.conversion_error", NoAction},
+	"text_recognition_error": {"error.text_recognition_error", NoAction},
+	"fetch_error":            {"error.fetch_error", NoAction},
+	"config_error":           {"error.config_error", OpenConfig},
+	"io_error":               {"error.io_error", OpenSettings},
+	"output_unavailable":     {"error.output_unavailable", OpenSettings},
+	"image_only":             {"error.image_only", OpenSettings},
+	"skipped":                {"error.skipped", NoAction},
+	"invalid_json":           {"error.internal", NoAction},
+	"internal_error":         {"error.internal", NoAction},
 }
 
 // ErrorKey maps an error code to its sentence key and second button. Any

@@ -18,6 +18,7 @@ pub fn error_copy(code: &str) -> (&'static str, Option<Second>) {
         "invalid_input" => ("error.invalid_input", None),
         "unsupported" => ("error.unsupported", Some(Remove)),
         "conversion_error" => ("error.conversion_error", None),
+        "text_recognition_error" => ("error.text_recognition_error", None),
         "fetch_error" => ("error.fetch_error", None),
         "config_error" => ("error.config_error", Some(OpenConfig)),
         "io_error" => ("error.io_error", Some(OpenSettings)),
@@ -40,13 +41,14 @@ pub fn second_key(second: Second) -> &'static str {
 
 /// Every code the table names.
 #[cfg(test)]
-pub const CODES: [&str; 15] = [
+pub const CODES: [&str; 16] = [
     "not_found",
     "is_directory",
     "no_model_configured",
     "invalid_input",
     "unsupported",
     "conversion_error",
+    "text_recognition_error",
     "fetch_error",
     "config_error",
     "io_error",
@@ -76,6 +78,11 @@ mod tests {
             }
         }
         assert_eq!(error_copy("something_new").0, "error.unknown");
+        assert_eq!(
+            error_copy("text_recognition_error").0,
+            "error.text_recognition_error"
+        );
+        assert_eq!(error_copy("conversion_error").0, "error.conversion_error");
         assert_eq!(error_copy("invalid_json").0, "error.internal");
     }
 }

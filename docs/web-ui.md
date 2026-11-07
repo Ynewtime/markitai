@@ -605,7 +605,8 @@ at once, and after the release host's rate limit the ↻ waits until the time it
   language: an API error's `reason`, then a settings conflict's `detail.code`,
   then the status-derived `code`; a failed item's `error_code` or a recognizable
   message shape (HTTP statuses, refused connections, timeouts, model refusals,
-  missing OCR, size limits). The service's full wording stays behind Details.
+  missing OCR, failed text recognition, size limits). The service's full wording
+  stays behind Details.
   Provider probe and discovery phrases are translated the same way. A job whose
   history could not be saved (`persistence_error`) reports it in the page.
 - **A failed action on one conversion** (Retry, Delete, Download, Copy;

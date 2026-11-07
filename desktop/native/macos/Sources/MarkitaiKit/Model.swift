@@ -213,6 +213,7 @@ public struct ErrorSentence: Equatable {
         case "invalid_input": return .init(key: "error.invalid_input", action: nil)
         case "unsupported": return .init(key: "error.unsupported", action: .remove)
         case "conversion_error": return .init(key: "error.conversion_error", action: nil)
+        case "text_recognition_error": return .init(key: "error.text_recognition_error", action: nil)
         case "fetch_error": return .init(key: "error.fetch_error", action: nil)
         case "config_error": return .init(key: "error.config_error", action: .openConfiguration)
         case "io_error": return .init(key: "error.io_error", action: .openSettings)

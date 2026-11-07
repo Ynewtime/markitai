@@ -12,6 +12,12 @@ pub(super) use crate::images::MAX_PIXELS;
 const MAX_DECODED: u64 = 256 * 1024 * 1024;
 const MAX_ENCODED: usize = 128 * 1024 * 1024;
 
+/// An image that cannot be prepared as given: the file's failure, not that of reading
+/// its text.
+fn unreadable(message: &str) -> crate::Error {
+    crate::Error::Conversion(format!("Local OCR: {message}"))
+}
+
 pub(super) struct Prepared {
     pub png: Vec<u8>,
     pub width: u32,
@@ -47,14 +53,14 @@ pub(super) fn prepare(bytes: &[u8]) -> Result<Prepared> {
 /// composited over white.
 pub(super) fn upright(bytes: &[u8]) -> Result<RgbImage> {
     if bytes.is_empty() || bytes.len() > MAX_INPUT {
-        return Err(failure("image input is empty or exceeds 64 MiB"));
+        return Err(unreadable("image input is empty or exceeds 64 MiB"));
     }
     let mut reader = ImageReader::new(ImageBytes::new(bytes))
         .with_guessed_format()
-        .map_err(|_| failure("cannot identify image encoding"))?;
+        .map_err(|_| unreadable("cannot identify image encoding"))?;
     if reader.format() == Some(ImageFormat::Tiff) {
         let tiff = tiff::decoder::Decoder::new(ImageBytes::new(bytes))
-            .map_err(|_| failure("cannot decode TIFF image"))?;
+            .map_err(|_| unreadable("cannot decode TIFF image"))?;
         if tiff.more_images() {
             return Err(crate::Error::Unsupported(
                 "Local OCR of multi-page TIFF images is not implemented".into(),
@@ -68,16 +74,16 @@ pub(super) fn upright(bytes: &[u8]) -> Result<RgbImage> {
     reader.limits(limits);
     let mut decoder = reader
         .into_decoder()
-        .map_err(|_| failure("cannot decode image"))?;
+        .map_err(|_| unreadable("cannot decode image"))?;
     let (width, height) = decoder.dimensions();
     if width == 0 || height == 0 || u64::from(width) * u64::from(height) > MAX_PIXELS {
-        return Err(failure("decoded image exceeds 32 million pixels"));
+        return Err(unreadable("decoded image exceeds 32 million pixels"));
     }
     let orientation = decoder
         .orientation()
-        .map_err(|_| failure("cannot read image orientation"))?;
-    let mut image =
-        DynamicImage::from_decoder(decoder).map_err(|_| failure("cannot decode image pixels"))?;
+        .map_err(|_| unreadable("cannot read image orientation"))?;
+    let mut image = DynamicImage::from_decoder(decoder)
+        .map_err(|_| unreadable("cannot decode image pixels"))?;
     image.apply_orientation(orientation);
     let rgb = if image.color().has_alpha() {
         let rgba = image.into_rgba8();
@@ -104,14 +110,14 @@ pub(super) fn check_rgb(rgb: &RgbImage) -> Result<()> {
 fn validate_rgb_layout(width: u32, height: u32, bytes: usize) -> Result<()> {
     let pixels = u64::from(width) * u64::from(height);
     if width == 0 || height == 0 || pixels > MAX_PIXELS {
-        return Err(failure("decoded image exceeds 32 million pixels"));
+        return Err(unreadable("decoded image exceeds 32 million pixels"));
     }
     let expected = pixels
         .checked_mul(3)
         .and_then(|length| usize::try_from(length).ok())
-        .ok_or_else(|| failure("RGB image byte length overflow"))?;
+        .ok_or_else(|| unreadable("RGB image byte length overflow"))?;
     if bytes != expected {
-        return Err(failure(
+        return Err(unreadable(
             "RGB image byte length does not match its dimensions",
         ));
     }
@@ -131,7 +137,7 @@ pub(super) fn prepare_rgb(rgb: RgbImage) -> Result<Prepared> {
         image::codecs::png::FilterType::Adaptive,
     )
     .write_image(rgb.as_raw(), width, height, image::ExtendedColorType::Rgb8)
-    .map_err(|_| failure("cannot prepare bounded OCR image"))?;
+    .map_err(|_| unreadable("cannot prepare bounded OCR image"))?;
     Ok(Prepared {
         png: png.0,
         width,
@@ -283,7 +289,11 @@ mod tests {
     #[test]
     fn malformed_and_oversized_images_fail_before_pixel_allocation() {
         assert!(prepare(&[]).is_err());
-        assert!(prepare(b"no image").is_err());
+        // The file's failure, not one of reading its text.
+        assert!(matches!(
+            prepare(b"no image"),
+            Err(crate::Error::Conversion(_))
+        ));
         let mut header = vec![0u8; 54];
         header[..2].copy_from_slice(b"BM");
         header[10..14].copy_from_slice(&54u32.to_le_bytes());

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -10,8 +11,10 @@ import (
 	"github.com/egoist/mygo/transfer"
 	"github.com/egoist/mygo/ui"
 
+	"markitai.local/mygo/internal/core"
 	"markitai.local/mygo/internal/l10n"
 	"markitai.local/mygo/internal/model"
+	"markitai.local/mygo/internal/testenv"
 )
 
 func TestEmptyConvert(t *testing.T) {
@@ -243,6 +246,78 @@ func TestFailure(t *testing.T) {
 	h.click(h.T("convert.remove"))
 	if h.item("gone.pdf") != nil {
 		t.Error("Remove from List kept the item")
+	}
+}
+
+// visionStopped answers as the core does when every Vision reader has stopped,
+// which takes it minutes for real.
+type visionStopped struct{ coreLib }
+
+func (visionStopped) ConvertJSON(any) (json.RawMessage, error) {
+	return nil, &core.Error{Code: "text_recognition_error", Message: "Local OCR: Vision stopped responding: a text recognition did not finish in up to 6 tries. Run the program again, or read with the portable engine (MARKITAI_OCR_BACKEND=paddle)"}
+}
+
+// damageOCRModels leaves every OCR model in place and damaged: OCR says so and
+// downloads nothing.
+func damageOCRModels(t *testing.T, home string) {
+	t.Helper()
+	data, err := os.ReadFile(testenv.Fixture(t, "crates/markitai-core/src/ocr/paddle/models.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest struct {
+		Models []struct{ Name, SHA256, File string }
+	}
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range manifest.Models {
+		folder := filepath.Join(home, ".markitai", "models", "ocr", m.Name+"-"+m.SHA256[:8])
+		if err := os.MkdirAll(folder, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(folder, m.File), []byte("damaged"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// TestFailureTitles: OCR that cannot read says so in the headline, a document that
+// cannot be converted says that, and neither says the other.
+func TestFailureTitles(t *testing.T) {
+	const recognition, document = "error.text_recognition_error", "error.conversion_error"
+	for _, test := range []struct {
+		name, title, code, key, other string
+		add                           func(h *harness) string
+	}{
+		{"every Vision reader stopped", "scan.png", "text_recognition_error", recognition, document, func(h *harness) string {
+			h.a.core = visionStopped{h.a.core}
+			return h.write("scan.png", "pixels")
+		}},
+		{"damaged OCR models", "english.png", "text_recognition_error", recognition, document, func(h *harness) string {
+			damageOCRModels(h.t, h.home)
+			h.a.settings.OCR = true
+			return h.inHome(pngNoText)
+		}},
+		{"broken document", "broken.docx", "conversion_error", document, recognition, func(h *harness) string {
+			return h.write("broken.docx", "not a zip")
+		}},
+	} {
+		for _, lang := range []l10n.Lang{l10n.En, l10n.ZhHans} {
+			t.Run(test.name+"/"+string(lang), func(t *testing.T) {
+				h := start(t, lang)
+				h.drop(h.T("a11y.drop_zone"), test.add(h))
+				failed := waitState[model.Failed](h, test.title)
+				h.settle()
+				if failed.Code != test.code {
+					t.Fatalf("code %q: %s", failed.Code, failed.Message)
+				}
+				h.wantText(h.T(test.key))
+				h.wantNoText(h.T(test.other))
+				h.wantText(h.T("detail.details"))
+				h.find(test.title + ", " + h.T("row.failed", "reason", h.T(test.key)))
+			})
+		}
 	}
 }
 

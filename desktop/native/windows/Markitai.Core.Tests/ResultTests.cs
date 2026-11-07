@@ -78,6 +78,7 @@ public sealed class ResultTests
     [InlineData("invalid_input", "Markitai couldn't read this input.", ErrorAction.None)]
     [InlineData("unsupported", "Markitai can't convert this kind of file.", ErrorAction.Remove)]
     [InlineData("conversion_error", "The document couldn't be converted. Check that it opens in its own app.", ErrorAction.None)]
+    [InlineData("text_recognition_error", "Text recognition (OCR) failed. Retry, and check the details if it happens again.", ErrorAction.None)]
     [InlineData("fetch_error", "Couldn't download this page. Check the address and your internet connection.", ErrorAction.None)]
     [InlineData("config_error", "Your markitai configuration has a problem.", ErrorAction.OpenConfiguration)]
     [InlineData("io_error", "Markitai couldn't read or write a file. Check that the output folder exists, can be written and has free space.", ErrorAction.OpenSettings)]

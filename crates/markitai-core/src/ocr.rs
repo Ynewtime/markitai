@@ -850,7 +850,7 @@ struct Line {
 }
 
 fn failure(message: &str) -> Error {
-    Error::Conversion(format!("Local OCR: {message}"))
+    Error::TextRecognition(format!("Local OCR: {message}"))
 }
 
 /// The spelling of `ocr.lang` after case, surrounding whitespace and
@@ -2642,7 +2642,7 @@ pub(crate) mod tests {
             "{reported}"
         );
         let translated = recognition_failure(None, true);
-        assert!(matches!(translated, Error::Conversion(_)));
+        assert!(matches!(translated, Error::TextRecognition(_)));
         let translated = translated.to_string();
         assert!(translated.starts_with("Local OCR: "), "{translated}");
         for part in [ROSETTA, "without an error", "x86_64", "native arm64 build"] {
@@ -3906,7 +3906,7 @@ pub(crate) mod tests {
     #[cfg(target_os = "macos")]
     pub(crate) fn vision_unavailable_under_rosetta<T>(result: &Result<T>) -> bool {
         let unavailable = crate::system_frameworks::translated()
-            && matches!(result, Err(Error::Conversion(message)) if message.contains(ROSETTA));
+            && matches!(result, Err(Error::TextRecognition(message)) if message.contains(ROSETTA));
         if let (true, Err(error)) = (unavailable, result) {
             eprintln!("skipping recognized-text assertions: {error}");
         }

@@ -55,19 +55,17 @@ pub unsafe fn prepare_environment(request: &str) -> String {
 }
 
 /// Convert as `markitai_convert_json` does (docs/bindings.md, "Shared
-/// contract"), except for an image with no text to extract (neither AI nor
-/// OCR on): it fails with the code `image_only`, which the CLI reports as that
-/// skip reason, rather than `conversion_error`, and a message without the
-/// Python binding's argument names. Blocks until the conversion ends.
+/// contract"), except for two failures that are `conversion_error` there. An
+/// image with no text to extract (neither AI nor OCR on) fails with the code
+/// `image_only`, which the CLI reports as that skip reason, and a message
+/// without the Python binding's argument names. Local OCR that could not read
+/// fails with `text_recognition_error`. Blocks until the conversion ends.
 pub fn convert_json(request: &str) -> String {
     let image_only = std::cell::Cell::new(false);
     let response = catch_unwind(AssertUnwindSafe(|| {
-        markitai_core::convert_json_as(request, |failure| match failure.error {
-            markitai_core::Error::ImageOnly(_) => {
-                image_only.set(true);
-                "image_only"
-            }
-            _ => failure.code(),
+        markitai_core::convert_json_as(request, |failure| {
+            image_only.set(matches!(failure.error, markitai_core::Error::ImageOnly(_)));
+            code_of(failure)
         })
     }))
     .unwrap_or_else(|_| markitai_core::internal_error_json());
@@ -86,6 +84,15 @@ pub fn convert_json(request: &str) -> String {
     let message = format!("{name} is an image file with no text to extract.");
     json!({"ok": false, "error": {"code": "image_only", "message": message.trim_start()}})
         .to_string()
+}
+
+/// The code the apps word a failed conversion by (desktop/DESIGN.md, section 9).
+fn code_of(failure: &markitai_core::ConversionFailure) -> &'static str {
+    match failure.error {
+        markitai_core::Error::ImageOnly(_) => "image_only",
+        markitai_core::Error::TextRecognition(_) => "text_recognition_error",
+        _ => failure.code(),
+    }
 }
 
 /// `{"markdown", "theme": "light" | "dark", "base_dir", "files_url"}`:
@@ -523,6 +530,24 @@ mod tests {
         let missing = json!({"source": dir.path().join("gone.png"), "options": {"config": {}}});
         let response = call(markitai_app_convert_json, &missing.to_string());
         assert_eq!(response["error"]["code"], "not_found", "{response}");
+    }
+
+    /// Vision with every reader stopped is what its message says, and so is any
+    /// other failure of the kind; a document that cannot be converted stays that,
+    /// whatever its message mentions.
+    #[test]
+    fn the_code_follows_the_kind_of_failure_and_not_its_message() {
+        use markitai_core::{ConversionFailure, Error};
+        const STOPPED: &str = "Local OCR: Vision stopped responding: a text recognition did not \
+                               finish in up to 6 tries.";
+        let code = |error: Error| code_of(&ConversionFailure::from(error));
+        assert_eq!(
+            code(Error::TextRecognition(STOPPED.into())),
+            "text_recognition_error"
+        );
+        assert_eq!(code(Error::Conversion(STOPPED.into())), "conversion_error");
+        assert_eq!(code(Error::ImageOnly("x".into())), "image_only");
+        assert_eq!(code(Error::Unsupported("x".into())), "unsupported");
     }
 
     #[test]

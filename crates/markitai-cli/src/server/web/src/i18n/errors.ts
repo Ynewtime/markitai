@@ -111,6 +111,7 @@ const en = {
     "A local OCR model could not be downloaded. Check the service computer's network and proxy, then run markitai doctor --fix or follow the original error's verified manual-download instructions.",
   errOcrModelPreparation:
     "Local OCR model preparation failed. Run markitai doctor on the service computer and inspect the original error before retrying.",
+  errOcrFailed: "Text recognition (OCR) failed. Retry, and check the details if it happens again.",
   errUnsupported: "This conversion is not supported here.",
   errFetch: "Could not fetch this page.",
   errConversion: "The document could not be converted. Check that the original file opens correctly, then review the error details.",
@@ -383,9 +384,8 @@ const modelHttp = (match: RegExpExecArray): [MessageKey, Values] => [
 const OCR_MODEL_MISSING = /^Local OCR needs the model [\s\S]+, which is not installed: /;
 const OCR_MODEL_DOWNLOAD = /^Local OCR download of [\s\S]+ failed \(/;
 
-/** First match wins: specific shapes precede general ones. */
-const ITEM_SHAPES: Shape[] = [
-  [/^No model configured\b/, () => ["errNoModel"]],
+/** Local OCR that cannot run as it is set up: each names its own way out, which a retry alone is not. */
+const OCR_SETUP_SHAPES: Shape[] = [
   [
     /^MARKITAI_OCR_BACKEND=vision selects macOS Vision, which needs macOS 11 or later; unset it or choose paddle$/,
     () => ["errOcrVisionSelection"],
@@ -403,6 +403,27 @@ const ITEM_SHAPES: Shape[] = [
   ],
   [/^Local OCR models: /, () => ["errOcrModelPreparation"]],
   [/^Local OCR (?:requires|of multi-page)|^PDF OCR is not implemented/, () => ["errOcrUnavailable"]],
+];
+
+// A reading that failed. An image the core turns down as given (damaged, or over a
+// limit) opens the same way, but that is the file's failure, not one of reading its
+// text, so those go on to the shapes and codes after this one.
+const OCR_READING_FAILED =
+  /^Local OCR: (?!image input is empty or exceeds |cannot identify image encoding$|cannot decode (?:TIFF )?image$|cannot decode image pixels$|decoded image exceeds |cannot read image orientation$|RGB image byte length |cannot prepare bounded OCR image$)/;
+
+/** First match wins: specific shapes precede general ones. */
+const ITEM_SHAPES: Shape[] = [
+  [/^No model configured\b/, () => ["errNoModel"]],
+  ...OCR_SETUP_SHAPES,
+  [OCR_READING_FAILED, () => ["errOcrFailed"]],
+  // A scanned page's failure quotes its cause, whatever the reader said.
+  [
+    /^PDF page media: local OCR failed on page \d+: ([\s\S]*)$/,
+    ([, cause]) => picked(cause ?? "", OCR_SETUP_SHAPES) ?? ["errOcrFailed"],
+  ],
+  // Python markitai's scanned pages, verbatim. Its single image reports only the
+  // reader's own exception, which no shape can tell from another failure.
+  [/^Conversion failed: OCRError: OCR failed /, () => ["errOcrFailed"]],
   // The core may name the provider's error type after the status and ends a
   // request failure with the deployment that failed.
   [/^LLM returned HTTP (\d{3})\b(?: \([^()]*\))?(?:: (.+?))?(?: \(deployment [^()]*\))?$/, modelHttp],
@@ -460,15 +481,17 @@ const PERSISTENCE: Record<string, MessageKey> = {
   "item deletion rollback failed; restart to recover": "errRollback",
 };
 
-function shaped(locale: Locale, text: string, shapes: Shape[], kind?: string): Described | null {
+function picked(text: string, shapes: Shape[], kind?: string): [MessageKey, Values?] | null {
   for (const [pattern, pick] of shapes) {
     const match = pattern.exec(text);
-    if (match) {
-      const [key, values] = pick(match, kind);
-      return { text: message(locale, key, values), detail: text };
-    }
+    if (match) return pick(match, kind);
   }
   return null;
+}
+
+function shaped(locale: Locale, text: string, shapes: Shape[], kind?: string): Described | null {
+  const found = picked(text, shapes, kind);
+  return found && { text: message(locale, found[0], found[1]), detail: text };
 }
 
 /** Every key the tables can produce, for the dictionary tests. */

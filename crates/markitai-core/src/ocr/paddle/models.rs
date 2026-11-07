@@ -115,7 +115,7 @@ pub(crate) fn defaults() -> impl Iterator<Item = &'static Model> {
 }
 
 fn failure(message: &str) -> Error {
-    Error::Conversion(format!("Local OCR models: {message}"))
+    Error::TextRecognition(format!("Local OCR models: {message}"))
 }
 
 /// Where models live.

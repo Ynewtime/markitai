@@ -37,6 +37,18 @@ struct CoreStateTests {
         return (workbench, workbench.items)
     }
 
+    /// Every OCR model in place and damaged: OCR says so and downloads nothing.
+    func damageOCRModels() throws {
+        let manifest = URL(fileURLWithPath: Repository.fixture("crates/markitai-core/src/ocr/paddle/models.json"))
+        let object = try JSONSerialization.jsonObject(with: Data(contentsOf: manifest)) as? [String: Any]
+        for model in try #require(object?["models"] as? [[String: Any]]) {
+            let name = try #require(model["name"] as? String), digest = try #require(model["sha256"] as? String), file = try #require(model["file"] as? String)
+            let folder = markitaiHome.appendingPathComponent("models/ocr/\(name)-\(digest.prefix(8))")
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try Data("damaged".utf8).write(to: folder.appendingPathComponent(file))
+        }
+    }
+
     func folders() -> [String] {
         ((try? FileManager.default.contentsOfDirectory(atPath: output.path)) ?? []).filter { !$0.hasPrefix(".") }.sorted()
     }
@@ -94,7 +106,7 @@ struct CoreStateTests {
     }
 
     enum Case: String, CaseIterable {
-        case notFound, unsupported, conversionError, fetchError, imageOnly, noModel, configError
+        case notFound, unsupported, conversionError, textRecognition, fetchError, imageOnly, noModel, configError
     }
 
     @Test(arguments: Case.allCases)
@@ -112,6 +124,11 @@ struct CoreStateTests {
         case .conversionError:
             input = .file(try authored("broken.pdf", "%PDF-1.7\nnot really a pdf"))
             expected = "conversion_error"
+        case .textRecognition:
+            try damageOCRModels()
+            input = .file(URL(fileURLWithPath: Repository.fixture("crates/markitai-core/src/ocr/fixtures/english.png")))
+            configure = { $0.configSource = .builtin; $0.ocr = true }
+            expected = "text_recognition_error"
         case .fetchError:
             input = .web("http://127.0.0.1:9/page")
             expected = "fetch_error"
@@ -128,7 +145,10 @@ struct CoreStateTests {
             configure = { $0.configSource = .user }
             expected = "config_error"
         }
-        defer { try? FileManager.default.removeItem(at: markitaiHome.appendingPathComponent("config.json")) }
+        defer {
+            try? FileManager.default.removeItem(at: markitaiHome.appendingPathComponent("config.json"))
+            try? FileManager.default.removeItem(at: markitaiHome.appendingPathComponent("models"))
+        }
         let (_, items) = try await convert([input], configure: configure)
         let item = try #require(items.first)
         #expect(item.failure?.code == expected, "\(String(describing: item.state))")
@@ -182,6 +202,25 @@ struct CoreStateTests {
         #expect(failure.code == "invalid_input", "\(failure)")
         #expect(ErrorSentence.of(failure.code).key == "error.invalid_input")
         #expect(folders().isEmpty)
+    }
+
+    /// Vision with every reader stopped takes minutes to fail for real, so this is its
+    /// answer; the sentence follows the code, and a document that cannot be converted
+    /// keeps its own, whatever its message says.
+    @Test func theSentenceFollowsTheCodeOfTheFailure() throws {
+        let folder = output.path
+        let stopped = "Local OCR: Vision stopped responding: a text recognition did not finish in up to 6 tries. Run the program again, or read with the portable engine (MARKITAI_OCR_BACKEND=paddle)"
+        func sentence(_ code: String) -> (String, ErrorAction?)? {
+            guard case .failure(let failure) = Job.parse(.failure(code: code, message: stopped), folder: folder + "/x", outputFolder: folder) else { return nil }
+            #expect(failure.code == code && failure.message == stopped)
+            return (ErrorSentence.text(for: failure), ErrorSentence.of(failure.code).action)
+        }
+        let recognition = try #require(sentence("text_recognition_error"))
+        #expect(recognition.0 == L["error.text_recognition_error"])
+        #expect(recognition.1 == nil)
+        let document = try #require(sentence("conversion_error"))
+        #expect(document.0 == L["error.conversion_error"])
+        #expect(recognition.0 != document.0)
     }
 
     /// Envelopes the core answers only in rare cases still map as section 9 says.
