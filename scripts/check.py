@@ -458,6 +458,7 @@ def main(argv=None):
 
     if options.build_tests:
         archive = Path(options.build_tests).absolute()
+        archive.parent.mkdir(parents=True, exist_ok=True)
         return run_steps([("nextest archive", command(*archive_command(archive, options.target)), None),
                           ("archive manifest", lambda: write_archive_manifest(archive, root, options.target),
                            "nextest archive")])
