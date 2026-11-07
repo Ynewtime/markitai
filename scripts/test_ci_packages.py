@@ -119,7 +119,8 @@ class PackageValidationTests(unittest.TestCase):
         self.assertEqual(wheel.read_bytes(), b"wheel bytes")
         for name in BUNDLE_PROGRAMS:
             self.assertEqual((release / name).read_bytes(), f"bytes of {name}".encode())
-            self.assertTrue((release / name).stat().st_mode & 0o100, name)
+            if os.name == "posix":
+                self.assertTrue((release / name).stat().st_mode & 0o100, name)
 
     def test_a_bundle_of_another_target_commit_or_bytes_is_refused(self):
         host, revision = "x86_64-apple-darwin", "authored-source-revision"
@@ -152,7 +153,7 @@ class PackageValidationTests(unittest.TestCase):
             return subprocess.CompletedProcess(command, 0)
 
         with (patch("ci_packages.sys.argv", ["ci_packages.py", "--build-for", target, "--output", str(output)]),
-              patch.dict(os.environ, {"HOME": str(self.root), "CARGO_TARGET_DIR": str(products),
+              patch.dict(os.environ, {"HOME": str(self.root), "USERPROFILE": str(self.root), "CARGO_TARGET_DIR": str(products),
                                       "CARGO_PROFILE_RELEASE_LTO": "off"}, clear=True),
               patch("ci_packages.subprocess.check_output", return_value="authored-source-revision\n"),
               patch("ci_packages.run_logged", side_effect=run),
@@ -196,13 +197,13 @@ class PackageValidationTests(unittest.TestCase):
         bundle = self.bundle()
         with (patch("ci_packages.sys.argv", ["ci_packages.py", "--expected-host", host, "--prebuilt", str(bundle),
                                              "--output", str(output)]),
+              patch("ci_packages.__file__", str(self.root / "scripts/ci_packages.py")),
               patch("ci_packages.sys.platform", "darwin"),
-              patch.dict(os.environ, {"HOME": str(self.root)}, clear=True),
+              patch.dict(os.environ, {"HOME": str(self.root), "USERPROFILE": str(self.root)}, clear=True),
               patch("ci_packages.subprocess.check_output", side_effect=check_output),
               patch("ci_packages.run_logged", side_effect=run),
               patch("ci_packages.package_attribution", return_value={}),
               patch("ci_packages.platform.platform", return_value="test-platform"),
-              patch("ci_packages.shutil.copy2"),
               patch("ci_packages.print"),
               patch("ci_packages.verify_target_executable", side_effect=RuntimeError("stop before execution"))):
             self.assertEqual(main(), 1)
@@ -210,6 +211,7 @@ class PackageValidationTests(unittest.TestCase):
         record = json.loads((output / "evidence.json").read_text())
         self.assertEqual(record["error"], "stop before execution")
         self.assertEqual(record["prebuilt"]["target"], host)
+        self.assertEqual((self.root / "target/release/markitai").read_bytes(), b"bytes of markitai")
 
     def test_the_wheel_and_ci_pin_one_exact_maturin(self):
         root = Path(__file__).resolve().parents[1]
