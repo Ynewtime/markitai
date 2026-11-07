@@ -66,6 +66,29 @@ falls back to the newest one. Only a passing check saves (a failed cache prune
 skips the save without failing the run); `-f save_cache=true`
 also saves on a branch, for that branch alone (to time a warm run before a merge).
 
+The Intel Mac does not build. Its tests are cross-compiled on an arm64 Mac
+(`intel-build`: `check.py --target x86_64-apple-darwin --build-tests`, a nextest
+archive uploaded with a manifest of its target, commit, size and sha256, with
+a Cargo cache of its own) and run on the Intel Mac in two shards (`intel-test`:
+`check.py --run-tests ... --partition count:N/2`, which refuses an archive of
+another commit or one that changed, reads fixtures from its own checkout, and unpacks the
+archive into it: the integration tests spawn the binary at the `target/` path the build compiled in).
+`intel-build` lints for the x86_64 target after the upload, so the Intel Mac does
+not wait for clippy. Formatting and the helper tests (Python and Node, the same
+on every macOS) run on the arm64 Mac, not on the Intel one. The job names are
+`intel-build` and `intel-test (N)`, not `check (macos-15-intel)`.
+Measured on hosted runners, without waiting for a runner: with the cache about 10
+minutes (build 4, the slower shard 6); with an empty cache about 20 (build 13, shards 6),
+against 12 to 20 and 45 minutes when the Intel Mac built the tests itself. A cache is empty
+only after the dependencies, the toolchain or `vendor/` change.
+
+A push to `main` that changes only Markdown, `website/` and `llms*.txt` runs on
+`ubuntu-24.04` alone (the `plan` job reads the push's changed files): only the
+helper tests that check the guides read them, and they behave the same on every
+platform. No Rust test reads them; `docs/schema/` and `licenses/`, which tests
+read, are not in that set. A push whose changed files cannot be read, or that
+has 300 or more, and every run started by hand or by a release, run every platform.
+
 ## Running package acceptance
 
 From a clean committed checkout, with Rust, Node/npm, Python with venv/pip,
