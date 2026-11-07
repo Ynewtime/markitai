@@ -12,3 +12,4 @@ works, named in website/package.json:
 - Pele (MIT), Copyright (c) 2026 kepano: draws the pages' Mermaid diagrams
   as SVG while the site is built. No Pele code is sent to the browser.
 
+
