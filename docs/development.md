@@ -145,8 +145,9 @@ project without the symlink privilege links its resources with a junction.
 `scripts/test_desktop_web_build.py` runs with the helper tests.
 
 `.github/workflows/desktop-web.yml` builds the Windows app on a hosted
-`windows-2025` runner on a push to `desktop/web/**`, `desktop/icon.png` or
-`scripts/desktop_web_*.py`, or by hand: it builds the CLI archive (cached by
+`windows-2025` runner on a push to `desktop/web/**`, `desktop/icon.png`,
+`scripts/desktop_web_*.py` or the built workbench
+(`crates/markitai-cli/src/server/web/dist/**`), or by hand: it builds the CLI archive (cached by
 the tree it is built from), the e2e build and the installer, runs a full
 `desktop_web_e2e.py` round, installs, launches, closes and uninstalls the app,
 and keeps the evidence and the installer for 7 days.

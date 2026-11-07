@@ -299,6 +299,8 @@ test("a scanned page keeps the way out its cause names", () => {
     ["Local OCR models: cannot stage a download", "errOcrModelPreparation"],
     ["Local OCR requires macOS 11 or later; no local OCR backend is available on this platform", "errOcrUnavailable"],
     ["MARKITAI_OCR_BACKEND must be vision or paddle", "errOcrBackendSetting"],
+    ["ocr.lang is not a language the portable OCR models read (tlh); use en", "errOcrLanguage"],
+    ["ocr.lang is not supported by the installed macOS Vision text recognizer (tlh); it reads en-US", "errOcrLanguage"],
   ];
   for (const [cause, key] of causes) {
     const error = `PDF page media: local OCR failed on page 12: ${cause}`;
@@ -333,7 +335,9 @@ test("an image turned down as given and other conversion failures do not blame t
     ["Conversion failed: OCRError: scan.svg has nothing to render", "errConversion"],
     ["Conversion failed: OCRError: OCR failed for truncated.png: image file is truncated", "errConversion"],
     ["Conversion failed: RuntimeError: boom", "errConversion"],
-    ["Conversion failed: MemoryError: (736, 2016, 3)", "errConversion"],
+    // Nothing is wrong with the file, whichever library ran out.
+    ["Conversion failed: MemoryError: (736, 2016, 3)", "errOutOfMemory"],
+    ["Conversion failed: _ArrayMemoryError: Unable to allocate 4.00 GiB", "errOutOfMemory"],
     // Set up without its OCR extra, as its README's server install is.
     [
       'Conversion failed: --ocr requires the optional OCR backend (RapidOCR), which is not installed. uv tool install "markitai[ocr]" --force',

@@ -86,14 +86,9 @@ pub fn convert_json(request: &str) -> String {
         .to_string()
 }
 
-/// What the core calls `unsupported` when local OCR cannot run: no model, or none for
-/// the language set. Nothing is wrong with the file, which `unsupported` would have
-/// the apps tell the user to remove.
-const OCR_CANNOT_RUN: [&str; 3] = [
-    "Local OCR needs the model ",
-    "Local OCR download of ",
-    "ocr.lang is not ",
-];
+/// What the core calls `unsupported` when local OCR has no model to run with. Nothing is
+/// wrong with the file, which `unsupported` would have the apps tell the user to remove.
+const OCR_CANNOT_RUN: [&str; 2] = ["Local OCR needs the model ", "Local OCR download of "];
 
 /// The code the apps word a failed conversion by (desktop/DESIGN.md, section 9).
 fn code_of(failure: &markitai_core::ConversionFailure) -> &'static str {

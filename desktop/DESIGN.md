@@ -277,9 +277,11 @@ Running an item:
    `skip_reason` is Failed with code `skipped`. An error envelope is Failed with
    its `code` and `message`; `markitai-app` answers `image_only` for an image
    with no text when neither AI nor OCR is on, and `text_recognition_error` when
-   local OCR cannot read what it was given, cannot use or download its models, or
-   has none for `ocr.lang` (the core's bindings say `conversion_error` for what it
-   cannot read and `unsupported` for models it cannot get).
+   local OCR cannot read what it was given or cannot use or download its models
+   (the core's bindings say `conversion_error` for what it cannot read and
+   `unsupported` for models it cannot get). An `ocr.lang` the engine has no models
+   for is `config_error`: retrying does not change it, and the configuration file
+   is where the user fixes it.
 5. On Failed, delete the claimed folder and everything in it. The app created
    that folder for this item a moment earlier, and nothing else writes there.
 6. On Done, add a History entry (4.4) and announce `a11y.done`. On Failed,

@@ -12,6 +12,8 @@ on:
     paths:
       - 'desktop/web/**'
       - 'desktop/icon.png'
+      # The workbench the app shows, which its e2e round drives.
+      - 'crates/markitai-cli/src/server/web/dist/**'
       - 'scripts/desktop_web_*.py'
       - 'scripts/test_desktop_web_build.py'
       - '.github/workflows/desktop-web.yml'

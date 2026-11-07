@@ -1428,7 +1428,7 @@ mod tests {
         assert_eq!(json(&ready)["fixable"], json!(false));
         let wrong = portable_ocr_check(
             "tract",
-            Err(markitai_core::Error::Unsupported(
+            Err(markitai_core::Error::Config(
                 "ocr.lang is not a language the portable OCR models read (xx)".into(),
             )),
         );
@@ -1554,7 +1554,7 @@ mod tests {
         }
         seen.push(portable_ocr_check(
             "tract",
-            Err(markitai_core::Error::Unsupported(
+            Err(markitai_core::Error::Config(
                 "ocr.lang is not a language the portable OCR models read (xx)".into(),
             )),
         ));

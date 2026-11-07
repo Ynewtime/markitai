@@ -810,11 +810,13 @@ fn apply_page(
     let result = recognition
         .join()
         .unwrap_or_else(|_| Err(failure("a recognition thread failed")))
-        .map_err(|error| {
-            Error::TextRecognition(format!(
+        .map_err(|error| match error {
+            // A setting no reading can satisfy is not this page's failure.
+            Error::Config(_) => error,
+            error => Error::TextRecognition(format!(
                 "PDF page media: local OCR failed on page {}: {error}",
                 page.number
-            ))
+            )),
         })?;
     if result.unread {
         pages
@@ -1969,6 +1971,20 @@ mod tests {
             "PDF page media: local OCR failed on page 1: Local OCR: Vision stopped responding"
         );
         assert_eq!(error.code(), "conversion_error");
+    }
+
+    #[test]
+    fn a_language_no_engine_reads_stays_a_configuration_error_on_a_page() {
+        let recognize = |_: RgbImage, _: &Value| -> Result<ocr::OcrResult> {
+            Err(Error::Config("ocr.lang is not a language".into()))
+        };
+        let cfg = json!({"ocr":{"enabled":true},"llm":{"enabled":false}});
+        let prepared = prepare_with(&scans(1), "s.pdf", &cfg, false, &recognize, &no_lines);
+        let Err(error) = prepared else {
+            panic!("the page was read");
+        };
+        assert_eq!(error.code(), "config_error");
+        assert_eq!(error.to_string(), "ocr.lang is not a language");
     }
 
     #[test]

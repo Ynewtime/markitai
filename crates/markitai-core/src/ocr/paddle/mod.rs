@@ -876,7 +876,7 @@ pub(super) fn choice(spelling: &str) -> Result<Choice> {
         _ => None,
     }
     .ok_or_else(|| {
-        crate::Error::Unsupported(format!(
+        crate::Error::Config(format!(
             "ocr.lang is not a language the portable OCR models read ({spelling}); use en (the \
              default: Latin script, Chinese and Japanese, then Korean), zh, zh_tw, ja, ko, ar, th, \
              el, ru, latin, cyrillic, devanagari, ta, te, or a code such as fr, de or es"
@@ -1581,7 +1581,7 @@ mod tests {
         }
         for unknown in ["he", "xx", "auto", "-en", "klingon-x"] {
             let error = choice(unknown).unwrap_err();
-            assert!(matches!(error, crate::Error::Unsupported(_)), "{unknown}");
+            assert!(matches!(error, crate::Error::Config(_)), "{unknown}");
             assert!(error.to_string().contains("zh_tw"), "{error}");
         }
         assert_eq!(needed("en").unwrap().len(), 4);

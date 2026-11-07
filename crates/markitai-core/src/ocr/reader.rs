@@ -246,6 +246,10 @@ fn encode(id: u64, read: &Result<OcrResult>) -> Vec<u8> {
             out.push(2);
             put_string(&mut out, message);
         }
+        Err(Error::Config(message)) => {
+            out.push(3);
+            put_string(&mut out, message);
+        }
         Err(error) => {
             out.push(2);
             put_string(&mut out, &error.to_string());
@@ -290,6 +294,7 @@ fn decode(input: &mut impl Read) -> Option<(u64, Reply)> {
             Reply::Lines(scale, language, unread[0] != 0, lines)
         }
         1 => Reply::Failed(Error::Unsupported(string_of(input)?)),
+        3 => Reply::Failed(Error::Config(string_of(input)?)),
         _ => Reply::Failed(Error::TextRecognition(string_of(input)?)),
     };
     Some((id, reply))
@@ -751,6 +756,11 @@ mod tests {
         let (_, reply) = decode(&mut unsupported.as_slice()).unwrap();
         assert!(
             matches!(reply, Reply::Failed(Error::Unsupported(message)) if message == "no language")
+        );
+        let setting = encode(3, &Err(Error::Config("ocr.lang is not".into())));
+        let (_, reply) = decode(&mut setting.as_slice()).unwrap();
+        assert!(
+            matches!(reply, Reply::Failed(Error::Config(message)) if message == "ocr.lang is not")
         );
         let other = encode(2, &Err(Error::TextRecognition("not read".into())));
         let (_, reply) = decode(&mut other.as_slice()).unwrap();

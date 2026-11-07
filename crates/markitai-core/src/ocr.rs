@@ -925,7 +925,7 @@ fn supported_language(requested: &str, supported: &[String]) -> Result<String> {
             return Ok(regional.clone());
         }
     }
-    Err(Error::Unsupported(format!(
+    Err(Error::Config(format!(
         "ocr.lang is not supported by the installed macOS Vision text recognizer ({requested}); \
          it reads {}",
         supported.join(", ")
@@ -3928,7 +3928,7 @@ pub(crate) mod tests {
                     include_bytes!("ocr/fixtures/english.png"),
                     &json!({"ocr":{"lang":"not-a-language"}})
                 ),
-                Err(Error::Unsupported(_))
+                Err(Error::Config(_))
             ));
         };
         if vision_unavailable_under_rosetta(&result) {

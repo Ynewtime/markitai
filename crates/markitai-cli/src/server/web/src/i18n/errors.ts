@@ -112,9 +112,12 @@ const en = {
   errOcrModelPreparation:
     "Local OCR model preparation failed. Run markitai doctor on the service computer and inspect the original error before retrying.",
   errOcrFailed: "Text recognition (OCR) failed. Retry, and check the details if it happens again.",
+  errOcrLanguage:
+    "The OCR language set for this conversion is not available on the service computer. Choose another language in the conversion options, or change ocr.lang in the configuration, then convert again.",
   errUnsupported: "This conversion is not supported here.",
   errFetch: "Could not fetch this page.",
   errConversion: "The document could not be converted. Check that the original file opens correctly, then review the error details.",
+  errOutOfMemory: "There was not enough memory to convert this file. Close other apps or try a smaller file, then retry.",
   errInvalidInput: "The input was not accepted.",
   errConfig: "The service configuration does not allow this conversion.",
   errIo: "The service could not read or write a file.",
@@ -391,6 +394,7 @@ const OCR_SETUP_SHAPES: Shape[] = [
     () => ["errOcrVisionSelection"],
   ],
   [/^MARKITAI_OCR_BACKEND must be vision or paddle$/, () => ["errOcrBackendSetting"]],
+  [/^ocr\.lang is not /, () => ["errOcrLanguage"]],
   [OCR_MODEL_MISSING, () => ["errOcrModelMissing"]],
   [OCR_MODEL_DOWNLOAD, () => ["errOcrModelDownload"]],
   [
@@ -426,6 +430,7 @@ const ITEM_SHAPES: Shape[] = [
   // shorter cause arrives alone: the engine's own says so, and others no shape can tell
   // from another failure.
   [/^Conversion failed: --ocr requires the optional OCR backend/, () => ["errOcrUnavailable"]],
+  [/^Conversion failed: \w*MemoryError\b/, () => ["errOutOfMemory"]],
   [/^Conversion failed: OCRError: OCR failed (?!for [\s\S]*: image file is truncated$)/, () => ["errOcrFailed"]],
   [/^Conversion failed: \w+: \[ONNXRuntimeError\]/, () => ["errOcrFailed"]],
   // The core may name the provider's error type after the status and ends a
