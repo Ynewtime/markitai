@@ -5,10 +5,17 @@ tests. `check.py --quick` runs only what the files changed since the branch
 left main (committed or not) can affect: the Rust tests of the changed crates
 and of the crates that depend on them (with nextest; `cargo test` runs them
 all), clippy when any crate changed, and the helper tests (which take seconds). Use the full gate before a merge or a release.
+
+A platform that is slow to build splits the gate across machines (docs/ci.md#checks):
+`--target T --build-tests FILE` cross-builds the Rust tests into a nextest archive on a
+fast machine, `--target T --lint` runs clippy for that target there, and
+`--run-tests FILE [--partition count:1/2]` runs the archive on the platform under test,
+after checking that it is the archive of this commit.
 """
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import argparse
+import hashlib
 import io
 import json
 import os
@@ -316,6 +323,60 @@ def test_command(packages, nextest, environment):
             *test_skips(environment)]
 
 
+def archive_command(archive, target):
+    """Build every test binary of the workspace for `target` into a nextest archive."""
+    return ["cargo", "nextest", "archive", "--workspace", "--locked", "--target", target,
+            "--archive-file", str(archive)]
+
+
+def archive_run_command(archive, root, partition, environment):
+    """Run the tests of an archive against the sources in `root` (fixtures are read from them), or one
+    `partition` ("count:1/2") of them."""
+    return ["cargo", "nextest", "run", "--archive-file", str(archive), "--workspace-remap", str(root),
+            "--no-fail-fast", *(["--partition", partition] if partition else []), *test_skips(environment)]
+
+
+def manifest_path(archive):
+    return archive.with_name(archive.name + ".json")
+
+
+def head_commit(root):
+    return subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, text=True,
+                          check=True).stdout.strip()
+
+
+def file_digest(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as stream:
+        for block in iter(lambda: stream.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def write_archive_manifest(archive, root, target):
+    """Record what the archive is next to it: its target, the commit it was built from, its size and digest."""
+    manifest = {"target": target, "commit": head_commit(root), "bytes": archive.stat().st_size,
+                "sha256": file_digest(archive)}
+    manifest_path(archive).write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    print(f"check.py: {archive.name}: {manifest['bytes']} bytes, sha256 {manifest['sha256'][:12]}, "
+          f"commit {manifest['commit'][:12]}, target {target}", flush=True)
+    return 0
+
+
+def verify_archive(archive, root):
+    """Why `archive` is not this commit's archive, or None: a missing or altered file, another commit."""
+    if not archive.is_file() or not manifest_path(archive).is_file():
+        return f"{archive} or its {manifest_path(archive).name} is missing"
+    manifest = json.loads(manifest_path(archive).read_text(encoding="utf-8"))
+    if manifest.get("commit") != head_commit(root):
+        return f"{archive.name} was built from {str(manifest.get('commit'))[:12]}, this is {head_commit(root)[:12]}"
+    if manifest.get("bytes") != archive.stat().st_size or manifest.get("sha256") != file_digest(archive):
+        return f"{archive.name} differs from the file that was built (size or sha256)"
+    print(f"check.py: {archive.name} is the {manifest.get('target')} archive of commit {manifest['commit'][:12]}",
+          flush=True)
+    return None
+
+
 def merge_base(root, base):
     for candidate in ([base] if base else ["origin/main", "main"]):
         found = subprocess.run(["git", "merge-base", "HEAD", candidate], cwd=root, capture_output=True, text=True)
@@ -367,7 +428,19 @@ def main(argv=None):
     parser.add_argument("--quick", action="store_true",
                         help="only what the files changed since the branch left main can affect")
     parser.add_argument("--base", help="with --quick: compare with the merge base of HEAD and BASE (default origin/main)")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--build-tests", metavar="FILE", help="build the Rust tests for --target into a nextest archive")
+    mode.add_argument("--lint", action="store_true", help="run only clippy, for --target")
+    mode.add_argument("--run-tests", metavar="FILE", help="run only the Rust tests of the archive FILE")
+    parser.add_argument("--target", help="the Rust target of --build-tests and --lint")
+    parser.add_argument("--partition", help="with --run-tests: nextest's partition, such as count:1/2")
     options = parser.parse_args(argv)
+    if (options.build_tests or options.lint) and not options.target:
+        parser.error("--build-tests and --lint need --target")
+    if options.partition and not options.run_tests:
+        parser.error("--partition needs --run-tests")
+    if options.quick and (options.build_tests or options.lint or options.run_tests):
+        parser.error("--quick runs the whole gate on this machine")
     root = Path(__file__).resolve().parents[1]
     local = root / ".local"
     environment = isolated_env(local / "test-user-home", local / "test-home")
@@ -383,6 +456,22 @@ def main(argv=None):
             return result.returncode
         return action
 
+    if options.build_tests:
+        archive = Path(options.build_tests).absolute()
+        return run_steps([("nextest archive", command(*archive_command(archive, options.target)), None),
+                          ("archive manifest", lambda: write_archive_manifest(archive, root, options.target),
+                           "nextest archive")])
+    if options.lint:
+        return run_steps([("cargo clippy", command("cargo", "clippy", "--workspace", "--all-targets", "--locked",
+                                                   "--target", options.target, "--", "-D", "warnings"), None)])
+    if options.run_tests:
+        archive = Path(options.run_tests).absolute()
+        problem = verify_archive(archive, root)
+        if problem:
+            print(f"check.py: {problem}", file=sys.stderr)
+            return 1
+        return run_steps([("cargo nextest", command(*archive_run_command(archive, root, options.partition,
+                                                                          environment)), None)])
     rust, tested = True, None
     if options.quick:
         files = changed_files(root, options.base)

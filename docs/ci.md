@@ -53,6 +53,17 @@ falls back to the newest one. Only a passing check saves (a failed cache prune
 skips the save without failing the run); `-f save_cache=true`
 also saves on a branch, for that branch alone (to time a warm run before a merge).
 
+The Intel Mac does not build. Its tests are cross-compiled on an arm64 Mac
+(`intel-build`: `check.py --target x86_64-apple-darwin --build-tests`, a nextest
+archive uploaded with a manifest of its target, commit, size and sha256, with
+a Cargo cache of its own) and run on the Intel Mac in two shards (`intel-test`:
+`check.py --run-tests ... --partition count:N/2`, which refuses an archive of
+another commit or one that changed, and reads fixtures from its own checkout).
+`intel-build` lints for the x86_64 target after the upload, so the Intel Mac does
+not wait for clippy. Formatting and the helper tests (Python and Node, the same
+on every macOS) run on the arm64 Mac, not on the Intel one. The job names are
+`intel-build` and `intel-test (N)`, not `check (macos-15-intel)`.
+
 ## Running package acceptance
 
 From a clean committed checkout, with Rust, Node/npm, Python with venv/pip,
