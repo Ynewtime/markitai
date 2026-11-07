@@ -301,6 +301,7 @@ test("a scanned page keeps the way out its cause names", () => {
     ["MARKITAI_OCR_BACKEND must be vision or paddle", "errOcrBackendSetting"],
     ["ocr.lang is not a language the portable OCR models read (tlh); use en", "errOcrLanguage"],
     ["ocr.lang is not supported by the installed macOS Vision text recognizer (tlh); it reads en-US", "errOcrLanguage"],
+    ["Conversion failed: OCRLanguageError: Unsupported ocr.lang 'xx': use en, zh", "errOcrLanguage"],
   ];
   for (const [cause, key] of causes) {
     const error = `PDF page media: local OCR failed on page 12: ${cause}`;

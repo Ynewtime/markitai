@@ -144,11 +144,12 @@ above were recorded on macOS 27). Set the language (`ocr.lang: ja`, or
 opt-in (`MARKITAI_OCR_BACKEND=vision` or the fallback); the default portable
 engine does not use Vision's language detection.
 
-Known issue: on macOS 15, Vision may join numbers in neighbouring columns of a
-table. Where macOS 27 reads `苹果 12 3.50`, macOS 15.7 returned `苹果 123.50`, with
-no candidate that separated them, and enlarging the image did not help. The
-default portable engine does not read through Vision: prefer it for tables on
-macOS 15, and check amounts Vision read there.
+Known issue: local OCR may join neighbouring cells of a table row. On one scan
+whose rows read `苹果 12 3.50` and `香蕉 30 1.20`, the portable engine returned
+`香蕉 301.20` and joined the header's words, and Vision on macOS 15.7 returned
+`苹果 123.50`, with no candidate that separated them (Vision on macOS 27 read
+both rows right). Enlarging the image did not help Vision. Check numbers read
+from tables.
 
 When the default engine falls back to Vision and Vision has no such language
 (`el`, say), the failure is still the download's: the setting is valid for the
@@ -333,7 +334,7 @@ A verified file is not a recognition-accuracy test. The four model states are:
 
 | State | Ordinary OCR | `doctor --fix` |
 | --- | --- | --- |
-| Missing | Downloads the model when needed; an offline error gives its URL, size, digest and manual path. | Installs it without overwriting a file that appeared meanwhile. |
+| Missing | Downloads the model when needed; an offline error gives its URL, size, digest and manual path, one model at a time; a file placed by hand must be private to this user. | Installs it without overwriting a file that appeared meanwhile. |
 | Ready | Verifies bytes when loading the model; graphs are reused within the process. | Keeps it. |
 | Corrupt | Does not overwrite it; required-model failures name `doctor --fix`. | Can replace a safe damaged managed file after verifying the new size and digest. |
 | Unsafe | Rejects an unsafe path in the selected model set before loading or downloading. | Refuses it and names the path reason before downloading. |

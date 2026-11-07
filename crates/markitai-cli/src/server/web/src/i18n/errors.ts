@@ -386,7 +386,8 @@ const modelHttp = (match: RegExpExecArray): [MessageKey, Values] => [
 // Share the exact shapes with localization so retryability cannot drift from the message.
 const OCR_MODEL_MISSING = /^Local OCR needs the model [\s\S]+, which is not installed: /;
 const OCR_MODEL_DOWNLOAD = /^Local OCR download of [\s\S]+ failed \(/;
-const OCR_LANGUAGE = /^ocr\.lang is not /;
+// In this server's words and in Python markitai's.
+const OCR_LANGUAGE = /^(?:ocr\.lang is not |Conversion failed: OCRLanguageError: )/;
 
 /** Local OCR that cannot run as it is set up: each names its own way out, which a retry alone is not. */
 const OCR_SETUP_SHAPES: Shape[] = [

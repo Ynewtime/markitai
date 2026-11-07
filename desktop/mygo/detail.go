@@ -229,32 +229,37 @@ func (a *app) footer(c *ui.Context, d model.Done) {
 }
 
 // failure is the error block of section 12: the sentence, Retry and the
-// code's second button, then the raw message.
+// code's second button, then the raw message, which can be taller than the
+// window. Its end names the path of a manual download.
 func (a *app) failure(c *ui.Context, t *target, f model.Failed) {
 	l := &a.look
-	ui.Text(c, a.sentence(f))
-	_, second := l10n.ErrorKey(f.Code)
-	ui.Row(c).Gap(8).Children(func() {
-		if ui.Button(c.Key("detail.retry"), a.lang.T("detail.retry")).Clicked() {
-			a.retry(t.id)
-		}
-		if second == l10n.NoAction {
-			return
-		}
-		label := a.lang.T(string(second), "settings", a.lang.T("nav.settings"))
-		if ui.Button(c.Key("detail.second"), label).Clicked() {
-			switch second {
-			case l10n.RemoveItem:
-				a.remove(t.id)
-			case l10n.OpenSettings:
-				a.show(pathSettings)
-			case l10n.OpenConfig:
-				a.openConfig()
-			}
-		}
-	})
-	ui.Text(c, a.lang.T("detail.details")).FontSize(l.b - 2).TextColor(l.theme.TextMuted)
-	ui.Column(c).Radius(12).Background(l.theme.Surface).Padding(12, 16).Children(func() {
-		ui.Text(c, f.Message).Font("monospace").FontSize(l.b - 1).Selectable()
+	ui.Scroll(c.Key("detail.failure")).Grow(1).Basis(0).Children(func() {
+		ui.Column(c).Gap(16).AlignItems(ui.Stretch).Children(func() {
+			ui.Text(c, a.sentence(f))
+			_, second := l10n.ErrorKey(f.Code)
+			ui.Row(c).Gap(8).Children(func() {
+				if ui.Button(c.Key("detail.retry"), a.lang.T("detail.retry")).Clicked() {
+					a.retry(t.id)
+				}
+				if second == l10n.NoAction {
+					return
+				}
+				label := a.lang.T(string(second), "settings", a.lang.T("nav.settings"))
+				if ui.Button(c.Key("detail.second"), label).Clicked() {
+					switch second {
+					case l10n.RemoveItem:
+						a.remove(t.id)
+					case l10n.OpenSettings:
+						a.show(pathSettings)
+					case l10n.OpenConfig:
+						a.openConfig()
+					}
+				}
+			})
+			ui.Text(c, a.lang.T("detail.details")).FontSize(l.b - 2).TextColor(l.theme.TextMuted)
+			ui.Column(c).Radius(12).Background(l.theme.Surface).Padding(12, 16).Children(func() {
+				ui.Text(c, f.Message).Font("monospace").FontSize(l.b - 1).Selectable()
+			})
+		})
 	})
 }

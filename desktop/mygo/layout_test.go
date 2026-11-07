@@ -196,6 +196,26 @@ func TestLongFailureMessageFits(t *testing.T) {
 	}
 }
 
+// TestLongFailureMessageScrolls: in a short window the end of a raw message,
+// which names the path of a manual download, can still be read.
+func TestLongFailureMessageScrolls(t *testing.T) {
+	h := start(t, l10n.En)
+	h.convert(h.write("a.md", "# A\n"))
+	message := strings.Repeat("Local OCR download of ppocrv6-det-small failed; ", 16) + "to /tmp/home/models/ocr/det.onnx"
+	h.item("a.md").State = model.Failed{Code: "text_recognition_error", Message: message}
+	h.tt.SetSize(960, 480)
+	h.rest()
+	before := h.find(message)
+	h.scrollToEnd(message)
+	after := h.find(message)
+	if after.Y >= before.Y {
+		t.Errorf("the message stayed at %v", after.Y)
+	}
+	if end := after.Y + after.H; end > 480 {
+		t.Errorf("the message ends at %v in a window 480 high", end)
+	}
+}
+
 // TestEmptyConvertFits keeps the empty page's drop zone 560 wide, or as
 // wide as the room, centered (DESIGN 6.2), and all of it in the smallest
 // content, 640 by 480, without scrolling (section 6.10).

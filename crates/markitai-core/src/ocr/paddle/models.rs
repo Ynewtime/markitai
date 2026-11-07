@@ -322,7 +322,7 @@ fn present_in(root: &Path, model: &Model) -> bool {
 fn remedy(root: &Path, model: &Model) -> String {
     format!(
         "run `markitai doctor --fix` where the network is reachable, or download {} \
-         (SHA-256 {}, {} bytes) to {}",
+         (SHA-256 {}, {} bytes) to {}, private to this user",
         model.url,
         model.sha256,
         model.bytes,
