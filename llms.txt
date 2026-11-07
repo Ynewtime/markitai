@@ -18,3 +18,4 @@ requests or use credentials. Use the caller's authorized inputs and settings.
 - [CLI](docs/cli.md): options, configuration precedence, errors and structured output.
 - [MCP](docs/mcp.md): stdio tools, schemas, temporary outputs and asynchronous batches.
 - [Documentation index](docs/index.md): full repository topics; only selected guides are copied into archives.
+
