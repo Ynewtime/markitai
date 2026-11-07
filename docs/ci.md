@@ -64,12 +64,12 @@ not wait for clippy. Formatting and the helper tests (Python and Node, the same
 on every macOS) run on the arm64 Mac, not on the Intel one. The job names are
 `intel-build` and `intel-test (N)`, not `check (macos-15-intel)`.
 
-A push to `main` that changes only Markdown, `website/` and `llms*.txt` skips the
-Intel Mac (the `plan` job reads the push's changed files; no Rust test reads
-them, while `docs/schema/` and `licenses/`, which tests read, are not in that set).
-The other five platforms still run, so the helper tests that check the guides
-do too. A push whose changed files cannot be read, or that has 300 or more,
-runs the Intel Mac; so does every run started by hand or by a release.
+A push to `main` that changes only Markdown, `website/` and `llms*.txt` runs on
+`ubuntu-24.04` alone (the `plan` job reads the push's changed files): only the
+helper tests that check the guides read them, and they behave the same on every
+platform. No Rust test reads them; `docs/schema/` and `licenses/`, which tests
+read, are not in that set. A push whose changed files cannot be read, or that
+has 300 or more, and every run started by hand or by a release, run every platform.
 
 ## Running package acceptance
 

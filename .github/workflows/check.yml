@@ -73,16 +73,17 @@ jobs:
           elif [ "$EVENT" = pull_request ]; then list='["macos-15", "ubuntu-24.04", "ubuntu-24.04-arm", "windows-2025", "windows-11-arm"]'
           else list='["macos-15", "macos-15-intel", "ubuntu-24.04", "ubuntu-24.04-arm", "windows-2025", "windows-11-arm"]'
           fi
-          # A push to main that changes only Markdown (guides, changelogs) and the
-          # website skips the Intel Mac: no Rust test reads them (they read docs/schema
-          # and licenses/, which stay in scope). Every other platform still runs, so the
-          # helper tests that check the guides do too. Any doubt runs it.
+          # A push to main that changes only Markdown (guides, changelogs), the
+          # website and llms*.txt runs on one Linux machine: only the helper tests
+          # read those (no Rust test does; they read docs/schema and licenses/,
+          # which stay in scope), and they behave the same everywhere. Any doubt
+          # runs every platform.
           if [ "$EVENT" = push ] && [ -z "$PLATFORMS" ]; then
             if files=$(gh api "repos/$REPO/compare/$BEFORE...$AFTER" --paginate --jq '.files[].filename' 2>/dev/null) \
                 && [ -n "$files" ] && [ "$(wc -l <<<"$files")" -lt 300 ] \
                 && ! grep -qvE '\.md$|^website/|^llms(-full)?\.txt$' <<<"$files"; then
-              echo "Only documentation changed: no Intel Mac run"
-              list=$(jq -c 'map(select(. != "macos-15-intel"))' <<<"$list")
+              echo "Only documentation changed: Linux only"
+              list='["ubuntu-24.04"]'
             fi
           fi
           {
