@@ -85,8 +85,9 @@ only after the dependencies, the toolchain or `vendor/` change.
 A push to `main` that changes only Markdown, `website/` and `llms*.txt` runs on
 `ubuntu-24.04` alone (the `plan` job reads the push's changed files): only the
 helper tests that check the guides read them, and they behave the same on every
-platform. `docs/schema/`, `licenses/` and anything under a `fixtures/` directory,
-which Rust tests read, are not in that set. A push whose changed files cannot be
+platform. Files that Rust tests read are not in that set: the JSON under
+`docs/schema/` and `licenses/pricing/`, and anything under a `fixtures/`
+directory, Markdown included. A push whose changed files cannot be
 read, or that has 300 or more, and every run started by hand or by a release,
 run every platform.
 
