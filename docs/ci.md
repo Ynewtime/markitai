@@ -64,6 +64,10 @@ archive into it: the integration tests spawn the binary at the `target/` path th
 not wait for clippy. Formatting and the helper tests (Python and Node, the same
 on every macOS) run on the arm64 Mac, not on the Intel one. The job names are
 `intel-build` and `intel-test (N)`, not `check (macos-15-intel)`.
+Measured on hosted runners, without waiting for a runner: with the cache about 10
+minutes (build 4, the slower shard 6); with an empty cache about 20 (build 13, shards 6),
+against 12 to 20 and 45 minutes when the Intel Mac built the tests itself. A cache is empty
+only after the dependencies, the toolchain or `vendor/` change.
 
 A push to `main` that changes only Markdown, `website/` and `llms*.txt` runs on
 `ubuntu-24.04` alone (the `plan` job reads the push's changed files): only the
