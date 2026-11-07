@@ -38,8 +38,8 @@ import { download } from "./lib/download.ts";
 import { addStaged, oversized, removeStaged, type StagedSubmission, type Walked } from "./lib/files.ts";
 import { basename, displayName, fmtBytes } from "./lib/format.ts";
 import { useConvertDefaults } from "./hooks/use-convert-defaults.ts";
-import { initialComposer, publicOptions, readRemembered, reconvertComposer, remember, resolveOptions, withOcrFor, type Composer } from "./lib/options.ts";
-import { prepareRetryBatch, retryBatchAnnouncement, submitRetryBatch } from "./lib/retry-batch.ts";
+import { initialComposer, publicOptions, readRemembered, reconvertComposer, remember, resolveOptions, type Composer } from "./lib/options.ts";
+import { prepareRetryBatch, retryBatchAnnouncement, retryOptions, submitRetryBatch } from "./lib/retry-batch.ts";
 import { ADMIN_SECTIONS, DIALOG_ENTRY, entryOnly, listEntry, listQuery, ONLY_ENTRY, OPEN_MODE, parseListState, parseRoute, routePath, settingsSections, SUMMARY_ENTRY, type PaneMode, type Route } from "./lib/route.ts";
 import { canRetry, waitingJobs, type SessionItem } from "./lib/session.ts";
 import { hasUnsaved } from "./lib/unsaved.ts";
@@ -473,8 +473,7 @@ export function App() {
   const savedOptions = (item: SessionItem): JobOptions => publicOptions(item.options ?? conversionsRef.current.jobs[item.jobId]?.options ?? optionsRef.current);
   const retry = useCallback(
     async (item: SessionItem, override?: JobOptions) => {
-      const base = override ?? savedOptions(item);
-      const next = item.skipped && item.skipReason === "image_only" ? withOcrFor(base) : base;
+      const next = retryOptions(item, override ?? savedOptions(item));
       const authorized = await authorize(next, [{ name: item.name, kind: item.kind }], true);
       if (authorized === null) return;
       const error = await requestItem(item, () => conversionsRef.current.retry(item, authorized), dicts[localeRef.current].retryFailed);

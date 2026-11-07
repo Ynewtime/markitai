@@ -241,7 +241,10 @@ def set_versions(root, version):
     _replace_once(root / "bindings/python/pyproject.toml", r'(^\[project\][^\[]*?^version\s*=\s*")[^"]+(")',
                   rf"\g<1>{python_version(version)}\g<2>")
     _replace_once(root / "bindings/node/package.json", r'^(  "version": ")[^"]+(")', rf"\g<1>{npm_version(version)}\g<2>")
-    _replace_once(root / "desktop/web/mygo.json", r'^(  "version": ")[^"]+(")', rf"\g<1>{version}\g<2>")
+    for app in ("desktop/web/mygo.json", "desktop/mygo/mygo.json"):
+        _replace_once(root / app, r'^(  "version": ")[^"]+(")', rf"\g<1>{version}\g<2>")
+    _replace_once(root / "desktop/native/linux/Cargo.toml", r'(^\[package\][^\[]*?^version\s*=\s*")[^"]+(")',
+                  rf"\g<1>{version}\g<2>")
     server_path = root / "server.json"
     server = json.loads(server_path.read_text(encoding="utf-8"))
     pinned = python_version(version)
@@ -288,6 +291,8 @@ def prepare_version(root, version, run_cargo=True):
     if run_cargo:
         # Only the workspace's own entries in Cargo.lock change.
         run(["cargo", "update", "--workspace"], cwd=root)
+        # The Linux app is a workspace of its own and builds with --locked too.
+        run(["cargo", "update", "--workspace", "--manifest-path", "desktop/native/linux/Cargo.toml"], cwd=root)
         run(["cargo", "test", "--locked", "-p", "markitai-cli", "--test", "integration", "--",
              "help_language::english_help_is_unchanged"], cwd=root, env={**os.environ, "MARKITAI_UPDATE_HELP_SNAPSHOT": "1"})
     check_versions(root, f"v{version}")

@@ -100,7 +100,7 @@ export const zh: Record<MessageKey, string> = {
   errOcrFailed: "OCR 文字识别失败。请重试；如再次出现，请查看错误详情。",
   errUnsupported: "这里不支持这项转换。",
   errFetch: "无法抓取此网页。",
-  errOcrLanguage: "服务所在的电脑不支持本次转换设置的 OCR 语言。请在转换选项中换一种语言，或修改配置中的 ocr.lang，然后重新转换。",
+  errOcrLanguage: "服务所在的电脑不支持本次转换设置的 OCR 语言。请在转换选项中换一种语言，或修改配置中的 ocr.lang 并重启服务，然后重新转换。",
   errConversion: "无法转换这个文档。请确认原文件能正常打开，具体原因见错误详情。",
   errOutOfMemory: "内存不足，无法转换这个文件。请关闭其他应用或换用较小的文件，然后重试。",
   errInvalidInput: "输入无效。",

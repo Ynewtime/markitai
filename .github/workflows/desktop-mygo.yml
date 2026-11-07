@@ -7,6 +7,8 @@ name: Desktop Mygo
 
 on:
   push:
+    # Branches alone: a pushed tag skips path filters and would run this on every release.
+    branches: ['**']
     # What the job reads, so other commits do not restart it: the app, its
     # strings and icon, the core with its fixtures, and the crates it builds.
     paths:

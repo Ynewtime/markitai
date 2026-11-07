@@ -9,6 +9,8 @@ name: Desktop Web
 
 on:
   push:
+    # Branches alone: a pushed tag skips path filters and would run this on every release.
+    branches: ['**']
     paths:
       - 'desktop/web/**'
       - 'desktop/icon.png'

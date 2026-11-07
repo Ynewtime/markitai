@@ -113,7 +113,7 @@ const en = {
     "Local OCR model preparation failed. Run markitai doctor on the service computer and inspect the original error before retrying.",
   errOcrFailed: "Text recognition (OCR) failed. Retry, and check the details if it happens again.",
   errOcrLanguage:
-    "The OCR language set for this conversion is not available on the service computer. Choose another language in the conversion options, or change ocr.lang in the configuration, then convert again.",
+    "The OCR language set for this conversion is not available on the service computer. Choose another language in the conversion options, or change ocr.lang in the configuration and restart the service, then convert again.",
   errUnsupported: "This conversion is not supported here.",
   errFetch: "Could not fetch this page.",
   errConversion: "The document could not be converted. Check that the original file opens correctly, then review the error details.",
@@ -386,6 +386,7 @@ const modelHttp = (match: RegExpExecArray): [MessageKey, Values] => [
 // Share the exact shapes with localization so retryability cannot drift from the message.
 const OCR_MODEL_MISSING = /^Local OCR needs the model [\s\S]+, which is not installed: /;
 const OCR_MODEL_DOWNLOAD = /^Local OCR download of [\s\S]+ failed \(/;
+const OCR_LANGUAGE = /^ocr\.lang is not /;
 
 /** Local OCR that cannot run as it is set up: each names its own way out, which a retry alone is not. */
 const OCR_SETUP_SHAPES: Shape[] = [
@@ -394,7 +395,7 @@ const OCR_SETUP_SHAPES: Shape[] = [
     () => ["errOcrVisionSelection"],
   ],
   [/^MARKITAI_OCR_BACKEND must be vision or paddle$/, () => ["errOcrBackendSetting"]],
-  [/^ocr\.lang is not /, () => ["errOcrLanguage"]],
+  [OCR_LANGUAGE, () => ["errOcrLanguage"]],
   [OCR_MODEL_MISSING, () => ["errOcrModelMissing"]],
   [OCR_MODEL_DOWNLOAD, () => ["errOcrModelDownload"]],
   [
@@ -587,6 +588,9 @@ export function persistenceText(locale: Locale, text: string): Described {
   const key = PERSISTENCE[text];
   return key ? { text: message(locale, key), detail: text } : { text, detail: "" };
 }
+
+/** The service could not read in the language this conversion asked for. */
+export const isOcrLanguageFailure = (error: string | null): boolean => OCR_LANGUAGE.test(error ?? "");
 
 /** Keep unsupported formats/capabilities blocked; missing models and downloads are recoverable. */
 export const isUnsupported = (item: { error?: string | null; error_code?: string | null }): boolean => {

@@ -1,15 +1,25 @@
 import type { Dict } from "../i18n/index.ts";
 import type { JobOptions } from "../api/types.ts";
+import { isOcrLanguageFailure } from "../i18n/errors.ts";
 import { publicOptions, withOcrFor } from "./options.ts";
 import { failedToRetry, type SessionItem } from "./session.ts";
 
 export interface RetryBatchEntry { readonly item: SessionItem; readonly options: JobOptions }
 
+/** What a retry sends: an image skipped for lack of text gets OCR, and a language the service could not
+ * read is left to its configuration, where the failure sends the user. The service no longer accepts the
+ * old language once they have changed it. */
+export function retryOptions(item: SessionItem, options: JobOptions): JobOptions {
+  if (item.skipped && item.skipReason === "image_only") return withOcrFor(options);
+  if (!isOcrLanguageFailure(item.error)) return options;
+  const { ocr_lang: _failed, ...rest } = options;
+  return rest;
+}
+
 /** The approval belongs to the exact retryable identities and options captured at this click. */
 export function prepareRetryBatch(items: readonly SessionItem[], jobs: Readonly<Record<string, { options?: JobOptions | null }>>, fallback: JobOptions): readonly RetryBatchEntry[] {
   return Object.freeze(failedToRetry([...items]).map((item) => {
-    const base = publicOptions(item.options ?? jobs[item.jobId]?.options ?? fallback);
-    const options = item.skipped && item.skipReason === "image_only" ? withOcrFor(base) : base;
+    const options = retryOptions(item, publicOptions(item.options ?? jobs[item.jobId]?.options ?? fallback));
     return Object.freeze({ item: Object.freeze({ ...item }), options: Object.freeze(options) });
   }));
 }

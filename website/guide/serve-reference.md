@@ -201,7 +201,7 @@ Errors are JSON `{"detail", "code", "reason"}`: `detail` is an English sentence,
 | 403 `origin_not_allowed` | A state-changing request from another web origin |
 | 403 `user_token_required` | Anyone but a user token on `/api/me/…` |
 | 404 `job_not_found` | An unknown or expired job, or one the user token did not create |
-| 409 `token_disabled` | A token route under `--no-auth` or `--supervised` |
+| 409 `token_disabled` | A token route under `--no-auth` |
 | 409 `batch_pending` | Retrying or enhancing an item still in an `--llm-batch` |
 | 413 `file_too_large` | A file over 100 MB |
 | 422 `llm_unavailable` | A job asking for LLM processing without a usable model (409 when enhancing an item) |

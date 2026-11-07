@@ -85,9 +85,10 @@ only after the dependencies, the toolchain or `vendor/` change.
 A push to `main` that changes only Markdown, `website/` and `llms*.txt` runs on
 `ubuntu-24.04` alone (the `plan` job reads the push's changed files): only the
 helper tests that check the guides read them, and they behave the same on every
-platform. No Rust test reads them; `docs/schema/` and `licenses/`, which tests
-read, are not in that set. A push whose changed files cannot be read, or that
-has 300 or more, and every run started by hand or by a release, run every platform.
+platform. `docs/schema/`, `licenses/` and anything under a `fixtures/` directory,
+which Rust tests read, are not in that set. A push whose changed files cannot be
+read, or that has 300 or more, and every run started by hand or by a release,
+run every platform.
 
 ## Running package acceptance
 
@@ -303,7 +304,9 @@ On macOS or Linux (the help snapshot test is Unix-only):
 1. `python3 scripts/release_build.py prepare-version X.Y.Z` writes the version
    into `Cargo.toml`, `Cargo.lock` (`cargo update --workspace`; `--locked`
    builds fail on a stale lock), `bindings/python/pyproject.toml`,
-   `bindings/node/package.json` and `server.json`, regenerates
+   `bindings/node/package.json`, `server.json`, `desktop/web/mygo.json`,
+   `desktop/mygo/mygo.json` and the Linux app's `desktop/native/linux/Cargo.toml`
+   and `Cargo.lock`, regenerates
    `crates/markitai-cli/tests/fixtures/help_en.txt` (it prints the version),
    and lists every tracked line that still names the old version. Tests,
    `AGENTS.md`, the changelogs, `website/` and the private workbench package are

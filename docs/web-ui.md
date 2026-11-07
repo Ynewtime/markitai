@@ -599,8 +599,10 @@ at once, and after the release host's rate limit the ↻ waits until the time it
   with waiting original items; stopped items read "Stopped before conversion.
   Retry to convert it." and can be retried. A 409 means nothing waited any more.
 - **Retry** of an image skipped for lack of text resubmits the item's saved
-  options with OCR on. An unsupported file type offers no Retry: converting it
-  again cannot help, and Retry failed leaves such items out.
+  options with OCR on. Retry after an OCR language the service could not read
+  leaves `ocr_lang` out, so the service's current `ocr.lang` applies. An
+  unsupported file type offers no Retry: converting it again cannot help, and
+  Retry failed leaves such items out.
 - **Errors** are worded from the service's stable codes in the interface
   language: an API error's `reason`, then a settings conflict's `detail.code`,
   then the status-derived `code`; a failed item's `error_code` or a recognizable

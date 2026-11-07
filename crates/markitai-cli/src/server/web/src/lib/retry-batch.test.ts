@@ -75,6 +75,17 @@ test("bulk retry keeps the existing failed-only scope and rejects mismatched app
   assert.equal(calls, 0);
 });
 
+test("a retry after a language the service could not read asks for the configured one", () => {
+  const options: JobOptions = { ...native, ocr: true, ocr_lang: "xx" };
+  const failed = { ...item("a", "file", "scan.png"), status: "error" as const, error: "ocr.lang is not a language the portable OCR models read (xx); use en" };
+  const [retried] = prepareRetryBatch([failed], { a: job("a", options) }, native);
+  assert.equal("ocr_lang" in retried.options, false);
+  assert.equal(retried.options.ocr, true);
+
+  const download = { ...failed, error: "Local OCR download of det failed (official download could not be reached)" };
+  assert.equal(prepareRetryBatch([download], { a: job("a", options) }, native)[0].options.ocr_lang, "xx");
+});
+
 test("items sharing a job retain their own routes after another item's retry changed job options", () => {
   const local = { ...item("same", "file", "local.pdf"), itemId: "local", options: { ...native, remote_processing: "cloudflare" as const } };
   const remote = { ...item("same", "file", "remote.pdf"), itemId: "remote", options: { ...cloud, remote_processing: "cloudflare" as const } };

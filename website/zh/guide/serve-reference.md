@@ -201,7 +201,7 @@ flowchart LR
 | 403 `origin_not_allowed` | 来自其他网站来源的状态变更请求 |
 | 403 `user_token_required` | 用户令牌以外的调用者访问 `/api/me/…` |
 | 404 `job_not_found` | 未知或已过期的任务，或不是该用户令牌创建的任务 |
-| 409 `token_disabled` | 使用 `--no-auth` 或 `--supervised` 时访问令牌路由 |
+| 409 `token_disabled` | 使用 `--no-auth` 时访问令牌路由 |
 | 409 `batch_pending` | 重试或增强仍在 `--llm-batch` 中的条目 |
 | 413 `file_too_large` | 文件超过 100 MB |
 | 422 `llm_unavailable` | 任务要求 LLM 处理却没有可用模型（增强单个条目时为 409） |

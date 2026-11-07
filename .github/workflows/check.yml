@@ -75,12 +75,13 @@ jobs:
           fi
           # A push to main that changes only Markdown (guides, changelogs), the
           # website and llms*.txt runs on one Linux machine: only the helper tests
-          # read those (no Rust test does; they read docs/schema and licenses/,
-          # which stay in scope), and they behave the same everywhere. Any doubt
-          # runs every platform.
+          # read those (Rust tests read docs/schema, licenses/ and fixtures, which
+          # stay in scope), and they behave the same everywhere. Any doubt runs
+          # every platform.
           if [ "$EVENT" = push ] && [ -z "$PLATFORMS" ]; then
             if files=$(gh api "repos/$REPO/compare/$BEFORE...$AFTER" --paginate --jq '.files[].filename' 2>/dev/null) \
                 && [ -n "$files" ] && [ "$(wc -l <<<"$files")" -lt 300 ] \
+                && ! grep -q '/fixtures/' <<<"$files" \
                 && ! grep -qvE '\.md$|^website/|^llms(-full)?\.txt$' <<<"$files"; then
               echo "Only documentation changed: Linux only"
               list='["ubuntu-24.04"]'
