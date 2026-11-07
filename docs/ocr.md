@@ -144,6 +144,16 @@ above were recorded on macOS 27). Set the language (`ocr.lang: ja`, or
 opt-in (`MARKITAI_OCR_BACKEND=vision` or the fallback); the default portable
 engine does not use Vision's language detection.
 
+Known issue: on macOS 15, Vision may join numbers in neighbouring columns of a
+table. Where macOS 27 reads `苹果 12 3.50`, macOS 15.7 returned `苹果 123.50`, with
+no candidate that separated them, and enlarging the image did not help. The
+default portable engine does not read through Vision: prefer it for tables on
+macOS 15, and check amounts Vision read there.
+
+When the default engine falls back to Vision and Vision has no such language
+(`el`, say), the failure is still the download's: the setting is valid for the
+portable models, so the message names the download, not `ocr.lang`.
+
 Vision reads in a process of its own, because a recognition can stop for good
 inside it: on macOS 27.2, correcting lines of Chinese as English or French, which
 the default language also does, stopped in about one process in 100 to 300 on a

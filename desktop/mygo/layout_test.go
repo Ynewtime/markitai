@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -165,6 +166,30 @@ func TestNarrowWindow(t *testing.T) {
 	h.find(h.T("convert.choose"))
 	h.convert(h.write("a.md", "# A\n"))
 	h.find(h.T("a11y.conversions"))
+}
+
+// TestLongFailureMessageFits: a raw message can hold a word wider than the
+// pane, a download's digest, which breaks instead of running out of the window.
+func TestLongFailureMessageFits(t *testing.T) {
+	h := start(t, l10n.En)
+	h.convert(h.write("a.md", "# A\n"))
+	message := "Local OCR download of ppocrv6-det-small failed (official download could not be reached); any existing damaged file was kept: " +
+		"run `markitai doctor --fix` where the network is reachable, or download https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.9.2/onnx/PP-OCRv6/det/PP-OCRv6_det_small.onnx (SHA-256 " +
+		strings.Repeat("090f04abcd9d9a74", 4) + ", 9929594 bytes) to /tmp/home/models/ocr/ppocrv6-det-small-090f04ab/PP-OCRv6_det_small.onnx"
+	h.item("a.md").State = model.Failed{Code: "text_recognition_error", Message: message}
+	for _, width := range []int{1024, 800} {
+		h.tt.SetSize(width, 720)
+		h.rest()
+		if width < 1024 {
+			h.click(h.rowLabel("a.md"))
+			h.rest()
+		}
+		text := h.find(message)
+		// The pane's padding and the box's stay to the message's right.
+		if right, room := text.X+text.W, float32(width-24-16); right > room {
+			t.Errorf("at %d wide the message ends at %v, past %v", width, right, room)
+		}
+	}
 }
 
 // TestEmptyConvertFits keeps the empty page's drop zone 560 wide, or as

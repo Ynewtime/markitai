@@ -53,7 +53,7 @@ func (a *app) view(c *ui.Context) {
 	}
 	ui.Row(c).Fill().AlignItems(ui.Stretch).Children(func() {
 		a.sidebar(c)
-		content := ui.Column(c.Key("content")).Grow(1).Basis(0).AlignItems(ui.Stretch)
+		content := ui.Column(c.Key("content")).Grow(1).Basis(0).MinWidth(0).AlignItems(ui.Stretch)
 		dragging := false
 		if a.page != pathSettings {
 			if paths := content.DroppedFiles(); len(paths) > 0 {

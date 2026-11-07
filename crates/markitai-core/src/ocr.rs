@@ -457,22 +457,27 @@ pub(crate) fn recognize(bytes: &[u8], cfg: &Value) -> Result<OcrResult> {
     let read = match backend {
         #[cfg(target_os = "macos")]
         Backend::Vision => read(&pixels::prepare_rgb(image.clone())?, &spelling),
-        Backend::Paddle => {
-            let read_models = paddle::read(&image, &spelling);
-            #[cfg(target_os = "macos")]
-            if let Err(error) = &read_models
-                && vision_instead(error)
-            {
-                return with_pixels(
-                    read(&pixels::prepare_rgb(image.clone())?, &spelling),
-                    &image,
-                    false,
-                );
-            }
-            read_models
-        }
+        Backend::Paddle => read_portable(&image, &spelling),
     };
     with_pixels(read, &image, false)
+}
+
+/// Read with the portable engine, or with Vision when [`vision_instead`] says so. A language
+/// only Vision lacks keeps the download's error: the setting is good, and the download is
+/// what the user has to fix.
+#[cfg(any(not(target_os = "macos"), feature = "portable-media"))]
+fn read_portable(image: &image::RgbImage, spelling: &str) -> Result<OcrResult> {
+    let read_models = paddle::read(image, spelling);
+    #[cfg(target_os = "macos")]
+    if let Err(error) = &read_models
+        && vision_instead(error)
+    {
+        return match read(&pixels::prepare_rgb(image.clone())?, spelling) {
+            Err(Error::Config(_)) => read_models,
+            vision => vision,
+        };
+    }
+    read_models
 }
 
 /// Whether Vision should read in place of the portable engine, which is the
@@ -523,18 +528,7 @@ fn recognize_pixels(image: image::RgbImage, cfg: &Value, figures: bool) -> Resul
         Backend::Vision => read(&pixels::prepare_rgb(image.clone())?, &spelling),
         Backend::Paddle => {
             pixels::check_rgb(&image)?;
-            let read_models = paddle::read(&image, &spelling);
-            #[cfg(target_os = "macos")]
-            if let Err(error) = &read_models
-                && vision_instead(error)
-            {
-                return with_pixels(
-                    read(&pixels::prepare_rgb(image.clone())?, &spelling),
-                    &image,
-                    figures,
-                );
-            }
-            read_models
+            read_portable(&image, &spelling)
         }
     };
     with_pixels(read, &image, figures)

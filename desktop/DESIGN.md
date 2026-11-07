@@ -281,7 +281,9 @@ Running an item:
    (the core's bindings say `conversion_error` for what it cannot read and
    `unsupported` for models it cannot get). An `ocr.lang` the engine has no models
    for is `config_error`: retrying does not change it, and the configuration file
-   is where the user fixes it.
+   is where the user fixes it. When the default engine's download failed and Vision,
+   reading in its place on macOS, lacks the language, the setting is good: that is
+   `text_recognition_error` with the download's message.
 5. On Failed, delete the claimed folder and everything in it. The app created
    that folder for this item a moment earlier, and nothing else writes there.
 6. On Done, add a History entry (4.4) and announce `a11y.done`. On Failed,
