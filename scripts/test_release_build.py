@@ -131,8 +131,7 @@ class PrepareVersionTests(unittest.TestCase):
     def copy(self, directory):
         root = Path(directory)
         for name in ["Cargo.toml", "bindings/python/pyproject.toml", "bindings/python/README.md",
-                     "bindings/node/package.json", "desktop/web/mygo.json", "desktop/mygo/mygo.json",
-                     "desktop/native/linux/Cargo.toml", "server.json"]:
+                     "bindings/node/package.json", "desktop/web/mygo.json", "server.json"]:
             (root / name).parent.mkdir(parents=True, exist_ok=True)
             (root / name).write_bytes((ROOT / name).read_bytes())
         (root / "docs").mkdir()
@@ -158,9 +157,8 @@ class PrepareVersionTests(unittest.TestCase):
             self.assertEqual(check_versions(root, "v9.8.7")["python_version"], "9.8.7")
             package = json.loads((root / "bindings/node/package.json").read_text(encoding="utf-8"))
             self.assertEqual(package["version"], "9.8.7")
-            for app in ("desktop/web/mygo.json", "desktop/mygo/mygo.json"):
-                self.assertEqual(json.loads((root / app).read_text(encoding="utf-8"))["version"], "9.8.7")
-            self.assertIn('version = "9.8.7"', (root / "desktop/native/linux/Cargo.toml").read_text(encoding="utf-8"))
+            app = json.loads((root / "desktop/web/mygo.json").read_text(encoding="utf-8"))
+            self.assertEqual(app["version"], "9.8.7")
             server = json.loads((root / "server.json").read_text(encoding="utf-8"))
             self.assertEqual((server["version"], server["packages"][0]["version"]), ("9.8.7", "9.8.7"))
             self.assertIn({"--from": "markitai==9.8.7"},

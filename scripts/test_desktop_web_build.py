@@ -16,7 +16,7 @@ import zipfile
 
 import bounded_run
 import desktop_web_build
-from desktop_web_build import (APP_DIR, DEB_DESCRIPTION, NATIVE_ENTRY, PLATFORMS, SHIPPED, STAMP, build,
+from desktop_web_build import (APP_DIR, DEB_DESCRIPTION, ENTRY_KEYS, PLATFORMS, SHIPPED, STAMP, build,
                                check_artifacts, e2e_project, layout, mygo_build_command, read_ar, stage)
 from release_build import TARGETS, archive_name
 
@@ -59,8 +59,6 @@ class Checkout:
         (self.root / APP_DIR).mkdir(parents=True)
         (self.root / "Cargo.toml").write_text(f'[workspace.package]\nversion = "{cargo}"\nlicense = "MIT"\n',
                                               encoding="utf-8")
-        (self.root / NATIVE_ENTRY).parent.mkdir(parents=True)
-        shutil.copyfile(ROOT / NATIVE_ENTRY, self.root / NATIVE_ENTRY)
         mygo = json.loads((ROOT / APP_DIR / "mygo.json").read_text(encoding="utf-8"))
         mygo["version"] = app
         (self.root / APP_DIR / "mygo.json").write_text(json.dumps(mygo, indent=2) + "\n", encoding="utf-8")
@@ -426,27 +424,28 @@ class LinuxPackageTests(unittest.TestCase):
         self.repo.resources.mkdir()
         (self.repo.resources / STAMP).write_text(json.dumps({"version": VERSION, "platform": "linux/amd64"}),
                                                  encoding="utf-8")
-        self.native = entry_keys((ROOT / NATIVE_ENTRY).read_text(encoding="utf-8"))
 
     def build(self, e2e=False, tail=""):
         self.mygo = MygoLinux(self.repo.root, tail)
         with mock.patch.object(desktop_web_build, "go", self.mygo), contextlib.redirect_stdout(io.StringIO()):
             return build("linux/amd64", e2e, root=self.repo.root)
 
-    def assert_native_entry(self, data, run):
+    def assert_entry(self, data, run):
         keys = entry_keys(data.decode("utf-8"))
-        for key in ["Comment", "Comment[zh_CN]", "Categories", "Keywords", "StartupNotify"]:
-            self.assertEqual(keys[key], self.native[key], key)
+        self.assertEqual((keys["Comment"], keys["Categories"]),
+                         ("Convert documents and web pages to Markdown", "Office;Utility;"))
+        for key, value in ENTRY_KEYS.items():
+            self.assertEqual(keys[key], value, key)
         self.assertEqual((keys["StartupWMClass"], keys["Exec"], keys["Icon"]),
                          ("dev.markitai.web", run, "markitai-web"))
 
-    def test_every_package_installs_native_s_entry_as_the_app_id(self):
+    def test_every_package_installs_the_finished_entry_as_the_app_id(self):
         out = self.build()
-        self.assert_native_entry((out / "markitai-web.desktop").read_bytes(), "markitai-web")
+        self.assert_entry((out / "markitai-web.desktop").read_bytes(), "markitai-web")
 
         archive = (out / f"markitai-web-{VERSION}-linux-amd64.tar.gz").read_bytes()
         files = read_tar(archive)
-        self.assert_native_entry(files["markitai-web.desktop"][1], "markitai-web")
+        self.assert_entry(files["markitai-web.desktop"][1], "markitai-web")
         self.assertEqual(files["bin/markitai"], (0o755, b"#!/bin/sh\n"))
         self.assertEqual(files["licenses/markitai"], (0o755, None))
 
@@ -459,7 +458,7 @@ class LinuxPackageTests(unittest.TestCase):
         self.assertIn('\tln -s ../../../opt/markitai-web/licenses "$pkgdir"/usr/share/licenses/markitai-web\n',
                       pkgbuild)
         inline = pkgbuild.split("printf '%s' '")[1].split("' |\n")[0]
-        self.assert_native_entry(inline.encode(), "/opt/markitai-web/markitai-web")
+        self.assert_entry(inline.encode(), "/opt/markitai-web/markitai-web")
         self.assertIn('install -Dm644 /dev/stdin "$pkgdir"/usr/share/applications/dev.markitai.web.desktop\n', pkgbuild)
         self.assertNotIn("applications/markitai-web.desktop", pkgbuild)
 
@@ -468,7 +467,7 @@ class LinuxPackageTests(unittest.TestCase):
                          [b"debian-binary", b"control.tar.gz", b"data.tar.gz"])
         control, data = read_tar(members[1][1]), read_tar(members[2][1])
         self.assertNotIn("./usr/share/applications/markitai-web.desktop", data)
-        self.assert_native_entry(data["./usr/share/applications/dev.markitai.web.desktop"][1],
+        self.assert_entry(data["./usr/share/applications/dev.markitai.web.desktop"][1],
                                  "/opt/markitai-web/markitai-web")
         self.assertEqual(data["./usr/bin/markitai-web"], (0o777, "../../opt/markitai-web/markitai-web"))
         listed = dict(reversed(line.split("  ", 1)) for line in control["./md5sums"][1].decode().splitlines())
@@ -490,8 +489,6 @@ class LinuxPackageTests(unittest.TestCase):
 
     def test_a_package_mygo_writes_differently_fails_and_stays_as_written(self):
         cases = {
-            "the desktop entry's Comment is not Markitai Native's": ("linux", "comment", "Convert files"),
-            "the desktop entry's Categories is not Markitai Native's": ("linux", "categories", ["Utility"]),
             "Maintainer is not 'Name <email>'": ("linux", "maintainer", "Markitai Web"),
         }
         production = (self.repo.root / APP_DIR / "mygo.json").read_text(encoding="utf-8")
@@ -508,6 +505,8 @@ class LinuxPackageTests(unittest.TestCase):
         (self.repo.root / APP_DIR / "mygo.json").write_text(production, encoding="utf-8")
         with self.assertRaisesRegex(SystemExit, "mygo build now writes StartupWMClass"):
             self.build(tail="StartupWMClass=markitai-web\n")
+        with self.assertRaisesRegex(SystemExit, "the desktop entry has 2 Comment lines, not one"):
+            self.build(tail="Comment=Again\n")
 
     def test_uninstall_removes_the_mime_cache_it_leaves_with_no_type(self):
         if os.name == "nt" or not shutil.which("sh"):

@@ -397,8 +397,8 @@ var editItems = []string{mygo.ContextMenuUndo, mygo.ContextMenuRedo, mygo.Contex
 	mygo.ContextMenuPaste, mygo.ContextMenuPasteAndMatchStyle, mygo.ContextMenuDelete, mygo.ContextMenuSelectAll,
 	mygo.ContextMenuSpellingGuess, mygo.ContextMenuEmoji}
 
-// contextMenu keeps the web view's context menu to what an app's text has,
-// as Markitai Mygo's: a text field's editing items, Copy over a selection,
+// contextMenu keeps the web view's context menu to what an app's text has:
+// a text field's editing items, Copy over a selection,
 // and no menu elsewhere. A browser's items, as Back, Reload, Print, Save As
 // or Share, never show; the items it keeps say what they do in the app's
 // language.
@@ -437,7 +437,7 @@ func menuKeeps(editable, selection bool, id string) bool {
 
 // windowTitle names the app in the page's title, as the taskbar, the Dock
 // and the window switcher show it: the workbench's "… · Markitai" ends in
-// "Markitai Web", which neither Markitai Native's nor Markitai Mygo's does.
+// "Markitai Web".
 func windowTitle(title string) string {
 	switch {
 	case strings.TrimSpace(title) == "":

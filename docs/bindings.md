@@ -15,8 +15,7 @@ applications; see [quick start](quickstart.md#platform-support).
 macOS Vision is the exception to reading in process: it reads in a helper program,
 `markitai-vision-reader`, so that a recognition that stops costs a restart
 ([local OCR](ocr.md)). Python wheels and the Node package carry it beside their
-library, and a wheel built from the sdist does not. The macOS Native and Mygo apps
-carry it too. A program using the C library or
+library, and a wheel built from the sdist does not. A program using the C library or
 the Go package keeps it beside the library, or beside the executable when linked
 statically (`cargo build --release -p markitai-vision-reader`). Without it, Vision
 reads in process.

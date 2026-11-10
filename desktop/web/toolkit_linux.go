@@ -11,8 +11,8 @@ import (
 	"github.com/egoist/mygo"
 )
 
-// nameApp names the app by its identifier, as Native and Mygo are named
-// (desktop/DESIGN.md section 14): the program name and the app's name, so
+// nameApp names the app by its identifier: the program name and the app's
+// name, so
 // that the window's class (Wayland app ID) matches dev.markitai.web.desktop
 // and the app's folders, WebKitGTK's data and the single-instance lock all
 // go under dev.markitai.web. Before anything reads a path.
@@ -31,7 +31,7 @@ func nameApp() {
 // languages and theme.
 //
 //   - GTK's and WebKitGTK's own words, as those of GTK's file chooser, are
-//     in the app's language through gettext's LANGUAGE, as Mygo's are: GTK
+//     in the app's language through gettext's LANGUAGE: GTK
 //     reads it as it starts, so a language the workbench chooses later
 //     reaches them at the next launch. serve and the programs the app opens
 //     keep the user's (userEnv).
@@ -59,7 +59,7 @@ func prepareToolkit() {
 	}
 	// Main thread only. A change is applied after GTK's notification
 	// returns: setting the source from inside it, which calls GTK from a
-	// callback of GTK's, never returned in Mygo's Linux run. Setting it
+	// callback of GTK's, never returned. Setting it
 	// tells GTK, which reports a change again; applying skips that one.
 	var applying, pending bool
 	mygo.Theme.OnUpdated(func() {

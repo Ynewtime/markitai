@@ -57,8 +57,8 @@ const (
 // keys are the shortcuts of macOS's menu bar (mygo's default menu: Quit,
 // View's Actual Size, Zoom In, Zoom Out and Full Screen) as Linux and
 // Windows have them, which the preload takes from the page: keydown's key,
-// with Ctrl. Windows quits with Alt+F4, which closes the window, as Native
-// does (desktop/DESIGN.md section 11). Ctrl with the wheel zooms too, a
+// with Ctrl. Windows quits with Alt+F4, which closes the window. Ctrl with
+// the wheel zooms too, a
 // step a notch as the keys step (wheelCount): WebView2 would zoom by
 // itself, apart from the factor the keys change.
 func keys(goos string) map[string]key {
@@ -98,7 +98,7 @@ func nextZoom(f float64, up bool) float64 {
 
 // notches is how many notches of the wheel a page's wheelDeltaY is, the
 // page zoomed by zoom. WebView2 gives the page 120 a notch divided by the
-// page's zoom, 60 at 2.0, as Markitai Mygo's wheeled found; its deltaY
+// page's zoom, 60 at 2.0; its deltaY
 // also changes with the system's lines a notch, wheelDeltaY does not.
 // WebKitGTK gives 120 for each unit of GDK's smooth scroll, whatever the
 // zoom: a notch of the wheel is one unit or more, as the compositor scales

@@ -13,7 +13,7 @@ var setProcessPreferredUILanguages = syscall.NewLazyDLL("kernel32.dll").NewProc(
 // localizeSystemDialogs gives the process mygo's languages again with
 // zh-CN before any Chinese: Windows finds the system's Simplified Chinese
 // texts, as those of the file dialogs, under zh-CN, not under the zh-Hans
-// mygo names, as Mygo found, and the app shows any Chinese as Simplified
+// mygo names, and the app shows any Chinese as Simplified
 // Chinese (languagesOn). Once the app runs, after mygo set the list, and
 // again whenever the app's language changes.
 func localizeSystemDialogs() {

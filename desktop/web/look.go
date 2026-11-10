@@ -77,8 +77,8 @@ var webLanguages = languagesOn(runtime.GOOS)
 
 // languagesOn are the languages mygo resolves the system's among on goos.
 // Any Chinese is Simplified Chinese, as the workbench and the app's own
-// words have it (workbenchLang) and as macOS shows it (desktop/DESIGN.md
-// section 7.5): on Linux and Windows, where mygo's language is the pages'
+// words have it (workbenchLang) and as macOS shows it: on Linux and
+// Windows, where mygo's language is the pages'
 // too, zh-Hant has mygo take Traditional Chinese for the workbench's
 // Chinese, which a match with zh-Hans alone does not, leaving English.
 // macOS gives the pages its own first language (pageLanguage) and the

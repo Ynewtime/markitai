@@ -80,11 +80,9 @@ E2E_IDENTIFIER = ".e2e"
 # (toolkit_linux.go): its window's class and the name of its installed desktop entry.
 SLUG = "markitai-web"
 APP_ID = "dev.markitai.web"
-# The Linux entry is Markitai Native's: keys mygo build writes from APP_DIR/mygo.json, which must
-# be Native's, by the field that sets each, and keys mygo build writes none of, taken as they are.
-NATIVE_ENTRY = "desktop/native/linux/data/dev.markitai.native.desktop"
-SAME_AS_NATIVE = {"Comment": "linux.comment", "Categories": "linux.categories"}
-FROM_NATIVE = ("Comment[zh_CN]", "Keywords", "StartupNotify")
+# The Linux entry's keys mygo build writes none of; Comment and Categories are APP_DIR/mygo.json's.
+ENTRY_KEYS = {"Comment[zh_CN]": "把文档和网页转换为 Markdown",
+              "Keywords": "Markdown;PDF;Word;PowerPoint;Excel;convert;", "StartupNotify": "true"}
 # The Debian package's long description, where mygo build writes "Markitai Web is a desktop application."
 DEB_DESCRIPTION = ("Markitai Web opens the markitai workbench in a window of its own. The markitai bundled with it "
                    "serves the workbench on this computer and converts documents, web pages and images to "
@@ -315,24 +313,18 @@ def layout(platform, version):
     raise SystemExit(f"No app layout for {platform}")
 
 
-def native_entry(root):
-    """Markitai Native's desktop entry, key -> value."""
-    lines = (root / NATIVE_ENTRY).read_text(encoding="utf-8").splitlines()
-    return dict(line.split("=", 1) for line in lines if "=" in line)
-
-
-def desktop_entry(text, native):
-    """text, a desktop entry as mygo build writes it, with Native's keys and the window's class."""
+def desktop_entry(text):
+    """text, a desktop entry as mygo build writes it, with ENTRY_KEYS and the window's class."""
     lines = text.rstrip("\n").split("\n")
-    for key, field in SAME_AS_NATIVE.items():
-        if [line for line in lines if line.startswith(key + "=")] != [f"{key}={native[key]}"]:
-            raise SystemExit(f"the desktop entry's {key} is not Markitai Native's {native[key]!r}: "
-                             f"make {field} of {APP_DIR}/mygo.json match")
-    for key in (*FROM_NATIVE, "StartupWMClass"):
+    for key in (*ENTRY_KEYS, "StartupWMClass"):
         if any(line.startswith(key + "=") for line in lines):
             raise SystemExit(f"mygo build now writes {key} in the desktop entry: drop it from desktop_web_build.py")
-    lines.insert(lines.index("Comment=" + native["Comment"]) + 1, "Comment[zh_CN]=" + native["Comment[zh_CN]"])
-    lines += [f"Keywords={native['Keywords']}", f"StartupNotify={native['StartupNotify']}",
+    comments = [index for index, line in enumerate(lines) if line.startswith("Comment=")]
+    if len(comments) != 1:
+        raise SystemExit(f"the desktop entry has {len(comments)} Comment lines, not one: "
+                         f"set linux.comment in {APP_DIR}/mygo.json")
+    lines.insert(comments[0] + 1, "Comment[zh_CN]=" + ENTRY_KEYS["Comment[zh_CN]"])
+    lines += [f"Keywords={ENTRY_KEYS['Keywords']}", f"StartupNotify={ENTRY_KEYS['StartupNotify']}",
               f"StartupWMClass={APP_ID}"]
     return "\n".join(lines) + "\n"
 
@@ -384,7 +376,7 @@ def write_ar(members):
 
 
 def finish_linux(out, version, root=ROOT):
-    """mygo build's Linux packages in `out` as Native's are. The app runs as APP_ID (toolkit_linux.go),
+    """mygo build's Linux packages in `out`, finished. The app runs as APP_ID (toolkit_linux.go),
     but mygo build names the desktop entry after the slug, which cannot hold a dot, and writes no
     Comment[zh_CN], Keywords, StartupNotify or StartupWMClass (linuxDesktopEntry, cmd/mygo/build.go).
     Every copy of the entry gets those keys: beside the app and in the .tar.gz, where install.sh and
@@ -394,7 +386,6 @@ def finish_linux(out, version, root=ROOT):
     have, with the app's licences in /usr/share/licenses/SLUG, and install.sh --uninstall removes the
     MIME cache it leaves with no type in it. It fails rather than guess when mygo build writes any
     of them differently, and writes nothing until all of them hold."""
-    native = native_entry(root)
     with open(root / "Cargo.toml", "rb") as file:
         licence = tomllib.load(file)["workspace"]["package"]["license"]
     goarch = out.name.removeprefix("linux-")
@@ -403,7 +394,7 @@ def finish_linux(out, version, root=ROOT):
     renamed = f"usr/share/applications/{APP_ID}.desktop"
 
     def entry(body):
-        return desktop_entry(body.decode("utf-8"), native).encode("utf-8")
+        return desktop_entry(body.decode("utf-8")).encode("utf-8")
 
     written = {out / template: entry((out / template).read_bytes())}
     archive = out / f"{SLUG}-{version}-linux-{goarch}.tar.gz"
@@ -432,7 +423,7 @@ def finish_linux(out, version, root=ROOT):
     inline = re.search(r"printf '%s' '(\[Desktop Entry\]\n.*?)' \|", text, re.S)
     if not inline:
         raise SystemExit(f"{pkgbuild.name}: no desktop entry as mygo build writes it")
-    quoted = desktop_entry(inline.group(1), native).replace("'", "'\\''")
+    quoted = desktop_entry(inline.group(1)).replace("'", "'\\''")
     text = replace_once(text[:inline.start(1)] + quoted + text[inline.end(1):], f'"$pkgdir"/{installed}',
                         f'"$pkgdir"/{renamed}', pkgbuild.name)
     written[pkgbuild] = replace_once(text, hashlib.sha256(before).hexdigest(),

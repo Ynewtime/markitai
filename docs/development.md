@@ -115,7 +115,7 @@ its `.tar.gz`, `.deb`, `PKGBUILD` and `install.sh` in
 `desktop/web/build/linux-amd64/` on x86-64 Linux
 ([Linux](desktop-web.md#linux)), from the `x86_64-unknown-linux-gnu` archive
 the manylinux_2_28 image builds (after `mygo build`, the script installs the
-menu entry of every package as `dev.markitai.web.desktop`, with Native's
+menu entry of every package as `dev.markitai.web.desktop`, with
 `Comment[zh_CN]`, `Keywords` and `StartupNotify` and the window's class, and
 fails where mygo writes them otherwise), or `Markitai Web.exe` and the installer
 `markitai-web-setup-<version>-amd64.exe` in `desktop/web/build/windows-amd64/`
@@ -151,98 +151,6 @@ project without the symlink privilege links its resources with a junction.
 the tree it is built from), the e2e build and the installer, runs a full
 `desktop_web_e2e.py` round, installs, launches, closes and uninstalls the app,
 and keeps the evidence and the installer for 7 days.
-
-## Markitai Native
-
-`desktop/native/` holds [Markitai Native](desktop-native.md): the apps for macOS
-(SwiftUI), Windows (WinUI 3) and Linux (GTK 4 and libadwaita), specified by
-`desktop/DESIGN.md`. They call the core in process through `crates/markitai-app`,
-a private crate: a C ABI for the macOS and Windows apps, a Rust API for the
-Linux app. `desktop/native/linux` is a Cargo workspace of its own, excluded from
-the root one. The three versions share the app icon `desktop/icon.png`;
-Markitai Native and Markitai Mygo share the design and `desktop/strings.json`
-([desktop versions](desktop.md)).
-
-```sh
-python3.13 desktop/scripts/strings.py [--check]
-python3.13 desktop/native/macos/build.py [--check] [--no-core]
-python3.13 desktop/native/windows/build.py [--check] [--state DIR]
-python3 desktop/native/linux/build.py [--check]
-```
-
-`strings.py` writes `desktop/strings.json` from section 10 of the design, and
-`--check` fails when the two differ. Each build's `--check` runs that app's
-tests with an isolated home. `desktop/native/windows/smoke.ps1` drives the built
-Windows app through UI Automation, and `.github/workflows/desktop-native.yml`
-runs the Windows build, tests and smoke on a hosted `windows-2025` runner on a
-push to the files that build reads, or by hand.
-
-## Markitai Mygo
-
-`desktop/mygo/` holds [Markitai Mygo](desktop-mygo.md), one app for macOS,
-Windows and Linux: a Go module (`markitai.local/mygo`, Go 1.27.3) on mygo's
-`ui` package, with `go tool mygo` from its `go.mod`, specified by
-`desktop/DESIGN.md` and `desktop/mygo/DESIGN.md`. It loads the core's C ABI
-(`crates/markitai-app` as a cdylib) with purego, so every build is
-`CGO_ENABLED=0`. The core library is staged in the Git-ignored
-`desktop/mygo/resources/<goos>-<goarch>/`, which `mygo build` puts beside the
-executable or in the bundle's resources.
-
-```sh
-python3.13 desktop/mygo/build.py [--check] [--no-core] [--platform GOOS/GOARCH] [--e2e]
-```
-
-`--check` builds and stages the core, runs `strings.py --check`, fails when
-the module's embedded copies of `desktop/strings.json` and `desktop/icon.png`
-differ from them or `mygo.json`'s version from the workspace's, and runs
-`go vet` and `go test` with `HOME`, `MARKITAI_HOME`, the XDG folders,
-`USERPROFILE`, `APPDATA`, `LOCALAPPDATA`, `TEMP` and `TMP` in a temporary
-folder. The preview script's tests run it in Node and skip when `node` is not
-on the `PATH`. It builds no app and writes no tracked file. Without `--check`,
-`build.py` refreshes those copies and builds the app into
-`desktop/mygo/build/<goos>-<goarch>/`. On Linux, `desktop/mygo/linux_entry.py`
-then gives every copy of the desktop entry (beside the app, in the `.tar.gz`,
-`install.sh`, the Debian package and the `PKGBUILD`) Markitai Native's keys and
-the name `dev.markitai.mygo.desktop`, which `mygo build` cannot, adds Markitai
-Native's 16 to 128 pixel icons to the Debian package and the `PKGBUILD`, keeps
-the archives' times so that the same build gives the same bytes, and fails when
-`mygo build` writes them differently. The
-Windows core links the C runtime statically and builds in
-`target/mygo-windows`; the macOS core's install name is
-`@rpath/libmarkitai_app.dylib`.
-
-`--e2e` builds with the `e2e` tag, which links mygo's automation plugin and
-keeps the web inspector, into `desktop/mygo/build/e2e/`; never ship it. The
-driver is a Go test behind the same tag:
-
-```sh
-cd desktop/mygo
-MARKITAI_MYGO_APP=<e2e executable> MARKITAI_MYGO_E2E_OUT=<evidence folder> \
-  go test -tags e2e -count=1 -v ./internal/e2e
-```
-
-It launches the app over the automation socket once per run of
-`MARKITAI_MYGO_E2E_RUNS` (default `en-light,zh-Hans-dark,en-dark,zh-Hans-light`),
-each with its own `HOME`, XDG folders, Windows user folders and `MARKITAI_HOME`
-under the evidence folder and a `TEMP` of its own under a short path, and converts fixtures and pages from a local server
-through Convert, a second instance, History, Settings and quitting while a
-conversion runs. It fails when the app writes in another version's folders,
-or on Linux under `Markitai Mygo` or `markitai-mygo`, the names mygo and
-WebKitGTK use when the app does not name itself. It keeps the window's own
-captures, `report.json` and the app's log per run. With `MARKITAI_MYGO_E2E_WINDOW_SHOT` naming a program that
-takes a process ID and a PNG path (`internal/e2e/windowshot.ps1` on Windows), it
-also keeps what the system composites, web view included. With
-`MARKITAI_MYGO_E2E_PAGE_KEY` naming a program that takes a process ID and
-`zoom-in` and sends that window Ctrl+= (`internal/e2e/pagekey.ps1` on Windows),
-it gives the preview page the keyboard, presses Zoom In and checks that the
-page's script zooms exactly one step. Without it, the e2e build dispatches that
-keydown in the page itself, which checks the page's script but not the system's
-delivery of the key. Quitting is asked through the app menu on
-macOS, Ctrl+Q on Linux and `WM_CLOSE` on Windows.
-
-`.github/workflows/desktop-mygo.yml` runs `--check`, both builds and the e2e
-driver on a hosted `windows-2025` runner on a push to the files those read, or
-by hand, and keeps the evidence and the app folder for 7 days.
 
 ## Website
 

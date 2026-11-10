@@ -95,7 +95,7 @@ func TestWindowTitleNamesMarkitaiWeb(t *testing.T) {
 		"Markitai Web":            "Markitai Web",
 		"Starting · Markitai Web": "Starting · Markitai Web",
 		"report.pdf":              "report.pdf · Markitai Web",
-		"Markitai Native":         "Markitai Native · Markitai Web",
+		"Markitai Notes":          "Markitai Notes · Markitai Web",
 	} {
 		if got := windowTitle(title); got != want {
 			t.Errorf("windowTitle(%q) = %q; want %q", title, got, want)

@@ -305,9 +305,8 @@ On macOS or Linux (the help snapshot test is Unix-only):
 1. `python3 scripts/release_build.py prepare-version X.Y.Z` writes the version
    into `Cargo.toml`, `Cargo.lock` (`cargo update --workspace`; `--locked`
    builds fail on a stale lock), `bindings/python/pyproject.toml`,
-   `bindings/node/package.json`, `server.json`, `desktop/web/mygo.json`,
-   `desktop/mygo/mygo.json` and the Linux app's `desktop/native/linux/Cargo.toml`
-   and `Cargo.lock`, regenerates
+   `bindings/node/package.json`, `server.json` and `desktop/web/mygo.json`,
+   regenerates
    `crates/markitai-cli/tests/fixtures/help_en.txt` (it prints the version),
    and lists every tracked line that still names the old version. Tests,
    `AGENTS.md`, the changelogs, `website/` and the private workbench package are
