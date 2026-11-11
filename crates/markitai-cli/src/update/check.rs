@@ -690,6 +690,7 @@ pub(crate) mod tests {
         assert_eq!(rate_limit(&headers, 1000), 4600);
         headers.insert(reqwest::header::RETRY_AFTER, "999999".parse().unwrap());
         assert_eq!(rate_limit(&headers, 1000), 1000 + 24 * 3600);
+        let reset = unix_now() + 600;
         let (base, _) = serve(vec![
             (
                 "/releases/latest/download/SHA256SUMS",
@@ -702,7 +703,7 @@ pub(crate) mod tests {
                 403,
                 vec![
                     ("x-ratelimit-remaining", "0".into()),
-                    ("x-ratelimit-reset", (unix_now() + 600).to_string()),
+                    ("x-ratelimit-reset", reset.to_string()),
                 ],
                 Vec::new(),
             ),
@@ -719,26 +720,34 @@ pub(crate) mod tests {
                 b"Access denied by policy".to_vec(),
             ),
         ]);
-        let before = unix_now();
-        assert!(matches!(
-            latest(&Base::parse(&base).unwrap(), NOTICE),
-            Err(Failure::RateLimited {
-                status: 403,
-                retry_at,
-                ..
-            }) if retry_at >= before + 119 && retry_at <= before + 121
-        ));
         let at = |path: &str| Base::parse(&base.replace("/releases", path)).unwrap();
-        assert!(matches!(
-            latest(&at("/spent"), NOTICE),
-            Err(Failure::RateLimited { status: 403, retry_at, .. })
-                if retry_at >= before + 599 && retry_at <= before + 601
-        ));
-        assert!(matches!(
-            latest(&at("/body"), NOTICE),
-            Err(Failure::RateLimited { status: 403, retry_at, .. })
-                if retry_at >= before + 3599 && retry_at <= before + 3601
-        ));
+        // `retry_at`, between the clock just before the request and just
+        // after it: the request reads the clock once, however long it takes.
+        let limited = |path: &str| {
+            let before = unix_now();
+            let answer = latest(&at(path), NOTICE);
+            let after = unix_now();
+            match answer {
+                Err(Failure::RateLimited {
+                    status: 403,
+                    retry_at,
+                    ..
+                }) => (before, retry_at, after),
+                other => panic!("{path}: {other:?}"),
+            }
+        };
+        let (before, retry_at, after) = limited("/releases");
+        assert!(
+            (before + 120..=after + 120).contains(&retry_at),
+            "{before} {retry_at} {after}"
+        );
+        // The host's own time, whenever the request was made.
+        assert_eq!(limited("/spent").1, reset);
+        let (before, retry_at, after) = limited("/body");
+        assert!(
+            (before + 3600..=after + 3600).contains(&retry_at),
+            "{before} {retry_at} {after}"
+        );
         // Another 403 (a proxy's refusal) is an ordinary failure.
         assert_eq!(
             latest(&at("/proxy"), NOTICE),
