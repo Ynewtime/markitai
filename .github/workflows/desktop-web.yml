@@ -1,10 +1,12 @@
 name: Desktop Web
 
-# Markitai Web (docs/desktop-web.md) on Windows x86-64: the markitai archive
-# built as release.yml builds it, staged into the app; desktop_web_build.py
-# vet; the e2e build driven by desktop_web_e2e.py on the runner's desktop; the
-# release build's installer installed, the app run from it, a file converted
-# by the server it starts (desktop_web_install.py), and the app uninstalled.
+# Markitai Web (docs/desktop-web.md), in a job for each system `platforms`
+# names: the markitai archive built as release.yml builds it, staged into the
+# app; desktop_web_build.py vet; the release build's package installed, the app
+# run from it, a file converted by the server it starts, and the app removed
+# (desktop_web_install.py). A push runs Windows x86-64 alone, and there also
+# the e2e build, driven by desktop_web_e2e.py on the runner's desktop; macOS
+# arm64 runs when `platforms` names it.
 # The archive is cached under a key of every tracked file but the app's own, so
 # a change to the app alone does not build it again.
 
@@ -21,30 +23,47 @@ on:
       - 'scripts/test_desktop_web_*.py'
       - '.github/workflows/desktop-web.yml'
   workflow_dispatch:
+    inputs:
+      platforms:
+        description: 'The systems to build and install on: a JSON list of darwin-arm64 and windows-amd64'
+        type: string
+        default: '["windows-amd64"]'
 
 permissions:
   contents: read
 
-# A newer push waits rather than cancels: a run may be building the archive
-# that later runs take from the cache.
+# A newer run of the same systems waits rather than cancels: a run may be
+# building the archive that later runs take from the cache. A run of other
+# systems does not wait for it.
 concurrency:
-  group: desktop-web-${{ github.ref }}
+  group: desktop-web-${{ github.ref }}-${{ inputs.platforms || '["windows-amd64"]' }}
   cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: never
   RUSTUP_TOOLCHAIN: 1.99.1
   CARGO_INCREMENTAL: '0'
-  TARGET: x86_64-pc-windows-msvc
 
 defaults:
   run:
     shell: bash
 
 jobs:
-  windows:
-    runs-on: windows-2025
+  app:
+    name: ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Each is a mygo platform with "-" for "/", as desktop_web_build.py names its build folder.
+        platform: ${{ fromJSON(inputs.platforms || '["windows-amd64"]') }}
+    runs-on: >-
+      ${{ fromJSON('{"darwin-arm64": "macos-15", "windows-amd64": "windows-2025"}')[matrix.platform] }}
     timeout-minutes: 150
+    env:
+      BUILD: ${{ matrix.platform }}
+      # The release target of the markitai the app bundles.
+      TARGET: >-
+        ${{ fromJSON('{"darwin-arm64": "aarch64-apple-darwin", "windows-amd64": "x86_64-pc-windows-msvc"}')[matrix.platform] }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -93,21 +112,30 @@ jobs:
         id: stage
         env:
           VERSION: ${{ steps.cli.outputs.version }}
-        run: python scripts/desktop_web_build.py stage --archive dist/markitai-v"$VERSION"-"$TARGET".zip
+        run: python scripts/desktop_web_build.py stage --archive dist/markitai-v"$VERSION"-"$TARGET".*
       - name: Vet and test
         run: |
           python scripts/desktop_web_build.py vet
           cd scripts && python -m unittest test_desktop_web_build test_desktop_web_install
       - name: Build the e2e app
         id: e2e
-        if: ${{ !cancelled() && steps.stage.outcome == 'success' }}
-        run: python scripts/desktop_web_build.py build --platform windows/amd64 --e2e
-      - name: Build the app and its installer
+        if: ${{ !cancelled() && steps.stage.outcome == 'success' && matrix.platform == 'windows-amd64' }}
+        run: python scripts/desktop_web_build.py build --platform "${BUILD/-//}" --e2e
+      - name: Build the app and its package
         id: app
         if: ${{ !cancelled() && steps.stage.outcome == 'success' }}
-        run: python scripts/desktop_web_build.py build --platform windows/amd64
-      - name: Record what was built
-        if: ${{ !cancelled() && steps.e2e.outcome == 'success' && steps.app.outcome == 'success' }}
+        run: python scripts/desktop_web_build.py build --platform "${BUILD/-//}"
+      - name: Record what was built (macOS)
+        if: ${{ !cancelled() && steps.app.outcome == 'success' && matrix.platform == 'darwin-arm64' }}
+        run: |
+          mkdir -p .local/desktop-web-install
+          sha256sum dist/markitai-v*.tar.gz "desktop/web/build/$BUILD/Markitai Web.app/Contents/MacOS/Markitai Web" \
+            "desktop/web/build/$BUILD/Markitai Web.app/Contents/Resources/bin/markitai" desktop/web/build/"$BUILD"/markitai-web-*.dmg \
+            | tee .local/desktop-web-install/sha256.txt
+          git rev-parse HEAD | tee .local/desktop-web-install/commit.txt
+          sw_vers | tee .local/desktop-web-install/system.txt
+      - name: Record what was built (Windows)
+        if: ${{ !cancelled() && steps.e2e.outcome == 'success' && steps.app.outcome == 'success' && matrix.platform == 'windows-amd64' }}
         run: |
           mkdir -p .local/desktop-web-install
           sha256sum dist/markitai-v*.zip "desktop/web/build/windows-amd64/Markitai Web.exe" desktop/web/build/windows-amd64/bin/markitai.exe \
@@ -119,8 +147,14 @@ jobs:
         if: ${{ !cancelled() && steps.e2e.outcome == 'success' }}
         timeout-minutes: 45
         run: python scripts/desktop_web_e2e.py "windows-ci-${{ github.run_id }}-${{ github.run_attempt }}"
-      - name: Install the app, run it and uninstall it
-        if: ${{ !cancelled() && steps.app.outcome == 'success' }}
+      # The disk image's app in /Applications, started with a HOME of the check's own: its server
+      # listens, its window is on the screen, a file converts, and it quits with 0.
+      - name: Install the app, run it and remove it (macOS)
+        if: ${{ !cancelled() && steps.app.outcome == 'success' && matrix.platform == 'darwin-arm64' }}
+        timeout-minutes: 10
+        run: python scripts/desktop_web_install.py run --package desktop/web/build/"$BUILD"/markitai-web-*.dmg --evidence .local/desktop-web-install
+      - name: Install the app, run it and uninstall it (Windows)
+        if: ${{ !cancelled() && steps.app.outcome == 'success' && matrix.platform == 'windows-amd64' }}
         timeout-minutes: 10
         shell: powershell
         run: |
@@ -228,7 +262,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: desktop-web-windows-evidence
+          name: desktop-web-${{ matrix.platform }}-evidence
           path: |
             .local/desktop-web-e2e/
             .local/desktop-web-install/
@@ -237,11 +271,14 @@ jobs:
           include-hidden-files: true
           if-no-files-found: warn
           retention-days: 7
-      - name: Keep the installer
+      # The disk image on macOS, the installer on Windows.
+      - name: Keep the package
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: markitai-web-windows-amd64
-          path: desktop/web/build/windows-amd64/markitai-web-setup-*.exe
+          name: markitai-web-${{ matrix.platform }}
+          path: |
+            desktop/web/build/${{ matrix.platform }}/markitai-web-*.dmg
+            desktop/web/build/${{ matrix.platform }}/markitai-web-setup-*.exe
           if-no-files-found: warn
           retention-days: 7
