@@ -101,6 +101,7 @@ python3 scripts/desktop_web_build.py vet
 python3 scripts/desktop_web_build.py stage --archive markitai-v<version>-<target>.tar.gz|.zip [--sums SHA256SUMS]
 python3 scripts/desktop_web_build.py build --platform darwin/arm64|linux/amd64|windows/amd64 [--e2e]
 python3 scripts/desktop_web_e2e.py ROUND [--only NAME,...]
+python3 scripts/desktop_web_install.py convert --pid PID --origin http://127.0.0.1:PORT
 ```
 
 `vet` checks gofmt and runs `go vet` for darwin, linux and windows, and the Go
@@ -142,15 +143,23 @@ is Winsock's `AF_UNIX`). The native Save panel and quit question are answered
 by the e2e build's environment on both, and a link it would open in the
 browser is recorded instead, so check them by hand once. Building the e2e
 project without the symlink privilege links its resources with a junction.
-`scripts/test_desktop_web_build.py` runs with the helper tests.
+A release build has no automation socket, so an installed app is checked
+through its server: `desktop_web_install.py convert` reads the token from the
+environment of the `markitai serve` the app started (PID; the app gives the
+token to no one else), sends a small HTML page to `POST /api/jobs` at the
+address `serve.log` names, as the workbench does, and fails unless the
+finished item's Markdown is the page's.
+`scripts/test_desktop_web_build.py` and `scripts/test_desktop_web_install.py`
+run with the helper tests.
 
 `.github/workflows/desktop-web.yml` builds the Windows app on a hosted
 `windows-2025` runner on a push to `desktop/web/**`, `desktop/icon.png`,
 `scripts/desktop_web_*.py` or the built workbench
 (`crates/markitai-cli/src/server/web/dist/**`), or by hand: it builds the CLI archive (cached by
 the tree it is built from), the e2e build and the installer, runs a full
-`desktop_web_e2e.py` round, installs, launches, closes and uninstalls the app,
-and keeps the evidence and the installer for 7 days.
+`desktop_web_e2e.py` round, installs and launches the app, converts a file
+through the server it started (`desktop_web_install.py convert`), closes and
+uninstalls it, and keeps the evidence and the installer for 7 days.
 
 ## Website
 

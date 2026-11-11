@@ -3,7 +3,8 @@ name: Desktop Web
 # Markitai Web (docs/desktop-web.md) on Windows x86-64: the markitai archive
 # built as release.yml builds it, staged into the app; desktop_web_build.py
 # vet; the e2e build driven by desktop_web_e2e.py on the runner's desktop; the
-# release build's installer installed, the app run from it and uninstalled.
+# release build's installer installed, the app run from it, a file converted
+# by the server it starts (desktop_web_install.py), and the app uninstalled.
 # The archive is cached under a key of every tracked file but the app's own, so
 # a change to the app alone does not build it again.
 
@@ -17,7 +18,7 @@ on:
       # The workbench the app shows, which its e2e round drives.
       - 'crates/markitai-cli/src/server/web/dist/**'
       - 'scripts/desktop_web_*.py'
-      - 'scripts/test_desktop_web_build.py'
+      - 'scripts/test_desktop_web_*.py'
       - '.github/workflows/desktop-web.yml'
   workflow_dispatch:
 
@@ -60,7 +61,7 @@ jobs:
         run: |
           python scripts/release_build.py version --github-output "$GITHUB_OUTPUT"
           sources=$(git ls-tree -r HEAD \
-            | grep -Ev $'\t(desktop/web/|desktop/icon\\.png$|\\.github/|docs/desktop-web\\.md$|docs/development\\.md$|scripts/desktop_web_[^/]*\\.py$|scripts/test_desktop_web_build\\.py$)' \
+            | grep -Ev $'\t(desktop/web/|desktop/icon\\.png$|\\.github/|docs/desktop-web\\.md$|docs/development\\.md$|scripts/(test_)?desktop_web_[^/]*\\.py$)' \
             | sha256sum | cut -c1-16)
           echo "key=desktop-web-cli-$TARGET-$RUSTUP_TOOLCHAIN-$sources" >> "$GITHUB_OUTPUT"
       - name: Restore the archive
@@ -96,7 +97,7 @@ jobs:
       - name: Vet and test
         run: |
           python scripts/desktop_web_build.py vet
-          cd scripts && python -m unittest test_desktop_web_build
+          cd scripts && python -m unittest test_desktop_web_build test_desktop_web_install
       - name: Build the e2e app
         id: e2e
         if: ${{ !cancelled() && steps.stage.outcome == 'success' }}
@@ -189,6 +190,15 @@ jobs:
           Shot 'installed-ready'
           Check (Test-Path (Join-Path $isolated.LOCALAPPDATA 'Markitai Web\WebView2')) 'web view data in LOCALAPPDATA\Markitai Web\WebView2'
           Check (Test-Path (Join-Path $isolated.APPDATA 'Markitai Web\web.json')) 'the port kept in APPDATA\Markitai Web\web.json'
+          # The release build has no automation socket: the page goes to the app's server with the
+          # token the app gave it, as the workbench in the window sends one.
+          if ($serve.Count -eq 1) {
+            $origin = [regex]::Match((Get-Content -Raw $serveLog), 'http://127\.0\.0\.1:\d+').Value
+            $converted = @(& python scripts\desktop_web_install.py convert --pid $serve[0].ProcessId --origin $origin)
+            $converts = $LASTEXITCODE -eq 0
+            foreach ($line in $converted) { Log "convert: $line" }
+            Check $converts "the installed app's serve converts a file"
+          }
           Check ($app.CloseMainWindow()) 'closing the window asks the app to quit'
           Check ($app.WaitForExit(30000) -and $app.ExitCode -eq 0) "the app quits with 0 ($($app.ExitCode))"
           if ($serve.Count -eq 1) {
