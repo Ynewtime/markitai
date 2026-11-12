@@ -6,7 +6,7 @@ name: Desktop Web
 # run from it, a file converted by the server it starts, and the app removed
 # (desktop_web_install.py). A push runs Windows x86-64 alone, and there also
 # the e2e build, driven by desktop_web_e2e.py on the runner's desktop; macOS
-# arm64 runs when `platforms` names it.
+# arm64 and Linux x86-64 run when `platforms` names them.
 # The archive is cached under a key of every tracked file but the app's own, so
 # a change to the app alone does not build it again.
 
@@ -25,7 +25,7 @@ on:
   workflow_dispatch:
     inputs:
       platforms:
-        description: 'The systems to build and install on: a JSON list of darwin-arm64 and windows-amd64'
+        description: 'The systems to build and install on: a JSON list of darwin-arm64, linux-amd64 and windows-amd64'
         type: string
         default: '["windows-amd64"]'
 
@@ -57,13 +57,16 @@ jobs:
         # Each is a mygo platform with "-" for "/", as desktop_web_build.py names its build folder.
         platform: ${{ fromJSON(inputs.platforms || '["windows-amd64"]') }}
     runs-on: >-
-      ${{ fromJSON('{"darwin-arm64": "macos-15", "windows-amd64": "windows-2025"}')[matrix.platform] }}
+      ${{ fromJSON('{"darwin-arm64": "macos-15", "linux-amd64": "ubuntu-24.04", "windows-amd64": "windows-2025"}')[matrix.platform] }}
     timeout-minutes: 150
     env:
       BUILD: ${{ matrix.platform }}
       # The release target of the markitai the app bundles.
       TARGET: >-
-        ${{ fromJSON('{"darwin-arm64": "aarch64-apple-darwin", "windows-amd64": "x86_64-pc-windows-msvc"}')[matrix.platform] }}
+        ${{ fromJSON('{"darwin-arm64": "aarch64-apple-darwin", "linux-amd64": "x86_64-unknown-linux-gnu", "windows-amd64": "x86_64-pc-windows-msvc"}')[matrix.platform] }}
+      # The image release.yml builds the Linux archive in, for glibc 2.28; no other system has one.
+      IMAGE: >-
+        ${{ fromJSON('{"linux-amd64": "quay.io/pypa/manylinux_2_28_x86_64@sha256:076b19ef6e698f28649fa817c49d14443201e01da85240e8e52f93e8daa49bff"}')[matrix.platform] }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -89,11 +92,16 @@ jobs:
         with:
           path: dist
           key: ${{ steps.cli.outputs.key }}
+      - name: Build the archive (manylinux_2_28)
+        if: steps.archive.outputs.cache-hit != 'true' && matrix.platform == 'linux-amd64'
+        run: |
+          docker run --rm -e RUSTUP_TOOLCHAIN -e CARGO_TERM_COLOR -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" \
+            -v "$GITHUB_WORKSPACE:/io" -w /io "$IMAGE" sh scripts/release_container.sh cli "$TARGET" dist
       - name: Install Rust
-        if: steps.archive.outputs.cache-hit != 'true'
+        if: steps.archive.outputs.cache-hit != 'true' && matrix.platform != 'linux-amd64'
         run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --target "$TARGET"
       - name: Build the archive
-        if: steps.archive.outputs.cache-hit != 'true'
+        if: steps.archive.outputs.cache-hit != 'true' && matrix.platform != 'linux-amd64'
         run: python scripts/release_build.py cli --target "$TARGET" --output dist
       - name: Install and exercise the archive
         if: steps.archive.outputs.cache-hit != 'true'
@@ -134,6 +142,16 @@ jobs:
             | tee .local/desktop-web-install/sha256.txt
           git rev-parse HEAD | tee .local/desktop-web-install/commit.txt
           sw_vers | tee .local/desktop-web-install/system.txt
+      - name: Record what was built (Linux)
+        if: ${{ !cancelled() && steps.app.outcome == 'success' && matrix.platform == 'linux-amd64' }}
+        run: |
+          mkdir -p .local/desktop-web-install
+          out=desktop/web/build/$BUILD
+          sha256sum dist/markitai-v*.tar.gz "$out"/markitai-web "$out"/bin/markitai "$out"/markitai-web_*.deb \
+            "$out"/markitai-web-*-linux-amd64.tar.gz "$out"/install.sh "$out"/PKGBUILD \
+            | tee .local/desktop-web-install/sha256.txt
+          git rev-parse HEAD | tee .local/desktop-web-install/commit.txt
+          { . /etc/os-release && echo "$PRETTY_NAME"; uname -srm; } | tee .local/desktop-web-install/system.txt
       - name: Record what was built (Windows)
         if: ${{ !cancelled() && steps.e2e.outcome == 'success' && steps.app.outcome == 'success' && matrix.platform == 'windows-amd64' }}
         run: |
@@ -153,6 +171,22 @@ jobs:
         if: ${{ !cancelled() && steps.app.outcome == 'success' && matrix.platform == 'darwin-arm64' }}
         timeout-minutes: 10
         run: python scripts/desktop_web_install.py run --package desktop/web/build/"$BUILD"/markitai-web-*.dmg --evidence .local/desktop-web-install
+      # The Debian package, installed by apt-get with what it depends on alone, and then the archive,
+      # installed by install.sh for a HOME of the check's own: each app runs on Xvfb's display, where
+      # its window is found and closed. The package brings the libraries the archive's app needs too.
+      - name: Install the app, run it and remove it (Linux)
+        if: ${{ !cancelled() && steps.app.outcome == 'success' && matrix.platform == 'linux-amd64' }}
+        timeout-minutes: 15
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xvfb
+          out=desktop/web/build/$BUILD
+          status=0
+          xvfb-run -a -s '-screen 0 1920x1080x24' python scripts/desktop_web_install.py run \
+            --package "$out"/markitai-web_*.deb --evidence .local/desktop-web-install/deb || status=1
+          xvfb-run -a -s '-screen 0 1920x1080x24' python scripts/desktop_web_install.py run \
+            --package "$out"/markitai-web-*-linux-amd64.tar.gz --evidence .local/desktop-web-install/install-sh || status=1
+          exit "$status"
       - name: Install the app, run it and uninstall it (Windows)
         if: ${{ !cancelled() && steps.app.outcome == 'success' && matrix.platform == 'windows-amd64' }}
         timeout-minutes: 10
@@ -271,7 +305,8 @@ jobs:
           include-hidden-files: true
           if-no-files-found: warn
           retention-days: 7
-      # The disk image on macOS, the installer on Windows.
+      # The disk image on macOS; the installer on Windows; on Linux the Debian package, the archive
+      # with install.sh, and the PKGBUILD with the icons it packages beside that archive.
       - name: Keep the package
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -280,5 +315,10 @@ jobs:
           path: |
             desktop/web/build/${{ matrix.platform }}/markitai-web-*.dmg
             desktop/web/build/${{ matrix.platform }}/markitai-web-setup-*.exe
+            desktop/web/build/${{ matrix.platform }}/markitai-web_*.deb
+            desktop/web/build/${{ matrix.platform }}/markitai-web-*-linux-*.tar.gz
+            desktop/web/build/${{ matrix.platform }}/install.sh
+            desktop/web/build/${{ matrix.platform }}/PKGBUILD
+            desktop/web/build/${{ matrix.platform }}/markitai-web-*x*.png
           if-no-files-found: warn
           retention-days: 7

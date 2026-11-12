@@ -101,7 +101,7 @@ python3 scripts/desktop_web_build.py vet
 python3 scripts/desktop_web_build.py stage --archive markitai-v<version>-<target>.tar.gz|.zip [--sums SHA256SUMS]
 python3 scripts/desktop_web_build.py build --platform darwin/arm64|linux/amd64|windows/amd64 [--e2e]
 python3 scripts/desktop_web_e2e.py ROUND [--only NAME,...]
-python3 scripts/desktop_web_install.py run --package markitai-web-<version>-arm64.dmg [--evidence DIR]
+python3 scripts/desktop_web_install.py run --package PACKAGE [--evidence DIR]
 python3 scripts/desktop_web_install.py convert --pid PID --origin http://127.0.0.1:PORT
 ```
 
@@ -152,31 +152,41 @@ token to no one else), sends a small HTML page to `POST /api/jobs` at the
 address `serve.log` names, as the workbench does, and fails unless the
 finished item's Markdown is the page's.
 `desktop_web_install.py run` is the whole check of a release build's package
-on macOS: it copies `Markitai Web.app` from the disk image to `/Applications`
-(and does not start when one is there or runs already), starts it with a
-`HOME` and `MARKITAI_HOME` of its own, and fails unless the bundled
-`markitai serve` listens, the app has a window on the screen, that server
-converts the page, and the app quits with 0 leaving its server drained; then
-it removes the app. It opens the app's window, so run it where that disturbs
-no one. The image it installs was never downloaded, so Gatekeeper, which
-would stop an app that is not signed for other Macs, is not part of the check.
+on macOS and Linux: it installs the package (and does not start when the app
+is installed or runs already), starts the app with a `HOME` and
+`MARKITAI_HOME` of its own, and fails unless the bundled `markitai serve`
+listens, the app has a window on the screen, that server converts the page,
+and the app quits with 0 leaving its server drained; then it removes the app.
+It opens the app's window, so run it where that disturbs no one. On macOS the
+package is the disk image, whose `Markitai Web.app` it copies to
+`/Applications`; the image was never downloaded, so Gatekeeper, which would
+stop an app that is not signed for other Macs, is not part of the check. On
+Linux the package is the `.deb`, which `apt-get` installs with what it depends
+on and no recommended package and removes afterwards (as root, through `sudo`
+when the check is not root; what it depends on stays), or the `.tar.gz`,
+which the `install.sh` beside it installs in the check's `HOME` and
+`install.sh --uninstall` removes, leaving the app's settings. There the app
+runs on the X display `DISPLAY` names, where the check finds its window and
+closes it as a window manager does for a user.
 `scripts/test_desktop_web_build.py` and `scripts/test_desktop_web_install.py`
 run with the helper tests.
 
 `.github/workflows/desktop-web.yml` builds the app on hosted runners, in a job
-for each system its `platforms` input names: `windows-amd64` (`windows-2025`)
-and `darwin-arm64` (`macos-15`). A push to `desktop/web/**`,
-`desktop/icon.png`, `scripts/desktop_web_*.py` or the built workbench
-(`crates/markitai-cli/src/server/web/dist/**`) runs `windows-amd64` alone; a
-run by hand takes the list
-(`gh workflow run desktop-web.yml -f platforms='["darwin-arm64"]'`). Each job
-builds the CLI archive (cached by the tree it is built from) and the app with
-its package, installs and launches the app, converts a file through the
-server it started, closes and removes it, and keeps the evidence and the
-package for 7 days: on Windows in the workflow's own step, which calls
-`desktop_web_install.py convert`, and on macOS with `desktop_web_install.py
-run`. The Windows job also builds the e2e build and runs a full
-`desktop_web_e2e.py` round; the macOS job does not.
+for each system its `platforms` input names: `windows-amd64` (`windows-2025`),
+`darwin-arm64` (`macos-15`) and `linux-amd64` (`ubuntu-24.04`, its archive
+built in the manylinux_2_28 image as `release.yml` builds it). A push to
+`desktop/web/**`, `desktop/icon.png`, `scripts/desktop_web_*.py` or the built
+workbench (`crates/markitai-cli/src/server/web/dist/**`) runs `windows-amd64`
+alone; a run by hand takes the list (`gh workflow run desktop-web.yml -f
+platforms='["darwin-arm64"]'`). Each job builds the CLI archive (cached by the
+tree it is built from) and the app with its package, installs and launches the
+app, converts a file through the server it started, closes and removes it, and
+keeps the evidence and the package for 7 days: on Windows in the workflow's own
+step, which calls `desktop_web_install.py convert`, on macOS with
+`desktop_web_install.py run`, and on Linux with `run` on Xvfb's display, once
+for the `.deb` and once for the `.tar.gz` with `install.sh`. The Windows job
+also builds the e2e build and runs a full `desktop_web_e2e.py` round; the macOS
+and Linux jobs do not.
 
 ## Website
 

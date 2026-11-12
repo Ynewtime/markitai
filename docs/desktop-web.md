@@ -138,7 +138,8 @@ that file; there is no need to turn Gatekeeper off.
 
 The Linux app is for x86-64 and needs glibc 2.28 or later, GTK 3 and
 WebKitGTK 4.1 (`libwebkit2gtk-4.1-0` on Debian and Ubuntu, `webkit2gtk-4.1`
-on Arch). It has been tested under Hyprland on Wayland. Build it on Linux from
+on Arch). It has been tested under Hyprland on Wayland and on Ubuntu 24.04 on
+an X display. Build it on Linux from
 the `markitai` release archive for `x86_64-unknown-linux-gnu` of the
 checkout's version (the GitHub release's, or one `release_build.py cli
 --target x86_64-unknown-linux-gnu` builds in the manylinux_2_28 image), then
@@ -153,8 +154,10 @@ sh desktop/web/build/linux-amd64/install.sh
 `build` writes to `desktop/web/build/linux-amd64/` the app (`markitai-web`,
 with `bin/markitai` and `licenses/` beside it), the archive
 `markitai-web-<version>-linux-amd64.tar.gz`, the Debian package
-`markitai-web_<version>_amd64.deb` (it installs in
-`/opt/markitai-web`, with the command `markitai-web` in `/usr/bin`), a
+`markitai-web_<version>_amd64.deb` (`sudo apt install
+./markitai-web_<version>_amd64.deb` installs it with GTK 3 and WebKitGTK in
+`/opt/markitai-web`, with the command `markitai-web` in `/usr/bin`, and
+`sudo apt remove markitai-web` removes it), a
 `PKGBUILD` (its package keeps the licences in
 `/usr/share/licenses/markitai-web`) and `install.sh`. `install.sh` puts the
 archive beside it in `~/.local/markitai-web.app`, with the command
