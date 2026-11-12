@@ -2,6 +2,7 @@
 from pathlib import Path
 from unittest import mock
 import contextlib
+import gzip
 import hashlib
 import io
 import json
@@ -328,8 +329,22 @@ def read_tar(data):
                               else member.linkname if member.issym() else None) for member in bundle.getmembers()}
 
 
+def tar_flags(data):
+    """The type flag of each header of a .tar.gz, those of long names and extended headers among them."""
+    raw, at, flags = gzip.decompress(data), 0, []
+    while raw[at:at + 512].strip(b"\0"):
+        flags.append(raw[at + 156:at + 157].decode("ascii"))
+        at += 512 + -(-int(raw[at + 124:at + 136].rstrip(b"\0 ") or b"0", 8) // 512) * 512
+    return flags
+
+
 def entry_keys(text):
     return dict(line.split("=", 1) for line in text.splitlines() if "=" in line)
+
+
+# A file of the markitai archive's attribution: past 100 characters once under ./opt/markitai-web/, so a
+# tar header's name field does not hold it.
+LONG_NAME = "licenses/markitai/licenses/upstream/local-evidence/alloc-stdlib-0.2.4/Cargo.toml.orig"
 
 
 class MygoLinux:
@@ -352,8 +367,11 @@ class MygoLinux:
         out = self.root / APP_DIR / ("build/e2e" if "-debug" in arguments else "build") / "linux-amd64"
         out.mkdir(parents=True)
         config = json.loads((self.root / APP_DIR / "mygo.json").read_text(encoding="utf-8"))
+        parts = LONG_NAME.split("/")
         app = [("bin", 0o755, None), ("bin/markitai", 0o755, b"#!/bin/sh\n"), ("licenses", 0o755, None),
                ("licenses/markitai", 0o755, None), ("licenses/markitai/LICENSE", 0o644, b"MIT"),
+               *(("/".join(parts[:count]), 0o755, None) for count in range(3, len(parts))),
+               (LONG_NAME, 0o644, b"[package]"),
                ("markitai-web", 0o755, b"\x7fELF"), ("markitai-web.desktop", 0o644, self.entry("markitai-web")),
                ("markitai-web.png", 0o644, b"png")]
         for name, mode, data in app:
@@ -479,6 +497,20 @@ class LinuxPackageTests(unittest.TestCase):
         self.assertTrue(all(line.startswith(" ") and len(line) <= 80 for line in description.splitlines()))
         self.assertEqual(" ".join(line.strip() for line in description.splitlines()), DEB_DESCRIPTION)
         self.assertTrue(DEB_DESCRIPTION.startswith("Markitai Web "))
+
+    def test_the_debian_package_keeps_long_names_as_dpkg_reads_them(self):
+        out = self.build()
+        members = read_ar((out / f"markitai-web_{VERSION}_amd64.deb").read_bytes(), "deb")
+        installed = "./opt/markitai-web/" + LONG_NAME
+        self.assertGreater(len(installed), 100)
+        for _, body in members[1:]:
+            # Files, links, directories and GNU's long names and link targets: dpkg refuses a pax
+            # archive's extended headers, "x" and "g".
+            self.assertLessEqual(set(tar_flags(body)), {"0", "2", "5", "L", "K"})
+        self.assertIn("L", tar_flags(members[2][1]))
+        self.assertEqual(read_tar(members[2][1])[installed], (0o644, b"[package]"))
+        archive = (out / f"markitai-web-{VERSION}-linux-amd64.tar.gz").read_bytes()
+        self.assertEqual(read_tar(archive)[LONG_NAME], (0o644, b"[package]"))
 
     def test_the_e2e_build_keeps_the_app_and_no_package(self):
         out = self.build(e2e=True)

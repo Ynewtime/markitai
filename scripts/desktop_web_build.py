@@ -335,12 +335,13 @@ def replace_once(text, old, new, where):
     return text.replace(old, new)
 
 
-def rewrite_tar(data, changes, where):
+def rewrite_tar(data, changes, where, format=tarfile.PAX_FORMAT):
     """data, a .tar.gz, with each regular file `changes` names as its change(body) -> (name, body)
-    makes it, and the other members as they were. Each named file must be there."""
+    makes it, and the other members as they were, written in `format`. Each named file must be
+    there."""
     out, seen = io.BytesIO(), set()
     with (tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as source,
-          tarfile.open(fileobj=out, mode="w:gz", format=tarfile.PAX_FORMAT) as target):
+          tarfile.open(fileobj=out, mode="w:gz", format=format) as target):
         for member in source.getmembers():
             body = source.extractfile(member).read() if member.isfile() else None
             if member.isfile() and member.name in changes:
@@ -381,11 +382,11 @@ def finish_linux(out, version, root=ROOT):
     Comment[zh_CN], Keywords, StartupNotify or StartupWMClass (linuxDesktopEntry, cmd/mygo/build.go).
     Every copy of the entry gets those keys: beside the app and in the .tar.gz, where install.sh and
     mygo's updater read it by the slug's name, and where install.sh, the Debian package and the
-    PKGBUILD install it, as APP_ID.desktop. The Debian package gets the app's long description, the
-    PKGBUILD the workspace's licence, which mygo build reads from a package.json the app does not
-    have, with the app's licences in /usr/share/licenses/SLUG, and install.sh --uninstall removes the
-    MIME cache it leaves with no type in it. It fails rather than guess when mygo build writes any
-    of them differently, and writes nothing until all of them hold."""
+    PKGBUILD install it, as APP_ID.desktop. The Debian package gets the app's long description and
+    stays the GNU tars dpkg reads, the PKGBUILD the workspace's licence, which mygo build reads from
+    a package.json the app does not have, with the app's licences in /usr/share/licenses/SLUG, and
+    install.sh --uninstall removes the MIME cache it leaves with no type in it. It fails rather than
+    guess when mygo build writes any of them differently, and writes nothing until all of them hold."""
     with open(root / "Cargo.toml", "rb") as file:
         licence = tomllib.load(file)["workspace"]["package"]["license"]
     goarch = out.name.removeprefix("linux-")
@@ -433,7 +434,11 @@ def finish_linux(out, version, root=ROOT):
     members = read_ar(deb.read_bytes(), deb.name)
     if [header[:16].decode().strip() for header, _ in members] != ["debian-binary", "control.tar.gz", "data.tar.gz"]:
         raise SystemExit(f"{deb.name}: not the members mygo build writes")
-    data = rewrite_tar(members[2][1], {"./" + installed: lambda body: ("./" + renamed, entry(body))}, deb.name)
+    # A Debian package's members are GNU tars, as dpkg-deb writes them: dpkg reads a name past 100
+    # characters, as the attribution's are, from that format's long-name member, and refuses the
+    # extended header a pax archive keeps one in ("unsupported PAX tar header type 'x'").
+    data = rewrite_tar(members[2][1], {"./" + installed: lambda body: ("./" + renamed, entry(body))}, deb.name,
+                       tarfile.GNU_FORMAT)
     with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as files:
         digest = hashlib.md5(files.extractfile("./" + renamed).read()).hexdigest()
 
@@ -453,7 +458,8 @@ def finish_linux(out, version, root=ROOT):
             raise SystemExit(f"{deb.name}: md5sums names {installed} {found} times")
         return "./md5sums", text.encode("utf-8")
 
-    control = rewrite_tar(members[1][1], {"./control": in_control, "./md5sums": in_md5sums}, deb.name)
+    control = rewrite_tar(members[1][1], {"./control": in_control, "./md5sums": in_md5sums}, deb.name,
+                          tarfile.GNU_FORMAT)
     written[deb] = write_ar([members[0], (members[1][0], control), (members[2][0], data)])
     for path, body in written.items():
         path.write_bytes(body)

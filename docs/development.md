@@ -119,7 +119,8 @@ its `.tar.gz`, `.deb`, `PKGBUILD` and `install.sh` in
 the manylinux_2_28 image builds (after `mygo build`, the script installs the
 menu entry of every package as `dev.markitai.web.desktop`, with
 `Comment[zh_CN]`, `Keywords` and `StartupNotify` and the window's class, and
-fails where mygo writes them otherwise), or `Markitai Web.exe` and the installer
+fails where mygo writes them otherwise; it keeps the Debian package's members
+GNU tars, as dpkg reads no pax header), or `Markitai Web.exe` and the installer
 `markitai-web-setup-<version>-amd64.exe` in `desktop/web/build/windows-amd64/`
 on x86-64 Windows ([Windows](desktop-web.md#windows)). No
 artifact may be named like a CLI archive (`markitai-v…`). `--e2e` builds with
