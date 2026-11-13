@@ -6,7 +6,9 @@ name: Release
 # publishing from the `pypi` environment), then server.json on the MCP
 # Registry, and it redeploys markitai.dev for the new notes. Started by hand, it
 # builds and tests everything and publishes nothing unless dry_run is off and
-# the run is on a tag. Nothing here needs a stored secret. The release builds
+# the run is on a tag; such a dry run also builds Markitai Web's packages
+# around its archives and installs them (desktop), which no release carries
+# yet. Nothing here needs a stored secret. The release builds
 # (cli, wheel, sdist) use no caches; only the test job (check.yml) restores a
 # Cargo cache, saved by runs on main.
 on:
@@ -312,6 +314,23 @@ jobs:
           path: dist/*.tar.gz
           if-no-files-found: error
           retention-days: 14
+
+  # A dry run only: Markitai Web (docs/desktop-web.md) with its packages for
+  # macOS arm64, Linux x86-64 and Windows x86-64, each built around the archive
+  # the cli job made in this run, then installed, started, used to convert a
+  # file, closed and removed on that system's runner (desktop-web.yml, which
+  # keeps the packages as artifacts). No release carries the app yet: a run
+  # that publishes skips this, and no job below waits for it or takes its
+  # packages.
+  desktop:
+    needs: [prepare, cli]
+    if: needs.prepare.outputs.publish != 'true'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/desktop-web.yml
+    with:
+      platforms: '["darwin-arm64", "linux-amd64", "windows-amd64"]'
+      archive: artifact
 
   github-release:
     needs: [prepare, test, cli, wheel, smoke-intel, sdist]

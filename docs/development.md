@@ -186,7 +186,10 @@ step, which calls `desktop_web_install.py convert`, on macOS with
 `desktop_web_install.py run`, and on Linux with `run` on Xvfb's display, once
 for the `.deb` and once for the `.tar.gz` with `install.sh`. The Windows job
 also builds the e2e build and runs a full `desktop_web_e2e.py` round; the macOS
-and Linux jobs do not.
+and Linux jobs do not. A dry run of `release.yml` ([releases](ci.md#releases))
+calls the workflow for the three systems with `archive: artifact`: each job
+then takes its archive from that run's `cli` job instead of building or
+restoring one, and makes no e2e build.
 
 ## Website
 

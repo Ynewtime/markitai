@@ -9,6 +9,9 @@ name: Desktop Web
 # arm64 and Linux x86-64 run when `platforms` names them.
 # The archive is cached under a key of every tracked file but the app's own, so
 # a change to the app alone does not build it again.
+# release.yml's dry run calls this for the three systems with `archive:
+# artifact`: each archive is then the one that run's cli job built, nothing is
+# built or cached for it here, and the e2e round stays with the push runs.
 
 on:
   push:
@@ -28,6 +31,16 @@ on:
         description: 'The systems to build and install on: a JSON list of darwin-arm64, linux-amd64 and windows-amd64'
         type: string
         default: '["windows-amd64"]'
+  workflow_call:
+    inputs:
+      platforms:
+        description: 'The systems to build and install on: a JSON list of darwin-arm64, linux-amd64 and windows-amd64'
+        type: string
+        required: true
+      archive:
+        description: 'build: build the archive or take it from the cache; artifact: the calling run''s cli-<target>, with no e2e round'
+        type: string
+        default: build
 
 permissions:
   contents: read
@@ -86,30 +99,38 @@ jobs:
             | grep -Ev $'\t(desktop/web/|desktop/icon\\.png$|\\.github/|docs/desktop-web\\.md$|docs/development\\.md$|scripts/(test_)?desktop_web_[^/]*\\.py$)' \
             | sha256sum | cut -c1-16)
           echo "key=desktop-web-cli-$TARGET-$RUSTUP_TOOLCHAIN-$sources" >> "$GITHUB_OUTPUT"
+      # The archive release.yml's cli job built and exercised in the same run.
+      - name: Take the calling run's archive
+        if: inputs.archive == 'artifact'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: cli-${{ env.TARGET }}
+          path: dist
       - name: Restore the archive
         id: archive
+        if: inputs.archive != 'artifact'
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: dist
           key: ${{ steps.cli.outputs.key }}
       - name: Build the archive (manylinux_2_28)
-        if: steps.archive.outputs.cache-hit != 'true' && matrix.platform == 'linux-amd64'
+        if: inputs.archive != 'artifact' && steps.archive.outputs.cache-hit != 'true' && matrix.platform == 'linux-amd64'
         run: |
           docker run --rm -e RUSTUP_TOOLCHAIN -e CARGO_TERM_COLOR -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" \
             -v "$GITHUB_WORKSPACE:/io" -w /io "$IMAGE" sh scripts/release_container.sh cli "$TARGET" dist
       - name: Install Rust
-        if: steps.archive.outputs.cache-hit != 'true' && matrix.platform != 'linux-amd64'
+        if: inputs.archive != 'artifact' && steps.archive.outputs.cache-hit != 'true' && matrix.platform != 'linux-amd64'
         run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --target "$TARGET"
       - name: Build the archive
-        if: steps.archive.outputs.cache-hit != 'true' && matrix.platform != 'linux-amd64'
+        if: inputs.archive != 'artifact' && steps.archive.outputs.cache-hit != 'true' && matrix.platform != 'linux-amd64'
         run: python scripts/release_build.py cli --target "$TARGET" --output dist
       - name: Install and exercise the archive
-        if: steps.archive.outputs.cache-hit != 'true'
+        if: inputs.archive != 'artifact' && steps.archive.outputs.cache-hit != 'true'
         env:
           VERSION: ${{ steps.cli.outputs.version }}
         run: python scripts/release_build.py smoke --target "$TARGET" dist/markitai-v"$VERSION"-"$TARGET".*
       - name: Keep the archive
-        if: steps.archive.outputs.cache-hit != 'true'
+        if: inputs.archive != 'artifact' && steps.archive.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: dist
@@ -127,7 +148,7 @@ jobs:
           cd scripts && python -m unittest test_desktop_web_build test_desktop_web_install
       - name: Build the e2e app
         id: e2e
-        if: ${{ !cancelled() && steps.stage.outcome == 'success' && matrix.platform == 'windows-amd64' }}
+        if: ${{ !cancelled() && steps.stage.outcome == 'success' && matrix.platform == 'windows-amd64' && inputs.archive != 'artifact' }}
         run: python scripts/desktop_web_build.py build --platform "${BUILD/-//}" --e2e
       - name: Build the app and its package
         id: app
@@ -153,12 +174,15 @@ jobs:
           git rev-parse HEAD | tee .local/desktop-web-install/commit.txt
           { . /etc/os-release && echo "$PRETTY_NAME"; uname -srm; } | tee .local/desktop-web-install/system.txt
       - name: Record what was built (Windows)
-        if: ${{ !cancelled() && steps.e2e.outcome == 'success' && steps.app.outcome == 'success' && matrix.platform == 'windows-amd64' }}
+        if: ${{ !cancelled() && steps.e2e.outcome != 'failure' && steps.app.outcome == 'success' && matrix.platform == 'windows-amd64' }}
         run: |
           mkdir -p .local/desktop-web-install
-          sha256sum dist/markitai-v*.zip "desktop/web/build/windows-amd64/Markitai Web.exe" desktop/web/build/windows-amd64/bin/markitai.exe \
-            desktop/web/build/windows-amd64/markitai-web-setup-*.exe "desktop/web/build/e2e/windows-amd64/Markitai Web.exe" \
-            | tee .local/desktop-web-install/sha256.txt
+          built=(dist/markitai-v*.zip "desktop/web/build/windows-amd64/Markitai Web.exe" desktop/web/build/windows-amd64/bin/markitai.exe
+                 desktop/web/build/windows-amd64/markitai-web-setup-*.exe)
+          # The e2e build, where this run made one.
+          e2e="desktop/web/build/e2e/windows-amd64/Markitai Web.exe"
+          if [ -f "$e2e" ]; then built+=("$e2e"); fi
+          sha256sum "${built[@]}" | tee .local/desktop-web-install/sha256.txt
           git rev-parse HEAD | tee .local/desktop-web-install/commit.txt
           python -c "import winreg; print('WebView2 Runtime', winreg.QueryValueEx(winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r'SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'), 'pv')[0])" | tee .local/desktop-web-install/webview2.txt
       - name: Drive the e2e app on the desktop

@@ -11,7 +11,9 @@ Windows 10 or later on x86-64 ([what it needs](#windows)).
 
 No release publishes Markitai Web yet; build it from a checkout with Go 1.27.3 or
 later, [on a Mac](#building-from-source), [on Linux](#linux) or
-[on Windows](#windows).
+[on Windows](#windows). A dry run of the [release workflow](ci.md#releases)
+builds its packages for the three systems, installs and runs each on a hosted
+runner, and keeps them as artifacts for 7 days.
 
 ## What it shares with the CLI
 

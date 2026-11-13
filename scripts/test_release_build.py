@@ -14,6 +14,7 @@ from unittest.mock import patch
 
 import bounded_run
 import release_build
+from desktop_web_build import PLATFORMS, SHIPPED
 from release_build import (TARGETS, archive_name, check_build_host, check_macos_extension, check_versions, expected_assets, extract_release_archive,
                            github_anchor, glibc_requirement, python_version, release_body, release_notes,
                            server_errors, write_sums)
@@ -260,6 +261,52 @@ class AssetTests(unittest.TestCase):
         images = re.findall(r"image: '(quay\.io/pypa/manylinux_2_28_\w+@sha256:[0-9a-f]{64})'", workflow)
         self.assertEqual(len(images), 4)
         self.assertEqual(len(set(images)), 2)
+        # Markitai Web's own runs build the Linux archive in the release's image.
+        desktop = (ROOT / ".github/workflows/desktop-web.yml").read_text(encoding="utf-8")
+        named = re.findall(r'"linux-amd64": "(quay\.io/pypa/manylinux_2_28_\w+@sha256:[0-9a-f]{64})"', desktop)
+        self.assertEqual(named, [image for image in sorted(set(images)) if "manylinux_2_28_x86_64@" in image])
+
+    def test_a_dry_run_builds_markitai_web_around_its_own_archives_and_a_release_does_not(self):
+        workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+        job = workflow.split("\n  desktop:\n", 1)[1].split("\n  github-release:", 1)[0]
+        for line in ["    needs: [prepare, cli]\n", "    if: needs.prepare.outputs.publish != 'true'\n",
+                     "    uses: ./.github/workflows/desktop-web.yml\n", "      archive: artifact\n"]:
+            self.assertIn(line, job)
+        self.assertEqual(job.split("permissions:\n", 1)[1].split("\n    uses:", 1)[0].split(), ["contents:", "read"])
+        platforms = json.loads(re.search(r"\n      platforms: '(\[[^']*\])'\n", job).group(1))
+        self.assertEqual(sorted(platforms), sorted(platform.replace("/", "-") for platform in SHIPPED))
+
+        # The called workflow takes both inputs, and has a runner and a target for each system; the
+        # target's archive is the artifact the cli job keeps under that name.
+        desktop = (ROOT / ".github/workflows/desktop-web.yml").read_text(encoding="utf-8")
+        called = desktop.split("\n  workflow_call:\n", 1)[1].split("\npermissions:", 1)[0]
+        for name in ["platforms", "archive"]:
+            self.assertIn(f"\n      {name}:\n", "\n" + called)
+        runners, targets = (json.loads(table) for table in
+                            re.findall(r"fromJSON\('(\{[^']*\})'\)\[matrix\.platform\]", desktop)[:2])
+        self.assertEqual((sorted(runners), sorted(targets)), (sorted(platforms), sorted(platforms)))
+        self.assertEqual(targets, {platform.replace("/", "-"): target for platform, target in PLATFORMS.items()
+                                   if platform in SHIPPED})
+        self.assertLessEqual(set(targets.values()), set(TARGETS))
+        taken = desktop.split("\n      - name: Take the calling run's archive\n", 1)[1].split("\n      - name:", 1)[0]
+        self.assertIn("        if: inputs.archive == 'artifact'\n", taken)
+        self.assertIn("          name: cli-${{ env.TARGET }}\n", taken)
+        self.assertIn("          path: dist", taken)
+        cli = workflow.split("\n  cli:\n", 1)[1].split("\n  # ", 1)[0]
+        self.assertIn("          name: cli-${{ matrix.target }}\n", cli)
+        # With that archive, nothing is restored, built or cached for it, and no e2e build is made.
+        for step in ["Restore the archive", "Build the archive (manylinux_2_28)", "Install Rust", "Build the archive",
+                     "Install and exercise the archive", "Keep the archive", "Build the e2e app"]:
+            condition = desktop.split(f"\n      - name: {step}\n", 1)[1].split("\n        if: ", 1)[1].split("\n", 1)[0]
+            self.assertIn("inputs.archive != 'artifact'", condition, step)
+
+        # No job that publishes waits for the app or takes its packages.
+        for name in ["github-release", "pypi", "mcp-registry", "website"]:
+            needs = re.search(rf"\n  {name}:\n(?:    name: [^\n]*\n)?    needs: \[([^\]]*)\]\n", workflow).group(1)
+            self.assertNotIn("desktop", needs, name)
+        published = workflow.split("\n  github-release:", 1)[1]
+        self.assertNotIn("markitai-web", published)
+        self.assertNotIn("desktop", published)
 
 
 class LicenseSetTests(unittest.TestCase):
