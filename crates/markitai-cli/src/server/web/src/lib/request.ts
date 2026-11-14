@@ -95,6 +95,27 @@ export function wrapUnits(words: string[]): string[] {
 
 const shown = (value: string | number | boolean | null) => (value === null ? "null" : String(value));
 
+/** Options and settings as text that is the same however their keys are ordered. */
+const told = (item: RanWith): string =>
+  JSON.stringify([item.options ?? null, item.settings ?? null], (_key, value: unknown) =>
+    value !== null && typeof value === "object" && !Array.isArray(value)
+      ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
+      : value,
+  );
+
+type RanWith = { options?: JobOptions | null; settings?: JobSettings | null };
+
+/** What a submission's items last ran with, when they all ran with the same. A retry or an
+ * enhancement runs an item with its own options and settings, while the job goes on telling what
+ * was asked at first: once every item was run again alike, that is no longer how any of them ran.
+ * Null when the items differ, there are none, or the backend tells nothing of an item's own. */
+export function sharedRun(items: readonly RanWith[]): { options: JobOptions; settings: JobSettings | null } | null {
+  const first = items[0];
+  if (!first?.options) return null;
+  const same = told(first);
+  return items.every((item) => item.options && told(item) === same) ? { options: first.options, settings: first.settings ?? null } : null;
+}
+
 /** `inputs`: what was converted, as names or URLs; `url`: the item is a URL. Null when nothing is known. */
 export function requestView(
   inputs: string[],

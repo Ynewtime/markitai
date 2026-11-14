@@ -227,7 +227,10 @@ files wait on Convert); typing URLs is Convert's job.
   the rest; Show item opens the one item, and Show items closes the window and narrows
   the list to exactly those items, with a thin "N items" bar over the list (its count drops
   as items are deleted; × shows all again); Summary opens the same
-  overview for the whole list.
+  overview for the whole list. A submission's request options are what it asked
+  for, until a retry or an enhancement has run every item again with the same
+  options and settings: then they are those, so a Retry failed after the
+  service's `ocr.lang` was corrected no longer shows the old language.
 - **Cost** is "unknown" whenever a model ran without a complete price, never
   `$0`: complete coverage shows the amount, partial coverage "At least $x · N
   requests without a price", a model that ran without pricing "Unknown". An item

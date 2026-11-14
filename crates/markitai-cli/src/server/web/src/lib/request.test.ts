@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { groupNotices, isUsedRetry, rowWarnings } from "./notices.ts";
 import { emptyOptions } from "./options.ts";
-import { publicSettings, requestView, wrapUnits } from "./request.ts";
+import { publicSettings, requestView, sharedRun, wrapUnits } from "./request.ts";
 
 const rich = { ...emptyOptions(), preset: "rich", llm: true, alt: true, desc: true, screenshot: true, ocr: false, no_cache: false };
 
@@ -141,4 +141,26 @@ test("a run kept off remote services copies with --no-remote-fetch", () => {
   const ask = requestView(["https://example.org/a"], null, { "fetch.remote_consent": "ask" }, true);
   assert.equal(ask?.command, "markitai https://example.org/a -o output/");
   assert.deepEqual(ask?.chips, [{ key: "fetch.remote_consent", value: "ask" }]);
+});
+
+test("a submission whose items were all run again alike tells how they ran", () => {
+  const asked = { ...emptyOptions(), ocr: true, ocr_lang: "xx" };
+  const first = { options: asked, settings: { "ocr.enabled": true, "ocr.lang": "xx" } };
+  // Retry after a language the service could not read leaves `ocr_lang` to the service.
+  const again = { options: { ...emptyOptions(), ocr: true }, settings: { "ocr.enabled": true } };
+  assert.deepEqual(sharedRun([again]), again);
+  assert.equal(requestView(["scan.png"], sharedRun([again])?.options, sharedRun([again])?.settings, false)?.chips.length, 0);
+  assert.deepEqual(requestView(["scan.png"], first.options, first.settings, false)?.chips, [{ key: "ocr.lang", value: "xx" }]);
+  // Key order is the backend's own; the same values are the same run.
+  const reordered = { options: Object.fromEntries(Object.entries(again.options).reverse()) as typeof again.options, settings: { ...again.settings } };
+  assert.deepEqual(sharedRun([again, reordered]), again);
+  // Items that ran differently leave the submission's own request.
+  assert.equal(sharedRun([first, again]), null);
+  assert.equal(sharedRun([again, { options: again.options, settings: { "ocr.enabled": true, "ocr.lang": "ja" } }]), null);
+  // Nothing of their own: an older or another backend, or no item yet.
+  assert.equal(sharedRun([{ settings: again.settings }]), null);
+  assert.equal(sharedRun([again, {}]), null);
+  assert.equal(sharedRun([]), null);
+  // A backend without recorded settings still gives the options.
+  assert.deepEqual(sharedRun([{ options: again.options }]), { options: again.options, settings: null });
 });

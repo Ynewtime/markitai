@@ -24,7 +24,7 @@ import { groupNotices, type NoticeGroup, noticeEntries } from "../lib/notices.ts
 import { copyText } from "../lib/clipboard.ts";
 import type { PresetTable } from "../lib/options.ts";
 import { openPreviewAs, readRequestOpen, storeRequestOpen } from "../lib/peek-pref.ts";
-import { requestView, wrapUnits, type RequestView } from "../lib/request.ts";
+import { requestView, sharedRun, wrapUnits, type RequestView } from "../lib/request.ts";
 import { cachedExcerpt, loadExcerpt, resultKey, sourceStart } from "../lib/results.ts";
 import { watchScrollCells } from "../lib/scroll-cells.ts";
 import { canRetry, isPreviewable, type SessionItem } from "../lib/session.ts";
@@ -831,11 +831,13 @@ export function JobInspector({
   const cost = totalCost(items);
   const running = job.status === "running";
   const kept = keptUntil(ctx, job.finishedAt);
-  const preset = presetOf(job.options);
+  // How the items last ran, which a retry changes for each, when they agree; else what was asked.
+  const ran = sharedRun(items) ?? { options: job.options, settings: job.settings };
+  const preset = presetOf(ran.options);
   const request = requestOf(ctx, {
     inputs: items.length <= 3 ? items.map((item) => item.name) : [],
-    options: job.options,
-    settings: job.settings,
+    options: ran.options,
+    settings: ran.settings,
     // the URL strategy applies to a submission's URLs, files and all
     url: items.some((item) => item.kind === "url"),
     origin: job.origin,
@@ -872,7 +874,7 @@ export function JobInspector({
           {totalCostText(t, items, cost)}
           {cost.kind === "unknown" && cost.unknownItems > 0 && <span class="fact-dim"> · {t.costUnknownItems(cost.unknownItems)}</span>}
         </dd>
-        {!request && <OptionsFact t={t} options={job.options} />}
+        {!request && <OptionsFact t={t} options={ran.options} />}
         {!running && job.durationMs !== null && (
           <>
             <dt>{t.factTook}</dt>
