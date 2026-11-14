@@ -39,6 +39,8 @@ EVERY_CRATE = ("Cargo.toml", "Cargo.lock", "vendor/", ".cargo/", "rust-toolchain
                ".config/nextest.toml")
 # Workbench sources: the helper tests build and test them; only the built dist/ is embedded in the CLI.
 WEB_SOURCES = "crates/markitai-cli/src/server/web/"
+# The workflows and the Rust test that reads them: a changed workflow is a change to what it tests.
+WORKFLOWS, WORKFLOW_TESTS = ".github/workflows/", "crates/markitai-cli/tests/workflows.rs"
 
 
 def unshimmed_path(path):
@@ -411,6 +413,8 @@ def affected_crates(files, crates):
     """The workspace crates `files` can affect (their own and every crate depending on them), or None for all."""
     changed = set()
     for file in files:
+        if file.startswith(WORKFLOWS):
+            file = WORKFLOW_TESTS
         if file.startswith(EVERY_CRATE) or file in EVERY_CRATE:
             return None
         if file.startswith(WEB_SOURCES) and not file.startswith(WEB_SOURCES + "dist/"):

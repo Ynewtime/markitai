@@ -43,10 +43,16 @@ For branch work, `python scripts/check.py --quick` checks only what the files
 changed since the branch left `origin/main` (committed or not; `--base REF`
 compares with another branch) can affect: with nextest, the tests of the
 changed crates and of every crate depending on them (all crates when
-`Cargo.toml`, `Cargo.lock` or `vendor/` changed; none for workbench sources or
+`Cargo.toml`, `Cargo.lock` or `vendor/` changed; the CLI's when a workflow
+changed; none for workbench sources or
 scripts alone), clippy and formatting when a crate changed, and all helper tests. Run the full gate before a merge or
 a release. The CLI's integration tests build as two binaries: `update` and
 `integration` (`crates/markitai-cli/tests/integration.rs` lists the other test files).
+One of those files, `tests/workflows.rs`, reads `.github/workflows/` as GitHub
+does before it runs anything: each file is YAML, and the jobs a job needs, the
+inputs it gives a workflow it calls, and the steps, inputs, matrix entries and
+needed jobs' outputs its expressions name are there. It does not check what an
+expression computes, or an action's own inputs.
 Build the optimized CLI separately:
 
 ```sh

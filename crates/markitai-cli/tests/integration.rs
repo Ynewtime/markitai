@@ -58,6 +58,7 @@ mod subscription_auth;
 mod terminal_language;
 mod terminal_usage;
 mod vision_reader;
+mod workflows;
 mod zh_output;
 
 /// Test files that are binaries of their own (Cargo.toml lists them).

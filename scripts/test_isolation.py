@@ -11,7 +11,8 @@ from unittest.mock import patch
 
 from audit_formats import run_worker
 import bounded_run
-from check import PART, SPLIT_AT, affected_crates, helper_parts, helper_tests, run_lanes, run_steps, test_command, test_skips, unshimmed_path
+from check import (PART, SPLIT_AT, WORKFLOWS, WORKFLOW_TESTS, affected_crates, helper_parts, helper_tests, run_lanes, run_steps,
+                   test_command, test_skips, unshimmed_path)
 from isolation import isolated_env
 
 
@@ -216,6 +217,13 @@ class CheckQuick(unittest.TestCase):
         web = "crates/markitai-cli/src/server/web/"
         self.assertEqual(affected_crates([web + "src/app.tsx", "scripts/check.py"], self.CRATES), set())
         self.assertEqual(affected_crates([web + "dist/app.js"], self.CRATES), {"markitai-cli", "markitai-python"})
+
+    def test_a_workflow_brings_the_crate_whose_test_reads_the_workflows(self):
+        self.assertEqual(affected_crates([".github/workflows/release.yml", "docs/ci.md"], self.CRATES),
+                         {"markitai-cli", "markitai-python"})
+        root = Path(__file__).resolve().parents[1]
+        self.assertTrue((root / WORKFLOWS).is_dir())
+        self.assertIn(WORKFLOWS.rstrip("/"), (root / WORKFLOW_TESTS).read_text(encoding="utf-8"))
 
     def test_nextest_builds_the_workspace_and_runs_the_chosen_crates(self):
         skip = {"MARKITAI_CHECK_SKIP": "vision"}
