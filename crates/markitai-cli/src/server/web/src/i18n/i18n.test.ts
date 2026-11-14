@@ -230,7 +230,10 @@ test("current portable OCR errors explain the right recovery and keep the origin
     ["MARKITAI_OCR_BACKEND=vision selects macOS Vision, which needs macOS 11 or later; unset it or choose paddle", "unsupported", "errOcrVisionSelection"],
     ["MARKITAI_OCR_BACKEND must be vision or paddle", "config_error", "errOcrBackendSetting"],
     [`Local OCR needs the model ${model}, which is not installed: ${remedy}`, "unsupported", "errOcrModelMissing"],
+    // A download that failed is `fetch_error`; an older server says `unsupported`.
+    [`Local OCR download of ${model} failed (official download could not be reached); any existing damaged file was kept: ${remedy}`, "fetch_error", "errOcrModelDownload"],
     [`Local OCR download of ${model} failed (official download could not be reached); any existing damaged file was kept: ${remedy}`, "unsupported", "errOcrModelDownload"],
+    [`Local OCR download of ${model} failed (official download was interrupted: timed out); any existing damaged file was kept: ${remedy}`, "fetch_error", "errOcrModelDownload"],
     [`Local OCR download of ${model} failed (official download was interrupted: timed out); any existing damaged file was kept: ${remedy}`, "unsupported", "errOcrModelDownload"],
     [`Local OCR models: ${path} has 10 bytes instead of its published 9929594 bytes${repair}`, "conversion_error", "errOcrModelCorrupt"],
     [`Local OCR models: ${path} does not match its published SHA-256${repair}`, "conversion_error", "errOcrModelCorrupt"],
@@ -382,6 +385,14 @@ test("only missing-model and download OCR errors can retry an unsupported item",
   }
   assert.equal(isUnsupported({ error: "Unsupported file format: '.xyz'." }), true);
   assert.equal(isUnsupported({ error: "ordinary conversion error", error_code: "conversion_error" }), false);
+  // The service's own code for a download that failed, on an image and on a scanned page.
+  for (const error of [
+    "Local OCR download of ppocrv6-det-small failed (official download could not be reached); any existing damaged file was kept: run `markitai doctor --fix`",
+    "PDF page media: local OCR failed on page 2: Local OCR download of ppocrv6-det-small failed (official download could not be reached); any existing damaged file was kept: run `markitai doctor --fix`",
+  ]) {
+    assert.equal(isUnsupported({ error, error_code: "fetch_error" }), false, error);
+    assert.equal(itemErrorText("en", { error, error_code: "fetch_error", kind: "file" }).text, MESSAGES.en.errOcrModelDownload, error);
+  }
 });
 
 test("unsafe portable OCR paths require inspection, never blind automatic repair", () => {

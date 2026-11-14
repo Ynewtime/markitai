@@ -525,7 +525,8 @@ fn fetch(
                 Error::Conversion(message) => message,
                 other => other.to_string(),
             };
-            Error::Unsupported(format!(
+            // The network's failure, not a format or a setting this build lacks.
+            Error::Fetch(format!(
                 "Local OCR download of {} failed ({cause}); any existing damaged file was kept: {}",
                 model.name,
                 remedy(root, model)
@@ -793,7 +794,8 @@ mod tests {
         drop(closed);
         let error =
             install_into(&root, &[&wanted], false, true, &client(), |_| url.clone()).unwrap_err();
-        assert!(matches!(error, Error::Unsupported(_)), "{error}");
+        assert!(matches!(error, Error::Fetch(_)), "{error}");
+        assert_eq!(error.code(), "fetch_error");
         let error = error.to_string();
         assert!(error.contains("could not be reached"), "{error}");
         assert!(

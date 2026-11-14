@@ -73,7 +73,7 @@ class ConversionError(RuntimeError):
 
 
 class FetchError(Exception):
-    """An HTTP source could not be fetched."""
+    """An HTTP source could not be fetched: a page, or a model local OCR downloads."""
 
     code = "fetch_error"
     usage: ConversionUsage | None = None

@@ -486,7 +486,7 @@ fn read_portable(image: &image::RgbImage, spelling: &str) -> Result<OcrResult> {
 #[cfg(all(target_os = "macos", feature = "portable-media"))]
 fn vision_instead(error: &Error) -> bool {
     static TOLD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-    let download_failed = matches!(error, Error::Unsupported(message)
+    let download_failed = matches!(error, Error::Fetch(message)
         if message.starts_with("Local OCR download of"));
     let chosen = std::env::var(BACKEND_VARIABLE).is_ok_and(|value| !value.trim().is_empty());
     let works = objc2::available!(macos = 11.0) && !crate::system_frameworks::translated();

@@ -549,7 +549,9 @@ fn picture_result(
             Ok(Some(text))
         }
         Err(error @ Error::Config(_)) => Err(error),
-        Err(error @ Error::Unsupported(_)) if backend_available => Err(error),
+        // What keeps any picture from being read (a missing engine, models that
+        // could not be downloaded) fails the conversion once, not each picture.
+        Err(error @ (Error::Unsupported(_) | Error::Fetch(_))) if backend_available => Err(error),
         Err(error) => {
             warnings.push(format!("PDF embedded image {name}: local OCR failed ({error}); the native page and image reference were preserved."));
             Ok(None)
@@ -813,6 +815,11 @@ fn apply_page(
         .map_err(|error| match error {
             // A setting no reading can satisfy is not this page's failure.
             Error::Config(_) => error,
+            // Nor is a model that could not be downloaded a reading that failed.
+            Error::Fetch(cause) => Error::Fetch(format!(
+                "PDF page media: local OCR failed on page {}: {cause}",
+                page.number
+            )),
             error => Error::TextRecognition(format!(
                 "PDF page media: local OCR failed on page {}: {error}",
                 page.number
@@ -1586,6 +1593,9 @@ mod tests {
         for error in [
             Error::Config("invalid OCR language identifier".into()),
             Error::Unsupported("language is not installed".into()),
+            Error::Fetch(
+                "Local OCR download of det failed (official download could not be reached)".into(),
+            ),
         ] {
             let mut counts = OcrCounts::default();
             let mut warnings = Vec::new();
@@ -1971,6 +1981,25 @@ mod tests {
             "PDF page media: local OCR failed on page 1: Local OCR: Vision stopped responding"
         );
         assert_eq!(error.code(), "conversion_error");
+    }
+
+    #[test]
+    fn a_model_that_cannot_be_downloaded_stays_a_fetch_error_on_a_page() {
+        let recognize = |_: RgbImage, _: &Value| -> Result<ocr::OcrResult> {
+            Err(Error::Fetch(
+                "Local OCR download of det failed (official download could not be reached)".into(),
+            ))
+        };
+        let cfg = json!({"ocr":{"enabled":true},"llm":{"enabled":false}});
+        let prepared = prepare_with(&scans(1), "s.pdf", &cfg, false, &recognize, &no_lines);
+        let Err(error) = prepared else {
+            panic!("the page was read");
+        };
+        assert_eq!(
+            error.to_string(),
+            "PDF page media: local OCR failed on page 1: Local OCR download of det failed (official download could not be reached)"
+        );
+        assert_eq!(error.code(), "fetch_error");
     }
 
     #[test]

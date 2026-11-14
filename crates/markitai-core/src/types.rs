@@ -27,6 +27,8 @@ pub enum Error {
     /// a document that cannot be converted.
     #[error("{0}")]
     TextRecognition(String),
+    /// Something could not be had over the network: a URL's page, or a model
+    /// local OCR downloads. Its code is `fetch_error`.
     #[error("{0}")]
     Fetch(String),
     #[error("{0}")]
