@@ -184,8 +184,13 @@ built in the manylinux_2_28 image as `release.yml` builds it). A push to
 `desktop/web/**`, `desktop/icon.png`, `scripts/desktop_web_*.py` or the built
 workbench (`crates/markitai-cli/src/server/web/dist/**`) runs `windows-amd64`
 alone; a run by hand takes the list (`gh workflow run desktop-web.yml -f
-platforms='["darwin-arm64"]'`). Each job builds the CLI archive (cached by the
-tree it is built from) and the app with its package, installs and launches the
+platforms='["darwin-arm64"]'`). Each job builds the CLI archive, or takes it
+from the cache, where it is kept under `desktop_web_build.py archive-key`: the
+files an archive is built from (the Rust workspace and what it compiles in,
+the attribution and guides the archive carries, the scripts that build it), so
+a change to the app, another guide, a test of the scripts or a workflow keeps
+the archive, whose build commit is then an earlier one. The job then builds the
+app with its package, installs and launches the
 app, converts a file through the server it started, closes and removes it, and
 keeps the evidence and the package for 7 days: on Windows in the workflow's own
 step, which calls `desktop_web_install.py convert`, on macOS with

@@ -17,8 +17,9 @@ import zipfile
 
 import bounded_run
 import desktop_web_build
-from desktop_web_build import (APP_DIR, DEB_DESCRIPTION, ENTRY_KEYS, PLATFORMS, SHIPPED, STAMP, build,
-                               check_artifacts, e2e_project, layout, mygo_build_command, read_ar, stage)
+from desktop_web_build import (APP_DIR, DEB_DESCRIPTION, ENTRY_KEYS, PLATFORMS, SHIPPED, STAMP, archive_key,
+                               archive_source, build, check_artifacts, e2e_project, layout, mygo_build_command,
+                               read_ar, sources_key, stage)
 from release_build import TARGETS, archive_name
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -182,6 +183,75 @@ class StageTests(unittest.TestCase):
                             modules=[*self.repo.modules, ("example.com/vendored", "v1.0.0", "")])
         self.assertEqual(json.loads((self.repo.resources / ".stage.json").read_text()), before)
         self.assertTrue((self.repo.resources / "darwin-arm64/bin/markitai").is_file())
+
+
+class ArchiveKeyTests(unittest.TestCase):
+    """The cache key of the CLI archive: the files it is built from, and no others."""
+    INSIDE = [".gitattributes", "Cargo.lock", "Cargo.toml", "LICENSE", "NOTICE", "README.md", "llms.txt",
+              "crates/markitai-core/src/lib.rs", "crates/markitai-cli/src/server/web/dist/app.js",
+              "docs/cli.md", "docs/schema/document-v1.schema.json", "licenses/pricing/provenance.json",
+              "scripts/release_build.py", "scripts/release_container.sh", "tests/support/bounded_read.rs",
+              "vendor/lopdf/src/lib.rs"]
+    OUTSIDE = [".github/workflows/release.yml", "AGENTS.md", "CHANGELOG.md", "Cargo.lock.orig",
+               "bindings/python/pyproject.toml", "desktop/icon.png", "desktop/web/main.go", "docs/ci.md",
+               "docs/desktop-web.md", "docs/development.md", "docs/schema.md", "scripts/desktop_web_build.py",
+               "scripts/desktop_web_install.py", "scripts/install/setup.sh", "scripts/test_release_build.py",
+               "website/package.json"]
+
+    @staticmethod
+    def listing(blobs):
+        return b"".join(f"100644 blob {blob * 40}\t{path}".encode() + b"\0" for path, blob in blobs.items())
+
+    def test_the_key_takes_what_the_archive_is_built_from(self):
+        for path in self.INSIDE:
+            self.assertTrue(archive_source(path), path)
+        for path in self.OUTSIDE:
+            self.assertFalse(archive_source(path), path)
+
+    def test_only_a_changed_source_changes_the_key(self):
+        tree = dict.fromkeys(self.INSIDE + self.OUTSIDE, "a")
+        key = sources_key(self.listing(tree))
+        self.assertRegex(key, "^[0-9a-f]{16}$")
+        self.assertEqual(sources_key(self.listing(dict(reversed(tree.items())))), key)
+        for path in self.OUTSIDE:
+            self.assertEqual(sources_key(self.listing({**tree, path: "b"})), key, path)
+            self.assertEqual(sources_key(self.listing({name: blob for name, blob in tree.items() if name != path})),
+                             key, path)
+        for path in self.INSIDE:
+            self.assertNotEqual(sources_key(self.listing({**tree, path: "b"})), key, path)
+            self.assertNotEqual(sources_key(self.listing({name: blob for name, blob in tree.items() if name != path})),
+                                key, path)
+        # A file that becomes executable is another file of the same bytes.
+        self.assertNotEqual(sources_key(self.listing(tree).replace(b"100644 blob " + b"a" * 40 + b"\tscripts/release",
+                                                                   b"100755 blob " + b"a" * 40 + b"\tscripts/release")), key)
+
+    def test_every_file_a_crate_compiles_in_is_in_the_key(self):
+        # include_str!("../../../../docs/schema/x.json"): a file outside the crates that changes the program.
+        included = re.compile(r'include(?:_str|_bytes)?!\(\s*(concat!\(\s*env!\("CARGO_MANIFEST_DIR"\)\s*,\s*)?"([^"]+)"')
+        outside = set()
+        for source in sorted((ROOT / "crates").rglob("*.rs")):
+            if "node_modules" in source.parts:
+                continue
+            for from_manifest, target in included.findall(source.read_text(encoding="utf-8")):
+                base = source.parent
+                if from_manifest:
+                    base = next(parent for parent in source.parents if (parent / "Cargo.toml").is_file())
+                    target = target.lstrip("/")
+                path = Path(os.path.normpath(base / target))
+                self.assertTrue(path.is_relative_to(ROOT), f"{source}: {target}")
+                relative = path.relative_to(ROOT).as_posix()
+                self.assertTrue(archive_source(relative), f"{source.relative_to(ROOT)} compiles in {relative}")
+                if not relative.startswith("crates/"):
+                    outside.add(relative)
+        # The scan is alive: the crates do compile in files that are not theirs.
+        self.assertTrue(outside)
+
+    def test_the_workflow_keeps_the_archive_under_that_key(self):
+        workflow = (ROOT / ".github/workflows/desktop-web.yml").read_text(encoding="utf-8")
+        self.assertIn("sources=$(python scripts/desktop_web_build.py archive-key)\n", workflow)
+        self.assertIn('echo "key=desktop-web-cli-$TARGET-$RUSTUP_TOOLCHAIN-$sources" >> "$GITHUB_OUTPUT"', workflow)
+        self.assertNotIn("ls-tree", workflow)
+        self.assertRegex(archive_key(), "^[0-9a-f]{16}$")
 
 
 class RegistryTests(unittest.TestCase):

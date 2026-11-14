@@ -26,6 +26,10 @@
         installed Markitai Web does.
   vet   gofmt, go vet and go test of desktop/web/ for darwin, linux and
         windows; tests run on this system and compile for the others.
+  archive-key
+        Sixteen hex digits naming what a CLI archive of HEAD is built from
+        (ARCHIVE_SOURCES): the workflow's cache keeps an archive under them,
+        so a commit that changes none of those files builds no new one.
 
 The input is a release-shaped CLI archive (`release_build.py cli`, or the
 GitHub release's); nothing here downloads. The app's version is the
@@ -50,10 +54,18 @@ import tempfile
 import textwrap
 import tomllib
 
+from cli_documentation import DOCUMENTATION_PATHS
 from package_cli_target import workspace_version
 from release_build import TARGETS, archive_attribution, archive_name, extract_release_archive
 
 ROOT = Path(__file__).resolve().parents[1]
+# What `release_build.py cli` makes an archive from: the Rust workspace with the crates it vendors and
+# the files outside it that it compiles in or its tests read, the attribution and the guides the
+# archive carries, and the scripts that build it. A directory ends in "/".
+ARCHIVE_SOURCES = (".gitattributes", "Cargo.lock", "Cargo.toml", "LICENSE", "NOTICE", "crates/", "docs/schema/",
+                   "licenses/", "scripts/", "tests/", "vendor/", *DOCUMENTATION_PATHS)
+# Scripts no archive is built with: the scripts' tests, the app's own, and the setup scripts the website serves.
+NOT_ARCHIVE_SOURCES = re.compile(r"scripts/(test_[^/]*\.py|desktop_web_[^/]*\.py|install/.*)")
 # The app's Go module and mygo project, from the checkout.
 APP_DIR = "desktop/web"
 # mygo platform -> release target; the platform, "/" made "-", names mygo's
@@ -87,6 +99,26 @@ ENTRY_KEYS = {"Comment[zh_CN]": "把文档和网页转换为 Markdown",
 DEB_DESCRIPTION = ("Markitai Web opens the markitai workbench in a window of its own. The markitai bundled with it "
                    "serves the workbench on this computer and converts documents, web pages and images to "
                    "Markdown, as the CLI of the same version does.")
+
+
+def archive_source(path):
+    """Whether the tracked file `path` is one a CLI archive is built from."""
+    return (any(path.startswith(source) if source.endswith("/") else path == source for source in ARCHIVE_SOURCES)
+            and not NOT_ARCHIVE_SOURCES.fullmatch(path))
+
+
+def sources_key(listing):
+    """Sixteen hex digits of the archive sources in `git ls-tree -r -z`'s `listing`: each one's mode, blob and path."""
+    entries = sorted(entry for entry in listing.split(b"\0")
+                     if entry and archive_source(entry.split(b"\t", 1)[1].decode("utf-8", "surrogateescape")))
+    return hashlib.sha256(b"\n".join(entries)).hexdigest()[:16]
+
+
+def archive_key(root=ROOT):
+    """`sources_key` of HEAD. An archive kept under it records the commit it was built at, which is
+    the one that last changed a source and need not be HEAD."""
+    return sources_key(subprocess.run(["git", "ls-tree", "-r", "-z", "HEAD"], cwd=root, check=True,
+                                      capture_output=True).stdout)
 
 
 def resources_dir(platform):
@@ -533,11 +565,14 @@ def main(argv=None):
     building.add_argument("--platform", required=True, choices=sorted(SHIPPED))
     building.add_argument("--e2e", action="store_true", help="the -debug build scripts/desktop_web_e2e.py drives")
     commands.add_parser("vet", help="gofmt, go vet and go test for darwin, linux and windows")
+    commands.add_parser("archive-key", help="name what a CLI archive of HEAD is built from")
     args = parser.parse_args(argv)
     if args.command == "stage":
         stage(args.archive.resolve(), args.sums.resolve() if args.sums else None)
     elif args.command == "build":
         build(args.platform, args.e2e)
+    elif args.command == "archive-key":
+        print(archive_key())
     else:
         vet()
     return 0

@@ -7,8 +7,10 @@ name: Desktop Web
 # (desktop_web_install.py). A push runs Windows x86-64 alone, and there also
 # the e2e build, driven by desktop_web_e2e.py on the runner's desktop; macOS
 # arm64 and Linux x86-64 run when `platforms` names them.
-# The archive is cached under a key of every tracked file but the app's own, so
-# a change to the app alone does not build it again.
+# The archive is cached under a key of the files it is built from
+# (desktop_web_build.py archive-key), so a change to the app, a guide the
+# archive does not carry, a test of the scripts or a workflow does not build
+# it again.
 # release.yml's dry run calls this for the three systems with `archive:
 # artifact`: each archive is then the one that run's cli job built, nothing is
 # built or cached for it here, and the e2e round stays with the push runs.
@@ -95,9 +97,7 @@ jobs:
         id: cli
         run: |
           python scripts/release_build.py version --github-output "$GITHUB_OUTPUT"
-          sources=$(git ls-tree -r HEAD \
-            | grep -Ev $'\t(desktop/web/|desktop/icon\\.png$|\\.github/|docs/desktop-web\\.md$|docs/development\\.md$|scripts/(test_)?desktop_web_[^/]*\\.py$)' \
-            | sha256sum | cut -c1-16)
+          sources=$(python scripts/desktop_web_build.py archive-key)
           echo "key=desktop-web-cli-$TARGET-$RUSTUP_TOOLCHAIN-$sources" >> "$GITHUB_OUTPUT"
       # The archive release.yml's cli job built and exercised in the same run.
       - name: Take the calling run's archive
