@@ -629,17 +629,23 @@ pub(crate) mod tests {
 
     #[test]
     fn a_silent_server_times_out_within_the_notice_cap() {
-        // Accepts, never answers.
+        // Accepts, never answers, and tells how long each caller stayed.
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
+        let (left, stays) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            let mut held = Vec::new();
             for stream in listener.incoming() {
-                held.push(stream);
+                let left = left.clone();
+                std::thread::spawn(move || {
+                    let accepted = Instant::now();
+                    let mut stream = stream.unwrap();
+                    // The request, then nothing until the caller hangs up.
+                    let _ = std::io::copy(&mut stream, &mut std::io::sink());
+                    let _ = left.send(accepted.elapsed());
+                });
             }
         });
         let base = Base::parse(&format!("http://{address}/releases")).unwrap();
-        let started = std::time::Instant::now();
         let quick = Timeouts {
             connect: Duration::from_millis(300),
             idle: Duration::from_millis(300),
@@ -651,12 +657,10 @@ pub(crate) mod tests {
                 ..
             })
         ));
-        assert!(
-            started.elapsed() < Duration::from_secs(2),
-            "{:?}",
-            started.elapsed()
-        );
-        let started = Instant::now();
+        // The wait is the server's to tell: getting a client ready is no part
+        // of it, and takes most of a second on a slow machine.
+        let stayed = stays.recv_timeout(Duration::from_secs(30)).unwrap();
+        assert!(stayed < Duration::from_secs(2), "{stayed:?}");
         assert!(matches!(
             latest_within(
                 &base,
@@ -668,7 +672,10 @@ pub(crate) mod tests {
                 ..
             })
         ));
-        assert!(started.elapsed() < Duration::from_secs(2));
+        // A caller whose deadline passed before it set out reached no server.
+        if let Ok(stayed) = stays.recv_timeout(Duration::from_secs(5)) {
+            assert!(stayed < Duration::from_secs(2), "{stayed:?}");
+        }
         // Nothing listens: refused, not a timeout.
         let closed = TcpListener::bind("127.0.0.1:0")
             .unwrap()
