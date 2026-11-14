@@ -353,7 +353,12 @@ Use a private user directory for the managed home; model hashing and identity
 checks are separate from filesystem access permissions.
 
 Downloads use the page-fetching proxy settings and HTTPS-only redirects, and
-verify each file against the bundled size and SHA-256 before publication. Repair
+verify each file against the bundled size and SHA-256 before publication. A
+request with no answer after 3 seconds is joined by a second one over a
+connection of its own, and the first answer of the two is used: one connection
+in some twenty stalled on a direct connection to the source, and the next
+connected at once. The download still fails when its first request fails, so a
+source that cannot be reached takes no longer to report (15 seconds). Repair
 does not overwrite an unsafe path. A failed download leaves the existing model;
 if an error occurs after publication, run `doctor` again to inspect its state.
 A conversion that needed the model then fails with `fetch_error` (`FetchError`

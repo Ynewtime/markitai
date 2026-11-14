@@ -1,10 +1,11 @@
 //! Shared private installation paths, stable no-follow files and bounded downloads.
 use crate::{Error, Result, config, platform};
-use reqwest::blocking::Client;
+use reqwest::blocking::{Client, Response};
 use sha2::{Digest, Sha256};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 pub(crate) type Failure = fn(&str) -> Error;
 
@@ -437,6 +438,55 @@ pub(crate) fn lock(root: &Path, contention: Contention, failure: Failure) -> Res
     Ok(lock)
 }
 
+/// How long a download's request waits for an answer before a second one
+/// sets out beside it. A request that connects takes a third of a second,
+/// half a second for one in twenty.
+const SECOND_REQUEST: Duration = Duration::from_secs(3);
+
+/// The answer to a GET of `url`, or None when the request failed. A request
+/// with no answer after `patience` is joined by a second one, over a
+/// connection of its own, and the first answer of the two is used: a
+/// connection that stalls is one path's bad luck (8 of 180 requests for a
+/// model from one direct connection timed out, each followed by one that
+/// connected at once). The request fails when its first one fails, as it did
+/// when that was the only one, so a source that cannot be reached is reported
+/// no later.
+fn answer(client: &Client, url: &str, patience: Duration) -> Option<Response> {
+    let (answers, answered) = std::sync::mpsc::channel();
+    let ask = |first: bool| {
+        let (client, url, answers) = (client.clone(), url.to_owned(), answers.clone());
+        std::thread::Builder::new()
+            .spawn(move || {
+                let _ = answers.send((first, client.get(url).send()));
+            })
+            .is_ok()
+    };
+    if !ask(true) {
+        return client.get(url).send().ok();
+    }
+    let mut alone = true;
+    loop {
+        let (first, answer) = if alone {
+            match answered.recv_timeout(patience) {
+                Ok(answer) => answer,
+                Err(_) => {
+                    alone = false;
+                    ask(false);
+                    continue;
+                }
+            }
+        } else {
+            answered.recv().ok()?
+        };
+        match answer {
+            Ok(response) => return Some(response),
+            Err(_) if first => return None,
+            // The second one failed before the first: the first still decides.
+            Err(_) => {}
+        }
+    }
+}
+
 /// Streams `url` into `output`, at most `limit` bytes, and returns the
 /// SHA-256 of the bytes written, in lowercase hexadecimal.
 pub(crate) fn download(
@@ -446,10 +496,8 @@ pub(crate) fn download(
     output: &mut impl Write,
     failure: Failure,
 ) -> Result<String> {
-    let mut response = client
-        .get(url)
-        .send()
-        .map_err(|_| failure("official download could not be reached"))?;
+    let mut response = answer(client, url, SECOND_REQUEST)
+        .ok_or_else(|| failure("official download could not be reached"))?;
     if !response.status().is_success() {
         return Err(failure("official download returned an unsuccessful status"));
     }
@@ -539,6 +587,127 @@ mod tests {
             platform::open_no_follow(platform::private_file(&mut options), path).unwrap();
         file.write_all(bytes).unwrap();
     }
+    /// A local server: each connection, counted from 0, is handed to `plan` on a
+    /// thread of its own once its request has been read. Its address and the
+    /// number of connections so far.
+    fn serve(
+        plan: impl Fn(usize, std::net::TcpStream) + Send + Sync + 'static,
+    ) -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/model.onnx", listener.local_addr().unwrap());
+        let (count, plan) = (
+            std::sync::Arc::new(AtomicUsize::new(0)),
+            std::sync::Arc::new(plan),
+        );
+        let seen = count.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let (mut stream, plan) = (stream.unwrap(), plan.clone());
+                let index = seen.fetch_add(1, Ordering::SeqCst);
+                std::thread::spawn(move || {
+                    let mut request = [0u8; 4096];
+                    let _ = stream.read(&mut request);
+                    plan(index, stream);
+                });
+            }
+        });
+        (url, count)
+    }
+    fn answered(mut stream: std::net::TcpStream) {
+        let _ = stream
+            .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: close\r\n\r\nok");
+    }
+    fn held(stream: std::net::TcpStream) {
+        std::thread::sleep(Duration::from_secs(8));
+        drop(stream);
+    }
+    fn client() -> Client {
+        crate::trust::bundled_builder()
+            .no_proxy()
+            .timeout(Duration::from_secs(4))
+            .build()
+            .unwrap()
+    }
+    const SOON: Duration = Duration::from_millis(150);
+
+    #[test]
+    fn a_request_that_is_answered_is_the_only_one() {
+        use std::sync::atomic::Ordering;
+        let (url, count) = serve(|_, stream| answered(stream));
+        let mut sink = Vec::new();
+        let digest = download(&client(), &url, 16, &mut sink, fail).unwrap();
+        assert_eq!(sink, b"ok");
+        assert_eq!(digest.len(), 64);
+        assert_eq!(count.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn a_request_with_no_answer_is_joined_by_a_second_whose_answer_is_used() {
+        use std::sync::atomic::Ordering;
+        // The first connection never answers; alone it would fail when the client gives up.
+        let (url, count) = serve(|index, stream| {
+            if index == 0 {
+                held(stream)
+            } else {
+                answered(stream)
+            }
+        });
+        let response = answer(&client(), &url, SOON).expect("the second request's answer");
+        assert_eq!(response.status().as_u16(), 200);
+        assert_eq!(count.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn the_first_request_s_failure_is_the_download_s_whatever_the_second_does() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        // The first connection is dropped unanswered after the second has set out; the second
+        // is dropped too, most of a second later.
+        let released = std::sync::Arc::new(AtomicBool::new(false));
+        let done = released.clone();
+        let (url, count) = serve(move |index, stream| {
+            if index == 0 {
+                std::thread::sleep(Duration::from_millis(600));
+                drop(stream);
+            } else {
+                std::thread::sleep(Duration::from_millis(1500));
+                done.store(true, Ordering::SeqCst);
+                drop(stream);
+            }
+        });
+        assert!(answer(&client(), &url, SOON).is_none());
+        assert_eq!(count.load(Ordering::SeqCst), 2);
+        // It did not wait for the second to fail: that connection is still held.
+        assert!(!released.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn a_second_request_that_fails_first_leaves_the_first_to_answer() {
+        use std::sync::atomic::Ordering;
+        let (url, count) = serve(|index, stream| {
+            if index == 0 {
+                std::thread::sleep(Duration::from_millis(800));
+                answered(stream);
+            } else {
+                drop(stream);
+            }
+        });
+        let response = answer(&client(), &url, SOON).expect("the first request's answer");
+        assert_eq!(response.status().as_u16(), 200);
+        assert_eq!(count.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn a_source_nothing_listens_on_fails_at_once() {
+        let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/model.onnx", closed.local_addr().unwrap());
+        drop(closed);
+        let mut sink = Vec::new();
+        let error = download(&client(), &url, 16, &mut sink, fail).unwrap_err();
+        assert_eq!(error.to_string(), "official download could not be reached");
+        assert!(sink.is_empty());
+    }
+
     #[test]
     fn a_replaced_lock_is_refused_while_the_original_handle_stays_locked() {
         let root = tempfile::tempdir().unwrap();
