@@ -147,7 +147,11 @@ where a quit must ask (SIGTERM there is the session's end, which asks
 nothing); on
 Windows it runs in a desktop session and closes the window with `WM_CLOSE`
 (signals become window messages and `TerminateProcess`, the automation socket
-is Winsock's `AF_UNIX`). The native Save panel and quit question are answered
+is Winsock's `AF_UNIX`); there, once a launch has ended, the round waits up to
+20 seconds for its WebView2 processes to end before the scenario's next launch,
+and notes how long they took. A scenario that fails leaves `processes.txt`, the
+processes running then (on Windows with the command lines of the app's,
+markitai's and the web view's). The native Save panel and quit question are answered
 by the e2e build's environment on both, and a link it would open in the
 browser is recorded instead, so check them by hand once. Building the e2e
 project without the symlink privilege links its resources with a junction.

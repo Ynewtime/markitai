@@ -151,6 +151,8 @@ BUILD = BUILDS.get((platform.system(), platform.machine()))
 EVIDENCE = (ROOT / ".local/desktop-web-e2e").resolve()
 TOKEN_KEY = "markitai.service-token"
 READY_TIMEOUT = 90
+# How long the web view's own processes may outlive the app that started them (Windows).
+SETTLE_TIMEOUT = 20
 # The page a held conversion fetches: enough text for a plain fetch to keep.
 SLOW_PAGE = ("<!doctype html><html><head><title>Held page</title></head><body><h1>Held page</h1>"
              + "".join(f"<p>Paragraph {n} of a page the web e2e holds open until the app quits.</p>"
@@ -243,6 +245,13 @@ class Posix:
     def request_quit(self, process):
         process.send_signal(signal.SIGTERM)
 
+    def web_view(self, pid):
+        """Nothing to wait for: the web view's processes here are not the app's to outlive."""
+        return []
+
+    def processes(self):
+        return subprocess.run(["ps", "-A", "-o", "pid=,ppid=,comm="], capture_output=True, text=True).stdout
+
     def connect(self, path):
         attempt = socket.socket(socket.AF_UNIX)
         try:
@@ -263,9 +272,17 @@ class Windows:
     WM_CLOSE, WM_SYSCOMMAND, SC_CLOSE, GW_OWNER = 0x0010, 0x0112, 0xF060, 4
     WM_QUERYENDSESSION, WM_ENDSESSION, ENDSESSION_LOGOFF, SMTO_BLOCK = 0x0011, 0x0016, 0x80000000, 0x0001
     AF_UNIX, INVALID_SOCKET = 1, 2 ** (8 * struct.calcsize("P")) - 1
+    SNAPPROCESS, WEB_VIEW = 0x2, "msedgewebview2.exe"
 
     def __init__(self):
         from ctypes import wintypes
+
+        class Entry(ctypes.Structure):
+            _fields_ = [("size", wintypes.DWORD), ("usage", wintypes.DWORD), ("pid", wintypes.DWORD),
+                        ("heap", ctypes.c_size_t), ("module", wintypes.DWORD), ("threads", wintypes.DWORD),
+                        ("parent", wintypes.DWORD), ("priority", ctypes.c_long), ("flags", wintypes.DWORD),
+                        ("name", ctypes.c_wchar * 260)]
+        self.entry = Entry
         self.kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
         self.user32 = ctypes.WinDLL("user32", use_last_error=True)
         self.ntdll = ctypes.WinDLL("ntdll")
@@ -277,6 +294,10 @@ class Windows:
         self.kernel32.QueryFullProcessImageNameW.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR,
                                                             ctypes.POINTER(wintypes.DWORD)]
         self.kernel32.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
+        self.kernel32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+        self.kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+        self.kernel32.Process32FirstW.argtypes = self.kernel32.Process32NextW.argtypes = [
+            wintypes.HANDLE, ctypes.POINTER(Entry)]
         self.ntdll.NtSuspendProcess.argtypes = self.ntdll.NtResumeProcess.argtypes = [wintypes.HANDLE]
         self.each_window = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
         self.user32.EnumWindows.argtypes = [self.each_window, wintypes.LPARAM]
@@ -338,6 +359,53 @@ class Windows:
         self.call(pid, self.TERMINATE, lambda handle: self.kernel32.TerminateProcess(handle, 1))
 
     kill = terminate
+
+    def listed(self):
+        """Every process as (pid, parent pid, name). Windows keeps the parent's PID in a process after
+        the parent has ended."""
+        snapshot = self.kernel32.CreateToolhelp32Snapshot(self.SNAPPROCESS, 0)
+        if snapshot in (None, self.INVALID_SOCKET):
+            raise ctypes.WinError(ctypes.get_last_error())
+        try:
+            entry, found = self.entry(), []
+            entry.size = ctypes.sizeof(entry)
+            more = self.kernel32.Process32FirstW(snapshot, ctypes.byref(entry))
+            while more:
+                found.append((entry.pid, entry.parent, entry.name))
+                more = self.kernel32.Process32NextW(snapshot, ctypes.byref(entry))
+            return found
+        finally:
+            self.kernel32.CloseHandle(snapshot)
+
+    def web_view(self, pid):
+        """The WebView2 processes `pid` started, and those they started, as (pid, name): the browser
+        process is the app's child and its renderers are the browser's. They end a moment after the
+        app, and until then hold the web view's data folder, which the next launch of the scenario
+        clears and opens again."""
+        listed = self.listed()
+        family, grown = {pid}, True
+        while grown:
+            more = {child for child, parent, _ in listed if parent in family} - family
+            family, grown = family | more, bool(more)
+        return [(child, name) for child, _, name in listed
+                if child in family and child != pid and name.lower() == self.WEB_VIEW]
+
+    def processes(self):
+        """Every process by name, then the app's, markitai's and the web view's with their command
+        lines (the web view's name their data folder), where Windows tells them."""
+        names = "".join(f"{pid:>7} {parent:>7} {name}\n" for pid, parent, name in self.listed())
+        try:
+            told = subprocess.run(
+                ["powershell", "-NoProfile", "-NonInteractive", "-Command",
+                 "Get-CimInstance Win32_Process | Where-Object { $_.Name -match 'markitai|msedgewebview2|"
+                 "MicrosoftEdgeUpdate' } | ForEach-Object { '{0,7} {1,7} {2} | {3}' -f "
+                 "$_.ProcessId, $_.ParentProcessId, $_.Name, $_.CommandLine }"],
+                capture_output=True, text=True, timeout=60)
+            if told.returncode == 0:
+                return names + "\n" + told.stdout
+        except (OSError, subprocess.SubprocessError):
+            pass
+        return names
 
     def windows(self, pid, hidden=False):
         """pid's visible top-level windows that no other window owns: the app's, not mygo's hidden one;
@@ -521,6 +589,7 @@ class App:
                                      **environment))
         self.socket = os.path.relpath(scenario.dir / socket_name)
         self.ui = None
+        self.settled = False
         print(f"  launch {index}: pid {self.process.pid}", flush=True)
 
     def connect(self):
@@ -620,6 +689,26 @@ class App:
             self.process.kill()
             self.process.wait(10)
         self.output.close()
+        self.settle()
+
+    def settle(self):
+        """Once the app has ended, wait for its web view's processes to end too (SYSTEM.web_view), so
+        that the scenario's next launch does not open the data folder they still hold. How long
+        they took goes into the scenario's notes: a launch has been seen to open no window on
+        Windows (once, the first of its scenario), and what the web view was doing then is not known."""
+        if self.settled:
+            return
+        self.settled = True
+        pid, started = self.process.pid, time.monotonic()
+        if not SYSTEM.web_view(pid):
+            return
+        gone = eventually("the web view's processes to end", lambda: not SYSTEM.web_view(pid), SETTLE_TIMEOUT)
+        if gone is None:
+            self.scenario.note(f"web view processes of the app (pid {pid}) still ran {SETTLE_TIMEOUT} s after it: "
+                               f"{SYSTEM.web_view(pid)}")
+        else:
+            self.scenario.note(f"the web view's processes of the app (pid {pid}) ended "
+                               f"{time.monotonic() - started:.1f} s after it")
 
 
 class HeldPage:
@@ -726,6 +815,9 @@ class Scenario:
         return environment
 
     def launch(self, english=True, **environment):
+        for earlier in self.apps:
+            if earlier.process.poll() is not None:
+                earlier.settle()  # one that was killed, or quit by itself, and not closed yet
         app = App(self, len(self.apps) + 1, english, **environment)
         self.apps.append(app)
         app.connect()
@@ -1466,6 +1558,12 @@ def run_scenario(run, name):
     finally:
         if error and s.apps and s.apps[-1].process.poll() is None:
             s.apps[-1].capture("failure")
+        if error:
+            # Which processes ran when it failed: the app's, the web view's and serve's among them.
+            try:
+                (s.dir / "processes.txt").write_text(SYSTEM.processes(), encoding="utf-8")
+            except OSError as failure:
+                s.note(f"the process list could not be written: {failure}")
         s.cleanup()
     if error:
         print(f"  FAIL {error}", flush=True)
