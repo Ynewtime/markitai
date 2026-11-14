@@ -558,7 +558,9 @@ upstream files:
   exposes `shared::drawingml::diagram_blocks` for a PPTX's SmartArt.
 - `src/package/xml.rs`, `src/package/archive.rs`,
   `src/formats/sheet/xlsx.rs`: a closed element's `children` and an element's
-  `attrs` keep no spare capacity; `parse_xml_with` (and
+  `attrs` keep no spare capacity (each is moved into a vector of its length,
+  not shrunk in place, which macOS 15 does slowly: a 40,000-paragraph
+  document converted in 5.6 seconds there, and does in 0.36); `parse_xml_with` (and
   `Package::optional_xml_part_with`) hands each closed `child` element of a
   `parent` to a callback instead of keeping it in the tree, and the XLSX
   reader reads `sheetData/row` that way, one row at a time, then drops the
