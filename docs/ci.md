@@ -91,6 +91,16 @@ directory, Markdown included. A push whose changed files cannot be
 read, or that has 300 or more, and every run started by hand or by a release,
 run every platform.
 
+On a push to `main`, a pull request and a run by hand (not as the release's
+`test` job) the workflow's `workflows` job checks `.github/workflows/` with [actionlint](https://github.com/rhysd/actionlint),
+a pinned release it downloads and verifies by SHA-256: what GitHub would refuse
+or find only when a job runs, such as an expression's types and contexts, a
+runner's name, and the inputs of actions and called workflows. The scripts in
+`run:` are not checked (shellcheck and pyflakes are off). Part of this is
+checked before a push by `crates/markitai-cli/tests/workflows.rs`
+([development](development.md)). By hand,
+`gh workflow run check.yml -f platforms='[]'` runs this job alone.
+
 ## Running package acceptance
 
 From a clean committed checkout, with Rust, Node/npm, Python with venv/pip,

@@ -92,6 +92,36 @@ jobs:
             echo "intel=$(jq 'index("macos-15-intel") != null' <<<"$list")"
           } >> "$GITHUB_OUTPUT"
 
+  # The workflows themselves, with actionlint: what GitHub would refuse, and
+  # what it finds only when a job runs (an expression's types and contexts, a
+  # runner's name, the inputs of an action or a called workflow). The scripts
+  # in `run:` are not its concern here, so shellcheck and pyflakes stay off.
+  # Not as the release's test job: a release does not wait for a download.
+  workflows:
+    if: github.workflow == 'Check'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check the workflows
+        env:
+          VERSION: 1.7.11
+          # Of actionlint_<version>_linux_amd64.tar.gz: the release's checksums
+          # file and GitHub's digest of the asset agree on it.
+          SHA256: 900919a84f2229bac68ca9cd4103ea297abc35e9689ebb842c6e34a3d1b01b0a
+        run: |
+          archive=$RUNNER_TEMP/actionlint.tar.gz
+          curl -fsSL --retry 3 -o "$archive" \
+            "https://github.com/rhysd/actionlint/releases/download/v$VERSION/actionlint_${VERSION}_linux_amd64.tar.gz"
+          echo "$SHA256  $archive" | sha256sum -c -
+          tar -xzf "$archive" -C "$RUNNER_TEMP" actionlint
+          "$RUNNER_TEMP/actionlint" -version
+          "$RUNNER_TEMP/actionlint" -shellcheck= -pyflakes=
+
   check:
     needs: plan
     if: needs.plan.outputs.native != '[]'
