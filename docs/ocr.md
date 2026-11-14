@@ -148,7 +148,12 @@ Known issue: local OCR may join neighbouring cells of a table row. On one scan
 whose rows read `苹果 12 3.50` and `香蕉 30 1.20`, the portable engine returned
 `香蕉 301.20` and joined the header's words, and Vision on macOS 15.7 returned
 `苹果 123.50`, with no candidate that separated them (Vision on macOS 27 read
-both rows right). Enlarging the image did not help Vision. Check numbers read
+both rows right). Enlarging the image did not help Vision. It happens where
+the cells stand a word space or two apart: of rendered pages with such rows the
+portable engine joined two numbers of a row in 6 of 12 whose cells were one or
+two spaces apart, and in none of 18 with three or more, where each cell is
+found by itself. The gap alone does not tell such a space from the room a 1 has
+among figures of one width, so the numbers are left as read. Check numbers read
 from tables.
 
 When the default engine falls back to Vision and Vision has no such language
