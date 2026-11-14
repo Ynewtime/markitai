@@ -250,6 +250,21 @@ class ProcessTests(unittest.TestCase):
                 while time.monotonic() < until:
                     self.assertEqual(process_command(pid)[1][1:], ["-c", "import sys; sys.stdin.read()"])
 
+    def test_on_linux_a_process_with_no_arguments_yet_is_read_again(self):
+        # What /proc gives for a moment after exec: the new file, and no arguments.
+        reads = [b"", b"", b"/usr/bin/python3\0-c\0pass\0"]
+        with (mock.patch("desktop_web_install.os.readlink", return_value="/usr/bin/python3.13") as link,
+              mock.patch("desktop_web_install.Path.read_bytes", side_effect=reads)):
+            self.assertEqual(desktop_web_install._linux_process(4242),
+                             ("/usr/bin/python3.13", ["/usr/bin/python3", "-c", "pass"]))
+        self.assertEqual(link.call_args_list, [mock.call("/proc/4242/exe")] * 3)
+        # One that never has any, as a kernel thread, is given up on with none.
+        with (mock.patch("desktop_web_install.os.readlink", return_value="/usr/bin/x"),
+              mock.patch("desktop_web_install.Path.read_bytes", return_value=b""),
+              mock.patch("desktop_web_install.time.monotonic", side_effect=[0, 1, 3]),
+              mock.patch("desktop_web_install.time.sleep")):
+            self.assertEqual(desktop_web_install._linux_process(4242), ("/usr/bin/x", []))
+
     @unittest.skipUnless(INSTALLS, "a process's windows are read where `run` installs")
     def test_a_process_without_windows_has_none_on_the_screen(self):
         windows = (desktop_web_install._darwin_windows if sys.platform == "darwin"

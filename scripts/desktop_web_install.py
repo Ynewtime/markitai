@@ -112,9 +112,15 @@ def _linux_environment(pid):
 
 def _linux_process(pid):
     """(program, arguments) of process `pid`: the file it runs, and the arguments it was started with."""
-    program = os.readlink(f"/proc/{pid}/exe")
-    arguments = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")[:-1]
-    return program, [argument.decode("utf-8", "replace") for argument in arguments]
+    deadline = time.monotonic() + 2
+    while True:
+        program = os.readlink(f"/proc/{pid}/exe")
+        arguments = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")[:-1]
+        # No arguments while the process starts a program, a fraction of a millisecond: the kernel
+        # names the new file before it has put the arguments in place.
+        if arguments or time.monotonic() > deadline:
+            return program, [argument.decode("utf-8", "replace") for argument in arguments]
+        time.sleep(0.01)
 
 
 def _darwin_process(pid):
