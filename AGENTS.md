@@ -41,18 +41,23 @@ behavioral reference, not a build dependency. Contributor commands are in
 
 ## Validation
 
-Every commit requires a fresh round and both checks below, with tracked bytes
+Every commit requires a fresh round and the checks below, with tracked bytes
 and modes unchanged during verification. Check existing `.local/` records before
-choosing the round; the local `run_checked_gate.py` wrapper supplies isolation.
+choosing the round. A round is a `.local/desktop-integration-rNN/` folder: copy
+the latest one's `gate.sh` and `freeze.py`, which run the checks with an
+isolated `HOME` and `MARKITAI_HOME`, compare the tracked files before and
+after, and keep the logs.
 
 ```sh
-python3.13 .local/integration-round36/run-gate2.py rNNN
+python3.13 scripts/check.py
+python3.13 scripts/desktop_web_build.py vet
 sh docs/validation/drivers/windows-check-round38/check-windows.sh clippy -- -D warnings
 ```
 
-- For pdf-inspector changes, rsync to `.local/pdf-backlog-r1/vendor-copy`, touch
-  each source file, run its own suite and match the exact 21 failed names in
-  `.local/pdf-backlog-r1/failures-r129.txt`. Do not accept stale Cargo results.
+- For pdf-inspector changes, rsync `vendor/pdf-inspector` to a copy under
+  `.local/`, touch each source file and run its own suite there before and
+  after the change: the failed names must be the same set. Do not accept stale
+  Cargo results.
 - The shared workbench design lives here (owner decision, 2026-10-11):
   `crates/markitai-cli/src/server/web/` is the one frontend both this server and
   Python markitai serve, through the API contract in [web UI](docs/web-ui.md)
