@@ -307,11 +307,17 @@ class PackageValidationTests(unittest.TestCase):
                 kwargs["log"].write_bytes(b"")
             return subprocess.CompletedProcess(command, 0)
 
+        def work(**kwargs):
+            # The checkout is the real one here, so its `.local` would keep a directory per run.
+            (self.root / "work").mkdir()
+            return str(self.root / "work")
+
         # Stop at the first executable inspection: no compiler, executable or
         # binding installer is actually run by this routing regression.
         with (patch("ci_packages.sys.argv", ["ci_packages.py", "--expected-host", host, "--output", str(output)]),
               patch("ci_packages.sys.platform", "win32"),
               patch.dict(os.environ, {"HOME": str(self.root), "USERPROFILE": str(self.root), "RUSTFLAGS": "-Cdebuginfo=1"}, clear=True),
+              patch("ci_packages.tempfile.mkdtemp", side_effect=work),
               patch("ci_packages.subprocess.check_output", side_effect=check_output),
               patch("ci_packages.run_logged", side_effect=run),
               patch("ci_packages.package_attribution", return_value={}),
@@ -336,7 +342,9 @@ class PackageValidationTests(unittest.TestCase):
         self.assertEqual(cli_environment["CARGO_ENCODED_RUSTFLAGS"].split("\x1f"),
                          ["-Cdebuginfo=1", *remap, "-Ctarget-feature=+crt-static"])
         verify.assert_called_once_with(root / "target/cli-static-crt" / host / "release/markitai.exe", host)
-        self.assertEqual(json.loads((output / "evidence.json").read_text())["error"], "stop before execution")
+        record = json.loads((output / "evidence.json").read_text())
+        self.assertEqual(record["error"], "stop before execution")
+        self.assertEqual(record["work_directory"], str(self.root / "work"))
 
 
     def zip_inputs(self):

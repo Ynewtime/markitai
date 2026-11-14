@@ -120,9 +120,15 @@ class TargetPackagingTests(unittest.TestCase):
             kwargs["log"].write_text(f"host: {host}\n" if command[0] == "rustc" else "")
             return subprocess.CompletedProcess(command, 0)
 
+        def work(**kwargs):
+            # The checkout is the real one here, so its `.local` would keep a directory per run.
+            (self.root / "work").mkdir()
+            return str(self.root / "work")
+
         with (patch("package_cli_target.sys.platform", "win32"),
               patch.dict(os.environ, {"HOME": str(self.root), "USERPROFILE": str(self.root), "CARGO_TARGET_DIR": "target with spaces",
                                       "CARGO_ENCODED_RUSTFLAGS": "-Cdebuginfo=1"}, clear=True),
+              patch("package_cli_target.tempfile.mkdtemp", side_effect=work),
               patch("package_cli_target.subprocess.check_output", side_effect=check_output),
               patch("package_cli_target.run_logged", side_effect=run),
               patch("package_cli_target.identity", return_value={}),
@@ -146,6 +152,7 @@ class TargetPackagingTests(unittest.TestCase):
         record = json.loads((output / "record.json").read_text())
         self.assertEqual(record["cli_build"]["release_directory"], str(release))
         self.assertEqual(record["status"], "failed")
+        self.assertEqual(record["work_directory"], str(self.root / "work"))
 
     def test_a_target_this_host_cannot_execute_is_not_reported_as_passed(self):
         host, target = "aarch64-unknown-linux-gnu", "x86_64-unknown-linux-gnu"
