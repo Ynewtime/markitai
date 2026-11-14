@@ -1,5 +1,6 @@
 from pathlib import Path
 import contextlib
+import inspect
 import io
 import json
 import os
@@ -13,6 +14,8 @@ import zipfile
 from unittest.mock import patch
 
 import bounded_run
+import ci_packages
+import package_cli_target
 import release_build
 from desktop_web_build import PLATFORMS, SHIPPED
 from release_build import (TARGETS, archive_name, check_build_host, check_macos_extension, check_versions, expected_assets, extract_release_archive,
@@ -469,6 +472,16 @@ class CrossBuildTests(unittest.TestCase):
                              ("x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc")]:
             with self.assertRaises(SystemExit, msg=(target, host)):
                 check_build_host(target, host)
+
+    def test_every_arm64_macos_release_build_takes_its_target_s_flags(self):
+        # The CLI, the wheel with its Vision reader, and a CLI packaged for another target.
+        for function in (release_build.build_cli, release_build.build_wheel):
+            self.assertIn("environment = apply_target_flags(build_environment(), target)\n",
+                          inspect.getsource(function), function.__name__)
+        self.assertIn("    apply_path_remap(environment, root)\n    apply_target_flags(environment, args.target)\n",
+                      inspect.getsource(package_cli_target.main))
+        self.assertIs(release_build.apply_target_flags, ci_packages.apply_target_flags)
+        self.assertIn("aarch64-apple-darwin", TARGETS)
 
     def test_a_macos_wheel_extension_names_its_target_and_minimum(self):
         def bundle(cpu, minimum):

@@ -22,7 +22,8 @@ import zipfile
 from ci_packages import (apply_path_remap, _sbom_without_local_paths, npm_command, packed_filename, source_snapshot, stage_node_licenses, supplement_wheel_licenses,
                          verify_node_licenses, write_cli_zip, extract_cli_zip, doctor_probe, mcp_probe, identity, package_attribution,
                          write_single_binary_tar, extract_single_binary_tar, windows_cli_build, time_limits, main, pinned_maturin,
-                         install_bundle, BUNDLE, BUNDLE_BUILD_MINUTES, BUNDLE_PROGRAMS, BUNDLE_TEST_MINUTES)
+                         install_bundle, BUNDLE, BUNDLE_BUILD_MINUTES, BUNDLE_PROGRAMS, BUNDLE_TEST_MINUTES,
+                         apply_target_flags, MACOS_ARM64, NO_MACHINE_OUTLINER)
 from cli_documentation import DOCUMENTATION_PATHS
 import bounded_run
 
@@ -239,6 +240,19 @@ class PackageValidationTests(unittest.TestCase):
                                      f"--remap-path-prefix={root}/=",
                                      f"--remap-path-prefix={self.root / 'rustup'}/=rustup/",
                                      f"--remap-path-prefix={self.root / 'cargo' / 'registry'}/=registry/"])
+
+    def test_only_arm64_macos_builds_keep_the_machine_outliner_off(self):
+        remapped = "--remap-path-prefix=/checkout/="
+        for target in ["x86_64-apple-darwin", "aarch64-unknown-linux-gnu", "aarch64-pc-windows-msvc"]:
+            environment = {"CARGO_ENCODED_RUSTFLAGS": remapped}
+            self.assertEqual(apply_target_flags(environment, target), {"CARGO_ENCODED_RUSTFLAGS": remapped}, target)
+        environment = apply_target_flags({"CARGO_ENCODED_RUSTFLAGS": f"-Cdebuginfo=1\x1f{remapped}"}, MACOS_ARM64)
+        self.assertEqual(environment["CARGO_ENCODED_RUSTFLAGS"].split("\x1f"),
+                         ["-Cdebuginfo=1", remapped, NO_MACHINE_OUTLINER])
+        # Once: a second build from the same environment adds nothing.
+        self.assertEqual(apply_target_flags(dict(environment), MACOS_ARM64), environment)
+        self.assertEqual(apply_target_flags({}, MACOS_ARM64), {"CARGO_ENCODED_RUSTFLAGS": NO_MACHINE_OUTLINER})
+        self.assertEqual(NO_MACHINE_OUTLINER, "-Cllvm-args=--enable-machine-outliner=never")
 
     def test_sbom_loses_every_local_path(self):
         # Synthetic build users the repository privacy check accepts. Cargo writes path

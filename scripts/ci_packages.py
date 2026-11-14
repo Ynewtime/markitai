@@ -66,6 +66,28 @@ def apply_path_remap(environment, root):
     return environment
 
 
+# The one target whose release builds take a flag of their own, and the flag.
+MACOS_ARM64 = "aarch64-apple-darwin"
+NO_MACHINE_OUTLINER = "-Cllvm-args=--enable-machine-outliner=never"
+
+
+def apply_target_flags(environment, target):
+    """Append the rustflags a release build for `target` takes, to those `apply_path_remap` set.
+
+    Arm64 macOS builds keep LLVM's machine outliner off. The dependencies are compiled for size,
+    which is where arm64 outlines, and the linker of Xcode 16.4 (ld-1167.5, on the macos-15
+    runners) refuses a link in which an outlined function reads CoreFoundation's
+    `_kCFAllocatorDefault` ("cannot delay-init"). Whether one does depends on what LLVM inlined:
+    a build with thin link-time optimization failed there, and the shipped one passed by that
+    accident alone. The CLI is about 1 MB larger for it.
+    """
+    if target == MACOS_ARM64:
+        flags = [flag for flag in environment.get("CARGO_ENCODED_RUSTFLAGS", "").split("\x1f") if flag]
+        if NO_MACHINE_OUTLINER not in flags:
+            environment["CARGO_ENCODED_RUSTFLAGS"] = "\x1f".join([*flags, NO_MACHINE_OUTLINER])
+    return environment
+
+
 def windows_cli_build(root, target, environment):
     """Isolate the static CRT to CLI target artifacts, never binding/host builds.
 

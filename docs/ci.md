@@ -285,7 +285,13 @@ restores the [check](#checks) cache saved by runs on `main`). Each step runs a s
 | `website` | Starts `deploy-website.yml` on `main` (with `actions: write` only) once `github-release` and `pypi` have succeeded, so markitai.dev's changelog pages show the new section only when the archives and wheels its install commands fetch are out. It does not wait for `mcp-registry`. |
 
 The archives keep the package inventory above, at the archive root. macOS builds
-target macOS 11.0. Linux archives and wheels are built in the pinned
+target macOS 11.0. Those for `aarch64-apple-darwin` (the CLI, the wheel and its
+Vision reader) are compiled with LLVM's machine outliner off
+(`-Cllvm-args=--enable-machine-outliner=never`, from
+`ci_packages.apply_target_flags`): the linker of Xcode 16.4 on the `macos-15`
+runners refuses an outlined function that reads CoreFoundation's allocator,
+which the dependencies compiled for size produce or not as LLVM happens to
+inline; the CLI is about 1 MB larger for it. Linux archives and wheels are built in the pinned
 `manylinux_2_28` image (`scripts/release_container.sh`), so they need glibc 2.28
 or later; the build refuses an executable that asks for more, and the image also
 installs the wheel with Python 3.10. musl (Alpine) is not a release target.

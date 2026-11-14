@@ -42,7 +42,8 @@ import tarfile
 import tempfile
 import zipfile
 
-from ci_packages import (MACOS_MINIMUM, VISION_READER, apply_path_remap, cli_attribution, doctor_probe, identity, mcp_probe,
+from ci_packages import (MACOS_MINIMUM, VISION_READER, apply_path_remap, apply_target_flags, cli_attribution, doctor_probe,
+                         identity, mcp_probe,
                          package_attribution, pinned_maturin, supplement_wheel_licenses,
                          windows_cli_build, write_cli_zip, write_single_binary_tar)
 from cli_documentation import cli_documentation
@@ -382,7 +383,7 @@ def build_cli(target, output):
         raise SystemExit(f"Not a release target: {target}")
     check_build_host(target, host_target())
     output.mkdir(parents=True, exist_ok=True)
-    environment = build_environment()
+    environment = apply_target_flags(build_environment(), target)
     windows = target in WINDOWS_TARGETS
     if windows:
         command, environment, release = windows_cli_build(ROOT, target, environment)
@@ -595,7 +596,7 @@ def build_wheel(target, output):
     if found[-1:] != [pinned]:
         raise SystemExit(f"Release wheels are built with maturin {pinned}, not {' '.join(found)}")
     output.mkdir(parents=True, exist_ok=True)
-    environment = build_environment()
+    environment = apply_target_flags(build_environment(), target)
     check_build_host(target, host_target())
     command = ["maturin", "build", "--release", "--locked", "--target", target,
                "--interpreter", sys.executable]
