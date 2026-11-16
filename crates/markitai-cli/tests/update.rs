@@ -332,7 +332,17 @@ impl Home {
     }
 
     fn command(&self, releases: &Releases, extra: &[(&str, &str)]) -> Command {
-        let mut command = Command::new(&self.program);
+        self.command_of(&self.program, releases, extra)
+    }
+
+    /// `program` in this home, without a console on Windows.
+    fn command_of(
+        &self,
+        program: impl AsRef<std::ffi::OsStr>,
+        releases: &Releases,
+        extra: &[(&str, &str)],
+    ) -> Command {
+        let mut command = Command::new(program);
         console::detached(&mut command);
         console::english(command.env_clear());
         for name in ["PATH", "SYSTEMROOT", "TMPDIR"] {
@@ -736,6 +746,62 @@ fn a_copy_no_setup_script_installed_gets_the_setup_command_and_changes_nothing()
     let (_, stderr, code) = text(&home.run(&releases, &["update", "--version", "1.2.0"], &[]));
     assert_eq!(code, 1);
     assert!(stderr.contains("Python package"), "{stderr}");
+}
+
+/// A run's standard output on Windows is a handle it was given inheritable,
+/// as a pipe from cmd or PowerShell is (`markitai a.txt | findstr x`). The
+/// background check the run starts does not inherit it, so the pipe's reader
+/// sees the end when the run ends, not when the check gives up on a release
+/// host that never answers.
+#[cfg(windows)]
+#[test]
+fn the_background_check_holds_no_pipe_the_run_was_given() {
+    use std::io::Read;
+    use std::os::windows::process::CommandExt;
+    use windows_sys::Win32::System::Threading::CREATE_NO_WINDOW;
+    let releases = Releases::start("2.2.0");
+    *releases.stall.lock().unwrap() = u64::MAX;
+    let home = Home::plain();
+    std::fs::write(home.path("a.txt"), "Words.\n").unwrap();
+    let system = PathBuf::from(std::env::var_os("SYSTEMROOT").expect("SYSTEMROOT"));
+    // cmd runs in a hidden console of its own. markitai, which cmd starts,
+    // writes its marks to that console, so it checks, and its output to
+    // cmd's: this test's pipe.
+    let mut shell = home.command_of(system.join("System32").join("cmd.exe"), &releases, &[]);
+    shell
+        .creation_flags(CREATE_NO_WINDOW)
+        .raw_arg(format!(
+            r#"/d /s /c ""{}" a.txt -o out 2>CON""#,
+            env!("CARGO_BIN_EXE_markitai")
+        ))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    let mut child = shell.spawn().unwrap();
+    let mut stdout = child.stdout.take().unwrap();
+    let (ended, end) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = stdout.read_to_end(&mut Vec::new());
+        let _ = ended.send(());
+    });
+    assert!(child.wait().unwrap().success());
+    // The check records its attempt before it asks, and then waits for the
+    // host far longer than this test looks for the end.
+    let started = Instant::now();
+    while !std::fs::read(home.path("mh/update-check.json"))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+        .is_some_and(|cache| cache["retry_at"].is_i64())
+    {
+        assert!(
+            started.elapsed() < Duration::from_secs(20),
+            "the background check never wrote the cache"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(
+        end.recv_timeout(Duration::from_secs(5)).is_ok(),
+        "the background check holds the run's standard output"
+    );
 }
 
 #[cfg(unix)]
@@ -1522,6 +1588,67 @@ mod unix {
             second.contains("New version 2.2.0 (current 2.1.0)"),
             "{second:?}"
         );
+    }
+
+    /// A file the run was given besides its standard streams, as a shell's
+    /// process substitution (`> >(tee log)`) gives one, is not held open by
+    /// the background check it starts: its reader sees the end when the run
+    /// ends, not when the check gives up on a release host that never answers.
+    #[test]
+    fn the_background_check_holds_nothing_else_the_run_was_given() {
+        use std::os::fd::FromRawFd;
+        use std::os::unix::ffi::OsStrExt;
+        use std::os::unix::process::CommandExt;
+        let releases = Releases::start("2.2.0");
+        *releases.stall.lock().unwrap() = u64::MAX;
+        let home = Home::plain();
+        std::fs::write(home.path("a.txt"), "Words.\n").unwrap();
+        let fifo = std::ffi::CString::new(home.path("given").as_os_str().as_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
+        // The reading end is this test's alone, close-on-exec as it opens.
+        // The writing end is opened in the run's process only, so no process
+        // another test starts can hold it, and says it is open with one byte.
+        let reader = unsafe {
+            libc::open(
+                fifo.as_ptr(),
+                libc::O_RDONLY | libc::O_NONBLOCK | libc::O_CLOEXEC,
+            )
+        };
+        assert!(reader >= 0, "{}", std::io::Error::last_os_error());
+        let mut reader = unsafe { std::fs::File::from_raw_fd(reader) };
+        let mut command = home.command(&releases, &[("TERM", "xterm"), ("NO_COLOR", "1")]);
+        command.args(["a.txt", "-o", "out"]);
+        unsafe {
+            command.pre_exec(move || {
+                let writer = libc::open(fifo.as_ptr(), libc::O_WRONLY);
+                if writer < 0 || libc::write(writer, b"x".as_ptr().cast(), 1) != 1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        let (text, code) = on_a_terminal(&mut command);
+        assert_eq!(code, 0, "{text}");
+        // The check records its attempt before it asks, and then waits for
+        // the host far longer than this test looks for the end.
+        wait_for_cache(&home, |cache| cache["retry_at"].is_i64());
+        let (mut given, started) = (Vec::<u8>::new(), Instant::now());
+        loop {
+            let mut buffer = [0_u8; 16];
+            match reader.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(count) => given.extend(&buffer[..count]),
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    assert!(
+                        started.elapsed() < Duration::from_secs(5),
+                        "the background check holds what the run was given"
+                    );
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                Err(error) => panic!("{error}"),
+            }
+        }
+        assert_eq!(given, b"x");
     }
 
     /// The new release's program: this binary posing as 2.2.0.

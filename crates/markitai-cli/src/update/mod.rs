@@ -10,6 +10,7 @@
 //! `MARKITAI_NO_UPDATE_CHECK=1` turn both off.
 pub(crate) mod check;
 pub(crate) mod control;
+mod detached;
 pub(crate) mod install;
 pub(crate) mod method;
 pub(crate) mod notes;
@@ -415,33 +416,14 @@ pub(crate) fn runner(in_python: bool, long: bool) -> Runner {
 }
 
 /// `markitai update --check --json` in the background, detached from the run
-/// (its own process group, no console, no output), so it may finish after
-/// the run has ended.
+/// (its own process group, no console, no output, nothing else the run holds),
+/// so it may finish after the run has ended.
 fn spawn_check() {
     let Ok(program) = std::env::current_exe() else {
         return;
     };
-    let mut command = std::process::Command::new(program);
-    command
-        .args(["update", "--check", "--json"])
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        command.process_group(0);
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        use windows_sys::Win32::System::Threading::{
-            CREATE_NEW_PROCESS_GROUP, CREATE_NO_WINDOW, DETACHED_PROCESS,
-        };
-        command.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
-    }
     // The child is not waited for; the system reaps it after this process ends.
-    let _ = command.spawn();
+    let _ = detached::spawn(&program, &["update", "--check", "--json"]);
 }
 
 /// The L1 line when the cache knows a newer release and it was not shown in
