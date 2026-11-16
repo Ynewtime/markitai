@@ -481,6 +481,35 @@ mod tests {
         assert_eq!(list(&cfg).unwrap()[0].hits, 16);
     }
 
+    /// SQLite's sharing does not allow a handle with delete access, as
+    /// another process has for a moment while it gives a store it has just
+    /// created its name: the store then opens read-only and refuses the
+    /// write, which is made again once the handle is let go.
+    #[cfg(windows)]
+    #[test]
+    fn a_store_another_handle_holds_for_a_moment_is_written_once_it_is_let_go() {
+        use std::os::windows::fs::OpenOptionsExt;
+        const DELETE: u32 = 0x0001_0000;
+        const SHARE_READ_WRITE_DELETE: u32 = 7;
+        let temp = tempfile::tempdir().unwrap();
+        let cfg = cfg(temp.path());
+        let page = url("https://example.test/a");
+        record_at(&cfg, &page, 10).unwrap();
+        let held = std::fs::OpenOptions::new()
+            .access_mode(DELETE)
+            .share_mode(SHARE_READ_WRITE_DELETE)
+            .open(path(&cfg))
+            .unwrap();
+        let holder = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(300));
+            drop(held);
+        });
+        record_at(&cfg, &page, 11).unwrap();
+        assert!(take_hint_at(&cfg, &page, 12).unwrap());
+        holder.join().unwrap();
+        assert_eq!(list(&cfg).unwrap()[0].hits, 3);
+    }
+
     #[test]
     fn first_use_waits_for_a_store_locked_longer_than_a_moment_and_loses_nothing() {
         let temp = tempfile::tempdir().unwrap();

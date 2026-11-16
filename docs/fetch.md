@@ -840,7 +840,8 @@ quota. The store bounds row allocation and lazily creates the database only
 when saving an admissible page. A read, write, removal or clear that fails
 because a store file is busy for a moment (lock contention SQLite did not wait
 out, a WAL lock protocol error, an I/O error; on Windows also a file that is
-locked, open without sharing, being deleted or held by a virus scanner) is
+locked, open without sharing, being deleted or held by a virus scanner, and
+one SQLite could open for reading alone at that moment) is
 tried again as a whole, with growing pauses, for up to 5 seconds; each attempt
 is one transaction, so a failed one changed nothing. Other failures (a damaged
 store, a link or directory in its place, a full disk) are not retried. Cache

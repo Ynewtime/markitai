@@ -61,7 +61,11 @@ impl From<std::io::Error> for Fault {
 /// moment (Windows sharing and lock violations, a virus scanner opening a
 /// new file, a side file being deleted by the last connection) as an I/O
 /// error once its own short retries are spent, and on Windows as a file it
-/// cannot open.
+/// cannot open, or as a read-only database: a file it cannot open for
+/// reading and writing it opens there for reading alone, without trying
+/// again, and refuses the write that follows. A handle with delete access
+/// is one its sharing does not allow, and another process holds one for a
+/// moment while it gives a store it has just created its name.
 fn transient_sqlite(error: &rusqlite::Error) -> bool {
     use rusqlite::ErrorCode;
     let rusqlite::Error::SqliteFailure(error, _) = error else {
@@ -73,7 +77,7 @@ fn transient_sqlite(error: &rusqlite::Error) -> bool {
             | ErrorCode::DatabaseLocked
             | ErrorCode::FileLockingProtocolFailed
             | ErrorCode::SystemIoFailure
-    ) || (cfg!(windows) && error.code == ErrorCode::CannotOpen)
+    ) || (cfg!(windows) && matches!(error.code, ErrorCode::CannotOpen | ErrorCode::ReadOnly))
 }
 
 /// The file errors that pass: on Windows a file that is open without
@@ -200,17 +204,16 @@ mod tests {
             ffi::SQLITE_CORRUPT,
             ffi::SQLITE_CONSTRAINT_TRIGGER,
             ffi::SQLITE_FULL,
-            ffi::SQLITE_READONLY,
             ffi::SQLITE_ERROR,
         ] {
             assert!(!transient_sqlite(&sqlite(code)), "{code}");
         }
         // Windows names a file a scanner or a closing connection holds as one
-        // it cannot open; elsewhere that is a lasting permission problem.
-        assert_eq!(
-            transient_sqlite(&sqlite(ffi::SQLITE_CANTOPEN)),
-            cfg!(windows)
-        );
+        // it cannot open, or opens it read-only and refuses the write;
+        // elsewhere either is a lasting permission problem.
+        for code in [ffi::SQLITE_CANTOPEN, ffi::SQLITE_READONLY] {
+            assert_eq!(transient_sqlite(&sqlite(code)), cfg!(windows), "{code}");
+        }
         assert!(!transient_io(&std::io::Error::from(
             std::io::ErrorKind::PermissionDenied
         )));
