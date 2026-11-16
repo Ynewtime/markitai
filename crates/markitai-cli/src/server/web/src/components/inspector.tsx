@@ -24,7 +24,7 @@ import { groupNotices, type NoticeGroup, noticeEntries } from "../lib/notices.ts
 import { copyText } from "../lib/clipboard.ts";
 import type { PresetTable } from "../lib/options.ts";
 import { openPreviewAs, readRequestOpen, storeRequestOpen } from "../lib/peek-pref.ts";
-import { requestView, sharedRun, wrapUnits, type RequestView } from "../lib/request.ts";
+import { ranApart, requestView, sharedRun, wrapUnits, type RequestView } from "../lib/request.ts";
 import { cachedExcerpt, loadExcerpt, resultKey, sourceStart } from "../lib/results.ts";
 import { watchScrollCells } from "../lib/scroll-cells.ts";
 import { canRetry, isPreviewable, type SessionItem } from "../lib/session.ts";
@@ -230,8 +230,9 @@ function RequestToggle({ t, open, onToggle, controls }: { t: Dict; open: boolean
   );
 }
 
-/** The request on the composer's dark strip with a copy button, and the settings no flag sets as chips under it. */
-function RequestStrip({ t, view, id }: { t: Dict; view: RequestView; id: string }) {
+/** The request on the composer's dark strip with a copy button, and the settings no flag sets as chips under it;
+ * `note` is a sentence under them, as a submission's when its items did not all run with this request. */
+function RequestStrip({ t, view, id, note }: { t: Dict; view: RequestView; id: string; note?: string }) {
   const [copied, setCopied] = useState<"copied" | "failed" | null>(null);
   useEffect(() => {
     if (copied === null) return;
@@ -270,6 +271,7 @@ function RequestStrip({ t, view, id }: { t: Dict; view: RequestView; id: string 
           ))}
         </ul>
       )}
+      {note && <p class="request-note">{note}</p>}
     </div>
   );
 }
@@ -831,8 +833,10 @@ export function JobInspector({
   const cost = totalCost(items);
   const running = job.status === "running";
   const kept = keptUntil(ctx, job.finishedAt);
-  // How the items last ran, which a retry changes for each, when they agree; else what was asked.
+  // How the items last ran, which a retry changes for each, when they agree; else what was asked,
+  // with a sentence under it when some of them ran with other options since.
   const ran = sharedRun(items) ?? { options: job.options, settings: job.settings };
+  const apart = ranApart(items);
   const preset = presetOf(ran.options);
   const request = requestOf(ctx, {
     inputs: items.length <= 3 ? items.map((item) => item.name) : [],
@@ -864,7 +868,7 @@ export function JobInspector({
           {job.createdAt && ` · ${fmtWhen(job.createdAt, locale)}`}
         </p>
         {request && <RequestToggle t={t} open={requestOpen} onToggle={toggleRequest} controls={`${headingId}-request`} />}
-        {request && requestOpen && <RequestStrip t={t} view={request} id={`${headingId}-request`} />}
+        {request && requestOpen && <RequestStrip t={t} view={request} id={`${headingId}-request`} note={apart ? t.requestApart : undefined} />}
       </header>
       <ProgressStrip t={t} items={items} />
       {job.persistenceError && <ConditionLine tone="error" text={persistenceText(locale, job.persistenceError).text} />}

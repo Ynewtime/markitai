@@ -1737,6 +1737,11 @@ main:focus {
 .request-chip-key {
   color: var(--text-3);
 }
+/* under a submission's request, when some of its items ran again with other options */
+.request-note {
+  margin: 0;
+  color: var(--text-2);
+}
 /* a file name on one line, its middle given up first, then its size */
 .facts dd.fact-file {
   display: flex;

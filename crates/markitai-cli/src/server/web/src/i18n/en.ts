@@ -750,6 +750,7 @@ export const en = {
   resultStart: "Start of the result",
   requestShow: "Show request options",
   requestHide: "Hide request options",
+  requestApart: "Some items were run again with other options; each item's details show its own.",
   startViews: "Show the start of the result",
   /** Source shows the first lines of a result with `total` lines (null: not reported); Rendered, only `total`. */
   startLines: (shown: number, total: number | null) =>

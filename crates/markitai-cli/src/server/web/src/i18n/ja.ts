@@ -720,6 +720,7 @@ export const ja: Dict = {
   resultStart: "結果の冒頭",
   requestShow: "リクエストのパラメータを表示",
   requestHide: "リクエストのパラメータを閉じる",
+  requestApart: "一部の項目は別のパラメータで再実行されました。各項目の詳細にそれぞれのパラメータが表示されます。",
   startViews: "結果の冒頭の表示",
   startLines: (shown: number, total: number | null) =>
     total === null ? `先頭 ${shown} 行` : shown < total ? `先頭 ${shown} 行 / 全 ${total.toLocaleString("ja-JP")} 行` : `全 ${total.toLocaleString("ja-JP")} 行`,

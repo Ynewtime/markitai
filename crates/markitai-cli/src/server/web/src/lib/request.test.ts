@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { groupNotices, isUsedRetry, rowWarnings } from "./notices.ts";
 import { emptyOptions } from "./options.ts";
-import { publicSettings, requestView, sharedRun, wrapUnits } from "./request.ts";
+import { publicSettings, ranApart, requestView, sharedRun, wrapUnits } from "./request.ts";
 
 const rich = { ...emptyOptions(), preset: "rich", llm: true, alt: true, desc: true, screenshot: true, ocr: false, no_cache: false };
 
@@ -163,4 +163,22 @@ test("a submission whose items were all run again alike tells how they ran", () 
   assert.equal(sharedRun([]), null);
   // A backend without recorded settings still gives the options.
   assert.deepEqual(sharedRun([{ options: again.options }]), { options: again.options, settings: null });
+});
+
+test("a submission whose items ran with other options than one another says so", () => {
+  const asked = { ...emptyOptions(), ocr: true, ocr_lang: "xx" };
+  const first = { options: asked, settings: { "ocr.enabled": true, "ocr.lang": "xx" } };
+  const again = { options: { ...emptyOptions(), ocr: true }, settings: { "ocr.enabled": true } };
+  // One of two was retried: the summary keeps what was asked, and tells that it is not how all ran.
+  assert.equal(sharedRun([first, again]), null);
+  assert.equal(ranApart([first, again]), true);
+  assert.equal(ranApart([again, { options: again.options, settings: { "ocr.enabled": true, "ocr.lang": "ja" } }]), true);
+  // All as asked, or all run again alike: one request is how they ran.
+  assert.equal(ranApart([first, { ...first }]), false);
+  assert.equal(ranApart([again, { options: Object.fromEntries(Object.entries(again.options).reverse()) as typeof again.options, settings: { ...again.settings } }]), false);
+  // An item a backend tells nothing of is not one that ran otherwise.
+  assert.equal(ranApart([again, {}]), false);
+  assert.equal(ranApart([first, again, { settings: again.settings }]), true);
+  assert.equal(ranApart([{}, {}]), false);
+  assert.equal(ranApart([]), false);
 });

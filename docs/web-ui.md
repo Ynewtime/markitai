@@ -230,7 +230,10 @@ files wait on Convert); typing URLs is Convert's job.
   overview for the whole list. A submission's request options are what it asked
   for, until a retry or an enhancement has run every item again with the same
   options and settings: then they are those, so a Retry failed after the
-  service's `ocr.lang` was corrected no longer shows the old language.
+  service's `ocr.lang` was corrected no longer shows the old language. While
+  its items ran with options that differ from one another (some were run again,
+  others not), a sentence under the request says so: "Some items were run again
+  with other options; each item's details show its own."
 - **Cost** is "unknown" whenever a model ran without a complete price, never
   `$0`: complete coverage shows the amount, partial coverage "At least $x · N
   requests without a price", a model that ran without pricing "Unknown". An item

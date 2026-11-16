@@ -116,6 +116,13 @@ export function sharedRun(items: readonly RanWith[]): { options: JobOptions; set
   return items.every((item) => item.options && told(item) === same) ? { options: first.options, settings: first.settings ?? null } : null;
 }
 
+/** Whether a submission's items last ran with options or settings that differ from one another:
+ * a retry or an enhancement ran some of them with other ones, so the request the summary shows,
+ * what was first asked for, is not how those ran. Items a backend tells nothing of are left out. */
+export function ranApart(items: readonly RanWith[]): boolean {
+  return new Set(items.filter((item) => item.options).map(told)).size > 1;
+}
+
 /** `inputs`: what was converted, as names or URLs; `url`: the item is a URL. Null when nothing is known. */
 export function requestView(
   inputs: string[],

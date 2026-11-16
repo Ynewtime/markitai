@@ -702,6 +702,7 @@ export const zh: Dict = {
   resultStart: "结果开头",
   requestShow: "查看请求参数",
   requestHide: "收起请求参数",
+  requestApart: "部分项重新运行时用了其他参数；各项的详情显示它自己的参数。",
   startViews: "结果开头的显示方式",
   startLines: (shown: number, total: number | null) =>
     total === null ? `前 ${shown} 行` : shown < total ? `前 ${shown} 行 / 共 ${total.toLocaleString("zh-CN")} 行` : `共 ${total.toLocaleString("zh-CN")} 行`,
