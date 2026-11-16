@@ -159,7 +159,10 @@ with `bin/markitai` and `licenses/` beside it), the archive
 `markitai-web_<version>_amd64.deb` (`sudo apt install
 ./markitai-web_<version>_amd64.deb` installs it with GTK 3 and WebKitGTK in
 `/opt/markitai-web`, with the command `markitai-web` in `/usr/bin`, and
-`sudo apt remove markitai-web` removes it), a
+`sudo apt remove markitai-web` removes it; it recommends `librsvg2-common`,
+which GTK draws its own file chooser's icons with, and `apt` brings that and
+what GTK and WebKitGTK recommend, as the accessibility bus and the portal's
+file chooser, unless told `--no-install-recommends`), a
 `PKGBUILD` (its package keeps the licences in
 `/usr/share/licenses/markitai-web`) and `install.sh`. `install.sh` puts the
 archive beside it in `~/.local/markitai-web.app`, with the command

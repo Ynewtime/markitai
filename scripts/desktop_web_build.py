@@ -99,6 +99,10 @@ ENTRY_KEYS = {"Comment[zh_CN]": "把文档和网页转换为 Markdown",
 DEB_DESCRIPTION = ("Markitai Web opens the markitai workbench in a window of its own. The markitai bundled with it "
                    "serves the workbench on this computer and converts documents, web pages and images to "
                    "Markdown, as the CLI of the same version does.")
+# What the Debian package recommends beside its dependencies, GTK 3 and WebKitGTK: the SVG loader GTK
+# draws the icons of its own file chooser with (Recent, the new folder button, the path's arrows). GTK's
+# package only recommends it too, so a system that has GTK without it gets it with the app.
+DEB_RECOMMENDS = "librsvg2-common"
 
 
 def archive_source(path):
@@ -480,8 +484,12 @@ def finish_linux(out, version, root=ROOT):
             raise SystemExit(f"{deb.name}: its Maintainer is not 'Name <email>': set linux.maintainer of "
                              f"{APP_DIR}/mygo.json")
         description = "".join(f" {line}\n" for line in textwrap.wrap(DEB_DESCRIPTION, 76))
-        return "./control", replace_once(text, " Markitai Web is a desktop application.\n", description,
-                                         f"{deb.name} control").encode("utf-8")
+        text = replace_once(text, " Markitai Web is a desktop application.\n", description, f"{deb.name} control")
+        depends = re.findall(r"^Depends: .*\n", text, re.M)
+        if len(depends) != 1 or re.search(r"^Recommends:", text, re.M):
+            raise SystemExit(f"{deb.name}: its control has not one Depends and no Recommends, as mygo build "
+                             "writes it")
+        return "./control", text.replace(depends[0], depends[0] + f"Recommends: {DEB_RECOMMENDS}\n").encode("utf-8")
 
     def in_md5sums(body):
         text, found = re.subn(rf"^[0-9a-f]{{32}}  {re.escape(installed)}$", f"{digest}  {renamed}",

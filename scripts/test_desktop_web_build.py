@@ -563,6 +563,9 @@ class LinuxPackageTests(unittest.TestCase):
                                   if isinstance(body, bytes)})
         fields = control["./control"][1].decode()
         self.assertIn("Maintainer: Ynewtime <27655771+Ynewtime@users.noreply.github.com>\n", fields)
+        # GTK's own file chooser draws its icons with the loader the package recommends.
+        self.assertIn("Depends: libgtk-3-0 | libgtk-3-0t64, libwebkit2gtk-4.1-0\nRecommends: librsvg2-common\n"
+                      "Section: utils\n", fields)
         description = fields.split("Description: Convert documents and web pages to Markdown\n")[1]
         self.assertTrue(all(line.startswith(" ") and len(line) <= 80 for line in description.splitlines()))
         self.assertEqual(" ".join(line.strip() for line in description.splitlines()), DEB_DESCRIPTION)
