@@ -338,7 +338,9 @@ pub(crate) fn load(model: &Model, download: bool) -> Result<Vec<u8>> {
 
 fn state_error(root: &Path, model: &Model, observed: &Observation) -> Error {
     match observed.state {
-        State::Missing => Error::Unsupported(format!(
+        // A model that is not there is one that could not be had, as one whose
+        // download failed: converting again after installing it works.
+        State::Missing => Error::Fetch(format!(
             "Local OCR needs the model {}, which is not installed: {}",
             model.name,
             remedy(root, model)
@@ -728,10 +730,15 @@ mod tests {
         let (url, task) = serve(b"model bytes");
         let wanted = model(b"model bytes", &url);
         assert!(!present_in(&root, &wanted));
-        // A missing model is not downloaded when that is not allowed.
-        let error = load_from(&root, &wanted, false).unwrap_err().to_string();
+        // A missing model is not downloaded when that is not allowed: it is
+        // an error of the kind a failed download is.
+        let error = load_from(&root, &wanted, false).unwrap_err();
+        assert!(matches!(error, Error::Fetch(_)), "{error:?}");
+        let error = error.to_string();
         assert!(
-            error.contains("doctor --fix") && error.contains(&url),
+            error.starts_with("Local OCR needs the model test-model, which is not installed: ")
+                && error.contains("doctor --fix")
+                && error.contains(&url),
             "{error}"
         );
         let installed =

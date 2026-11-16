@@ -550,7 +550,8 @@ fn picture_result(
         }
         Err(error @ Error::Config(_)) => Err(error),
         // What keeps any picture from being read (a missing engine, models that
-        // could not be downloaded) fails the conversion once, not each picture.
+        // are missing or could not be downloaded) fails the conversion once, not
+        // each picture.
         Err(error @ (Error::Unsupported(_) | Error::Fetch(_))) if backend_available => Err(error),
         Err(error) => {
             warnings.push(format!("PDF embedded image {name}: local OCR failed ({error}); the native page and image reference were preserved."));

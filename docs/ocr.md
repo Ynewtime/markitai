@@ -367,7 +367,8 @@ source that cannot be reached takes no longer to report (15 seconds). Repair
 does not overwrite an unsafe path. A failed download leaves the existing model;
 if an error occurs after publication, run `doctor` again to inspect its state.
 A conversion that needed the model then fails with `fetch_error` (`FetchError`
-in Python), for an image and for a scanned PDF page alike.
+in Python), for an image and for a scanned PDF page alike; so does one whose
+model is not installed when it is read.
 The optional Korean reading may retain the first reading if its model cannot
 load or infer. A Korean model that cannot load is tried once per process, so a
 long-running `markitai serve` or MCP process uses a model installed later only

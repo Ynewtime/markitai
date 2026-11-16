@@ -229,8 +229,9 @@ test("current portable OCR errors explain the right recovery and keep the origin
   const cases: [string, string, keyof typeof MESSAGES_EN][] = [
     ["MARKITAI_OCR_BACKEND=vision selects macOS Vision, which needs macOS 11 or later; unset it or choose paddle", "unsupported", "errOcrVisionSelection"],
     ["MARKITAI_OCR_BACKEND must be vision or paddle", "config_error", "errOcrBackendSetting"],
+    // A model that is missing or whose download failed is `fetch_error`; an older server says `unsupported`.
+    [`Local OCR needs the model ${model}, which is not installed: ${remedy}`, "fetch_error", "errOcrModelMissing"],
     [`Local OCR needs the model ${model}, which is not installed: ${remedy}`, "unsupported", "errOcrModelMissing"],
-    // A download that failed is `fetch_error`; an older server says `unsupported`.
     [`Local OCR download of ${model} failed (official download could not be reached); any existing damaged file was kept: ${remedy}`, "fetch_error", "errOcrModelDownload"],
     [`Local OCR download of ${model} failed (official download could not be reached); any existing damaged file was kept: ${remedy}`, "unsupported", "errOcrModelDownload"],
     [`Local OCR download of ${model} failed (official download was interrupted: timed out); any existing damaged file was kept: ${remedy}`, "fetch_error", "errOcrModelDownload"],

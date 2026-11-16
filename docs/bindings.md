@@ -296,7 +296,7 @@ serialization selectors remain a compatibility testing target. JSON
 dictionaries and external objects exposing
 `model_dump(mode="json")` also work. The wrapper never mutates supplied config.
 Native `fetch_error` (a page that could not be fetched, or a local OCR model
-that could not be downloaded) maps to `FetchError`; a bad configuration (`config_error`)
+that is not installed or could not be downloaded) maps to `FetchError`; a bad configuration (`config_error`)
 to `ConfigFileError`, Python markitai's name, which is a `ValueError` subclass so
 existing `except ValueError` handlers still catch it; other input errors to
 `ValueError`; conversion/unsupported errors and a native panic

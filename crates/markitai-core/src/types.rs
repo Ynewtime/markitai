@@ -28,7 +28,8 @@ pub enum Error {
     #[error("{0}")]
     TextRecognition(String),
     /// Something could not be had over the network: a URL's page, or a model
-    /// local OCR downloads. Its code is `fetch_error`.
+    /// local OCR downloads (one whose download failed, or that is not
+    /// installed). Its code is `fetch_error`.
     #[error("{0}")]
     Fetch(String),
     #[error("{0}")]
