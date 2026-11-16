@@ -904,7 +904,29 @@ mod unix {
         (terminal, code)
     }
 
+    /// What is there to read now, without waiting for more or for the end.
+    fn take(from: &mut impl Read, into: &mut Vec<u8>) {
+        let mut buffer = [0_u8; 4096];
+        loop {
+            match from.read(&mut buffer) {
+                Ok(count) if count > 0 => into.extend(&buffer[..count]),
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                // The end, nothing more for now, or a terminal whose other
+                // side is closed.
+                _ => return,
+            }
+        }
+    }
+
+    /// The run's terminal and standard output are read while it runs and
+    /// once more when it has ended, not to their end: a copy of either may
+    /// be open in a process another test started at the moment this one
+    /// opened them (they are made close-on-exec just after), and in the
+    /// background check that process starts, which waits as long as a
+    /// release host that does not answer. Waiting for their end then timed
+    /// that process, not this run.
     fn run_on_a_terminal(command: &mut Command, stdout_too: bool) -> (String, String, i32) {
+        use std::os::fd::AsRawFd;
         let (mut master, slave) = pty();
         let stdout = if stdout_too {
             Stdio::from(slave.try_clone().unwrap())
@@ -912,26 +934,48 @@ mod unix {
             Stdio::piped()
         };
         command.stdout(stdout).stderr(Stdio::from(slave));
-        let child = command.spawn().unwrap();
-        // Replacing the command's copies of the slave closes them, so the
-        // master reads to the end once the child exits.
+        let mut child = command.spawn().unwrap();
+        // Replacing the command's copies of the slave closes them.
         command.stdout(Stdio::null()).stderr(Stdio::null());
-        let reader = std::thread::spawn(move || {
-            let mut bytes = Vec::new();
-            let mut buffer = [0_u8; 4096];
-            while let Ok(count) = master.read(&mut buffer) {
-                if count == 0 {
-                    break;
-                }
-                bytes.extend(&buffer[..count]);
+        let mut piped = child.stdout.take();
+        let descriptors: Vec<_> = std::iter::once(master.as_raw_fd())
+            .chain(piped.as_ref().map(AsRawFd::as_raw_fd))
+            .collect();
+        for &descriptor in &descriptors {
+            unsafe {
+                let flags = libc::fcntl(descriptor, libc::F_GETFL);
+                assert_eq!(
+                    libc::fcntl(descriptor, libc::F_SETFL, flags | libc::O_NONBLOCK),
+                    0
+                );
             }
-            bytes
-        });
-        let output = child.wait_with_output().unwrap();
+        }
+        let (mut terminal, mut output) = (Vec::new(), Vec::new());
+        let status = loop {
+            // Whether it has ended is asked first: what it wrote before is
+            // then read below.
+            let ended = child.try_wait().unwrap();
+            take(&mut master, &mut terminal);
+            if let Some(piped) = &mut piped {
+                take(piped, &mut output);
+            }
+            if let Some(status) = ended {
+                break status;
+            }
+            let mut waiting: Vec<_> = descriptors
+                .iter()
+                .map(|&fd| libc::pollfd {
+                    fd,
+                    events: libc::POLLIN,
+                    revents: 0,
+                })
+                .collect();
+            unsafe { libc::poll(waiting.as_mut_ptr(), waiting.len() as libc::nfds_t, 5) };
+        };
         (
-            String::from_utf8_lossy(&reader.join().unwrap()).into_owned(),
-            String::from_utf8_lossy(&output.stdout).into_owned(),
-            output.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&terminal).into_owned(),
+            String::from_utf8_lossy(&output).into_owned(),
+            status.code().unwrap_or(-1),
         )
     }
 
