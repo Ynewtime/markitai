@@ -13,10 +13,16 @@ import (
 	"time"
 
 	"github.com/egoist/mygo"
-	// mygo's own words, as its menus on macOS, in the workbench's other
-	// languages (webLanguages).
+	// mygo's own words, as its menus on macOS and the save panel's title
+	// and button on Linux, in the app's other languages (languagesOn):
+	// Traditional Chinese too, which the app names on Linux and Windows
+	// for a system in it. In a language whose words are not linked mygo
+	// says them in English, and says so in the log at every start. A
+	// desktop's own file chooser, which the save panel is through the
+	// portal, is in that system's language, as these words then are.
 	_ "github.com/egoist/mygo/locales/ja"
 	_ "github.com/egoist/mygo/locales/zh-Hans"
+	_ "github.com/egoist/mygo/locales/zh-Hant"
 )
 
 // idleStop is how long the quit waits here for a child with nothing

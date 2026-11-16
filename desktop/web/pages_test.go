@@ -1,6 +1,8 @@
 package main
 
 import (
+	"go/parser"
+	"go/token"
 	"math"
 	"os"
 	"path/filepath"
@@ -247,6 +249,29 @@ func TestAnyChineseShowsSimplifiedChinese(t *testing.T) {
 			}
 			if workbenchLang(got) != want {
 				t.Errorf("%s: %s shows %s (%s); want %s", goos, tag, workbenchLang(got), got, want)
+			}
+		}
+	}
+}
+
+// mygo says its own words, as the buttons of the dialogs it draws, in
+// English in a language whose words are not linked, and logs a reminder of
+// it at every start: main.go links them for every language the app names.
+func TestMygoHasItsWordsInEveryLanguageOfTheApp(t *testing.T) {
+	file, err := parser.ParseFile(token.NewFileSet(), "main.go", nil, parser.ImportsOnly)
+	if err != nil {
+		t.Fatal(err)
+	}
+	linked := map[string]bool{}
+	for _, spec := range file.Imports {
+		if tag, ok := strings.CutPrefix(strings.Trim(spec.Path.Value, `"`), "github.com/egoist/mygo/locales/"); ok {
+			linked[tag] = true
+		}
+	}
+	for _, goos := range []string{"darwin", "linux", "windows"} {
+		for _, lang := range languagesOn(goos)[1:] {
+			if !linked[lang] {
+				t.Errorf("%s: main.go does not link mygo's words in %s", goos, lang)
 			}
 		}
 	}
