@@ -332,17 +332,7 @@ impl Home {
     }
 
     fn command(&self, releases: &Releases, extra: &[(&str, &str)]) -> Command {
-        self.command_of(&self.program, releases, extra)
-    }
-
-    /// `program` in this home, without a console on Windows.
-    fn command_of(
-        &self,
-        program: impl AsRef<std::ffi::OsStr>,
-        releases: &Releases,
-        extra: &[(&str, &str)],
-    ) -> Command {
-        let mut command = Command::new(program);
+        let mut command = Command::new(&self.program);
         console::detached(&mut command);
         console::english(command.env_clear());
         for name in ["PATH", "SYSTEMROOT", "TMPDIR"] {
@@ -757,26 +747,27 @@ fn a_copy_no_setup_script_installed_gets_the_setup_command_and_changes_nothing()
 #[test]
 fn the_background_check_holds_no_pipe_the_run_was_given() {
     use std::io::Read;
-    use std::os::windows::process::CommandExt;
-    use windows_sys::Win32::System::Threading::CREATE_NO_WINDOW;
     let releases = Releases::start("2.2.0");
     *releases.stall.lock().unwrap() = u64::MAX;
     let home = Home::plain();
     std::fs::write(home.path("a.txt"), "Words.\n").unwrap();
-    let system = PathBuf::from(std::env::var_os("SYSTEMROOT").expect("SYSTEMROOT"));
-    // cmd runs in a hidden console of its own. markitai, which cmd starts,
-    // writes its marks to that console, so it checks, and its output to
-    // cmd's: this test's pipe.
-    let mut shell = home.command_of(system.join("System32").join("cmd.exe"), &releases, &[]);
-    shell
-        .creation_flags(CREATE_NO_WINDOW)
-        .raw_arg(format!(
-            r#"/d /s /c ""{}" a.txt -o out 2>CON""#,
-            env!("CARGO_BIN_EXE_markitai")
-        ))
+    // The run shares this test's console (one is made if the runner has
+    // none) and writes its marks there, so it shows the notice and checks;
+    // its output goes to this test's pipe. The console is opened for reading
+    // too, as a terminal's own handle is: a handle that may only write to it
+    // (cmd's `2>CON`) is not taken for a terminal.
+    let mut command = home.command(&releases, &[]);
+    interrupt::interruptible(&mut command);
+    let console = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("CONOUT$")
+        .unwrap();
+    command
+        .args(["a.txt", "-o", "out"])
         .stdout(Stdio::piped())
-        .stderr(Stdio::null());
-    let mut child = shell.spawn().unwrap();
+        .stderr(Stdio::from(console));
+    let mut child = command.spawn().unwrap();
     let mut stdout = child.stdout.take().unwrap();
     let (ended, end) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
