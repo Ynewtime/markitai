@@ -96,7 +96,9 @@ On a push to `main`, a pull request and a run by hand (not as the release's
 a pinned release it downloads and verifies by SHA-256: what GitHub would refuse
 or find only when a job runs, such as an expression's types and contexts, a
 runner's name, and the inputs of actions and called workflows. The scripts in
-`run:` are not checked (shellcheck and pyflakes are off). Part of this is
+`run:` are not checked (shellcheck and pyflakes are off). The job first gives
+actionlint a workflow with a mistake (a job that needs one that does not
+exist) and fails unless that is refused. Part of this is
 checked before a push by `crates/markitai-cli/tests/workflows.rs`
 ([development](development.md)). By hand,
 `gh workflow run check.yml -f platforms='[]'` runs this job alone.

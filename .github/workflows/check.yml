@@ -120,6 +120,15 @@ jobs:
           echo "$SHA256  $archive" | sha256sum -c -
           tar -xzf "$archive" -C "$RUNNER_TEMP" actionlint
           "$RUNNER_TEMP/actionlint" -version
+          # A workflow with a mistake must fail it: a check that passed this one would pass the
+          # repository's workflows whatever they held.
+          bad=$RUNNER_TEMP/mistaken.yml
+          printf '%s\n' 'on: push' 'jobs:' '  job:' '    runs-on: ubuntu-24.04' '    needs: missing' \
+            '    steps:' '      - run: echo' > "$bad"
+          if "$RUNNER_TEMP/actionlint" -shellcheck= -pyflakes= "$bad"; then
+            echo "actionlint accepted a workflow whose job needs one that does not exist" >&2
+            exit 1
+          fi
           "$RUNNER_TEMP/actionlint" -shellcheck= -pyflakes=
 
   check:
