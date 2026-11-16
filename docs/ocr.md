@@ -144,18 +144,6 @@ above were recorded on macOS 27). Set the language (`ocr.lang: ja`, or
 opt-in (`MARKITAI_OCR_BACKEND=vision` or the fallback); the default portable
 engine does not use Vision's language detection.
 
-Known issue: local OCR may join neighbouring cells of a table row. On one scan
-whose rows read `苹果 12 3.50` and `香蕉 30 1.20`, the portable engine returned
-`香蕉 301.20` and joined the header's words, and Vision on macOS 15.7 returned
-`苹果 123.50`, with no candidate that separated them (Vision on macOS 27 read
-both rows right). Enlarging the image did not help Vision. It happens where
-the cells stand a word space or two apart: of rendered pages with such rows the
-portable engine joined two numbers of a row in 6 of 12 whose cells were one or
-two spaces apart, and in none of 18 with three or more, where each cell is
-found by itself. The gap alone does not tell such a space from the room a 1 has
-among figures of one width, so the numbers are left as read. Check numbers read
-from tables.
-
 When the default engine falls back to Vision and Vision has no such language
 (`el`, say), the failure is still the download's: the setting is valid for the
 portable models, so the message names the download, not `ocr.lang`.
@@ -242,6 +230,26 @@ pages, code and number-heavy lines. These are conservative recognition aids,
 not permission to infer missing data. A numeric or punctuation substitution can
 still occur; compare important values and executable text with the source image.
 
+The recognizer reads two numbers a word space or two apart, as the cells of a
+table row often stand, as one (`香蕉 301.20` for `香蕉 30 1.20`); the portable
+engine puts the space back where the glyphs show it. Figures share one width,
+so a narrow `1` has a wide gap on each side yet stands no farther from its
+neighbours: two digits read together are a space apart when the centres of
+their ink stand at least 1.35 times as far apart as the line's digits usually
+do and the gap between them is over a fifth of the line's height. On 732
+rendered pages of number rows (28 fonts, 14 to 32 pixels, clean and blurred
+JPEG) this put back 785 of the 1,129 spaces left out and split none of 31,500
+pairs of digits of one number.
+
+Known issue: local OCR may still join neighbouring cells of a table row. The
+portable engine leaves digits as read where their ink runs together (small or
+blurred print) or has ink between them, and in a line with a single pair of
+digits read together, and may join the words of a header (`项目数量单价`).
+Vision is not corrected: on one scan whose rows read `苹果 12 3.50` and
+`香蕉 30 1.20`, Vision on macOS 15.7 returned `苹果 123.50`, with no candidate
+that separated them (Vision on macOS 27 read both rows right), and enlarging
+the image did not help. Check numbers read from tables.
+
 ## Chinese, Japanese and Korean recognition aids
 
 The reader can choose alternate language readings for uncertain lines and
@@ -300,7 +308,8 @@ and the OCR corpus: 0 to 5 characters in about 31,000 differ). qppocr uses its
 own line classifier, PP-LCNet_x0_25_textline_ori (the v2.0 classifier turned an
 upright line of prose over), which `doctor --fix` and the first OCR install only
 when qppocr is selected. Spaces between a Chinese or Japanese letter and a Latin
-letter or digit follow the same rule with either engine. The overlapping-tiles
+letter or digit, and between two numbers read as one, follow the same rules
+with either engine. The overlapping-tiles
 retry of a nearly empty image (below) also runs on qppocr. qppocr reads one
 image at a time with all of the OCR thread budget (`MARKITAI_OCR_THREADS`) and
 shrinks an image whose long side is over 960 pixels (tract's detector, 1,600).

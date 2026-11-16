@@ -980,18 +980,19 @@ fn blocky(corners: &[[f32; 2]; 4], (width, height): (u32, u32)) -> bool {
     short >= 200.0 && short >= 0.2 * width.min(height) as f32 && long < 3.0 * short
 }
 
-/// The spaces between a Chinese or Japanese letter and a Latin letter or
-/// digit that the line's pixels show, which the recognizer leaves out, put
-/// into the text of each of qppocr's lines that has such a junction: the same
-/// rule as for tract's readings ([`recognize::spaced`]), on the line cut out
-/// of `image`, with the characters' places projected onto the line.
+/// The spaces that the line's pixels show but the recognizer leaves out
+/// (between a Chinese or Japanese letter and a Latin letter or digit, and
+/// between two numbers read as one), put into the text of each of qppocr's
+/// lines that may have one ([`recognize::may_space`]): the same rules as for
+/// tract's readings ([`recognize::spaced`]), on the line cut out of `image`,
+/// with the characters' places projected onto the line.
 fn qpp_spaces(image: &RgbImage, found: &mut qpp::Found) {
     for index in 0..found.lines.len() {
         let characters: Vec<char> = found.lines[index].text.chars().collect();
         let places = &found.centers[index];
         if characters.len() < 2
             || characters.len() != places.len()
-            || super::layout::junctions(&characters).is_empty()
+            || !recognize::may_space(&characters)
         {
             continue;
         }

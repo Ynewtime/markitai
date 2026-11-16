@@ -761,8 +761,20 @@ pub(super) fn junctions(characters: &[char]) -> Vec<usize> {
         .collect()
 }
 
+/// Positions `n` where `characters[n]` and `characters[n + 1]` are digits
+/// with no space between them.
+pub(super) fn digit_pairs(characters: &[char]) -> Vec<usize> {
+    (0..characters.len().saturating_sub(1))
+        .filter(|&n| characters[n].is_ascii_digit() && characters[n + 1].is_ascii_digit())
+        .collect()
+}
+
 fn gray(image: &image::RgbImage, x: u32, y: u32) -> i16 {
-    let [r, g, b] = image.get_pixel(x, y).0.map(u32::from);
+    luma(image.get_pixel(x, y))
+}
+
+fn luma(pixel: &image::Rgb<u8>) -> i16 {
+    let [r, g, b] = pixel.0.map(u32::from);
     ((r * 299 + g * 587 + b * 114) / 1000) as i16
 }
 
@@ -825,6 +837,135 @@ pub(super) fn spaced(
         widest = widest.max(run);
     }
     widest as f32 >= SPACE * tall as f32
+}
+
+/// A pixel this far from the background gray is a digit's ink: low enough
+/// that the hairlines of a thin serif `0` close it (at the 80 of [`spaced`]
+/// its two sides would be two glyphs).
+const DIGIT_INK: i16 = 40;
+
+/// Two digits read with no space between them stand a space apart when the
+/// centres of their ink are at least this many times as far apart as the
+/// line's digits usually stand, and the gap between them is at least
+/// [`SPACE`] line heights. Figures share one width, so a narrow `1` has a
+/// wide gap on each side yet stands no farther from its neighbours, while a
+/// space adds a third to a half of a figure. Measured on 732 rendered images
+/// of number rows (28 fonts, 14 to 32 pixels, clean and blurred JPEG): the
+/// digits of a number stand at most 1.22 times the usual distance apart,
+/// digits a space apart mostly 1.35 times or more.
+const DIGIT_SPACE: f32 = 1.35;
+
+/// Positions `n` (from [`digit_pairs`]) where the recognizer read the digits
+/// `characters[n]` and `characters[n + 1]` together but `image`, a cut-out
+/// line on a `background` gray, shows a space between them: two numbers a
+/// word space or two apart, as the cells of a table row often stand. `x(n)`
+/// is where the recognizer places character `n`, in the image's columns.
+///
+/// The image's columns of ink (any pixel [`DIGIT_INK`] from the background)
+/// run in glyphs, and each character takes the run nearest its place. A pair
+/// is measured when its digits have a run each, side by side, and spaced as
+/// [`DIGIT_SPACE`] says, against the median distance (the lower middle one)
+/// between the centres of the line's measured pairs; a centre weighs each
+/// column by its ink, so the flag of a `1` does not pull it aside. Digits whose
+/// ink runs together, or with ink between them (a point the recognizer
+/// dropped), and lines with fewer than two measured pairs, stay as read.
+pub(super) fn digit_spaces(
+    image: &image::RgbImage,
+    background: i16,
+    characters: &[char],
+    x: impl Fn(usize) -> f32,
+) -> Vec<usize> {
+    let pairs = digit_pairs(characters);
+    let (width, height) = image.dimensions();
+    if pairs.len() < 2 || height < 4 {
+        return Vec::new();
+    }
+    // Each column's strongest ink and its weight: the ink beyond half of
+    // DIGIT_INK, summed down the column.
+    let mut strongest = vec![0i16; width as usize];
+    let mut weight = vec![0u32; width as usize];
+    for (column, _, pixel) in image.enumerate_pixels() {
+        let ink = (luma(pixel) - background).abs();
+        let column = column as usize;
+        strongest[column] = strongest[column].max(ink);
+        weight[column] += (ink - DIGIT_INK / 2).max(0) as u32;
+    }
+    // Runs of ink columns: first column, end, and the centre of their ink.
+    let mut runs: Vec<(u32, u32, f32)> = Vec::new();
+    let (mut start, mut sum, mut moment) = (None, 0.0f64, 0.0f64);
+    for column in 0..=width {
+        if strongest
+            .get(column as usize)
+            .is_some_and(|&ink| ink > DIGIT_INK)
+        {
+            start.get_or_insert(column);
+            let weight = f64::from(weight[column as usize]);
+            sum += weight;
+            moment += weight * (f64::from(column) + 0.5);
+        } else if let Some(first) = start.take() {
+            // An ink column weighs more than nothing: its ink passes DIGIT_INK.
+            runs.push((first, column, (moment / sum) as f32));
+            (sum, moment) = (0.0, 0.0);
+        }
+    }
+    let distance = |run: &(u32, u32, f32), at: f32| {
+        let (first, end) = (run.0 as f32, run.1 as f32);
+        if (first..end).contains(&at) {
+            0.0
+        } else {
+            (at - first).abs().min((at - (end - 1.0)).abs())
+        }
+    };
+    let nearest = |at: f32| {
+        let after = runs.partition_point(|run| run.0 as f32 <= at);
+        [after.checked_sub(1), (after < runs.len()).then_some(after)]
+            .into_iter()
+            .flatten()
+            .min_by(|&a, &b| distance(&runs[a], at).total_cmp(&distance(&runs[b], at)))
+    };
+    let owners: Vec<Option<usize>> = characters
+        .iter()
+        .enumerate()
+        .map(|(n, c)| {
+            if c.is_whitespace() {
+                None
+            } else {
+                nearest(x(n))
+            }
+        })
+        .collect();
+    let mut claims = vec![0usize; runs.len()];
+    for &run in owners.iter().flatten() {
+        claims[run] += 1;
+    }
+    // Each measured pair: its position, the distance between the centres
+    // and the gap between the runs.
+    let measured: Vec<(usize, f32, u32)> = pairs
+        .into_iter()
+        .filter_map(|n| {
+            let (left, right) = (owners[n]?, owners[n + 1]?);
+            (right == left + 1 && claims[left] == 1 && claims[right] == 1).then(|| {
+                (
+                    n,
+                    runs[right].2 - runs[left].2,
+                    runs[right].0 - runs[left].1,
+                )
+            })
+        })
+        .collect();
+    if measured.len() < 2 {
+        return Vec::new();
+    }
+    let mut distances: Vec<f32> = measured.iter().map(|pair| pair.1).collect();
+    crate::sort::by(&mut distances, f32::total_cmp);
+    let usual = distances[(distances.len() - 1) / 2];
+    measured
+        .into_iter()
+        .filter(|&(_, apart, gap)| {
+            gap as f32 >= SPACE * height as f32 && apart >= DIGIT_SPACE * usual
+        })
+        .map(|(n, ..)| n)
+        .collect()
 }
 
 /// Whether two lines side by side on a row are written without a space: a
@@ -1377,5 +1518,64 @@ mod tests {
             &line("Hello", [100., 0., 150., 50.]),
             &line("World", [152., 0., 230., 50.])
         ));
+    }
+
+    /// A 40-pixel line on white with a block of ink from row 8 to row 32 at
+    /// each `(left, width)`: digits on a pitch of 16 pixels take 12, a `1`
+    /// takes 2 in the middle of its 16.
+    fn glyphs(blocks: &[(u32, u32)], width: u32) -> image::RgbImage {
+        image::RgbImage::from_fn(width, 40, |x, y| {
+            let ink = (8..32).contains(&y)
+                && blocks
+                    .iter()
+                    .any(|&(left, wide)| (left..left + wide).contains(&x));
+            image::Rgb([if ink { 0 } else { 255 }; 3])
+        })
+    }
+
+    /// `digit_spaces` for `text`, each character placed at `places` (the
+    /// recognizer's places run a little right of the glyphs).
+    fn digit_spaces_of(image: &image::RgbImage, text: &str, places: &[f32]) -> Vec<usize> {
+        let characters: Vec<char> = text.chars().collect();
+        digit_spaces(image, 255, &characters, |n| places[n])
+    }
+
+    #[test]
+    fn digits_a_space_apart_are_told_from_a_narrow_one() {
+        // `30 100`, read as `30100`: the 0 and 1 stand 24 pixels apart, one
+        // and a half figures; the 1 and 0 after it have a gap of 9 pixels,
+        // over 0.22 line heights, but stand one figure apart.
+        let line = glyphs(&[(2, 12), (18, 12), (47, 2), (58, 12), (74, 12)], 100);
+        assert_eq!(
+            digit_spaces_of(&line, "30100", &[12., 28., 52., 68., 84.]),
+            [1]
+        );
+        // `1001`: gaps of 9 pixels beside each 1, every figure one apart.
+        let line = glyphs(&[(7, 2), (18, 12), (34, 12), (55, 2)], 70);
+        assert!(digit_spaces_of(&line, "1001", &[12., 28., 44., 60.]).is_empty());
+        // `1 2`, read as `12`: one pair tells nothing of the line's figures.
+        let line = glyphs(&[(7, 2), (34, 12)], 60);
+        assert!(digit_spaces_of(&line, "12", &[12., 44.]).is_empty());
+        assert_eq!(
+            digit_pairs(&"x 12a345".chars().collect::<Vec<_>>()),
+            [2, 5, 6]
+        );
+    }
+
+    #[test]
+    fn digits_whose_ink_touches_or_holds_a_dropped_point_stay_as_read() {
+        // `45 6`, the 4 and 5 touching: one run for two digits.
+        let line = glyphs(&[(2, 14), (16, 12), (42, 12)], 60);
+        assert!(digit_spaces_of(&line, "456", &[12., 26., 52.]).is_empty());
+        // `3.50 12`, read as `35012`: the point between 3 and 5 is ink of its
+        // own, so only the space after 50 is put back.
+        let line = glyphs(
+            &[(2, 12), (21, 3), (26, 12), (42, 12), (71, 2), (82, 12)],
+            100,
+        );
+        assert_eq!(
+            digit_spaces_of(&line, "35012", &[12., 36., 52., 76., 92.]),
+            [2]
+        );
     }
 }

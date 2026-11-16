@@ -270,37 +270,50 @@ pub(super) fn input(line: &RgbImage, min_width: u32) -> (Vec<f32>, u32, u32) {
     )
 }
 
-/// `reading`'s text with the spaces the line's pixels show between a
-/// Chinese or Japanese letter and a Latin letter or digit, which the
-/// recognizer leaves out: where its text has none, the widest ink-free run of
-/// pixel columns between the two characters' centers is measured over the
-/// cut-out line, and a run of [`super::super::layout::SPACE`] line heights or
-/// more is a space, as for Vision. `pixels_per_step` maps the reading's
-/// character centers onto the line's pixels.
+/// Whether [`spaced`] may put a space into a line of `characters`: a Chinese
+/// or Japanese letter meets a Latin letter or digit, or the line has two
+/// pairs of digits read together.
+pub(super) fn may_space(characters: &[char]) -> bool {
+    use super::super::layout;
+    !layout::junctions(characters).is_empty() || layout::digit_pairs(characters).len() >= 2
+}
+
+/// `reading`'s text with the spaces the line's pixels show but the
+/// recognizer leaves out. Between a Chinese or Japanese letter and a Latin
+/// letter or digit, the widest ink-free run of pixel columns between the two
+/// characters' centers is measured over the cut-out line, and a run of
+/// [`super::super::layout::SPACE`] line heights or more is a space, as for
+/// Vision. Between two digits, which the recognizer reads together when two
+/// numbers stand a word space or two apart (the cells of a table row), the
+/// glyphs' spacing tells ([`super::super::layout::digit_spaces`]).
+/// `pixels_per_step` maps the reading's character centers onto the line's
+/// pixels.
 pub(super) fn spaced(line: &RgbImage, reading: &Reading, pixels_per_step: f32) -> String {
     use super::super::layout;
     let characters: Vec<char> = reading.text.chars().collect();
-    if characters.len() != reading.centers.len() || !pixels_per_step.is_finite() {
+    if characters.len() != reading.centers.len()
+        || !pixels_per_step.is_finite()
+        || !may_space(&characters)
+    {
         return reading.text.clone();
     }
-    let junctions = layout::junctions(&characters);
     let (width, height) = (line.width() as f32, line.height() as f32);
-    let Some(background) = (!junctions.is_empty())
-        .then(|| layout::background(line, [0.0, 0.0, width, height]))
-        .flatten()
-    else {
+    let Some(background) = layout::background(line, [0.0, 0.0, width, height]) else {
         return reading.text.clone();
     };
     let x = |index: usize| reading.centers[index] * pixels_per_step;
-    let mut text = String::with_capacity(reading.text.len() + junctions.len());
-    let mut next = junctions.iter().peekable();
+    let junctions = layout::junctions(&characters);
+    let numbers = layout::digit_spaces(line, background, &characters, x);
+    let mut text = String::with_capacity(reading.text.len() + junctions.len() + numbers.len());
     for (index, character) in characters.iter().enumerate() {
         text.push(*character);
-        if next.peek() == Some(&&index) {
-            next.next();
-            if layout::spaced(line, [0.0, height], [x(index), x(index + 1)], background) {
-                text.push(' ');
-            }
+        let space = if junctions.contains(&index) {
+            layout::spaced(line, [0.0, height], [x(index), x(index + 1)], background)
+        } else {
+            numbers.contains(&index)
+        };
+        if space {
+            text.push(' ');
         }
     }
     text
@@ -389,6 +402,33 @@ mod tests {
         let mut short = reading(16, "在C");
         short.centers.pop();
         assert_eq!(spaced(&line(16), &short, 1.0), "在C");
+    }
+
+    #[test]
+    fn two_numbers_read_as_one_get_their_space_back_and_a_narrow_one_does_not() {
+        // Digits 16 pixels apart on a 40-pixel line, 12 wide, a 1 2 wide.
+        let line = |blocks: &[(u32, u32)]| {
+            RgbImage::from_fn(100, 40, |x, y| {
+                let ink = (8..32).contains(&y)
+                    && blocks
+                        .iter()
+                        .any(|&(left, wide)| (left..left + wide).contains(&x));
+                Rgb([if ink { 0 } else { 255 }; 3])
+            })
+        };
+        // Centers in steps of 2 pixels.
+        let reading = |text: &str, pixels: &[f32]| Reading {
+            text: text.into(),
+            confidence: 0.99,
+            centers: pixels.iter().map(|x| x / 2.0).collect(),
+        };
+        let table = line(&[(2, 12), (18, 12), (47, 2), (58, 12), (74, 12)]);
+        let places = [12., 28., 52., 68., 84.];
+        assert_eq!(spaced(&table, &reading("30100", &places), 2.0), "30 100");
+        let number = line(&[(7, 2), (18, 12), (34, 12), (55, 2)]);
+        let places = [12., 28., 44., 60.];
+        assert_eq!(spaced(&number, &reading("1001", &places), 2.0), "1001");
+        assert!(may_space(&['1', '2', '3']) && !may_space(&['1', '2', 'a']));
     }
 
     #[test]
