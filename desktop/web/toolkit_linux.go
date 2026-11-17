@@ -145,6 +145,29 @@ func toolkitReady() {
 	watchDrops()
 }
 
+// workArea is the size of the work area of the monitor a new window opens
+// on, the primary one or else the first, which leaves out the panels a
+// desktop keeps there; 0 by 0 when GTK tells none. GTK has started.
+func workArea() (int, int) {
+	if loadGTK() != nil {
+		return 0, 0
+	}
+	d := gtk.displayDefault()
+	if d == nil {
+		return 0, 0
+	}
+	monitor := gtk.primaryMonitor(d)
+	if monitor == nil {
+		monitor = gtk.monitorAt(d, 0)
+	}
+	if monitor == nil {
+		return 0, 0
+	}
+	var area gdkRectangle
+	gtk.workarea(monitor, &area)
+	return int(area.width), int(area.height)
+}
+
 // sizeFileChoosers keeps GTK's own file chooser within its window and the
 // work area of its window's screen, as it opens 1203 by 950 by default,
 // past a 1280 by 720 screen, and a tiling window manager centers it on its

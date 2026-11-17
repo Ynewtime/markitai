@@ -14,6 +14,9 @@ func prepareToolkit() {}
 // toolkitReady has nothing to ready outside Linux.
 func toolkitReady() {}
 
+// workArea tells no work area outside Linux: the window opens at its size.
+func workArea() (int, int) { return 0, 0 }
+
 // openURL opens url with its default program.
 func openURL(url string) error { return mygo.Shell.OpenExternal(url) }
 

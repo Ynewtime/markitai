@@ -35,6 +35,7 @@ var gtk struct {
 	displayDefault    func() unsafe.Pointer
 	monitorAtWindow   func(d, w unsafe.Pointer) unsafe.Pointer
 	monitorAt         func(d unsafe.Pointer, n int32) unsafe.Pointer
+	primaryMonitor    func(d unsafe.Pointer) unsafe.Pointer
 	workarea          func(m unsafe.Pointer, r *gdkRectangle)
 	setGeometryHints  func(w, geometryWidget unsafe.Pointer, g *gdkGeometry, mask int32)
 	preferredWidth    func(w unsafe.Pointer, least, natural *int32)
@@ -91,6 +92,7 @@ func loadGTK() error {
 			{&gtk.displayDefault, t, "gdk_display_get_default"},
 			{&gtk.monitorAtWindow, t, "gdk_display_get_monitor_at_window"},
 			{&gtk.monitorAt, t, "gdk_display_get_monitor"},
+			{&gtk.primaryMonitor, t, "gdk_display_get_primary_monitor"},
 			{&gtk.workarea, t, "gdk_monitor_get_workarea"},
 			{&gtk.setGeometryHints, t, "gtk_window_set_geometry_hints"},
 			{&gtk.preferredWidth, t, "gtk_widget_get_preferred_width"},

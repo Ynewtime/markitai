@@ -175,7 +175,8 @@ On Linux the app's settings and the server's log are in
 `~/.config/dev.markitai.web` (`logs/serve.log`, under `XDG_CONFIG_HOME`); the
 window's web data is in `~/.local/share/dev.markitai.web` and
 `~/.cache/dev.markitai.web`. There is no application menu: Ctrl+Q or closing
-the window quits the app. Save and export use the desktop's file chooser
+the window quits the app. The window first opens no larger than the screen's
+work area, the screen without the desktop's panels. Save and export use the desktop's file chooser
 through its portal (`xdg-desktop-portal`) when it has one, in the desktop's
 theme and language; otherwise GTK's own, fitted to the window and the
 screen. While the app follows the system's theme it follows the desktop's

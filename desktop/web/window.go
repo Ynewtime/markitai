@@ -175,13 +175,35 @@ const background = "light-dark(#fafafa, #09090b)"
 // than the window gets its content squeezed, as Hyprland does.
 const minWidth, minHeight = 480, 300
 
+// startWidth and startHeight are the window's size the first time it opens,
+// within the screen's work area (fitSize); later it opens at the size the
+// user left it (StateKey).
+const startWidth, startHeight = 1280, 860
+
+// fitSize is width by height within a work area areaWidth by areaHeight,
+// each where it is known (above 0), and no smaller than the window's
+// smallest size. With no window manager to keep it on the screen, as on an X
+// display without one, a window opens as large as it asks: 860 high on a
+// screen 800 high, its bottom out of sight.
+func fitSize(width, height, areaWidth, areaHeight int) (int, int) {
+	if areaWidth > 0 {
+		width = max(min(width, areaWidth), minWidth)
+	}
+	if areaHeight > 0 {
+		height = max(min(height, areaHeight), minHeight)
+	}
+	return width, height
+}
+
 func openWindow(sc *Sidecar, mem *memory, logPath, downloads string) *window {
 	w := &window{sc: sc, mem: mem, logPath: logPath, downloads: downloads, phases: make(chan Phase, 1)}
 	mygo.Bind(&MarkitaiWeb{w: w})
+	areaWidth, areaHeight := workArea()
+	width, height := fitSize(startWidth, startHeight, areaWidth, areaHeight)
 	w.w = mygo.NewWindow(mygo.WindowOptions{
 		Title:           "Markitai Web",
-		Width:           1280,
-		Height:          860,
+		Width:           width,
+		Height:          height,
 		MinWidth:        minWidth,
 		MinHeight:       minHeight,
 		BackgroundColor: background,
