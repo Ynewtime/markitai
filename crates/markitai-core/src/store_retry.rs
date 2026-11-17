@@ -35,6 +35,17 @@ impl Fault {
             detail: detail.into(),
         }
     }
+
+    /// A state that another process leaves for a moment, which a later
+    /// attempt may not see; one that stays fails once the retries are spent.
+    /// (A store file's second name, which only Unix counts.)
+    #[cfg(unix)]
+    pub(crate) fn passing(detail: impl Into<String>) -> Self {
+        Self {
+            transient: true,
+            detail: detail.into(),
+        }
+    }
 }
 
 impl From<rusqlite::Error> for Fault {

@@ -81,8 +81,15 @@ fn check_file(path: &Path) -> Attempt<bool> {
             #[cfg(unix)]
             {
                 use std::os::unix::fs::MetadataExt;
-                if metadata.nlink() != 1 || metadata.mode() & 0o077 != 0 {
-                    return Err(Fault::permanent("a store file is linked or not private"));
+                if metadata.mode() & 0o077 != 0 {
+                    return Err(Fault::permanent("a store file is not private"));
+                }
+                // Where the file system has no rename that refuses to replace
+                // a name, another process giving a store it has just created
+                // its name links it and then removes the temporary name
+                // (`platform::persist_noclobber`): for a moment it has two.
+                if metadata.nlink() != 1 {
+                    return Err(Fault::passing("a store file has another name"));
                 }
             }
             Ok(true)
@@ -479,6 +486,35 @@ mod tests {
             }
         });
         assert_eq!(list(&cfg).unwrap()[0].hits, 16);
+    }
+
+    /// A store with a second name for a moment, as one another process is
+    /// giving its name by linking (a file system without a rename that
+    /// refuses to replace), is used once the temporary name is gone; one
+    /// whose second name stays is refused.
+    #[cfg(unix)]
+    #[test]
+    fn a_store_with_a_second_name_for_a_moment_is_used_once_it_is_gone() {
+        let temp = tempfile::tempdir().unwrap();
+        let cfg = cfg(temp.path());
+        let page = url("https://example.test/a");
+        record_at(&cfg, &page, 10).unwrap();
+        let second = temp.path().join("second-name");
+        std::fs::hard_link(path(&cfg), &second).unwrap();
+        let unlinker = {
+            let second = second.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(300));
+                std::fs::remove_file(second).unwrap();
+            })
+        };
+        record_at(&cfg, &page, 11).unwrap();
+        unlinker.join().unwrap();
+        assert_eq!(list(&cfg).unwrap()[0].hits, 2);
+        std::fs::hard_link(path(&cfg), &second).unwrap();
+        let started = std::time::Instant::now();
+        assert!(record_at(&cfg, &page, 12).is_err());
+        assert!(started.elapsed() >= Duration::from_secs(4));
     }
 
     /// SQLite's sharing does not allow a handle with delete access, as
