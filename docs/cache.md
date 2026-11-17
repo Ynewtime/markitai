@@ -106,8 +106,15 @@ and a 30-second busy timeout. First-use WAL/schema initialization also retries
 BUSY/LOCKED errors against a 30-second deadline, dropping the failed connection
 before retrying. SQLite can bypass its busy handler while upgrading a rollback
 journal read lock, so a busy timeout alone does not cover simultaneous first
-writers. Only idempotent initialization is retried; row transactions are not
-replayed, and corruption or other I/O failures remain explicit cache warnings.
+writers. A read or write that fails because the store is busy for a moment
+(lock contention SQLite did not wait out, a WAL lock protocol error, an I/O
+error; on Windows also a file that is locked, open without sharing, being
+deleted or held by a virus scanner, and one SQLite could open for reading alone
+at that moment) is tried again as a whole, with growing pauses, for up to 5
+seconds, as the [fetch cache](fetch.md) does. Each attempt is one transaction,
+so a failed one changed nothing, and replaying one only moves an access time or
+replaces the one entry it saves. Corruption and other failures remain explicit
+cache warnings.
 The table retains the reference fields `key`,
 `value`, `model`, `created_at`, `accessed_at` and `size_bytes`; typed document `value` is a JSON object containing `cleaned_markdown`,
 `description` and `tags`; legacy entries remain JSON strings. `model` records
@@ -133,8 +140,9 @@ promise to shrink the physical database file immediately.
 
 Unavailable, malformed or unwritable caches produce a fixed warning and leave a
 successful enhancement intact. Errors do not expose the database path, SQL,
-credentials or cached content. Reads update `accessed_at`; if the database cannot
-accept that update, the call degrades to a cache miss and may contact the model.
+credentials or cached content. Reads update `accessed_at`; if the database still
+cannot accept that update after the retries above, the call degrades to a cache
+miss and may contact the model.
 Typed stored values are schema-checked and their protected markers checked
 against the current chunk before replay. Invalid stored values are ignored with
 a warning; they never count as successful cache hits. Diagnostics describe cache unavailability rather than implying a free

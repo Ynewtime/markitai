@@ -1,5 +1,5 @@
-//! Bounded retries for the SQLite stores (the fetch cache, learned browser
-//! domains): one attempt is one complete transaction or read, and an attempt
+//! Bounded retries for the SQLite stores (the fetch and LLM caches, learned
+//! browser domains): one attempt is one complete transaction or read, and an attempt
 //! that failed for a passing reason is made again for a short while instead of
 //! losing the entry it was saving or reading.
 use crate::{Error, Result};

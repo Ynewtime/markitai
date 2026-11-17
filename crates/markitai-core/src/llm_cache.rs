@@ -1,5 +1,6 @@
 //! Persistent Markdown answers, isolated by prompt/content/model fingerprints.
 
+use crate::store_retry::{Attempt, Fault};
 use crate::{Error, Result, config};
 use globset::GlobBuilder;
 use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior, params};
@@ -26,6 +27,15 @@ pub(crate) struct Cache {
 fn unavailable() -> Error {
     // SQLite errors may contain file paths, SQL or cached content.
     Error::Conversion("Persistent LLM cache is unavailable".into())
+}
+
+/// One read or write of a row, made again for a short while when it failed
+/// for a passing reason (see [`store_retry`](crate::store_retry)). Replaying
+/// is safe: a read only moves the entry's access time, and a write replaces
+/// the one key it saves (with whatever eviction makes room) in one
+/// transaction.
+fn retrying<T>(attempt: impl FnMut() -> Attempt<T>) -> Result<T> {
+    crate::store_retry::retrying("LLM cache", unavailable, attempt)
 }
 
 fn directory(cfg: &Value) -> PathBuf {
@@ -216,7 +226,11 @@ impl Cache {
         if self.skip_read {
             return Ok(None);
         }
-        let Some(mut connection) = existing(&self.path, false)? else {
+        retrying(|| self.read(key))
+    }
+
+    fn read(&self, key: &str) -> Attempt<Option<Value>> {
+        let Some(mut connection) = existing_attempt(&self.path, false)? else {
             return Ok(None);
         };
         // A corrupt/malicious row cannot force an unbounded answer allocation.
@@ -226,33 +240,32 @@ impl Cache {
                 params![key, MAX_ENTRY_BYTES],
                 |row| row.get(0),
             )
-            .optional()
-            .map_err(|_| unavailable())?;
+            .optional()?;
         let Some(value) = value.flatten() else {
             return Ok(None);
         };
-        let answer: Value = serde_json::from_str(&value).map_err(|_| unavailable())?;
-        let transaction = connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(|_| unavailable())?;
-        transaction
-            .execute(
-                "UPDATE cache SET accessed_at = ?2 WHERE key = ?1",
-                params![key, now()],
-            )
-            .map_err(|_| unavailable())?;
-        transaction.commit().map_err(|_| unavailable())?;
+        let answer: Value = serde_json::from_str(&value)
+            .map_err(|_| Fault::permanent("a cached answer is not JSON"))?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        transaction.execute(
+            "UPDATE cache SET accessed_at = ?2 WHERE key = ?1",
+            params![key, now()],
+        )?;
+        transaction.commit()?;
         Ok(Some(answer))
     }
 
     pub(crate) fn set_json(&self, key: &str, model: &str, answer: &Value) -> Result<()> {
         let value = serde_json::to_string(answer).map_err(|_| unavailable())?;
         let size = i64::try_from(value.len()).map_err(|_| unavailable())?;
+        retrying(|| self.write(key, model, &value, size))
+    }
+
+    fn write(&self, key: &str, model: &str, value: &str, size: i64) -> Attempt<()> {
         if let Some(parent) = self.path.parent() {
             crate::platform::private_directory()
                 .recursive(true)
-                .create(parent)
-                .map_err(|_| unavailable())?;
+                .create(parent)?;
         }
         // The store holds document text and model answers: created owner-only
         // before SQLite opens it (its side files copy that mode), and a store
@@ -264,53 +277,42 @@ impl Cache {
         {
             Ok(_) => {}
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-            Err(_) => return Err(unavailable()),
+            Err(error) => return Err(error.into()),
         }
         private(&self.path)?;
         let mut connection = initialize_writer(&self.path)?;
-        let transaction = connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(|_| unavailable())?;
-        transaction
-            .execute("DELETE FROM cache WHERE key = ?1", [key])
-            .map_err(|_| unavailable())?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        transaction.execute("DELETE FROM cache WHERE key = ?1", [key])?;
         // Remove a stale replacement, but leave unrelated rows intact when the
         // new result alone cannot fit. Admission and all evictions are atomic.
         if size <= self.capacity && size <= MAX_ENTRY_BYTES {
-            let mut total: i64 = transaction
-                .query_row(
-                    "SELECT COALESCE(SUM(size_bytes), 0) FROM cache",
-                    [],
-                    |row| row.get(0),
-                )
-                .map_err(|_| unavailable())?;
+            let mut total: i64 = transaction.query_row(
+                "SELECT COALESCE(SUM(size_bytes), 0) FROM cache",
+                [],
+                |row| row.get(0),
+            )?;
             while total > self.capacity - size {
                 let oldest: Option<(String, i64)> = transaction
                     .query_row("SELECT key, size_bytes FROM cache ORDER BY accessed_at ASC, rowid ASC LIMIT 1", [], |row| Ok((row.get(0)?, row.get(1)?)))
-                    .optional().map_err(|_| unavailable())?;
+                    .optional()?;
                 let Some((key, removed)) = oldest else { break };
-                transaction
-                    .execute("DELETE FROM cache WHERE key = ?1", [key])
-                    .map_err(|_| unavailable())?;
+                transaction.execute("DELETE FROM cache WHERE key = ?1", [key])?;
                 total = total.saturating_sub(removed);
             }
             let timestamp = now();
             transaction.execute(
                 "INSERT INTO cache (key,value,model,created_at,accessed_at,size_bytes) VALUES (?1,?2,?3,?4,?4,?5)",
                 params![key, value, model, timestamp, size],
-            ).map_err(|_| unavailable())?;
+            )?;
         }
-        transaction.commit().map_err(|_| unavailable())?;
+        transaction.commit()?;
         Ok(())
     }
 }
 
-// WAL migration upgrades a read lock and can return BUSY without invoking
-// SQLite's busy handler. Retrying a fresh connection releases that read lock;
-// retrying the insertion transaction would have a different correctness scope.
 /// Narrow the store and the SQLite side files present to their owner; a link
 /// or other non-file in their place is refused rather than written through.
-fn private(path: &Path) -> Result<()> {
+fn private(path: &Path) -> Attempt<()> {
     for suffix in ["", "-journal", "-wal", "-shm"] {
         let mut name = path.as_os_str().to_owned();
         name.push(suffix);
@@ -329,26 +331,30 @@ fn private(path: &Path) -> Result<()> {
                         )
                         .and_then(|opened| {
                             opened.set_permissions(std::fs::Permissions::from_mode(mode & 0o700))
-                        })
-                        .map_err(|_| unavailable())?;
+                        })?;
                     }
                 }
             }
-            Ok(_) | Err(_) => return Err(unavailable()),
+            Ok(_) => return Err(Fault::permanent("a store file is not a regular file")),
+            Err(error) => return Err(error.into()),
         }
     }
     Ok(())
 }
 
-fn initialize_writer(path: &Path) -> Result<Connection> {
+fn initialize_writer(path: &Path) -> Attempt<Connection> {
     initialize_writer_with_wait(path, Duration::from_secs(30), &mut std::thread::sleep)
 }
 
+// WAL migration upgrades a read lock and can return BUSY without invoking
+// SQLite's busy handler. Retrying a fresh connection releases that read lock,
+// here against the initialization's own deadline; other passing failures
+// leave it to the caller's retry of the whole write.
 fn initialize_writer_with_wait(
     path: &Path,
     timeout: Duration,
     wait: &mut dyn FnMut(Duration),
-) -> Result<Connection> {
+) -> Attempt<Connection> {
     let started = Instant::now();
     loop {
         let remaining = timeout.saturating_sub(started.elapsed());
@@ -357,14 +363,12 @@ fn initialize_writer_with_wait(
         let result = initialize_writer_once(path, remaining.min(Duration::from_millis(100)));
         match result {
             Ok(connection) => {
-                // Ordinary row transactions retain their existing busy policy;
-                // only the idempotent initialization above is replayed.
-                connection
-                    .busy_timeout(Duration::from_secs(30))
-                    .map_err(|_| unavailable())?;
+                // Row transactions wait for locks up to the store's busy
+                // timeout; the caller makes a whole write again when it failed.
+                connection.busy_timeout(Duration::from_secs(30))?;
                 return Ok(connection);
             }
-            Err(rusqlite::Error::SqliteFailure(error, _))
+            Err(rusqlite::Error::SqliteFailure(error, message))
                 if matches!(
                     error.code,
                     rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked
@@ -372,11 +376,11 @@ fn initialize_writer_with_wait(
             {
                 let remaining = timeout.saturating_sub(started.elapsed());
                 if remaining.is_zero() {
-                    return Err(unavailable());
+                    return Err(rusqlite::Error::SqliteFailure(error, message).into());
                 }
                 wait(remaining.min(Duration::from_millis(10)));
             }
-            Err(_) => return Err(unavailable()),
+            Err(error) => return Err(error.into()),
         }
     }
 }
@@ -401,32 +405,26 @@ fn initialize_writer_once(path: &Path, timeout: Duration) -> rusqlite::Result<Co
     Ok(connection)
 }
 
-fn open(path: &Path, flags: OpenFlags) -> Result<Connection> {
-    let connection = Connection::open_with_flags(path, flags).map_err(|_| unavailable())?;
-    connection
-        .busy_timeout(Duration::from_secs(30))
-        .map_err(|_| unavailable())?;
-    connection
-        .pragma_update(None, "trusted_schema", "OFF")
-        .map_err(|_| unavailable())?;
-    Ok(connection)
+fn existing(path: &Path, readonly: bool) -> Result<Option<Connection>> {
+    existing_attempt(path, readonly).map_err(|_| unavailable())
 }
 
-fn existing(path: &Path, readonly: bool) -> Result<Option<Connection>> {
+fn existing_attempt(path: &Path, readonly: bool) -> Attempt<Option<Connection>> {
     match std::fs::metadata(path) {
         Ok(metadata) if metadata.is_file() => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        _ => return Err(unavailable()),
+        Ok(_) => return Err(Fault::permanent("the store is not a regular file")),
+        Err(error) => return Err(error.into()),
     }
-    open(
-        path,
-        if readonly {
-            OpenFlags::SQLITE_OPEN_READ_ONLY
-        } else {
-            OpenFlags::SQLITE_OPEN_READ_WRITE
-        },
-    )
-    .map(Some)
+    let flags = if readonly {
+        OpenFlags::SQLITE_OPEN_READ_ONLY
+    } else {
+        OpenFlags::SQLITE_OPEN_READ_WRITE
+    };
+    let connection = Connection::open_with_flags(path, flags)?;
+    connection.busy_timeout(Duration::from_secs(30))?;
+    connection.pragma_update(None, "trusted_schema", "OFF")?;
+    Ok(Some(connection))
 }
 
 fn megabytes(bytes: i64) -> f64 {
@@ -628,6 +626,39 @@ mod tests {
         assert_eq!(std::fs::read(&target).unwrap(), b"");
     }
 
+    /// SQLite's sharing does not allow a handle with delete access, as
+    /// another program (a scanner, a backup) can hold for a moment: the
+    /// store then opens read-only and refuses the write, or cannot be opened
+    /// at all. The write and the read are made again once it is let go.
+    #[cfg(windows)]
+    #[test]
+    fn a_store_another_handle_holds_for_a_moment_is_used_once_it_is_let_go() {
+        use std::os::windows::fs::OpenOptionsExt;
+        const DELETE: u32 = 0x0001_0000;
+        const SHARE_READ_WRITE_DELETE: u32 = 7;
+        let root = tempfile::tempdir().unwrap();
+        let cache = Cache::configured(&configuration(root.path(), 10_000), "").unwrap();
+        cache.set("first", "pool", "one").unwrap();
+        let hold = || {
+            let held = std::fs::OpenOptions::new()
+                .access_mode(DELETE)
+                .share_mode(SHARE_READ_WRITE_DELETE)
+                .open(root.path().join("cache.db"))
+                .unwrap();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(300));
+                drop(held);
+            })
+        };
+        let holder = hold();
+        cache.set("second", "pool", "two").unwrap();
+        holder.join().unwrap();
+        let holder = hold();
+        assert_eq!(cache.get("first").unwrap().as_deref(), Some("one"));
+        holder.join().unwrap();
+        assert_eq!(cache.get("second").unwrap().as_deref(), Some("two"));
+    }
+
     #[test]
     fn rollback_lock_during_wal_initialization_is_retried_after_release() {
         let root = tempfile::tempdir().unwrap();
@@ -682,8 +713,17 @@ mod tests {
         let failure = initialize_writer_with_wait(&bad, Duration::from_secs(30), &mut |_| {
             panic!("corruption must not retry")
         });
+        assert!(
+            !failure.unwrap_err().transient,
+            "corruption must not be tried again"
+        );
+        let cache = Cache::configured(&configuration(root.path(), 10_000), "").unwrap();
+        let bad_cache = Cache {
+            path: bad.clone(),
+            ..cache
+        };
         assert_eq!(
-            failure.unwrap_err().to_string(),
+            bad_cache.set("k", "pool", "text").unwrap_err().to_string(),
             "Persistent LLM cache is unavailable"
         );
         assert_eq!(
