@@ -350,10 +350,13 @@ own line classifier, PP-LCNet_x0_25_textline_ori (the v2.0 classifier turned an
 upright line of prose over), which `doctor --fix` and the first OCR install only
 when qppocr is selected. Spaces between a Chinese or Japanese letter and a Latin
 letter or digit, between two numbers read as one, and between two Chinese words
-read as one, follow the same rules with either engine. The overlapping-tiles
-retry of a nearly empty image (below) also runs on qppocr. qppocr reads one
-image at a time with all of the OCR thread budget (`MARKITAI_OCR_THREADS`) and
-shrinks an image whose long side is over 960 pixels (tract's detector, 1,600).
+read as one, follow the same rules with either engine, with about the same
+result: on 2,556 rendered pages qppocr left out 2,908 such spaces where tract
+left out 3,295, and split 102 pairs set solid where tract split 99. The
+overlapping-tiles retry of a nearly empty image (below) also runs on qppocr.
+qppocr reads one image at a time with all of the OCR thread budget
+(`MARKITAI_OCR_THREADS`) and shrinks an image whose long side is over 960 pixels
+(tract's detector, 1,600).
 
 ### Models
 

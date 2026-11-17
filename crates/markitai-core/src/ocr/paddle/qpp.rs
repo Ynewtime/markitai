@@ -39,7 +39,8 @@ pub(super) struct Found {
     /// Each line's region: top-left, top-right, bottom-right, bottom-left,
     /// in image pixels.
     pub corners: Vec<[[f32; 2]; 4]>,
-    /// The middle of each character of each line, in image pixels.
+    /// Where the recognizer places each character of each line, in image
+    /// pixels ([`place`]).
     pub centers: Vec<Vec<[f32; 2]>>,
     /// The region was found upside down (or, for a tall region, turned the
     /// other way) and read turned over.
@@ -313,6 +314,16 @@ impl Qpp {
                 [tr[0] - tl[0], tr[1] - tl[1]]
             };
             let flipped = line.rotation == 180;
+            let reading = if flipped {
+                direction.map(|n| -n)
+            } else {
+                direction
+            };
+            let places = line
+                .chars
+                .iter()
+                .map(|c| place(&c.pts, flipped, reading))
+                .collect();
             found.lines.push(Line {
                 text: line.text,
                 confidence: if line.confidence.is_finite() {
@@ -321,27 +332,52 @@ impl Qpp {
                     0.0
                 },
                 bounds,
-                direction: if flipped {
-                    direction.map(|n| -n)
-                } else {
-                    direction
-                },
+                direction: reading,
                 marks: Default::default(),
             });
             found.corners.push(line.pts);
-            found.centers.push(
-                line.chars
-                    .iter()
-                    .map(|c| {
-                        let mean = |axis: usize| c.pts.iter().map(|p| p[axis]).sum::<f32>() / 4.0;
-                        [mean(0), mean(1)]
-                    })
-                    .collect(),
-            );
+            found.centers.push(places);
             found.flipped.push(flipped);
         }
         Some(found)
     }
+}
+
+/// Half a step of the recognizer, in line heights: PP-OCR's recognizer reads
+/// a line scaled to 48 pixels tall in steps 8 pixels wide, so a step is a
+/// sixth of the line's height. This is the model's geometry, not something
+/// qppocr reports.
+const HALF_STEP: f32 = 1.0 / 12.0;
+
+/// Where the recognizer places a character whose box qppocr gives as `pts`
+/// (top-left, top-right, bottom-right, bottom-left of the line as cut, before
+/// a line read turned over is turned), on a line read along `reading` (turned
+/// over when `flipped`), in image pixels.
+///
+/// qppocr's box for a character runs from the left edge of the step where
+/// the recognizer first gives it to that of the next character's (the last
+/// to the end of the line), so its middle lies halfway to the next
+/// character. The place is the middle of the box's starting edge (its right
+/// one for a line read turned over) moved half a step along the line, as
+/// tract places a character in the middle of its steps
+/// ([`super::recognize::Reading`]).
+fn place(pts: &[[f32; 2]; 4], flipped: bool, reading: [f32; 2]) -> [f32; 2] {
+    let (top, bottom) = if flipped {
+        (pts[1], pts[2])
+    } else {
+        (pts[0], pts[3])
+    };
+    let height = (top[0] - bottom[0]).hypot(top[1] - bottom[1]);
+    let length = reading[0].hypot(reading[1]);
+    let shift = if length > 0.0 {
+        HALF_STEP * height / length
+    } else {
+        0.0
+    };
+    [
+        (top[0] + bottom[0]) / 2.0 + reading[0] * shift,
+        (top[1] + bottom[1]) / 2.0 + reading[1] * shift,
+    ]
 }
 
 #[cfg(test)]
@@ -374,5 +410,21 @@ mod tests {
         assert_eq!(shards(1), 0);
         assert_eq!(shards(4), 2);
         assert_eq!(shards(16), 4);
+    }
+
+    /// A character's box runs from its first step to the next character's;
+    /// it stands half a step (a twelfth of the line's height) past the
+    /// box's starting edge, not in the box's middle.
+    #[test]
+    fn a_character_stands_half_a_step_past_where_its_box_starts() {
+        // A box from x 100 to 160 on a line 48 pixels tall (y 10 to 58).
+        let pts = [[100.0, 10.0], [160.0, 10.0], [160.0, 58.0], [100.0, 58.0]];
+        assert_eq!(place(&pts, false, [2.0, 0.0]), [104.0, 34.0]);
+        // Read turned over, the line runs right to left and the box starts
+        // at its right edge.
+        assert_eq!(place(&pts, true, [-2.0, 0.0]), [156.0, 34.0]);
+        // A line running down the image (a tall region turned clockwise).
+        let pts = [[58.0, 100.0], [58.0, 160.0], [10.0, 160.0], [10.0, 100.0]];
+        assert_eq!(place(&pts, false, [0.0, 2.0]), [34.0, 104.0]);
     }
 }
