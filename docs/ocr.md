@@ -242,9 +242,12 @@ line's height; the figures of one number whose ink runs together (blurred
 print) are cut apart at the faintest column between them first. Chinese
 letters share one width too: two read together are a space apart when the
 centres of their ink stand at least 1.25 times as far apart as the line's
-letters usually do, with the same gap, on lines 20 pixels tall or more. On 732
+letters usually do, with the same gap, on lines 20 pixels tall or more. In a
+table, with either engine, a cell of numbers closes up a number read with
+spaces in it (`1 2`, `1. 20`) but keeps the space between numbers of two
+characters or more (`6.20 6,273.11`, two columns read as one line). On 732
 rendered pages of number rows (28 fonts, 14 to 32 pixels, clean and blurred
-JPEG) this put back 896 of the 1,129 spaces left out and split none of
+JPEG) this put back 1,032 of the 1,129 spaces left out and split none of
 31,500 pairs of digits of one number; on 1,680 rendered pages of table
 headers, label and number rows and prose (21 Chinese fonts, 13 to 36 pixels)
 it put back 4,064 of the 6,494 spaces left out between Chinese words and split

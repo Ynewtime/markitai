@@ -2201,8 +2201,8 @@ fn merged(mut spans: Vec<[f32; 2]>) -> Vec<[f32; 2]> {
     columns
 }
 
-/// A table in Markdown, its first row the header: number cells without
-/// their inner spaces, letter-spaced cells closed up, rules escaped.
+/// A table in Markdown, its first row the header: numbers read with spaces
+/// in them and letter-spaced cells closed up, rules escaped.
 fn table_markdown(cells: &[Vec<String>]) -> String {
     let row = |cells: &[String]| {
         let cells: Vec<String> = cells

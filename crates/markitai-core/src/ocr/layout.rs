@@ -1259,14 +1259,23 @@ pub(super) fn table_cells(text: &str) -> (Vec<String>, bool) {
 }
 
 /// A table cell that holds a number with spaces in it (`1 2`, `1. 20`,
-/// `3 . 5 0`) without them.
+/// `3 . 5 0`) without them. Numbers a space apart, each of two characters
+/// or more from its first figure to its last (`6.20 6,273.11`, the cells of
+/// two columns read as one line), keep their spaces.
 pub(super) fn number_cell(cell: &str) -> Option<String> {
     let squeezed: String = cell.split_whitespace().collect();
+    let whole = |piece: &str| {
+        let figures = piece.trim_start_matches(['-', '+', '$', '€', '£', '¥', '(']);
+        piece.chars().count() >= 2
+            && figures.starts_with(|c: char| c.is_ascii_digit())
+            && piece.ends_with(|c: char| c.is_ascii_digit() || c == '%' || c == ')')
+    };
     (squeezed.len() != cell.len()
         && squeezed.chars().any(|c| c.is_ascii_digit())
         && squeezed
             .chars()
-            .all(|c| c.is_ascii_digit() || numeric_mark(c)))
+            .all(|c| c.is_ascii_digit() || numeric_mark(c))
+        && !cell.split_whitespace().all(whole))
     .then_some(squeezed)
 }
 
@@ -1315,8 +1324,14 @@ mod tests {
         assert_eq!(table_cells("one plain sentence").0.len(), 1);
         assert_eq!(number_cell("1 2").as_deref(), Some("12"));
         assert_eq!(number_cell("1. 20").as_deref(), Some("1.20"));
+        assert_eq!(number_cell("3 . 5 0").as_deref(), Some("3.50"));
+        assert_eq!(number_cell("12 3").as_deref(), Some("123"));
         assert_eq!(number_cell("3.50"), None);
         assert_eq!(number_cell("香 蕉"), None);
+        // Two numbers of two columns read as one line keep their space.
+        for numbers in ["6.20 6,273.11", "-0 741.81", "12 3.50", "5% (1,200)"] {
+            assert_eq!(number_cell(numbers), None, "{numbers}");
+        }
     }
 
     fn line(text: &str, bounds: [f32; 4]) -> Line {
