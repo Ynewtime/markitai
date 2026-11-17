@@ -250,20 +250,50 @@ class ProcessTests(unittest.TestCase):
                 while time.monotonic() < until:
                     self.assertEqual(process_command(pid)[1][1:], ["-c", "import sys; sys.stdin.read()"])
 
-    def test_on_linux_a_process_with_no_arguments_yet_is_read_again(self):
-        # What /proc gives for a moment after exec: the new file, and no arguments.
-        reads = [b"", b"", b"/usr/bin/python3\0-c\0pass\0"]
+    @unittest.skipUnless(sys.platform.startswith("linux"), "/proc is Linux's")
+    def test_on_linux_a_child_that_has_not_started_its_program_is_read_once_it_has(self):
+        # A child forked by another, which starts its program 0.3 s later: until then /proc reads it
+        # as its parent, whose memory it copies, as a vfork child shares it for a moment.
+        forks = ("import os, sys, time\n"
+                 "child = os.fork()\n"
+                 "if child == 0:\n"
+                 "    time.sleep(0.3)\n"
+                 "    os.execv(sys.executable, [sys.executable, '-c', 'import sys; sys.stdin.read()'])\n"
+                 "print(child, flush=True)\n"
+                 "os.waitpid(child, 0)\n")
+        parent = subprocess.Popen([sys.executable, "-c", forks], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                  text=True)
+        try:
+            pid = int(parent.stdout.readline())
+            self.assertEqual(desktop_web_install._linux_parent_arguments(pid),
+                             Path(f"/proc/{parent.pid}/cmdline").read_bytes())
+            self.assertEqual(process_command(pid)[1][1:], ["-c", "import sys; sys.stdin.read()"])
+        finally:
+            parent.stdin.close()
+            parent.wait(timeout=30)
+            parent.stdout.close()
+
+    def test_on_linux_a_process_starting_its_program_is_read_again(self):
+        # What /proc gives for a moment as a child starts its program: its parent's arguments, then the
+        # new file with no arguments.
+        parent = b"/usr/bin/python3\0-m\0unittest\0"
+        reads = [parent, b"", b"/usr/bin/python3\0-c\0pass\0"]
         with (mock.patch("desktop_web_install.os.readlink", return_value="/usr/bin/python3.13") as link,
-              mock.patch("desktop_web_install.Path.read_bytes", side_effect=reads)):
+              mock.patch("desktop_web_install.Path.read_bytes", side_effect=reads),
+              mock.patch("desktop_web_install._linux_parent_arguments", return_value=parent),
+              mock.patch("desktop_web_install.time.sleep")):
             self.assertEqual(desktop_web_install._linux_process(4242),
                              ("/usr/bin/python3.13", ["/usr/bin/python3", "-c", "pass"]))
         self.assertEqual(link.call_args_list, [mock.call("/proc/4242/exe")] * 3)
-        # One that never has any, as a kernel thread, is given up on with none.
-        with (mock.patch("desktop_web_install.os.readlink", return_value="/usr/bin/x"),
-              mock.patch("desktop_web_install.Path.read_bytes", return_value=b""),
-              mock.patch("desktop_web_install.time.monotonic", side_effect=[0, 1, 3]),
-              mock.patch("desktop_web_install.time.sleep")):
-            self.assertEqual(desktop_web_install._linux_process(4242), ("/usr/bin/x", []))
+        # One that never has any, as a kernel thread, is given up on with none; one whose arguments
+        # stay its parent's, with them.
+        for read, arguments in [(b"", []), (parent, ["/usr/bin/python3", "-m", "unittest"])]:
+            with (mock.patch("desktop_web_install.os.readlink", return_value="/usr/bin/x"),
+                  mock.patch("desktop_web_install.Path.read_bytes", return_value=read),
+                  mock.patch("desktop_web_install._linux_parent_arguments", return_value=parent),
+                  mock.patch("desktop_web_install.time.monotonic", side_effect=[0, 1, 3]),
+                  mock.patch("desktop_web_install.time.sleep")):
+                self.assertEqual(desktop_web_install._linux_process(4242), ("/usr/bin/x", arguments))
 
     @unittest.skipUnless(INSTALLS, "a process's windows are read where `run` installs")
     def test_a_process_without_windows_has_none_on_the_screen(self):

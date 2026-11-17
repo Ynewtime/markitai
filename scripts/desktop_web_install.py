@@ -110,16 +110,29 @@ def _linux_environment(pid):
     return _strings(Path(f"/proc/{pid}/environ").read_bytes(), "utf-8")
 
 
+def _linux_parent_arguments(pid):
+    """/proc's arguments of process `pid`'s parent, as read; None when they cannot be read."""
+    try:
+        # The parent's PID follows the name in parentheses, which may hold any character.
+        parent = Path(f"/proc/{pid}/stat").read_bytes().rpartition(b")")[2].split()[1].decode()
+        return Path(f"/proc/{parent}/cmdline").read_bytes()
+    except (OSError, IndexError):
+        return None
+
+
 def _linux_process(pid):
-    """(program, arguments) of process `pid`: the file it runs, and the arguments it was started with."""
+    """(program, arguments) of process `pid`: the file it runs, and the arguments it was started with.
+    For a moment as a process starts a program, /proc reads it as something else, and it is read again,
+    for up to 2 s: a child that has not yet started its program reads as its parent, whose memory it
+    shares (vfork, as Python's subprocess and Go's os/exec start one) or copies; then, a fraction of a
+    millisecond, as the new file with no arguments, which the kernel puts in place after it. A process
+    whose arguments are its parent's for good is read so once the 2 s have passed."""
     deadline = time.monotonic() + 2
     while True:
         program = os.readlink(f"/proc/{pid}/exe")
-        arguments = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")[:-1]
-        # No arguments while the process starts a program, a fraction of a millisecond: the kernel
-        # names the new file before it has put the arguments in place.
-        if arguments or time.monotonic() > deadline:
-            return program, [argument.decode("utf-8", "replace") for argument in arguments]
+        read = Path(f"/proc/{pid}/cmdline").read_bytes()
+        if read and read != _linux_parent_arguments(pid) or time.monotonic() > deadline:
+            return program, [argument.decode("utf-8", "replace") for argument in read.split(b"\0")[:-1]]
         time.sleep(0.01)
 
 
