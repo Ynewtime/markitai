@@ -138,7 +138,9 @@ func (a *app) quitNow() {
 // an answer: on Linux, SIGTERM as the session ends. It quits as Quit When
 // Done does, without the question; while the question is up, it closes it,
 // and an answer that comes anyway changes nothing (askAndQuit). A second
-// request stops the conversions at once.
+// request stops the conversions at once, as `timeout` asks twice (the app,
+// then its process group); the first one's quit, which can meet that stop
+// under way, waits for it (gateWait).
 func (a *app) terminate() {
 	if a.ending.Swap(true) {
 		if a.sc != nil {
@@ -179,6 +181,7 @@ const (
 	gateDrain             // nothing unfinished: stop the child here, then quit
 	gateAsk               // conversions unfinished, or no count: ask first; this quit is canceled
 	gateFocus             // a stop or the question is under way: show the window
+	gateWait              // as gateFocus while the system ends the app: quit once the stop is done
 )
 
 // busy is how many conversions a stop would wait for, running or queued, and
@@ -191,16 +194,23 @@ type busy struct {
 
 // quitGate decides from the sidecar's phase; unfinished is asked only of a
 // ready child. A count that fails asks too: conversions are never stopped
-// unasked.
-func quitGate(p Phase, asking bool, unfinished func() (int, error)) (gate, busy) {
+// unasked. While the system ends the app (ending), a quit that meets a stop
+// or the question under way waits for the stop rather than being canceled:
+// the stop may be one a second request made (terminate), which leaves no
+// quit to follow it.
+func quitGate(p Phase, asking, ending bool, unfinished func() (int, error)) (gate, busy) {
+	underWay := gateFocus
+	if ending {
+		underWay = gateWait
+	}
 	switch p.(type) {
 	case Stopped:
 		return gateLeave, busy{}
 	case Stopping:
-		return gateFocus, busy{}
+		return underWay, busy{}
 	}
 	if asking {
-		return gateFocus, busy{}
+		return underWay, busy{}
 	}
 	if _, ok := p.(Ready); ok {
 		n, err := unfinished()
@@ -232,7 +242,7 @@ func (a *app) beforeQuit(e *mygo.QuitEvent) {
 		a.leaving = true
 		return
 	}
-	g, b := quitGate(a.sc.Phase(), a.asking.Load(), func() (int, error) {
+	g, b := quitGate(a.sc.Phase(), a.asking.Load(), a.ending.Load(), func() (int, error) {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
 		return a.sc.Unfinished(ctx)
@@ -260,6 +270,9 @@ func (a *app) beforeQuit(e *mygo.QuitEvent) {
 	case gateFocus:
 		e.PreventDefault()
 		a.focus()
+	case gateWait:
+		e.PreventDefault()
+		go a.quitWhenStopped()
 	}
 }
 

@@ -96,23 +96,30 @@ func TestQuitGate(t *testing.T) {
 		name    string
 		phase   Phase
 		asking  bool
+		ending  bool
 		running int
 		err     error
 		want    gate
 		busy    busy
 	}{
-		{"stopped leaves", Stopped{}, false, 0, nil, gateLeave, busy{}},
-		{"a stop under way shows the window", Stopping{Mode: WhenDone, PID: 7}, false, 0, nil, gateFocus, busy{}},
-		{"an open question shows the window", Ready{Child: c}, true, 3, nil, gateFocus, busy{}},
-		{"an idle ready child is drained here", Ready{Child: c}, false, 0, nil, gateDrain, busy{}},
-		{"unfinished conversions ask", Ready{Child: c}, false, 2, nil, gateAsk, busy{N: 2, Known: true}},
-		{"a count that fails asks, saying it is unknown", Ready{Child: c}, false, 0, noCount, gateAsk, busy{}},
-		{"a starting child is drained here", Starting{Child: c}, false, 5, nil, gateDrain, busy{}},
-		{"a failure ends the sidecar", Failed{Cause: NotReady{}}, false, 0, nil, gateDrain, busy{}},
+		{"stopped leaves", Stopped{}, false, false, 0, nil, gateLeave, busy{}},
+		{"a stop under way shows the window", Stopping{Mode: WhenDone, PID: 7}, false, false, 0, nil, gateFocus, busy{}},
+		{"an open question shows the window", Ready{Child: c}, true, false, 3, nil, gateFocus, busy{}},
+		{"an idle ready child is drained here", Ready{Child: c}, false, false, 0, nil, gateDrain, busy{}},
+		{"unfinished conversions ask", Ready{Child: c}, false, false, 2, nil, gateAsk, busy{N: 2, Known: true}},
+		{"a count that fails asks, saying it is unknown", Ready{Child: c}, false, false, 0, noCount, gateAsk, busy{}},
+		{"a starting child is drained here", Starting{Child: c}, false, false, 5, nil, gateDrain, busy{}},
+		{"a failure ends the sidecar", Failed{Cause: NotReady{}}, false, false, 0, nil, gateDrain, busy{}},
+		// A second SIGTERM's stop, made before the first one's quit is
+		// taken, leaves nothing else to quit once it is done.
+		{"as the system ends the app, a stop under way is waited for", Stopping{Mode: Now, PID: 7}, false, true, 0, nil, gateWait, busy{}},
+		{"as the system ends the app, the question's stop is waited for", Ready{Child: c}, true, true, 3, nil, gateWait, busy{}},
+		{"as the system ends the app, an idle ready child is drained here", Ready{Child: c}, false, true, 0, nil, gateDrain, busy{}},
+		{"as the system ends the app, stopped leaves", Stopped{}, false, true, 0, nil, gateLeave, busy{}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			g, b := quitGate(tc.phase, tc.asking, func() (int, error) { return tc.running, tc.err })
+			g, b := quitGate(tc.phase, tc.asking, tc.ending, func() (int, error) { return tc.running, tc.err })
 			if g != tc.want || b != tc.busy {
 				t.Errorf("quitGate = %v, %+v; want %v, %+v", g, b, tc.want, tc.busy)
 			}

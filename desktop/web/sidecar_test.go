@@ -495,7 +495,7 @@ func TestQuitAsksWhenTheCountFails(t *testing.T) {
 	if err := os.Remove(filepath.Join(r.Child.Home, "serve", "control")); err != nil {
 		t.Fatal(err)
 	}
-	g, b := quitGate(h.sc.Phase(), false, func() (int, error) { return h.sc.Unfinished(context.Background()) })
+	g, b := quitGate(h.sc.Phase(), false, false, func() (int, error) { return h.sc.Unfinished(context.Background()) })
 	if g != gateAsk || b.Known {
 		t.Errorf("with the count unknown, the quit gate is %v, %+v; want gateAsk, unknown", g, b)
 	}

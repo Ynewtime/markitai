@@ -196,7 +196,9 @@ When the session ends (logging out, restarting or shutting down), the system
 asks the app to quit with SIGTERM and does not wait for an answer: the app
 asks nothing, closes a question it shows, and quits as Quit When Done does,
 so conversions the session ends before they finish stop and show as
-interrupted when the app next starts.
+interrupted when the app next starts. A second SIGTERM, as `timeout` sends
+one to the app and one to its process group, stops the conversions at once,
+and the app still quits.
 
 ## Windows
 
