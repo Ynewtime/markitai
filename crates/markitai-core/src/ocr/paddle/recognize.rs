@@ -272,10 +272,12 @@ pub(super) fn input(line: &RgbImage, min_width: u32) -> (Vec<f32>, u32, u32) {
 
 /// Whether [`spaced`] may put a space into a line of `characters`: a Chinese
 /// or Japanese letter meets a Latin letter or digit, or the line has two
-/// pairs of digits read together.
+/// pairs of digits, or of Chinese letters, read together.
 pub(super) fn may_space(characters: &[char]) -> bool {
     use super::super::layout;
-    !layout::junctions(characters).is_empty() || layout::digit_pairs(characters).len() >= 2
+    !layout::junctions(characters).is_empty()
+        || layout::digit_pairs(characters).len() >= 2
+        || layout::han_pairs(characters).len() >= 2
 }
 
 /// `reading`'s text with the spaces the line's pixels show but the
@@ -285,9 +287,11 @@ pub(super) fn may_space(characters: &[char]) -> bool {
 /// [`super::super::layout::SPACE`] line heights or more is a space, as for
 /// Vision. Between two digits, which the recognizer reads together when two
 /// numbers stand a word space or two apart (the cells of a table row), the
-/// glyphs' spacing tells ([`super::super::layout::digit_spaces`]).
-/// `pixels_per_step` maps the reading's character centers onto the line's
-/// pixels.
+/// glyphs' spacing tells ([`super::super::layout::digit_spaces`]), and so it
+/// does between two Chinese letters, which it reads together when two words
+/// of a table header stand a space apart
+/// ([`super::super::layout::han_spaces`]). `pixels_per_step` maps the
+/// reading's character centers onto the line's pixels.
 pub(super) fn spaced(line: &RgbImage, reading: &Reading, pixels_per_step: f32) -> String {
     use super::super::layout;
     let characters: Vec<char> = reading.text.chars().collect();
@@ -304,13 +308,15 @@ pub(super) fn spaced(line: &RgbImage, reading: &Reading, pixels_per_step: f32) -
     let x = |index: usize| reading.centers[index] * pixels_per_step;
     let junctions = layout::junctions(&characters);
     let numbers = layout::digit_spaces(line, background, &characters, x);
-    let mut text = String::with_capacity(reading.text.len() + junctions.len() + numbers.len());
+    let words = layout::han_spaces(line, background, &characters, x);
+    let mut text =
+        String::with_capacity(reading.text.len() + junctions.len() + numbers.len() + words.len());
     for (index, character) in characters.iter().enumerate() {
         text.push(*character);
         let space = if junctions.contains(&index) {
             layout::spaced(line, [0.0, height], [x(index), x(index + 1)], background)
         } else {
-            numbers.contains(&index)
+            numbers.contains(&index) || words.contains(&index)
         };
         if space {
             text.push(' ');
@@ -429,6 +435,29 @@ mod tests {
         let places = [12., 28., 44., 60.];
         assert_eq!(spaced(&number, &reading("1001", &places), 2.0), "1001");
         assert!(may_space(&['1', '2', '3']) && !may_space(&['1', '2', 'a']));
+    }
+
+    #[test]
+    fn chinese_words_read_as_one_get_their_space_back() {
+        // `项目 数量`: letters 30 pixels wide on a pitch of 32, the space
+        // adding 10, on a 40-pixel line; centers in steps of 2 pixels.
+        let lefts = [2u32, 34, 76, 108];
+        let line = RgbImage::from_fn(150, 40, |x, y| {
+            let ink =
+                (7..33).contains(&y) && lefts.iter().any(|&left| (left..left + 30).contains(&x));
+            Rgb([if ink { 0 } else { 255 }; 3])
+        });
+        let reading = Reading {
+            text: "项目数量".into(),
+            confidence: 0.99,
+            centers: lefts
+                .iter()
+                .map(|&left| (left as f32 + 15.0) / 2.0)
+                .collect(),
+        };
+        assert_eq!(spaced(&line, &reading, 2.0), "项目 数量");
+        // One pair of letters, and no Latin letter or digit: left as read.
+        assert!(may_space(&['项', '目', '数']) && !may_space(&['项', '目']));
     }
 
     #[test]

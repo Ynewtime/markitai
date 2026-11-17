@@ -231,24 +231,35 @@ not permission to infer missing data. A numeric or punctuation substitution can
 still occur; compare important values and executable text with the source image.
 
 The recognizer reads two numbers a word space or two apart, as the cells of a
-table row often stand, as one (`香蕉 301.20` for `香蕉 30 1.20`); the portable
-engine puts the space back where the glyphs show it. Figures share one width,
-so a narrow `1` has a wide gap on each side yet stands no farther from its
-neighbours: two digits read together are a space apart when the centres of
-their ink stand at least 1.35 times as far apart as the line's digits usually
-do and the gap between them is over a fifth of the line's height. On 732
+table row often stand, as one (`香蕉 301.20` for `香蕉 30 1.20`), and two
+Chinese words a space apart, as in a table header, as one (`项目数量` for
+`项目 数量`); the portable engine puts the space back where the glyphs show
+it. Figures share one width, so a narrow `1` has a wide gap on each side yet
+stands no farther from its neighbours: two digits read together are a space
+apart when the centres of their ink stand at least 1.35 times as far apart as
+the line's digits usually do and the gap between them is over a fifth of the
+line's height; the figures of one number whose ink runs together (blurred
+print) are cut apart at the faintest column between them first. Chinese
+letters share one width too: two read together are a space apart when the
+centres of their ink stand at least 1.25 times as far apart as the line's
+letters usually do, with the same gap, on lines 20 pixels tall or more. On 732
 rendered pages of number rows (28 fonts, 14 to 32 pixels, clean and blurred
-JPEG) this put back 785 of the 1,129 spaces left out and split none of 31,500
-pairs of digits of one number.
+JPEG) this put back 896 of the 1,129 spaces left out and split none of
+31,500 pairs of digits of one number; on 1,680 rendered pages of table
+headers, label and number rows and prose (21 Chinese fonts, 13 to 36 pixels)
+it put back 4,064 of the 6,494 spaces left out between Chinese words and split
+none of 60,100 pairs of letters set solid.
 
 Known issue: local OCR may still join neighbouring cells of a table row. The
-portable engine leaves digits as read where their ink runs together (small or
-blurred print) or has ink between them, and in a line with a single pair of
-digits read together, and may join the words of a header (`项目数量单价`).
-Vision is not corrected: on one scan whose rows read `苹果 12 3.50` and
-`香蕉 30 1.20`, Vision on macOS 15.7 returned `苹果 123.50`, with no candidate
-that separated them (Vision on macOS 27 read both rows right), and enlarging
-the image did not help. Check numbers read from tables.
+portable engine leaves digits as read where a space between them is blurred
+over or has ink in it, and in a line with a single pair of digits read
+together. It leaves Chinese words as read in print under 20 pixels, in a line
+with a single pair of letters read together, and about one in five pairs a
+space apart on taller lines (`项目数量 单价`). Vision is not corrected: on one
+scan whose rows read `苹果 12 3.50` and `香蕉 30 1.20`, Vision on macOS 15.7
+returned `苹果 123.50`, with no candidate that separated them (Vision on macOS
+27 read both rows right), and enlarging the image did not help. Check numbers
+read from tables.
 
 ## Chinese, Japanese and Korean recognition aids
 
@@ -308,8 +319,8 @@ and the OCR corpus: 0 to 5 characters in about 31,000 differ). qppocr uses its
 own line classifier, PP-LCNet_x0_25_textline_ori (the v2.0 classifier turned an
 upright line of prose over), which `doctor --fix` and the first OCR install only
 when qppocr is selected. Spaces between a Chinese or Japanese letter and a Latin
-letter or digit, and between two numbers read as one, follow the same rules
-with either engine. The overlapping-tiles
+letter or digit, between two numbers read as one, and between two Chinese words
+read as one, follow the same rules with either engine. The overlapping-tiles
 retry of a nearly empty image (below) also runs on qppocr. qppocr reads one
 image at a time with all of the OCR thread budget (`MARKITAI_OCR_THREADS`) and
 shrinks an image whose long side is over 960 pixels (tract's detector, 1,600).

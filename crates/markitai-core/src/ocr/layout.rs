@@ -769,6 +769,14 @@ pub(super) fn digit_pairs(characters: &[char]) -> Vec<usize> {
         .collect()
 }
 
+/// Positions `n` where `characters[n]` and `characters[n + 1]` are Chinese
+/// letters with no space between them.
+pub(super) fn han_pairs(characters: &[char]) -> Vec<usize> {
+    (0..characters.len().saturating_sub(1))
+        .filter(|&n| cjk::han(characters[n]) && cjk::han(characters[n + 1]))
+        .collect()
+}
+
 fn gray(image: &image::RgbImage, x: u32, y: u32) -> i16 {
     luma(image.get_pixel(x, y))
 }
@@ -862,13 +870,17 @@ const DIGIT_SPACE: f32 = 1.35;
 /// is where the recognizer places character `n`, in the image's columns.
 ///
 /// The image's columns of ink (any pixel [`DIGIT_INK`] from the background)
-/// run in glyphs, and each character takes the run nearest its place. A pair
-/// is measured when its digits have a run each, side by side, and spaced as
-/// [`DIGIT_SPACE`] says, against the median distance (the lower middle one)
-/// between the centres of the line's measured pairs; a centre weighs each
-/// column by its ink, so the flag of a `1` does not pull it aside. Digits whose
-/// ink runs together, or with ink between them (a point the recognizer
-/// dropped), and lines with fewer than two measured pairs, stay as read.
+/// run in glyphs, and each character takes the run nearest its place. A run
+/// that digits in a row take together (the figures of one number, run
+/// together by blur) is cut between each two at the column with the least
+/// ink between their places. A pair is measured when its digits have a run
+/// or part each, side by side, and spaced as [`DIGIT_SPACE`] says, against
+/// the median distance (the lower middle one) between the centres of the
+/// line's measured pairs of whole runs; a centre weighs each column by its
+/// ink, so the flag of a `1` does not pull it aside. Digits on either side
+/// of ink that runs on (a space blurred over), or with ink between them (a
+/// point the recognizer dropped), and lines with fewer than two measured
+/// pairs of whole runs, stay as read.
 pub(super) fn digit_spaces(
     image: &image::RgbImage,
     background: i16,
@@ -880,35 +892,19 @@ pub(super) fn digit_spaces(
     if pairs.len() < 2 || height < 4 {
         return Vec::new();
     }
-    // Each column's strongest ink and its weight: the ink beyond half of
-    // DIGIT_INK, summed down the column.
-    let mut strongest = vec![0i16; width as usize];
-    let mut weight = vec![0u32; width as usize];
-    for (column, _, pixel) in image.enumerate_pixels() {
-        let ink = (luma(pixel) - background).abs();
-        let column = column as usize;
-        strongest[column] = strongest[column].max(ink);
-        weight[column] += (ink - DIGIT_INK / 2).max(0) as u32;
-    }
-    // Runs of ink columns: first column, end, and the centre of their ink.
-    let mut runs: Vec<(u32, u32, f32)> = Vec::new();
-    let (mut start, mut sum, mut moment) = (None, 0.0f64, 0.0f64);
+    let width = width as usize;
+    let (strongest, weight) = column_ink(image, background);
+    // Runs of ink columns: first column and end.
+    let mut runs: Vec<(usize, usize)> = Vec::new();
+    let mut start = None;
     for column in 0..=width {
-        if strongest
-            .get(column as usize)
-            .is_some_and(|&ink| ink > DIGIT_INK)
-        {
+        if strongest.get(column).is_some_and(|&ink| ink > DIGIT_INK) {
             start.get_or_insert(column);
-            let weight = f64::from(weight[column as usize]);
-            sum += weight;
-            moment += weight * (f64::from(column) + 0.5);
         } else if let Some(first) = start.take() {
-            // An ink column weighs more than nothing: its ink passes DIGIT_INK.
-            runs.push((first, column, (moment / sum) as f32));
-            (sum, moment) = (0.0, 0.0);
+            runs.push((first, column));
         }
     }
-    let distance = |run: &(u32, u32, f32), at: f32| {
+    let distance = |run: &(usize, usize), at: f32| {
         let (first, end) = (run.0 as f32, run.1 as f32);
         if (first..end).contains(&at) {
             0.0
@@ -923,34 +919,219 @@ pub(super) fn digit_spaces(
             .flatten()
             .min_by(|&a, &b| distance(&runs[a], at).total_cmp(&distance(&runs[b], at)))
     };
-    let owners: Vec<Option<usize>> = characters
+    // The characters (not spaces) whose place each run is nearest to.
+    let mut claimants: Vec<Vec<usize>> = vec![Vec::new(); runs.len()];
+    for (n, character) in characters.iter().enumerate() {
+        if !character.is_whitespace()
+            && let Some(run) = nearest(x(n))
+        {
+            claimants[run].push(n);
+        }
+    }
+    // Each character's glyph: its run, or its part of a run that digits in a
+    // row share (blurred figures of one number run together), cut between
+    // each two at the column with the least ink between their places. A
+    // glyph: first column, end, the centre of its ink, and whether it was cut.
+    let column = |at: f32| (at.max(0.0) as usize).min(width);
+    let cut = |(first, end): (usize, usize), members: &[usize]| {
+        let mut cuts = vec![first];
+        for pair in members.windows(2) {
+            let low = (cuts[cuts.len() - 1] + 1).max(column(x(pair[0])));
+            let high = (end - 1).min(column(x(pair[1])) + 1);
+            cuts.push((low..high).min_by_key(|&at| (weight[at], at))?);
+        }
+        cuts.push(end);
+        Some(cuts)
+    };
+    let centre = |first: usize, end: usize| {
+        // An ink column weighs more than nothing: its ink passes DIGIT_INK.
+        let (sum, moment) = (first..end).fold((0.0f64, 0.0f64), |(sum, moment), at| {
+            let weight = f64::from(weight[at]);
+            (sum + weight, moment + weight * (at as f64 + 0.5))
+        });
+        (moment / sum) as f32
+    };
+    let mut glyphs: Vec<(usize, usize, f32, bool)> = Vec::new();
+    let mut glyph_of = vec![None; characters.len()];
+    let mut claims: Vec<usize> = Vec::new();
+    for (&run, members) in runs.iter().zip(&claimants) {
+        let shared = members.len() > 1
+            && members.windows(2).all(|pair| pair[1] == pair[0] + 1)
+            && members.iter().all(|&n| characters[n].is_ascii_digit());
+        match shared.then(|| cut(run, members)).flatten() {
+            Some(cuts) => {
+                for (part, &n) in members.iter().enumerate() {
+                    let (first, end) = (cuts[part], cuts[part + 1]);
+                    glyph_of[n] = Some(glyphs.len());
+                    glyphs.push((first, end, centre(first, end), true));
+                    claims.push(1);
+                }
+            }
+            None => {
+                for &n in members {
+                    glyph_of[n] = Some(glyphs.len());
+                }
+                glyphs.push((run.0, run.1, centre(run.0, run.1), false));
+                claims.push(members.len());
+            }
+        }
+    }
+    // Each measured pair: its position, the distance between the centres,
+    // the gap between the glyphs, and whether a glyph was cut from a run.
+    let measured: Vec<(usize, f32, usize, bool)> = pairs
+        .into_iter()
+        .filter_map(|n| {
+            let (left, right) = (glyph_of[n]?, glyph_of[n + 1]?);
+            (right == left + 1 && claims[left] == 1 && claims[right] == 1).then(|| {
+                let ((_, end, from, left_cut), (next, _, to, right_cut)) =
+                    (glyphs[left], glyphs[right]);
+                (n, to - from, next - end, left_cut || right_cut)
+            })
+        })
+        .collect();
+    // The usual distance from glyphs that are runs of their own: a cut
+    // glyph's centre is less sure.
+    let mut distances: Vec<f32> = measured
         .iter()
-        .enumerate()
-        .map(|(n, c)| {
-            if c.is_whitespace() {
-                None
-            } else {
-                nearest(x(n))
+        .filter(|pair| !pair.3)
+        .map(|pair| pair.1)
+        .collect();
+    if distances.len() < 2 {
+        return Vec::new();
+    }
+    crate::sort::by(&mut distances, f32::total_cmp);
+    let usual = distances[(distances.len() - 1) / 2];
+    measured
+        .into_iter()
+        .filter(|&(_, apart, gap, _)| {
+            gap as f32 >= SPACE * height as f32 && apart >= DIGIT_SPACE * usual
+        })
+        .map(|(n, ..)| n)
+        .collect()
+}
+
+/// Each column of a cut-out line on a `background` gray: its strongest ink
+/// (how far its farthest pixel is from the background) and its weight, the
+/// ink beyond half of [`DIGIT_INK`] summed down the column.
+fn column_ink(image: &image::RgbImage, background: i16) -> (Vec<i16>, Vec<u32>) {
+    let width = image.width() as usize;
+    let mut strongest = vec![0i16; width];
+    let mut weight = vec![0u32; width];
+    for (column, _, pixel) in image.enumerate_pixels() {
+        let ink = (luma(pixel) - background).abs();
+        let column = column as usize;
+        strongest[column] = strongest[column].max(ink);
+        weight[column] += (ink - DIGIT_INK / 2).max(0) as u32;
+    }
+    (strongest, weight)
+}
+
+/// Two Chinese letters read with no space between them stand a space apart
+/// when the centres of their ink stand at least this many times as far
+/// apart as the line's letters usually do, and the gap between them is at
+/// least [`SPACE`] line heights. Chinese letters share one width, a space
+/// adds a quarter to a third of it. Measured on 1,680 rendered images of
+/// table headers, label and number rows and prose (21 Chinese fonts, 13 to
+/// 36 pixels, clean and blurred JPEG): on lines [`HAN_MIN_HEIGHT`] pixels
+/// tall or more, the 44,600 pairs of letters set solid the rule measures
+/// stood at most 1.17 times the usual distance apart, and four of five
+/// pairs a space apart 1.25 times or more.
+const HAN_SPACE: f32 = 1.25;
+
+/// Lines shorter than this many pixels are left as read: in small blurred
+/// print a letter's ink centre wanders by as much as a space adds (letters
+/// set solid stood up to 1.27 times the usual distance apart).
+const HAN_MIN_HEIGHT: u32 = 20;
+
+/// A letter cut out wider than this many of the line's usual distances
+/// between letters holds part of its neighbour (the cut went through a
+/// letter whose parts stand apart, as in `川` or `计`), and its pairs are
+/// left as read.
+const HAN_WIDE: f32 = 1.05;
+
+/// Positions `n` (from [`han_pairs`]) where the recognizer read the Chinese
+/// letters `characters[n]` and `characters[n + 1]` together but `image`, a
+/// cut-out line on a `background` gray, shows a space between them: the
+/// words of a table header a space or two apart. `x(n)` is where the
+/// recognizer places character `n`, in the image's columns.
+///
+/// Chinese letters are often drawn in parts with ink-free columns between
+/// them, so the line is cut between each two characters rather than at its
+/// ink-free runs: in the middle of the widest run of columns without ink
+/// (any pixel [`DIGIT_INK`] from the background) between their places, or
+/// at the column with the least ink when there is none. Each letter's ink is
+/// the ink columns between its cuts; a pair is measured when both letters
+/// have some, neither is wider than [`HAN_WIDE`] (an ill cut), and is spaced
+/// as [`HAN_SPACE`] says against the median distance (the lower middle one)
+/// between the centres of the line's measured pairs' ink. Lines with fewer
+/// than two measured pairs, as a header of one-letter words, and lines under
+/// [`HAN_MIN_HEIGHT`], stay as read.
+pub(super) fn han_spaces(
+    image: &image::RgbImage,
+    background: i16,
+    characters: &[char],
+    x: impl Fn(usize) -> f32,
+) -> Vec<usize> {
+    let pairs = han_pairs(characters);
+    let (width, height) = image.dimensions();
+    if pairs.len() < 2 || height < HAN_MIN_HEIGHT {
+        return Vec::new();
+    }
+    let width = width as usize;
+    let (strongest, weight) = column_ink(image, background);
+    let ink = |column: usize| strongest[column] > DIGIT_INK;
+    let column = |at: f32| (at.max(0.0) as usize).min(width);
+    // The characters shown (not spaces), and the cut after each but the last.
+    let shown: Vec<usize> = (0..characters.len())
+        .filter(|&n| !characters[n].is_whitespace())
+        .collect();
+    let cuts: Vec<f32> = shown
+        .windows(2)
+        .map(|pair| {
+            let (low, high) = (column(x(pair[0])), (column(x(pair[1])) + 1).min(width));
+            // The widest ink-free run, its first column and length.
+            let (mut widest, mut start) = (None::<(usize, usize)>, None);
+            for at in low..high {
+                if ink(at) {
+                    start = None;
+                    continue;
+                }
+                let first = *start.get_or_insert(at);
+                if widest.is_none_or(|(_, length)| at + 1 - first > length) {
+                    widest = Some((first, at + 1 - first));
+                }
+            }
+            match widest {
+                Some((first, length)) => first as f32 + length as f32 / 2.0,
+                None => (low..high)
+                    .min_by_key(|&at| (weight[at], at))
+                    .map_or((low + high) as f32 / 2.0, |at| at as f32 + 0.5),
             }
         })
         .collect();
-    let mut claims = vec![0usize; runs.len()];
-    for &run in owners.iter().flatten() {
-        claims[run] += 1;
-    }
-    // Each measured pair: its position, the distance between the centres
-    // and the gap between the runs.
-    let measured: Vec<(usize, f32, u32)> = pairs
+    // Each letter's ink between its cuts: first column, end and centre.
+    let letter = |n: usize| {
+        let k = shown.partition_point(|&m| m < n);
+        let left = k.checked_sub(1).map_or(0, |k| cuts[k] as usize);
+        let right = cuts
+            .get(k)
+            .map_or(width, |cut| (cut.ceil() as usize).min(width));
+        let first = (left..right).find(|&at| ink(at))?;
+        let end = (left..right).rfind(|&at| ink(at))? + 1;
+        Some((first, end, (first + end) as f32 / 2.0))
+    };
+    // Each measured pair: its position, the distance between the centres,
+    // the gap between the letters' ink and the wider letter's width.
+    let measured: Vec<(usize, f32, f32, f32)> = pairs
         .into_iter()
         .filter_map(|n| {
-            let (left, right) = (owners[n]?, owners[n + 1]?);
-            (right == left + 1 && claims[left] == 1 && claims[right] == 1).then(|| {
-                (
-                    n,
-                    runs[right].2 - runs[left].2,
-                    runs[right].0 - runs[left].1,
-                )
-            })
+            let ((first, end, left), (next, next_end, right)) = (letter(n)?, letter(n + 1)?);
+            Some((
+                n,
+                right - left,
+                next as f32 - end as f32,
+                (end - first).max(next_end - next) as f32,
+            ))
         })
         .collect();
     if measured.len() < 2 {
@@ -959,10 +1140,13 @@ pub(super) fn digit_spaces(
     let mut distances: Vec<f32> = measured.iter().map(|pair| pair.1).collect();
     crate::sort::by(&mut distances, f32::total_cmp);
     let usual = distances[(distances.len() - 1) / 2];
+    if usual <= 0.0 {
+        return Vec::new();
+    }
     measured
         .into_iter()
-        .filter(|&(_, apart, gap)| {
-            gap as f32 >= SPACE * height as f32 && apart >= DIGIT_SPACE * usual
+        .filter(|&(_, apart, gap, wide)| {
+            gap >= SPACE * height as f32 && apart >= HAN_SPACE * usual && wide <= HAN_WIDE * usual
         })
         .map(|(n, ..)| n)
         .collect()
@@ -1576,6 +1760,73 @@ mod tests {
         assert_eq!(
             digit_spaces_of(&line, "35012", &[12., 36., 52., 76., 92.]),
             [2]
+        );
+    }
+
+    #[test]
+    fn figures_of_one_number_that_run_together_are_cut_apart_and_measured() {
+        // `506 78`, read as `50678`, the 7 and 8 joined by a faint bridge
+        // (rows 18 to 22 of columns 70 and 71): the run is cut at the bridge,
+        // and the 7 stands 24 pixels from the 6, one and a half figures.
+        let mut line = glyphs(&[(2, 12), (18, 12), (34, 12), (58, 12), (72, 12)], 100);
+        for x in 70..72 {
+            for y in 18..22 {
+                line.put_pixel(x, y, image::Rgb([0; 3]));
+            }
+        }
+        let places = [8., 24., 40., 64., 78.];
+        assert_eq!(digit_spaces_of(&line, "50678", &places), [2]);
+        // The same run claimed by a point and a digit is not cut: `50.78`.
+        assert!(digit_spaces_of(&line, "506.8", &places).is_empty());
+        // Only pairs of whole runs set the usual distance: in `5 0678` the
+        // one whole pair cannot.
+        let line = glyphs(&[(2, 12), (26, 12), (40, 14), (54, 12), (66, 12)], 90);
+        assert!(digit_spaces_of(&line, "50678", &[8., 32., 47., 60., 72.]).is_empty());
+    }
+
+    /// A line `height` pixels tall on white with a letter's ink from a sixth
+    /// to five sixths of it at each `(left, width)`.
+    fn letters(blocks: &[(u32, u32)], width: u32, height: u32) -> image::RgbImage {
+        image::RgbImage::from_fn(width, height, |x, y| {
+            let ink = (height / 6..height * 5 / 6).contains(&y)
+                && blocks
+                    .iter()
+                    .any(|&(left, wide)| (left..left + wide).contains(&x));
+            image::Rgb([if ink { 0 } else { 255 }; 3])
+        })
+    }
+
+    fn han_spaces_of(image: &image::RgbImage, text: &str, places: &[f32]) -> Vec<usize> {
+        let characters: Vec<char> = text.chars().collect();
+        han_spaces(image, 255, &characters, |n| places[n])
+    }
+
+    #[test]
+    fn chinese_words_a_space_apart_are_told_from_letters_set_solid() {
+        // `项目 数量 单价` read as one word: letters 30 pixels wide on a
+        // pitch of 32, a space adding 10.
+        let lefts = [2, 34, 76, 108, 150, 182];
+        let blocks: Vec<(u32, u32)> = lefts.iter().map(|&left| (left, 30)).collect();
+        let places: Vec<f32> = lefts.iter().map(|&left| left as f32 + 15.0).collect();
+        let header = letters(&blocks, 220, 40);
+        assert_eq!(han_spaces_of(&header, "项目数量单价", &places), [1, 3]);
+        // Small print is left as read.
+        let small = letters(&blocks, 220, HAN_MIN_HEIGHT - 1);
+        assert!(han_spaces_of(&small, "项目数量单价", &places).is_empty());
+        // Set solid, with letters drawn in three strokes (`川`) whose gaps
+        // are wider than those between letters: the cuts go through the
+        // strokes, yet no pair is spaced.
+        let mut blocks = Vec::new();
+        for left in [2, 66, 130] {
+            blocks.extend([(left, 4), (left + 13, 4), (left + 26, 4)]);
+        }
+        blocks.extend([(34, 30), (98, 30), (162, 30)]);
+        let places = [17., 49., 81., 113., 145., 177.];
+        let prose = letters(&blocks, 200, 40);
+        assert!(han_spaces_of(&prose, "川的川字川有", &places).is_empty());
+        assert_eq!(
+            han_pairs(&"共有 12个项目".chars().collect::<Vec<_>>()),
+            [0, 5, 6]
         );
     }
 }
