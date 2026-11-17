@@ -412,9 +412,9 @@ def entry_keys(text):
     return dict(line.split("=", 1) for line in text.splitlines() if "=" in line)
 
 
-# A file of the markitai archive's attribution: past 100 characters once under ./opt/markitai-web/, so a
-# tar header's name field does not hold it.
-LONG_NAME = "licenses/markitai/licenses/upstream/local-evidence/alloc-stdlib-0.2.4/Cargo.toml.orig"
+# A file of the markitai archive's attribution, past 100 characters even without the Debian package's
+# ./opt/markitai-web/, as the attribution's longest are: a tar header's name field does not hold it.
+LONG_NAME = "licenses/markitai/licenses/upstream/local-evidence/wasm-bindgen-macro-support-0.2.100/src/Cargo.toml.orig"
 
 
 class MygoLinux:
@@ -584,6 +584,9 @@ class LinuxPackageTests(unittest.TestCase):
         self.assertEqual(read_tar(members[2][1])[installed], (0o644, b"[package]"))
         archive = (out / f"markitai-web-{VERSION}-linux-amd64.tar.gz").read_bytes()
         self.assertEqual(read_tar(archive)[LONG_NAME], (0o644, b"[package]"))
+        # The archive install.sh, makepkg and mygo's updater read is the same kind of tar.
+        self.assertLessEqual(set(tar_flags(archive)), {"0", "2", "5", "L", "K"})
+        self.assertIn("L", tar_flags(archive))
 
     def test_the_e2e_build_keeps_the_app_and_no_package(self):
         out = self.build(e2e=True)
