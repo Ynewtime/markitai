@@ -1,12 +1,11 @@
 name: Desktop Web
 
 # Markitai Web (docs/desktop-web.md), in a job for each system `platforms`
-# names: the markitai archive built as release.yml builds it, staged into the
-# app; desktop_web_build.py vet; the release build's package installed, the app
-# run from it, a file converted by the server it starts, and the app removed
-# (desktop_web_install.py). A push runs Windows x86-64 alone, and there also
-# the e2e build, driven by desktop_web_e2e.py on the runner's desktop; macOS
-# arm64 and Linux x86-64 run when `platforms` names them.
+# names, all three by default: the markitai archive built as release.yml builds
+# it, staged into the app; desktop_web_build.py vet; the release build's package
+# installed, the app run from it, a file converted by the server it starts, and
+# the app removed (desktop_web_install.py); and the e2e build, driven by
+# desktop_web_e2e.py on the runner's desktop (on Linux, Xvfb's display).
 # The archive is cached under a key of the files it is built from
 # (desktop_web_build.py archive-key), so a change to the app, a guide the
 # archive does not carry, a test of the scripts or a workflow does not build
@@ -32,7 +31,7 @@ on:
       platforms:
         description: 'The systems to build and install on: a JSON list of darwin-arm64, linux-amd64 and windows-amd64'
         type: string
-        default: '["windows-amd64"]'
+        default: '["darwin-arm64", "linux-amd64", "windows-amd64"]'
   workflow_call:
     inputs:
       platforms:
@@ -51,7 +50,7 @@ permissions:
 # building the archive that later runs take from the cache. A run of other
 # systems does not wait for it.
 concurrency:
-  group: desktop-web-${{ github.ref }}-${{ inputs.platforms || '["windows-amd64"]' }}
+  group: desktop-web-${{ github.ref }}-${{ inputs.platforms || '["darwin-arm64", "linux-amd64", "windows-amd64"]' }}
   cancel-in-progress: false
 
 env:
@@ -70,7 +69,7 @@ jobs:
       fail-fast: false
       matrix:
         # Each is a mygo platform with "-" for "/", as desktop_web_build.py names its build folder.
-        platform: ${{ fromJSON(inputs.platforms || '["windows-amd64"]') }}
+        platform: ${{ fromJSON(inputs.platforms || '["darwin-arm64", "linux-amd64", "windows-amd64"]') }}
     runs-on: >-
       ${{ fromJSON('{"darwin-arm64": "macos-15", "linux-amd64": "ubuntu-24.04", "windows-amd64": "windows-2025"}')[matrix.platform] }}
     timeout-minutes: 150
@@ -148,7 +147,7 @@ jobs:
           cd scripts && python -m unittest test_desktop_web_build test_desktop_web_install
       - name: Build the e2e app
         id: e2e
-        if: ${{ !cancelled() && steps.stage.outcome == 'success' && matrix.platform == 'windows-amd64' && inputs.archive != 'artifact' }}
+        if: ${{ !cancelled() && steps.stage.outcome == 'success' && inputs.archive != 'artifact' }}
         run: python scripts/desktop_web_build.py build --platform "${BUILD/-//}" --e2e
       - name: Build the app and its package
         id: app
@@ -158,9 +157,12 @@ jobs:
         if: ${{ !cancelled() && steps.app.outcome == 'success' && matrix.platform == 'darwin-arm64' }}
         run: |
           mkdir -p .local/desktop-web-install
-          sha256sum dist/markitai-v*.tar.gz "desktop/web/build/$BUILD/Markitai Web.app/Contents/MacOS/Markitai Web" \
-            "desktop/web/build/$BUILD/Markitai Web.app/Contents/Resources/bin/markitai" desktop/web/build/"$BUILD"/markitai-web-*.dmg \
-            | tee .local/desktop-web-install/sha256.txt
+          built=(dist/markitai-v*.tar.gz "desktop/web/build/$BUILD/Markitai Web.app/Contents/MacOS/Markitai Web"
+                 "desktop/web/build/$BUILD/Markitai Web.app/Contents/Resources/bin/markitai" desktop/web/build/"$BUILD"/markitai-web-*.dmg)
+          # The e2e build, where this run made one.
+          e2e="desktop/web/build/e2e/$BUILD/Markitai Web.app/Contents/MacOS/Markitai Web"
+          if [ -f "$e2e" ]; then built+=("$e2e"); fi
+          sha256sum "${built[@]}" | tee .local/desktop-web-install/sha256.txt
           git rev-parse HEAD | tee .local/desktop-web-install/commit.txt
           sw_vers | tee .local/desktop-web-install/system.txt
       - name: Record what was built (Linux)
@@ -168,9 +170,12 @@ jobs:
         run: |
           mkdir -p .local/desktop-web-install
           out=desktop/web/build/$BUILD
-          sha256sum dist/markitai-v*.tar.gz "$out"/markitai-web "$out"/bin/markitai "$out"/markitai-web_*.deb \
-            "$out"/markitai-web-*-linux-amd64.tar.gz "$out"/install.sh "$out"/PKGBUILD \
-            | tee .local/desktop-web-install/sha256.txt
+          built=(dist/markitai-v*.tar.gz "$out"/markitai-web "$out"/bin/markitai "$out"/markitai-web_*.deb
+                 "$out"/markitai-web-*-linux-amd64.tar.gz "$out"/install.sh "$out"/PKGBUILD)
+          # The e2e build, where this run made one.
+          e2e=desktop/web/build/e2e/$BUILD/markitai-web
+          if [ -f "$e2e" ]; then built+=("$e2e"); fi
+          sha256sum "${built[@]}" | tee .local/desktop-web-install/sha256.txt
           git rev-parse HEAD | tee .local/desktop-web-install/commit.txt
           { . /etc/os-release && echo "$PRETTY_NAME"; uname -srm; } | tee .local/desktop-web-install/system.txt
       - name: Record what was built (Windows)
@@ -185,10 +190,11 @@ jobs:
           sha256sum "${built[@]}" | tee .local/desktop-web-install/sha256.txt
           git rev-parse HEAD | tee .local/desktop-web-install/commit.txt
           python -c "import winreg; print('WebView2 Runtime', winreg.QueryValueEx(winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r'SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'), 'pv')[0])" | tee .local/desktop-web-install/webview2.txt
+      # On Linux after the install check, which needs a runner without the app's libraries.
       - name: Drive the e2e app on the desktop
-        if: ${{ !cancelled() && steps.e2e.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.e2e.outcome == 'success' && matrix.platform != 'linux-amd64' }}
         timeout-minutes: 45
-        run: python scripts/desktop_web_e2e.py "windows-ci-${{ github.run_id }}-${{ github.run_attempt }}"
+        run: python scripts/desktop_web_e2e.py "$BUILD-ci-${{ github.run_id }}-${{ github.run_attempt }}"
       # The disk image's app in /Applications, started with a HOME of the check's own: its server
       # listens, its window is on the screen, a file converts, and it quits with 0.
       - name: Install the app, run it and remove it (macOS)
@@ -211,6 +217,17 @@ jobs:
           xvfb-run -a -s '-screen 0 1920x1080x24' python scripts/desktop_web_install.py run \
             --package "$out"/markitai-web-*-linux-amd64.tar.gz --evidence .local/desktop-web-install/install-sh || status=1
           exit "$status"
+      # The libraries the package depends on stay after its removal; they are asked for again where
+      # the install check stopped short of them. Xvfb's screen is 1280 by 800 and has no window
+      # manager, so the app's window must fit on it by itself (the ready scenario checks it), and
+      # desktop_web_e2e.py closes the window as a window manager does, with WM_DELETE_WINDOW.
+      - name: Drive the e2e app on the desktop (Linux)
+        if: ${{ !cancelled() && steps.e2e.outcome == 'success' && matrix.platform == 'linux-amd64' }}
+        timeout-minutes: 45
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xvfb libgtk-3-0t64 libwebkit2gtk-4.1-0
+          xvfb-run -a -s '-screen 0 1280x800x24' python scripts/desktop_web_e2e.py "$BUILD-ci-${{ github.run_id }}-${{ github.run_attempt }}"
       - name: Install the app, run it and uninstall it (Windows)
         if: ${{ !cancelled() && steps.app.outcome == 'success' && matrix.platform == 'windows-amd64' }}
         timeout-minutes: 10

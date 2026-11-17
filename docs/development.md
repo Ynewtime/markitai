@@ -141,10 +141,12 @@ scenarios its docstring lists, each with its own
 `HOME` (with the XDG directories on Linux, and `USERPROFILE`, `APPDATA`,
 `LOCALAPPDATA` and `TEMP` on Windows), `MARKITAI_HOME` and app data, and
 keeps the evidence in `.local/desktop-web-e2e/ROUND/`; the bundled `markitai` must
-have `serve --supervised`. On Linux it runs in a Hyprland session and quits by
-closing the window with `hyprctl`, as there is no application menu, also
-where a quit must ask (SIGTERM there is the session's end, which asks
-nothing); on
+have `serve --supervised`. On Linux it quits by closing the window, as there
+is no application menu, also where a quit must ask (SIGTERM there is the
+session's end, which asks nothing): in a Hyprland session with `hyprctl`, on
+another X display with `WM_DELETE_WINDOW`, as a window manager does for a user;
+there, with no window manager, the `ready` scenario also checks that the window
+fits on the screen. On
 Windows it runs in a desktop session and closes the window with `WM_CLOSE`
 (signals become window messages and `TerminateProcess`, the automation socket
 is Winsock's `AF_UNIX`); there, once a launch has ended, the round waits up to
@@ -188,8 +190,8 @@ for each system its `platforms` input names: `windows-amd64` (`windows-2025`),
 `darwin-arm64` (`macos-15`) and `linux-amd64` (`ubuntu-24.04`, its archive
 built in the manylinux_2_28 image as `release.yml` builds it). A push to
 `desktop/web/**`, `desktop/icon.png`, `scripts/desktop_web_*.py` or the built
-workbench (`crates/markitai-cli/src/server/web/dist/**`) runs `windows-amd64`
-alone; a run by hand takes the list (`gh workflow run desktop-web.yml -f
+workbench (`crates/markitai-cli/src/server/web/dist/**`) runs all three; a run
+by hand takes the list (`gh workflow run desktop-web.yml -f
 platforms='["darwin-arm64"]'`). Each job builds the CLI archive, or takes it
 from the cache, where it is kept under `desktop_web_build.py archive-key`: the
 files an archive is built from (the Rust workspace and what it compiles in,
@@ -201,9 +203,10 @@ app, converts a file through the server it started, closes and removes it, and
 keeps the evidence and the package for 7 days: on Windows in the workflow's own
 step, which calls `desktop_web_install.py convert`, on macOS with
 `desktop_web_install.py run`, and on Linux with `run` on Xvfb's display, once
-for the `.deb` and once for the `.tar.gz` with `install.sh`. The Windows job
-also builds the e2e build and runs a full `desktop_web_e2e.py` round; the macOS
-and Linux jobs do not. A dry run of `release.yml` ([releases](ci.md#releases))
+for the `.deb` and once for the `.tar.gz` with `install.sh`. Each job also
+builds the e2e build and runs a full `desktop_web_e2e.py` round on the runner's
+desktop; on Linux after the install check, on Xvfb's 1280 by 800 screen with no
+window manager. A dry run of `release.yml` ([releases](ci.md#releases))
 calls the workflow for the three systems with `archive: artifact`: each job
 then takes its archive from that run's `cli` job instead of building or
 restoring one, and makes no e2e build.

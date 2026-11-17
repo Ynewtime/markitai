@@ -507,8 +507,9 @@ def _darwin_quit(process):
     return "SIGTERM, which the app takes as its menu's Quit"
 
 
-class _Display:
-    """The X display DISPLAY names, through libX11: a process's windows on it, and the screen."""
+class X11Display:
+    """The X display DISPLAY names, through libX11: a process's windows on it, and the screen. Also
+    what desktop_web_e2e.py closes and measures the app's window with on an X display."""
     # libX11 calls it for as long as this process lives.
     errors = None
 
@@ -533,6 +534,8 @@ class _Display:
                                                 ctypes.c_ulong, long_at, ctypes.POINTER(number), long_at, long_at,
                                                 ctypes.POINTER(long_at))),
                 ("XGetWindowAttributes", number, (pointer, window, pointer)),
+                ("XTranslateCoordinates", number, (pointer, window, window, number, number, ctypes.POINTER(number),
+                                                   ctypes.POINTER(number), window_at)),
                 ("XSendEvent", number, (pointer, window, number, ctypes.c_long, pointer)),
                 ("XFlush", number, (pointer,)),
                 ("XGetImage", pointer, (pointer, window, number, number, ctypes.c_uint, ctypes.c_uint, ctypes.c_ulong,
@@ -565,13 +568,13 @@ class _Display:
                 (name, ctypes.c_ulong) for name in ("red_mask", "green_mask", "blue_mask")]
 
         self.Attributes, self.Event, self.Image = Attributes, Event, Image
-        if _Display.errors is None:
+        if X11Display.errors is None:
             # An error the server answers, as for a window that went meanwhile, fails that request and
             # no more: Xlib's own handler ends the process.
             handler = ctypes.CFUNCTYPE(number, pointer, pointer)
-            _Display.errors = handler(lambda display, event: 0)
+            X11Display.errors = handler(lambda display, event: 0)
             x11.XSetErrorHandler.restype, x11.XSetErrorHandler.argtypes = pointer, (handler,)
-            x11.XSetErrorHandler(_Display.errors)
+            x11.XSetErrorHandler(X11Display.errors)
         self.display = x11.XOpenDisplay(None)
         if not self.display:
             raise OSError(f"no X display opens: DISPLAY is {os.environ.get('DISPLAY') or 'not set'}")
@@ -624,14 +627,31 @@ class _Display:
         self.x11.XSendEvent(self.display, window, 0, 0, self.ctypes.byref(event))
         self.x11.XFlush(self.display)
 
+    def size(self):
+        """(width, height) of the screen."""
+        attributes = self.Attributes()
+        if not self.x11.XGetWindowAttributes(self.display, self.x11.XDefaultRootWindow(self.display),
+                                             self.ctypes.byref(attributes)):
+            raise OSError("the X server does not say how large its screen is")
+        return attributes.width, attributes.height
+
+    def placed(self, window):
+        """(left, top, width, height) of `window` from the screen's top left corner, wherever a window
+        manager has put it."""
+        ctypes, x11 = self.ctypes, self.x11
+        attributes, left, top, child = self.Attributes(), ctypes.c_int(), ctypes.c_int(), ctypes.c_ulong()
+        if not (x11.XGetWindowAttributes(self.display, window, ctypes.byref(attributes))
+                and x11.XTranslateCoordinates(self.display, window, x11.XDefaultRootWindow(self.display), 0, 0,
+                                              ctypes.byref(left), ctypes.byref(top), ctypes.byref(child))):
+            raise OSError(f"the X server does not say where window {window:#x} is")
+        return left.value, top.value, attributes.width, attributes.height
+
     def screen(self):
         """(width, height, rows of RGB bytes) of the screen, as the server holds it."""
         ctypes, x11 = self.ctypes, self.x11
-        root, attributes = x11.XDefaultRootWindow(self.display), self.Attributes()
-        if not x11.XGetWindowAttributes(self.display, root, ctypes.byref(attributes)):
-            raise OSError("the X server does not say how large its screen is")
+        width, height = self.size()
         # AllPlanes, ZPixmap
-        image = x11.XGetImage(self.display, root, 0, 0, attributes.width, attributes.height, 2 ** 64 - 1, 2)
+        image = x11.XGetImage(self.display, x11.XDefaultRootWindow(self.display), 0, 0, width, height, 2 ** 64 - 1, 2)
         if not image:
             raise OSError("the X server gives no image of its screen")
         held = ctypes.cast(image, ctypes.POINTER(self.Image)).contents
@@ -667,7 +687,7 @@ def png(width, height, rows):
 
 def _x11_windows(pid):
     """(width, height) of each of process `pid`'s windows on the X display."""
-    display = _Display()
+    display = X11Display()
     try:
         return [(width, height) for _, width, height in display.shown(pid)]
     finally:
@@ -677,7 +697,7 @@ def _x11_windows(pid):
 def _x11_screenshot(path):
     """The X display's screen as a PNG at `path`; why not, when it gives none."""
     try:
-        display = _Display()
+        display = X11Display()
         try:
             width, height, rows = display.screen()
         finally:
@@ -691,7 +711,7 @@ def _x11_screenshot(path):
 def _x11_quit(process):
     """Close the app's windows as a window manager does for its user, which quits the app: Linux has no
     menu to quit it from, and SIGTERM is there the session's end, which asks nothing."""
-    display = _Display()
+    display = X11Display()
     try:
         windows = display.shown(process.pid)
         for window, _, _ in windows:

@@ -3,8 +3,9 @@
 
     python3.13 scripts/desktop_web_e2e.py ROUND [--only NAME,...] [--app PATH]
 
-It runs on an Apple silicon Mac, on x86_64 Linux in a Hyprland session, and on x86-64 Windows in a
-desktop session. Build the app first, around a markitai that has `serve --supervised`:
+It runs on an Apple silicon Mac, on x86_64 Linux in a Hyprland session or on an X display without
+one (Xvfb on a CI runner), and on x86-64 Windows in a desktop session. Build the app first, around
+a markitai that has `serve --supervised`:
 
     python3.13 scripts/desktop_web_build.py stage --archive markitai-v<version>-aarch64-apple-darwin.tar.gz
     python3.13 scripts/desktop_web_build.py build --e2e --platform darwin/arm64
@@ -21,7 +22,8 @@ Scenarios (all by default):
                sidebar; serve.log names neither the token nor an address; a
                link to another site the user follows opens in the browser and
                the window stays, a page's own navigation elsewhere goes
-               nowhere; a stop-now link in the workbench does nothing
+               nowhere; a stop-now link in the workbench does nothing; on an X
+               display without Hyprland, the window is within the screen
   convert      a synthetic DataTransfer drop and Convert: the job finishes with
                the expected Markdown
   download     a blob download, and in the next launch a ticket download, land
@@ -38,9 +40,11 @@ Scenarios (all by default):
                exits 0, serve drains, its PID is gone, its control file removed
   quit-uncounted
                a quit (SIGTERM, which mygo takes as Cmd-Q, on macOS; closing
-               the window on Linux, where SIGTERM asks nothing; WM_CLOSE on
-               Windows) while serve cannot answer (suspended): the app asks with
-               no count; Cancel keeps it working; with nothing unfinished,
+               the window on Linux, where SIGTERM asks nothing: Hyprland's
+               close, or elsewhere WM_DELETE_WINDOW as a window manager sends
+               it; WM_CLOSE on Windows) while serve cannot answer (suspended):
+               the app asks with no count; Cancel keeps it working; with nothing
+               unfinished,
                Quit from the menu (on Linux and Windows, closing the window)
                then asks nothing
   quit-busy-when-done, quit-busy-now, quit-busy-then-now
@@ -112,6 +116,7 @@ import urllib.error
 import urllib.request
 import zipfile
 
+import desktop_web_install
 from isolation import install_state_guard, isolated_env
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -128,9 +133,13 @@ class Build(NamedTuple):
     # Variables naming where the app and its web view keep data, each made a directory in the sandbox's HOME.
     data: dict
     shell: str  # the login shell the app reads its environment from; "" where it reads none
-    quit: str  # how a user quits with nothing unfinished: "menu", or closing the window with "hyprctl" or "close"
+    # How a user quits with nothing unfinished: "menu", or closing the window with "hyprctl", "x11" or "close".
+    quit: str
 
 
+# On Linux, a Hyprland session closes the window as Super+W does; any other X display (Xvfb on a CI
+# runner, with no window manager) is sent what a window manager sends a window its user closes.
+LINUX_CLOSE = "hyprctl" if os.environ.get("HYPRLAND_INSTANCE_SIGNATURE") else "x11"
 BUILDS = {
     ("Darwin", "arm64"): Build("darwin/arm64", "desktop/web/build/e2e/darwin-arm64/Markitai Web.app",
                                "Contents/MacOS/Markitai Web", "Contents/Resources/bin/markitai",
@@ -139,7 +148,8 @@ BUILDS = {
     ("Linux", "x86_64"): Build("linux/amd64", "desktop/web/build/e2e/linux-amd64", "markitai-web", "bin/markitai", (),
                                {"LANGUAGE": "en"},
                                {"XDG_CONFIG_HOME": ".config", "XDG_DATA_HOME": ".local/share",
-                                "XDG_CACHE_HOME": ".cache", "XDG_STATE_HOME": ".local/state"}, "/bin/bash", "hyprctl"),
+                                "XDG_CACHE_HOME": ".cache", "XDG_STATE_HOME": ".local/state"}, "/bin/bash",
+                               LINUX_CLOSE),
     # The app takes Explorer's environment, as the process's own.
     ("Windows", "AMD64"): Build("windows/amd64", "desktop/web/build/e2e/windows-amd64", "Markitai Web.exe",
                                 "bin/markitai.exe", (), {},
@@ -673,13 +683,20 @@ class App:
         """A quit that asks about unfinished conversions, without waiting: SIGTERM on macOS, which
         mygo takes as Cmd-Q; on Linux, where SIGTERM is the session's end and asks nothing (the
         app's session_linux.go), closing the window; WM_CLOSE on Windows."""
-        if BUILD.quit == "hyprctl":
+        if BUILD.quit in ("hyprctl", "x11"):
             self.close_window()
         else:
             SYSTEM.request_quit(self.process)
 
     def close_window(self):
-        """Hyprland's close of the app's window, as Super+W does."""
+        """The window closed as its user closes it: Hyprland's close, as Super+W does; on another X
+        display, WM_DELETE_WINDOW, what a window manager sends the window then."""
+        if BUILD.quit == "x11":
+            try:
+                desktop_web_install._x11_quit(self.process)
+            except OSError as error:
+                raise Failure(f"the window could not be closed: {error}") from error
+            return
         closed = subprocess.run(["hyprctl", "dispatch",
                                  f'hl.dsp.window.close({{ window = "pid:{self.process.pid}" }})'],
                                 capture_output=True, text=True, timeout=10)
@@ -702,8 +719,8 @@ class App:
     def quit_as_user(self):
         """Quit as a user does, and the app's exit status: after one SIGTERM, mygo ends the app at
         once on the next. Quit from the application menu, as Cmd-Q does; on Linux, which has no
-        application menu, the compositor closes the window (Hyprland's close, as Super+W does); on
-        Windows the window's close command, as its close button sends."""
+        application menu, closing the window (close_window); on Windows the window's close command,
+        as its close button sends."""
         try:
             if BUILD.quit == "menu":
                 self.ui.call("menu", window=self.ui.window(), path=[APP_NAME, f"Quit {APP_NAME}"])
@@ -839,10 +856,12 @@ class Scenario:
 
     def environment(self, **extra):
         """The sandbox's environment as Finder would start the app: no terminal, so the app
-        reads a login shell's; nothing of the developer's markitai, mygo or proxies."""
+        reads a login shell's; nothing of the developer's markitai, mygo or proxies. Where the
+        window is closed on the X display, no Wayland display either: the app's window is there."""
+        dropped = {"TERM", "TERM_PROGRAM", "ZDOTDIR"} | ({"WAYLAND_DISPLAY"} if BUILD.quit == "x11" else set())
         environment = {key: value for key, value in self.base.items()
                        if not key.startswith(("MARKITAI_", "MYGO_")) and key.lower() not in PROXIES
-                       and key not in {"TERM", "TERM_PROGRAM", "ZDOTDIR"}}
+                       and key not in dropped}
         environment.update(MARKITAI_HOME=str(self.markitai_home), LANG="en_US.UTF-8", MARKITAI_LANG="en",
                            **BUILD.variables, **extra)
         if BUILD.shell:
@@ -991,10 +1010,27 @@ def convert_dropped(scenario, app, origin, token):
     return job, item, markdown
 
 
+def on_screen(pid):
+    """(the X display's screen as (width, height), process pid's windows on it as (left, top, width,
+    height))."""
+    display = desktop_web_install.X11Display()
+    try:
+        return display.size(), [display.placed(window) for window, _, _ in display.shown(pid)]
+    finally:
+        display.close()
+
+
 def ready(s):
     app = s.launch()
     origin = app.ready()
     app.capture("ready")
+    if BUILD.quit == "x11":
+        # With no window manager to keep it there, as on Xvfb, the window opens where it asks to be.
+        (width, height), windows = on_screen(app.process.pid)
+        s.check("the window is within the screen", windows and all(
+            left >= 0 and top >= 0 and left + wide <= width and top + high <= height
+            for left, top, wide, high in windows),
+            f"{', '.join(f'{w}x{h} at {x},{y}' for x, y, w, h in windows) or 'no window'} on {width}x{height}")
     address = urlsplit(origin)
     s.check("the workbench is on 127.0.0.1, on a port from 23600 to 23699",
             address.hostname == "127.0.0.1" and address.port in APP_PORTS, origin)
@@ -1543,7 +1579,7 @@ SCENARIOS = {
 }
 if os.name == "nt":
     SCENARIOS["logout"] = logout
-if BUILD and BUILD.quit == "hyprctl":
+if BUILD and BUILD.platform.startswith("linux/"):
     SCENARIOS["session-end"] = session_end
 
 
