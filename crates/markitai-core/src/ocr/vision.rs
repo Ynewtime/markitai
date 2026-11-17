@@ -496,10 +496,15 @@ impl<'a> Ink<'a> {
     }
 }
 
-/// Spaces between a Chinese or Japanese letter and a Latin letter or digit
-/// that the reading left out although the image shows one: an ink-free gap
-/// of at least [`layout::SPACE`] line heights between the two characters.
-/// Spaces the reading has are kept: none was found where the text has none.
+/// Spaces the reading left out although the image shows one, found as the
+/// portable engine finds them on its cut-out lines: between a Chinese or
+/// Japanese letter and a Latin letter or digit
+/// ([`layout::junction_spaces`]), between two numbers read as one
+/// ([`layout::digit_spaces`]) and between two Chinese words read as one
+/// ([`layout::han_spaces`]). The line is the line's rectangle cut out of the
+/// read image, and each character stands at the centre of its box. Spaces
+/// the reading has are kept; a line with a character Vision gives no box for
+/// is left as read.
 fn spaces(
     ink: &mut Ink,
     line: &Line,
@@ -507,42 +512,48 @@ fn spaces(
     rectangle: CGRect,
 ) -> Vec<(usize, char)> {
     let characters: Vec<char> = line.text.chars().collect();
-    let junctions = layout::junctions(&characters);
-    if junctions.is_empty() {
+    if !layout::may_space(&characters) {
         return Vec::new();
     }
     let (width, height) = (f64::from(ink.image.width), f64::from(ink.image.height));
-    let band = [
-        (1.0 - rectangle.origin.y - rectangle.size.height) * height,
-        (1.0 - rectangle.origin.y) * height,
-    ]
-    .map(|n| n as f32);
-    let area = [
-        (rectangle.origin.x * width) as f32,
-        band[0],
-        ((rectangle.origin.x + rectangle.size.width) * width) as f32,
-        band[1],
-    ];
+    let mut centres = Vec::with_capacity(characters.len());
+    for (index, character) in characters.iter().enumerate() {
+        // A space has no box, and the rules never place one.
+        let centre = if character.is_whitespace() {
+            0.0
+        } else {
+            let Some(b) = char_box(candidate, &characters, index) else {
+                return Vec::new();
+            };
+            ((b[0] + b[2] / 2.0) * width) as f32
+        };
+        centres.push(centre);
+    }
     let Some(pixels) = ink.pixels() else {
         return Vec::new();
     };
-    let Some(background) = layout::background(pixels, area) else {
+    // The rectangle in the image's pixels, from the top left.
+    let left = (rectangle.origin.x * width).max(0.0) as u32;
+    let right = ((rectangle.origin.x + rectangle.size.width) * width)
+        .min(width)
+        .ceil() as u32;
+    let top = ((1.0 - rectangle.origin.y - rectangle.size.height) * height).max(0.0) as u32;
+    let bottom = ((1.0 - rectangle.origin.y) * height).min(height).ceil() as u32;
+    if right <= left || bottom <= top {
+        return Vec::new();
+    }
+    let cut = image::imageops::crop_imm(pixels, left, top, right - left, bottom - top).to_image();
+    let area = [0.0, 0.0, cut.width() as f32, cut.height() as f32];
+    let Some(background) = layout::background(&cut, area) else {
         return Vec::new();
     };
-    let mut found = Vec::new();
-    for index in junctions {
-        let (Some(a), Some(b)) = (
-            char_box(candidate, &characters, index),
-            char_box(candidate, &characters, index + 1),
-        ) else {
-            continue;
-        };
-        let centre = |b: [f64; 4]| ((b[0] + b[2] / 2.0) * width) as f32;
-        if layout::spaced(pixels, band, [centre(a), centre(b)], background) {
-            found.push((index + 1, ' '));
-        }
-    }
-    found
+    let x = |index: usize| centres[index] - left as f32;
+    let mut found = layout::junction_spaces(&cut, background, &characters, x);
+    found.extend(layout::digit_spaces(&cut, background, &characters, x));
+    found.extend(layout::han_spaces(&cut, background, &characters, x));
+    found.sort_unstable();
+    found.dedup();
+    found.into_iter().map(|index| (index + 1, ' ')).collect()
 }
 
 /// Readings of regions per image, at most.

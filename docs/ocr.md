@@ -268,18 +268,28 @@ to 40 pixels) this split 115 of 5,455 pairs set solid, where the ink-free run
 alone split 554 (beside a digit, 26 where it split 361), and left out 35 of
 10,832 spaces where it left out 24.
 
+Vision's readings of Chinese and Japanese lines go through the same three
+rules, on the line's rectangle cut out of the read image, with each character
+at the centre of the box Vision gives it (a line with a character Vision gives
+no box for stays as read). With Vision on macOS 27, on 1,248 of those pages it
+put back 1,497 of the 2,627 spaces Vision left out between Chinese words and 75
+of the 124 between numbers, split none more of 59,279 pairs set solid, and
+split 117 pairs of a Chinese and a Latin letter or digit set solid where
+Vision's reading and the ink-free run split 191 (and left out 39 such spaces
+where they left out 71).
+
 Known issue: local OCR may still join neighbouring cells of a table row. The
-portable engine leaves digits as read where a space between them is blurred
-over or has ink in it, and in a line with a single pair of digits read
-together. It leaves Chinese words as read in print under 20 pixels, in a line
-with a single pair of letters read together, and about one in five pairs a
-space apart on taller lines (`项目数量 单价`). A Latin letter open on its side
-beside a Chinese letter whose ink starts late (`CPU占用率`, `使用PDF`) can still
-get a space. Vision is not corrected: on one
-scan whose rows read `苹果 12 3.50` and `香蕉 30 1.20`, Vision on macOS 15.7
-returned `苹果 123.50`, with no candidate that separated them (Vision on macOS
-27 read both rows right), and enlarging the image did not help. Check numbers
-read from tables.
+rules leave digits as read where a space between them is blurred over or has
+ink in it, and in a line with a single pair of digits read together. They
+leave Chinese words as read in print under 20 pixels, in a line with a single
+pair of letters read together, and about one in five pairs a space apart on
+taller lines (`项目数量 单价`). A Latin letter open on its side beside a
+Chinese letter whose ink starts late (`CPU占用率`, `使用PDF`) can still get a
+space. On one scan whose rows read `苹果 12 3.50` and `香蕉 30 1.20`, Vision on
+macOS 15.7 returned `苹果 123.50`, with no candidate that separated them, and
+enlarging the image did not help (Vision on macOS 27 read both rows right);
+the rules were measured with Vision on macOS 27 only. Check numbers read from
+tables.
 
 ## Chinese, Japanese and Korean recognition aids
 
