@@ -15,7 +15,7 @@ tract-onnx = { version = "=0.23.8", default-features = false, optional = true }
 # tract's own matrix kernels on several threads (rayon), for text detection.
 tract-linalg = { version = "=0.23.8", default-features = false, features = ["multithread-mm"], optional = true }
 rayon = { version = "1.12", optional = true }
-# The default local OCR engine on x86_64 and aarch64 (pure Rust, runtime CPU dispatch); tract stays as the fallback.
+# An experimental opt-in local OCR engine (MARKITAI_OCR_ENGINE=qppocr; pure Rust, runtime CPU dispatch) on x86_64 and aarch64; tract is the default and its fallback.
 qppocr = { version = "=0.3.1", default-features = false, features = ["std", "parallel"], optional = true }
 base64 = "0.23"
 libc = "0.2"
