@@ -185,23 +185,27 @@ class Failure(Exception):
     """A scenario cannot go on."""
 
 
+class TimedOut(Failure):
+    """What a scenario waited for did not come in time (wait_for)."""
+
+
 class AutomationError(Exception):
     """The automation socket refused a call or went away (the page may be navigating)."""
 
 
 def wait_for(what, probe, timeout, interval=0.2):
-    """probe's first truthy answer; calls that fail while a page loads are retried."""
+    """probe's first truthy answer; calls that fail while a page loads are retried. A timeout names
+    the last call's error, when it failed."""
     deadline = time.monotonic() + timeout
-    last = None
     while True:
         try:
-            value = probe()
+            value, last = probe(), None
         except (AutomationError, OSError, ValueError) as error:
             value, last = None, error
         if value:
             return value
         if time.monotonic() > deadline:
-            raise Failure(f"no {what} within {timeout} s" + (f" (last error: {last})" if last else ""))
+            raise TimedOut(f"no {what} within {timeout} s" + (f" (last error: {last})" if last else ""))
         time.sleep(interval)
 
 
@@ -582,6 +586,7 @@ class App:
         executable = scenario.run.app / BUILD.executable
         socket_name = f"a{index}.sock"
         self.output = open(scenario.dir / f"app-{index}.log", "wb")
+        self.launched = time.monotonic()
         self.process = subprocess.Popen(
             [str(executable), *(BUILD.arguments if english else ())], cwd=scenario.dir, stdin=subprocess.DEVNULL,
             stdout=self.output, stderr=subprocess.STDOUT, start_new_session=True,
@@ -602,15 +607,29 @@ class App:
         return state
 
     def ready(self):
-        """The workbench's origin once it has rendered with the token; a Failed page fails."""
+        """The workbench's origin once it has rendered with the token; a Failed page fails. A timeout
+        tells when the window first answered and what it showed last."""
+        seen = {}
+
         def probe():
             if self.process.poll() is not None:
                 raise Failure(f"the app exited with {self.process.returncode} before it was ready")
             state = self.page()
+            seen.setdefault("first", time.monotonic() - self.launched)
+            seen["last"] = state
             if state["phase"] == "failed":
                 raise Failure(f"the app shows Failed ({state['cause']}): {state['tail'][-800:]}")
             return state if state["url"].startswith("http://127.0.0.1:") and state["token"] and state["sidebar"] else None
-        state = wait_for("ready workbench", probe, READY_TIMEOUT)
+        try:
+            state = wait_for("ready workbench", probe, READY_TIMEOUT)
+        except TimedOut as failure:
+            if not seen:
+                raise
+            last = seen["last"]
+            shown = urlsplit(last["url"])._replace(query="", fragment="").geturl()
+            raise Failure(f"{failure}; the window answered first {seen['first']:.1f} s after the launch, and last "
+                          f"showed {shown} (phase {last['phase']}, token {last['token']}, "
+                          f"sidebar {last['sidebar']})") from None
         self.ui.call("idle", window=self.ui.window(), timeout=10000)
         address = urlsplit(state["url"])
         return f"{address.scheme}://{address.netloc}"
@@ -620,6 +639,22 @@ class App:
 
     def token(self):
         return self.ui.eval(f"return sessionStorage.getItem({json.dumps(TOKEN_KEY)})")
+
+    def note_windows(self):
+        """The app's windows as automation lists them, into the scenario's notes, their addresses
+        without query or fragment."""
+        if self.ui is None:
+            return
+        try:
+            windows = self.ui.call("windows").get("windows") or []
+        except AutomationError as error:
+            self.scenario.note(f"the app's windows could not be listed: {error}")
+            return
+        for window in windows:
+            if window.get("url"):
+                window["url"] = urlsplit(window["url"])._replace(query="", fragment="").geturl()
+        self.scenario.note(f"the app's windows {time.monotonic() - self.launched:.1f} s after the launch: "
+                           f"{json.dumps(windows)}")
 
     def capture(self, name):
         if self.ui is None:
@@ -1557,6 +1592,7 @@ def run_scenario(run, name):
         (s.dir / "error.txt").write_text(traceback.format_exc(), encoding="utf-8")
     finally:
         if error and s.apps and s.apps[-1].process.poll() is None:
+            s.apps[-1].note_windows()
             s.apps[-1].capture("failure")
         if error:
             # Which processes ran when it failed: the app's, the web view's and serve's among them.
