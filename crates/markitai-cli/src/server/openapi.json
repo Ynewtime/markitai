@@ -778,6 +778,7 @@
         "tags": ["settings"],
         "operationId": "openConfig",
         "summary": "Ask the server host's system opener to open the configuration file",
+        "description": "On Windows, Notepad opens it when no app opens files of its type, as no app opens a `.json` on a new system; Windows would otherwise ask which app to use.",
         "responses": {
           "204": { "description": "Opened" },
           "401": { "$ref": "#/components/responses/Error" },

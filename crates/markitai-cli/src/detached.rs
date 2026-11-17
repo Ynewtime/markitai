@@ -1,21 +1,24 @@
-//! The background check's process: it outlives the run and holds nothing of
-//! the run's but the null device.
+//! Processes that outlive the one starting them and hold nothing of its but
+//! the null device: the background update check, and on Windows the editor
+//! the server opens its configuration in.
 //!
 //! A child that `std::process::Command` starts keeps every descriptor not
-//! marked close-on-exec and, on Windows, every inheritable handle. The run
+//! marked close-on-exec and, on Windows, every inheritable handle. A run
 //! marks its own, but not those it was given: a shell's process substitution
 //! (`markitai a.pdf > >(tee log)`) or a Node parent's IPC channel on 3 and up,
-//! and on Windows the pipe its standard output is (`markitai a.pdf | findstr
-//! x`). A check holding one keeps that reader waiting as long as the check
-//! runs, 30 seconds and more for a release host that does not answer.
+//! and on Windows the pipe or file its standard output is (`markitai a.pdf |
+//! findstr x`, the desktop app's log of the server). A check holding one
+//! keeps that reader waiting as long as the check runs, 30 seconds and more
+//! for a release host that does not answer; an editor, as long as it is open.
 
+use std::ffi::OsStr;
 use std::io;
 use std::path::Path;
 
 /// Start `program` with `args` in a process group of its own (on Windows
 /// without a console), its standard streams the null device and no other file
 /// of this process open in it. It is not waited for.
-pub(crate) fn spawn(program: &Path, args: &[&str]) -> io::Result<()> {
+pub(crate) fn spawn(program: &Path, args: &[&OsStr]) -> io::Result<()> {
     imp::spawn(program, args)
 }
 
@@ -64,10 +67,10 @@ mod imp {
         }
     }
 
-    pub(super) fn spawn(program: &Path, args: &[&str]) -> io::Result<()> {
+    pub(super) fn spawn(program: &Path, args: &[&OsStr]) -> io::Result<()> {
         let path = c(program.as_os_str())?;
         let argv = std::iter::once(Ok(path.clone()))
-            .chain(args.iter().map(|arg| c(OsStr::new(arg))))
+            .chain(args.iter().map(|arg| c(arg)))
             .collect::<io::Result<Vec<_>>>()?;
         // The environment as the standard library reads it, under its lock.
         let environment = std::env::vars_os()
@@ -138,12 +141,13 @@ mod imp {
 /// the child before the program starts.
 #[cfg(all(unix, not(target_vendor = "apple")))]
 mod imp {
+    use std::ffi::OsStr;
     use std::io;
     use std::os::unix::process::CommandExt;
     use std::path::Path;
     use std::process::{Command, Stdio};
 
-    pub(super) fn spawn(program: &Path, args: &[&str]) -> io::Result<()> {
+    pub(super) fn spawn(program: &Path, args: &[&OsStr]) -> io::Result<()> {
         let mut command = Command::new(program);
         command
             .args(args)
@@ -199,7 +203,7 @@ mod imp {
 /// handle of this process.
 #[cfg(windows)]
 mod imp {
-    use std::ffi::OsString;
+    use std::ffi::OsStr;
     use std::io;
     use std::os::windows::ffi::OsStrExt;
     use std::os::windows::io::AsRawHandle;
@@ -223,6 +227,39 @@ mod imp {
         }
     }
 
+    /// `arg` as the C runtime's parsing of a command line reads it back: as
+    /// it is when it has no space, tab or quote, else in quotes with the
+    /// backslashes before a quote, or before the closing one, doubled.
+    pub(super) fn quote(arg: &OsStr, line: &mut Vec<u16>) {
+        const QUOTE: u16 = b'"' as u16;
+        const BACKSLASH: u16 = b'\\' as u16;
+        let wide: Vec<u16> = arg.encode_wide().collect();
+        let special = |c: &u16| b" \t\"".iter().any(|&b| u16::from(b) == *c);
+        if !wide.is_empty() && !wide.iter().any(special) {
+            line.extend(wide);
+            return;
+        }
+        line.push(QUOTE);
+        let mut backslashes = 0;
+        for c in wide {
+            match c {
+                BACKSLASH => backslashes += 1,
+                QUOTE => {
+                    line.extend(std::iter::repeat_n(BACKSLASH, backslashes * 2 + 1));
+                    line.push(QUOTE);
+                    backslashes = 0;
+                }
+                _ => {
+                    line.extend(std::iter::repeat_n(BACKSLASH, backslashes));
+                    line.push(c);
+                    backslashes = 0;
+                }
+            }
+        }
+        line.extend(std::iter::repeat_n(BACKSLASH, backslashes * 2));
+        line.push(QUOTE);
+    }
+
     struct List(LPPROC_THREAD_ATTRIBUTE_LIST);
 
     impl Drop for List {
@@ -231,7 +268,7 @@ mod imp {
         }
     }
 
-    pub(super) fn spawn(program: &Path, args: &[&str]) -> io::Result<()> {
+    pub(super) fn spawn(program: &Path, args: &[&OsStr]) -> io::Result<()> {
         let null = std::fs::OpenOptions::new()
             .read(true)
             .write(true)
@@ -266,15 +303,13 @@ mod imp {
         startup.StartupInfo.hStdError = handle;
         startup.lpAttributeList = list.0;
         let application: Vec<u16> = program.as_os_str().encode_wide().chain([0]).collect();
-        // The program in quotes (a path holds none), then words that need none.
-        let mut line = OsString::from("\"");
-        line.push(program);
-        line.push("\"");
+        let mut line = Vec::new();
+        quote(program.as_os_str(), &mut line);
         for arg in args {
-            line.push(" ");
-            line.push(arg);
+            line.push(u16::from(b' '));
+            quote(arg, &mut line);
         }
-        let mut line: Vec<u16> = line.encode_wide().chain([0]).collect();
+        line.push(0);
         let mut process: PROCESS_INFORMATION = unsafe { std::mem::zeroed() };
         done(unsafe {
             CreateProcessW(
@@ -298,5 +333,45 @@ mod imp {
             CloseHandle(process.hThread);
         }
         Ok(())
+    }
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use std::ffi::OsStr;
+    use windows_sys::Win32::Foundation::LocalFree;
+    use windows_sys::Win32::UI::Shell::CommandLineToArgvW;
+
+    /// Each argument reads back as it was, as Windows parses a command line.
+    #[test]
+    fn an_argument_reads_back_as_it_was() {
+        let args = [
+            "--json",
+            r"C:\Users\A B\.markitai\config.json",
+            "",
+            r"C:\dir with space\",
+            r#"say "hi""#,
+            r#"a\"b"#,
+            r"\\server\share\x.json",
+        ];
+        let mut line = Vec::new();
+        super::imp::quote(OsStr::new(r"C:\Windows\System32\notepad.exe"), &mut line);
+        for arg in args {
+            line.push(u16::from(b' '));
+            super::imp::quote(OsStr::new(arg), &mut line);
+        }
+        line.push(0);
+        let mut count = 0;
+        let parsed = unsafe { CommandLineToArgvW(line.as_ptr(), &mut count) };
+        assert!(!parsed.is_null());
+        let read: Vec<String> = (0..count as usize)
+            .map(|index| unsafe {
+                let arg = *parsed.add(index);
+                let length = (0..).take_while(|&at| *arg.add(at) != 0).count();
+                String::from_utf16(std::slice::from_raw_parts(arg, length)).unwrap()
+            })
+            .collect();
+        unsafe { LocalFree(parsed.cast()) };
+        assert_eq!(read[1..], args);
     }
 }

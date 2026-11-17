@@ -74,7 +74,67 @@ pub(super) fn address_url(address: SocketAddr, token: Option<&str>) -> String {
 }
 
 pub(crate) fn open_config(path: &Path) -> Result<(), String> {
+    // Windows asks which app to use for a file of a type no app opens, as a
+    // `.json` is on a new system; the configuration opens in Notepad then.
+    #[cfg(windows)]
+    if !association::opens(path) {
+        return association::open_in_notepad(path);
+    }
     open_target(path.as_os_str())
+}
+
+#[cfg(windows)]
+mod association {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+    use std::path::Path;
+    use windows_sys::Win32::Foundation::ERROR_NO_ASSOCIATION;
+    use windows_sys::Win32::UI::Shell::{
+        ASSOCF_INIT_IGNOREUNKNOWN, ASSOCSTR_COMMAND, ASSOCSTR_DELEGATEEXECUTE, AssocQueryStringW,
+    };
+
+    /// Whether an app opens files of `path`'s type: its default verb has a
+    /// command, or a delegate as a packaged app's has. Unless Windows says
+    /// there is no association, the system's opener decides as before.
+    pub(super) fn opens(path: &Path) -> bool {
+        let Some(extension) = path.extension() else {
+            return true;
+        };
+        let name: Vec<u16> = OsStr::new(".")
+            .encode_wide()
+            .chain(extension.encode_wide())
+            .chain([0])
+            .collect();
+        let none = (0x8007_0000 | (ERROR_NO_ASSOCIATION & 0xFFFF)) as i32;
+        [ASSOCSTR_COMMAND, ASSOCSTR_DELEGATEEXECUTE]
+            .into_iter()
+            .any(|kind| {
+                let mut size = 0;
+                // Asks for the size alone: S_FALSE where there is one.
+                let result = unsafe {
+                    AssocQueryStringW(
+                        ASSOCF_INIT_IGNOREUNKNOWN,
+                        kind,
+                        name.as_ptr(),
+                        std::ptr::null(),
+                        std::ptr::null_mut(),
+                        &mut size,
+                    )
+                };
+                result != none
+            })
+    }
+
+    /// Notepad, which every Windows has, holding nothing of the server's: an
+    /// inherited handle would keep the desktop app's log of the server open
+    /// as long as the file is.
+    pub(super) fn open_in_notepad(path: &Path) -> Result<(), String> {
+        let root = std::env::var_os("SystemRoot")
+            .ok_or_else(|| "the Windows directory is unknown".to_owned())?;
+        let notepad = Path::new(&root).join("System32").join("notepad.exe");
+        crate::detached::spawn(&notepad, &[path.as_os_str()])
+            .map_err(|_| "Notepad could not be started".to_owned())
+    }
 }
 
 pub(super) fn open_browser(url: &str) -> Result<(), String> {
@@ -124,6 +184,19 @@ fn open_target(target: &std::ffi::OsStr) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// On a new Windows no app opens a `.json`: Windows says there is no
+    /// association, as for a type it has never heard of; a program has its
+    /// command, and a name without a type is left to the system's opener.
+    #[cfg(windows)]
+    #[test]
+    fn a_type_no_app_opens_is_told_from_one_an_app_opens() {
+        assert!(!association::opens(Path::new(
+            "a.markitai-unassociated-type"
+        )));
+        assert!(association::opens(Path::new("a.exe")));
+        assert!(association::opens(Path::new("no-type")));
+    }
 
     #[test]
     fn browser_address_is_local_and_fragment_token_is_encoded() {

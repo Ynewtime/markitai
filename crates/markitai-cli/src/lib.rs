@@ -9,6 +9,7 @@ macro_rules! eprintln {
     ($($argument:tt)*) => { $crate::app::logging::diagnostic(format_args!($($argument)*)) };
 }
 mod app;
+mod detached;
 mod diagnostics;
 #[cfg(all(test, target_os = "linux"))]
 mod file_lock_test;

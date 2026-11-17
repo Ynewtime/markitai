@@ -10,7 +10,6 @@
 //! `MARKITAI_NO_UPDATE_CHECK=1` turn both off.
 pub(crate) mod check;
 pub(crate) mod control;
-mod detached;
 pub(crate) mod install;
 pub(crate) mod method;
 pub(crate) mod notes;
@@ -423,7 +422,8 @@ fn spawn_check() {
         return;
     };
     // The child is not waited for; the system reaps it after this process ends.
-    let _ = detached::spawn(&program, &["update", "--check", "--json"]);
+    let args = ["update", "--check", "--json"].map(std::ffi::OsStr::new);
+    let _ = crate::detached::spawn(&program, &args);
 }
 
 /// The L1 line when the cache knows a newer release and it was not shown in

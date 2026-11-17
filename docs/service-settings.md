@@ -22,7 +22,7 @@ save. Responses identify `config_path` and `config_origin`.
 | POST | `/deployments/batch` | Atomically add up to 50 deployments and remove saved ones (`remove`), all or nothing |
 | PATCH / DELETE | `/deployments/{id}` | Change a stable deployment identity |
 | PATCH / DELETE | `/providers/{id}` | Change a connection or remove it and its deployments |
-| POST | `/config/open` | Ask the server host's system opener to open the selected file |
+| POST | `/config/open` | Ask the server host's system opener to open the selected file (on Windows, Notepad when no app opens its type, as no app opens a `.json` on a new system) |
 
 Provider detection, live discovery and the transient connection test use
 `/detected`, `/model-discovery` and `/test`; those operations are separate from
