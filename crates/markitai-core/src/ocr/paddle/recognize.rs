@@ -270,25 +270,16 @@ pub(super) fn input(line: &RgbImage, min_width: u32) -> (Vec<f32>, u32, u32) {
     )
 }
 
-/// Whether [`spaced`] may put a space into a line of `characters`: a Chinese
-/// or Japanese letter meets a Latin letter or digit, or the line has two
-/// pairs of digits, or of Chinese letters, read together.
-pub(super) fn may_space(characters: &[char]) -> bool {
-    use super::super::layout;
-    !layout::junctions(characters).is_empty()
-        || layout::digit_pairs(characters).len() >= 2
-        || layout::han_pairs(characters).len() >= 2
-}
+/// Whether [`spaced`] may put a space into a line of `characters`.
+pub(super) use super::super::layout::may_space;
 
 /// `reading`'s text with the spaces the line's pixels show but the
-/// recognizer leaves out. Between a Chinese or Japanese letter and a Latin
-/// letter or digit, the widest ink-free run of pixel columns between the two
-/// characters' centers is measured over the cut-out line, and a run of
-/// [`super::super::layout::SPACE`] line heights or more is a space, as for
-/// Vision. Between two digits, which the recognizer reads together when two
-/// numbers stand a word space or two apart (the cells of a table row), the
-/// glyphs' spacing tells ([`super::super::layout::digit_spaces`]), and so it
-/// does between two Chinese letters, which it reads together when two words
+/// recognizer leaves out: between a Chinese or Japanese
+/// letter and a Latin letter or digit
+/// ([`super::super::layout::junction_spaces`]); between two digits, which
+/// the recognizer reads together when two numbers stand a word space or two
+/// apart (the cells of a table row) ([`super::super::layout::digit_spaces`]);
+/// and between two Chinese letters, which it reads together when two words
 /// of a table header stand a space apart
 /// ([`super::super::layout::han_spaces`]). `pixels_per_step` maps the
 /// reading's character centers onto the line's pixels.
@@ -306,19 +297,14 @@ pub(super) fn spaced(line: &RgbImage, reading: &Reading, pixels_per_step: f32) -
         return reading.text.clone();
     };
     let x = |index: usize| reading.centers[index] * pixels_per_step;
-    let junctions = layout::junctions(&characters);
+    let junctions = layout::junction_spaces(line, background, &characters, x);
     let numbers = layout::digit_spaces(line, background, &characters, x);
     let words = layout::han_spaces(line, background, &characters, x);
     let mut text =
         String::with_capacity(reading.text.len() + junctions.len() + numbers.len() + words.len());
     for (index, character) in characters.iter().enumerate() {
         text.push(*character);
-        let space = if junctions.contains(&index) {
-            layout::spaced(line, [0.0, height], [x(index), x(index + 1)], background)
-        } else {
-            numbers.contains(&index) || words.contains(&index)
-        };
-        if space {
+        if junctions.contains(&index) || numbers.contains(&index) || words.contains(&index) {
             text.push(' ');
         }
     }

@@ -253,12 +253,29 @@ headers, label and number rows and prose (21 Chinese fonts, 13 to 36 pixels)
 it put back 4,064 of the 6,494 spaces left out between Chinese words and split
 none of 60,100 pairs of letters set solid.
 
+Between a Chinese letter and a Latin letter or digit read together, the
+portable engine puts a space where the gap between their ink is wider than the
+line's usual gap between two Chinese letters by a tenth of the usual distance
+between their centres. A figure is narrower than its place, so a digit set
+solid in prose has a wide gap on each side (`共有12个项目`): beside a digit the
+gap need only pass the usual one by 0.06 of that distance, but the digit's
+centre must also stand 0.08 of it farther from the letter than a figure set
+solid would. A line with no two Chinese letters side by side keeps the older
+test, an ink-free run over a fifth of the line's height. On 3,180 rendered
+pages (those above, and Chinese prose with Latin words and numbers set with and
+without spaces: 28 Chinese and Japanese fonts, five Latin ones beside them, 13
+to 40 pixels) this split 115 of 5,455 pairs set solid, where the ink-free run
+alone split 554 (beside a digit, 26 where it split 361), and left out 35 of
+10,832 spaces where it left out 24.
+
 Known issue: local OCR may still join neighbouring cells of a table row. The
 portable engine leaves digits as read where a space between them is blurred
 over or has ink in it, and in a line with a single pair of digits read
 together. It leaves Chinese words as read in print under 20 pixels, in a line
 with a single pair of letters read together, and about one in five pairs a
-space apart on taller lines (`项目数量 单价`). Vision is not corrected: on one
+space apart on taller lines (`项目数量 单价`). A Latin letter open on its side
+beside a Chinese letter whose ink starts late (`CPU占用率`, `使用PDF`) can still
+get a space. Vision is not corrected: on one
 scan whose rows read `苹果 12 3.50` and `香蕉 30 1.20`, Vision on macOS 15.7
 returned `苹果 123.50`, with no candidate that separated them (Vision on macOS
 27 read both rows right), and enlarging the image did not help. Check numbers

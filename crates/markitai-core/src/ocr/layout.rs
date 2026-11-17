@@ -761,6 +761,15 @@ pub(super) fn junctions(characters: &[char]) -> Vec<usize> {
         .collect()
 }
 
+/// Whether a line of `characters` may want a space the recognizer left out:
+/// a Chinese or Japanese letter meets a Latin letter or digit, or the line
+/// has two pairs of digits, or of Chinese letters, read together.
+pub(super) fn may_space(characters: &[char]) -> bool {
+    !junctions(characters).is_empty()
+        || digit_pairs(characters).len() >= 2
+        || han_pairs(characters).len() >= 2
+}
+
 /// Positions `n` where `characters[n]` and `characters[n + 1]` are digits
 /// with no space between them.
 pub(super) fn digit_pairs(characters: &[char]) -> Vec<usize> {
@@ -1073,11 +1082,66 @@ pub(super) fn han_spaces(
     x: impl Fn(usize) -> f32,
 ) -> Vec<usize> {
     let pairs = han_pairs(characters);
-    let (width, height) = image.dimensions();
+    let height = image.height();
     if pairs.len() < 2 || height < HAN_MIN_HEIGHT {
         return Vec::new();
     }
-    let width = width as usize;
+    let letters = cut_letters(image, background, characters, x);
+    // Each measured pair: its position, the distance between the centres,
+    // the gap between the letters' ink and the wider letter's width.
+    let measured: Vec<(usize, f32, f32, f32)> = pairs
+        .into_iter()
+        .filter_map(|n| {
+            let ((first, end), (next, next_end)) = (letters[n]?, letters[n + 1]?);
+            Some((
+                n,
+                (next + next_end) as f32 / 2.0 - (first + end) as f32 / 2.0,
+                next as f32 - end as f32,
+                (end - first).max(next_end - next) as f32,
+            ))
+        })
+        .collect();
+    if measured.len() < 2 {
+        return Vec::new();
+    }
+    let usual = lower_median(measured.iter().map(|pair| pair.1));
+    if usual <= 0.0 {
+        return Vec::new();
+    }
+    measured
+        .into_iter()
+        .filter(|&(_, apart, gap, wide)| {
+            gap >= SPACE * height as f32 && apart >= HAN_SPACE * usual && wide <= HAN_WIDE * usual
+        })
+        .map(|(n, ..)| n)
+        .collect()
+}
+
+/// The lower middle of `values` (the lower of the two middle ones of an
+/// even count); 0 for none.
+fn lower_median(values: impl Iterator<Item = f32>) -> f32 {
+    let mut values: Vec<f32> = values.collect();
+    crate::sort::by(&mut values, f32::total_cmp);
+    values
+        .get(values.len().saturating_sub(1) / 2)
+        .copied()
+        .unwrap_or(0.0)
+}
+
+/// Each character's ink on a cut-out line on a `background` gray, its first
+/// column and end, where `x(n)` places character `n`: the line is cut
+/// between each two characters shown (not spaces) in the middle of the
+/// widest run of columns without ink (any pixel [`DIGIT_INK`] from the
+/// background) between their places, or at the column with the least ink
+/// when there is none, and a character's ink is the ink columns between its
+/// cuts. None for a space, or a character with no ink between its cuts.
+fn cut_letters(
+    image: &image::RgbImage,
+    background: i16,
+    characters: &[char],
+    x: impl Fn(usize) -> f32,
+) -> Vec<Option<(usize, usize)>> {
+    let width = image.width() as usize;
     let (strongest, weight) = column_ink(image, background);
     let ink = |column: usize| strongest[column] > DIGIT_INK;
     let column = |at: f32| (at.max(0.0) as usize).min(width);
@@ -1109,46 +1173,137 @@ pub(super) fn han_spaces(
             }
         })
         .collect();
-    // Each letter's ink between its cuts: first column, end and centre.
-    let letter = |n: usize| {
-        let k = shown.partition_point(|&m| m < n);
+    let mut letters = vec![None; characters.len()];
+    for (k, &n) in shown.iter().enumerate() {
         let left = k.checked_sub(1).map_or(0, |k| cuts[k] as usize);
         let right = cuts
             .get(k)
             .map_or(width, |cut| (cut.ceil() as usize).min(width));
-        let first = (left..right).find(|&at| ink(at))?;
-        let end = (left..right).rfind(|&at| ink(at))? + 1;
-        Some((first, end, (first + end) as f32 / 2.0))
-    };
-    // Each measured pair: its position, the distance between the centres,
-    // the gap between the letters' ink and the wider letter's width.
-    let measured: Vec<(usize, f32, f32, f32)> = pairs
+        letters[n] = (left..right)
+            .find(|&at| ink(at))
+            .zip((left..right).rfind(|&at| ink(at)))
+            .map(|(first, last)| (first, last + 1));
+    }
+    letters
+}
+
+/// A Chinese or Japanese letter and a Latin letter stand a space apart when
+/// the gap between their ink is wider than the line's usual gap between two
+/// Chinese letters by at least this many of its usual distances between
+/// Chinese letters' centres. Measured on 288 rendered images of Chinese
+/// prose with Latin words set with and without spaces (eight fonts, two of
+/// them a Latin font beside a Chinese one, 16 to 32 pixels, clean and
+/// blurred JPEG): letters set solid passed the usual gap by at most 0.25 (a
+/// hundredth of them by 0.13), letters a space apart by 0.06 or more (a
+/// twentieth below 0.13).
+const LETTER_JUNCTION: f32 = 0.1;
+
+/// A Chinese or Japanese letter and a digit stand a space apart when the gap
+/// between their ink passes the usual gap by this many usual distances, and
+/// the distance between their centres passes half the usual distance
+/// between Chinese letters' centres and half the digits' own by
+/// [`DIGIT_JUNCTION`] of the former: a narrow figure, a `1`, has a wide gap
+/// on each side yet stands no farther from its neighbours.
+const DIGIT_GAP: f32 = 0.06;
+
+/// See [`DIGIT_GAP`]. Read with the CLI on 3,180 rendered images of table
+/// headers, label and number rows and Chinese prose with and without Latin
+/// words (28 Chinese and Japanese fonts, five Latin ones beside them, 13 to
+/// 40 pixels, clean and blurred JPEG; tuned on 528 of them), 26 digits set
+/// solid beside a Chinese letter were split off where the ink-free gap alone
+/// split 361, and 26 a space apart were kept with none where it kept 20.
+const DIGIT_JUNCTION: f32 = 0.08;
+
+/// A lone digit's distance from its neighbouring figures, in usual distances
+/// between Chinese letters' centres: figures are a little over half as wide
+/// as Chinese letters.
+const LONE_DIGIT: f32 = 0.6;
+
+/// Positions `n` (from [`junctions`]) where the recognizer read a Chinese or
+/// Japanese letter and a Latin letter or digit together but `image`, a
+/// cut-out line on a `background` gray, shows a space between them. `x(n)`
+/// is where the recognizer places character `n`, in the image's columns.
+///
+/// Characters are cut apart as [`han_spaces`] cuts them. A Chinese letter's
+/// and a Latin letter's own sides leave a gap between them as wide as two
+/// Chinese letters leave, so a space is a gap wider than the line's usual one
+/// between Chinese letters by [`LETTER_JUNCTION`] ([`DIGIT_GAP`] beside a
+/// digit); and a digit is measured by its centre too ([`DIGIT_JUNCTION`]),
+/// against the distance between the centres of its run's neighbouring
+/// figures, or [`LONE_DIGIT`] when it has none. The usual gap and distance
+/// are the medians (the lower middle ones)
+/// over the line's neighbouring Chinese letters. A line with no two Chinese
+/// letters side by side to measure, and a pair without ink of its own, have
+/// a space where the widest ink-free run between them is [`SPACE`] line
+/// heights ([`spaced`]).
+pub(super) fn junction_spaces(
+    image: &image::RgbImage,
+    background: i16,
+    characters: &[char],
+    x: impl Fn(usize) -> f32,
+) -> Vec<usize> {
+    let junctions = junctions(characters);
+    if junctions.is_empty() {
+        return Vec::new();
+    }
+    let height = image.height() as f32;
+    let letters = cut_letters(image, background, characters, &x);
+    let centre = |(first, end): (usize, usize)| (first + end) as f32 / 2.0;
+    // The line's neighbouring Chinese letters: the distances between their
+    // centres and the gaps between their ink.
+    let measured: Vec<(f32, f32)> = han_pairs(characters)
         .into_iter()
         .filter_map(|n| {
-            let ((first, end, left), (next, next_end, right)) = (letter(n)?, letter(n + 1)?);
-            Some((
-                n,
-                right - left,
-                next as f32 - end as f32,
-                (end - first).max(next_end - next) as f32,
-            ))
+            let (left, right) = (letters[n]?, letters[n + 1]?);
+            Some((centre(right) - centre(left), right.0 as f32 - left.1 as f32))
         })
         .collect();
-    if measured.len() < 2 {
-        return Vec::new();
-    }
-    let mut distances: Vec<f32> = measured.iter().map(|pair| pair.1).collect();
-    crate::sort::by(&mut distances, f32::total_cmp);
-    let usual = distances[(distances.len() - 1) / 2];
-    if usual <= 0.0 {
-        return Vec::new();
-    }
-    measured
+    let pitch = lower_median(measured.iter().map(|pair| pair.0));
+    let usual_gap = lower_median(measured.iter().map(|pair| pair.1)).max(0.0);
+    let ink_free = |n: usize| spaced(image, [0.0, height], [x(n), x(n + 1)], background);
+    let run = |c: char| c.is_ascii_alphanumeric() || ".,%-:/".contains(c);
+    junctions
         .into_iter()
-        .filter(|&(_, apart, gap, wide)| {
-            gap >= SPACE * height as f32 && apart >= HAN_SPACE * usual && wide <= HAN_WIDE * usual
+        .filter(|&n| {
+            let (Some(left), Some(right)) = (letters[n], letters[n + 1]) else {
+                return ink_free(n);
+            };
+            if measured.is_empty() || pitch <= 0.0 {
+                return ink_free(n);
+            }
+            let excess = right.0 as f32 - left.1 as f32 - usual_gap;
+            let (latin, letter, figure) = if characters[n].is_ascii() {
+                (n, right, left)
+            } else {
+                (n + 1, left, right)
+            };
+            if !characters[latin].is_ascii_digit() {
+                return excess >= LETTER_JUNCTION * pitch;
+            }
+            if excess < DIGIT_GAP * pitch {
+                return false;
+            }
+            // The run of figures and their signs the digit stands in.
+            let first = (0..latin)
+                .rev()
+                .find(|&k| !run(characters[k]))
+                .map_or(0, |k| k + 1);
+            let end = (latin..characters.len())
+                .find(|&k| !run(characters[k]))
+                .unwrap_or(characters.len());
+            let figures = lower_median((first..end.saturating_sub(1)).filter_map(|k| {
+                let both = characters[k].is_ascii_digit() && characters[k + 1].is_ascii_digit();
+                both.then_some((letters[k]?, letters[k + 1]?))
+                    .map(|(a, b)| centre(b) - centre(a))
+            }));
+            let figures = if figures > 0.0 {
+                figures
+            } else {
+                LONE_DIGIT * pitch
+            };
+            let apart = (centre(figure) - centre(letter)).abs();
+            apart - pitch / 2.0 - figures / 2.0 >= DIGIT_JUNCTION * pitch
         })
-        .map(|(n, ..)| n)
         .collect()
 }
 
@@ -1843,5 +1998,60 @@ mod tests {
             han_pairs(&"共有 12个项目".chars().collect::<Vec<_>>()),
             [0, 5, 6]
         );
+    }
+
+    fn junction_spaces_of(image: &image::RgbImage, text: &str, places: &[f32]) -> Vec<usize> {
+        let characters: Vec<char> = text.chars().collect();
+        junction_spaces(image, 255, &characters, |n| places[n])
+    }
+
+    #[test]
+    fn a_narrow_figure_in_prose_set_solid_keeps_no_space_and_a_spaced_number_gets_one() {
+        // Chinese letters 30 pixels wide on a pitch of 32 (a gap of 2) on a
+        // 40-pixel line; figures on a pitch of 18, a `1` 4 pixels wide and a
+        // `2` 12, each in the middle of its place.
+        let han = |left: u32| (left, 30);
+        let figure = |centre: u32, wide: u32| (centre - wide / 2, wide);
+        // `共有12个项目`, set solid: the `1` leaves 9 pixels on its left, more
+        // than SPACE line heights (8.8) of ink-free columns, yet its centre
+        // stands where a figure's does.
+        let blocks = [
+            han(2),
+            han(34),
+            figure(75, 4),
+            figure(93, 12),
+            han(104),
+            han(136),
+            han(168),
+        ];
+        let places = [17., 49., 75., 93., 119., 151., 183.];
+        let prose = letters(&blocks, 210, 40);
+        assert!(junction_spaces_of(&prose, "共有12个项目", &places).is_empty());
+        // `收入 12 万元`: a space (12 pixels) on each side of the number.
+        let blocks = [
+            han(2),
+            han(34),
+            figure(87, 4),
+            figure(105, 12),
+            han(128),
+            han(160),
+        ];
+        let places = [17., 49., 87., 105., 143., 175.];
+        let spaced = letters(&blocks, 200, 40);
+        assert_eq!(junction_spaces_of(&spaced, "收入12万元", &places), [1, 3]);
+        // A Latin letter is measured by the gap alone: `用 OCR` and `用OCR`.
+        let word = |gap: u32| {
+            let latin = |left: u32| (left + gap, 14);
+            let blocks = [han(2), han(34), latin(66), latin(82), latin(98)];
+            let at = |centre: f32| centre + gap as f32;
+            let places = [17., 49., at(73.), at(89.), at(105.)];
+            junction_spaces_of(&letters(&blocks, 140, 40), "使用OCR", &places)
+        };
+        assert_eq!(word(12), [1]);
+        assert!(word(0).is_empty());
+        // With no two Chinese letters to measure, the ink-free run decides.
+        let blocks = [han(2), figure(48, 4)];
+        let lone = letters(&blocks, 60, 40);
+        assert_eq!(junction_spaces_of(&lone, "共1", &[17., 48.]), [0]);
     }
 }
