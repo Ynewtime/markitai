@@ -425,7 +425,8 @@ fn install_into(
     // it, so a process may download several, one call at a time.
     if announce {
         let models: Vec<&Model> = needed.iter().map(|(model, _)| **model).collect();
-        crate::console::line(&download_notice(&models, root));
+        let urls: Vec<String> = models.iter().map(|model| url(model)).collect();
+        crate::console::line(&download_notice(&models, &urls, root));
     }
     let mut installed = Vec::new();
     for (model, state) in needed {
@@ -437,14 +438,28 @@ fn install_into(
     Ok(installed)
 }
 
-/// The line that announces downloading `models` into `root`.
-fn download_notice(models: &[&Model], root: &Path) -> String {
+/// The line that announces downloading `models` from `urls` (one each) into
+/// `root`. It names the hosts the files come from: the models are not all
+/// published in one place (RapidOCR's ModelScope mirror has most of them,
+/// PaddlePaddle's Hugging Face repository the qppocr engine's classifier).
+fn download_notice(models: &[&Model], urls: &[String], root: &Path) -> String {
     let bytes: u64 = models.iter().map(|model| model.bytes).sum();
     let names: Vec<&str> = models.iter().map(|model| model.name.as_str()).collect();
+    let mut hosts: Vec<String> = Vec::new();
+    for url in urls {
+        let host = reqwest::Url::parse(url)
+            .ok()
+            .and_then(|url| url.host_str().map(str::to_owned))
+            .unwrap_or_else(|| url.clone());
+        if !hosts.contains(&host) {
+            hosts.push(host);
+        }
+    }
     format!(
-        "Local OCR: downloading {} ({:.1} MB, once) from the official PaddleOCR mirror into {}; `markitai doctor --fix` installs the models ahead of time.",
+        "Local OCR: downloading {} ({:.1} MB, once) from {} into {}; `markitai doctor --fix` installs the models ahead of time.",
         names.join(", "),
         bytes as f64 / 1e6,
+        hosts.join(", "),
         root.display()
     )
 }
@@ -594,15 +609,31 @@ mod tests {
         let korean = named("korean-ppocrv5-rec-mobile").unwrap();
         let detector = named(super::super::DETECTOR).unwrap();
         let root = Path::new("models");
-        let one = download_notice(&[korean], root);
+        let urls = |models: &[&Model]| -> Vec<String> {
+            models.iter().map(|model| model.url.clone()).collect()
+        };
+        let one = download_notice(&[korean], &urls(&[korean]), root);
         assert!(
-            one.contains("downloading korean-ppocrv5-rec-mobile (13.5 MB, once)"),
+            one.contains(
+                "downloading korean-ppocrv5-rec-mobile (13.5 MB, once) from www.modelscope.cn into"
+            ),
             "{one}"
         );
-        let two = download_notice(&[detector, korean], root);
+        // Each host once, in the models' order: qppocr's classifier is not
+        // on RapidOCR's mirror.
+        let classifier = named("ppocr-lcnet-textline-ori").unwrap();
+        let three = [detector, korean, classifier];
+        let three = download_notice(&three, &urls(&three), root);
         assert!(
-            two.contains(&format!("{}, korean-ppocrv5-rec-mobile (", detector.name)),
-            "{two}"
+            three.contains(&format!(
+                "{}, korean-ppocrv5-rec-mobile, ppocr-lcnet-textline-ori (",
+                detector.name
+            )),
+            "{three}"
+        );
+        assert!(
+            three.contains(" from www.modelscope.cn, huggingface.co into "),
+            "{three}"
         );
         // No once-per-process latch: install_into announces every call.
         let source = include_str!("models.rs");

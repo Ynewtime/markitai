@@ -147,9 +147,11 @@ pub fn warm_local_ocr(config: &Value) -> bool {
     ocr::warm(config)
 }
 
-/// Explicitly download the missing files [`local_ocr_models`] lists from the
-/// official PaddleOCR mirror, each verified by size and SHA-256, into the
-/// private Markitai home; returns the files installed.
+/// Explicitly download the missing files [`local_ocr_models`] lists from
+/// their official sources (RapidOCR's ModelScope mirror of PaddleOCR's
+/// models; PaddlePaddle's Hugging Face repository for the qppocr engine's
+/// classifier), each verified by size and SHA-256, into the private Markitai
+/// home; returns the files installed.
 pub fn install_local_ocr_models(config: &Value) -> Result<Vec<PathBuf>> {
     ocr::install_portable_models(config)
 }

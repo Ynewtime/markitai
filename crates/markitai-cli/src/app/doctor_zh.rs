@@ -38,12 +38,12 @@ const KNOWN: &[(&str, &str)] = &[
         "运行 markitai doctor --fix，只替换已损坏的受管模型文件，并先校验每个新文件的大小和 SHA-256",
     ),
     (
-        "Download them now from the official PaddleOCR mirror (each verified by SHA-256):",
-        "现在从 PaddleOCR 官方镜像下载（每个文件都校验 SHA-256）：",
+        "Download them now from their official sources (each verified by SHA-256):",
+        "现在从各模型的官方来源下载（每个文件都校验 SHA-256）：",
     ),
     (
-        "Run markitai doctor --fix to download them now from the official PaddleOCR mirror (each verified by SHA-256)",
-        "运行 markitai doctor --fix，现在从 PaddleOCR 官方镜像下载（每个文件都校验 SHA-256）",
+        "Run markitai doctor --fix to download them now from their official sources (each verified by SHA-256)",
+        "运行 markitai doctor --fix，现在从各模型的官方来源下载（每个文件都校验 SHA-256）",
     ),
     (
         "Launch and CDP connection succeeded in a private profile; no remote page was opened",

@@ -230,8 +230,8 @@ const RULES: &[(&str, &str)] = &[
         "未能读取 SSL_CERT_FILE/SSL_CERT_DIR 中的证书：{}",
     ),
     (
-        "Local OCR: downloading {} ({} MB, once) from the official PaddleOCR mirror into {}; `markitai doctor --fix` installs the models ahead of time.",
-        "本地 OCR：正在从 PaddleOCR 官方镜像下载 {}（{} MB，只下载一次）到 {}；`markitai doctor --fix` 可以提前安装这些模型。",
+        "Local OCR: downloading {} ({} MB, once) from {} into {}; `markitai doctor --fix` installs the models ahead of time.",
+        "本地 OCR：正在从 {2} 下载 {0}（{1} MB，只下载一次）到 {3}；`markitai doctor --fix` 可以提前安装这些模型。",
     ),
     (
         "Local OCR: the portable engine's models could not be downloaded; reading with macOS Vision instead (the first Vision use of this program takes about 20 seconds). `markitai doctor --fix` installs the models.",
@@ -918,6 +918,16 @@ mod tests {
                 "PDF page 2: native text was not recovered (x); OCR is required to read it. Run again with --ocr."
             )
             .starts_with("PDF 第 2 页")
+        );
+    }
+
+    #[test]
+    fn the_ocr_download_notice_names_its_hosts_in_chinese_too() {
+        assert_eq!(
+            localize(
+                "Local OCR: downloading ppocrv6-det-small, ppocr-lcnet-textline-ori (10.9 MB, once) from www.modelscope.cn, huggingface.co into /m/ocr; `markitai doctor --fix` installs the models ahead of time."
+            ),
+            "本地 OCR：正在从 www.modelscope.cn, huggingface.co 下载 ppocrv6-det-small, ppocr-lcnet-textline-ori（10.9 MB，只下载一次）到 /m/ocr；`markitai doctor --fix` 可以提前安装这些模型。"
         );
     }
 

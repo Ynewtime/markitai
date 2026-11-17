@@ -614,12 +614,12 @@ fn portable_ocr_check(
                 let bytes: u64 = missing.iter().map(|model| model.bytes).sum();
                 fix = vec![
                     Fix::text(
-                        "Download them now from the official PaddleOCR mirror (each verified by SHA-256):",
+                        "Download them now from their official sources (each verified by SHA-256):",
                     ),
                     Fix::command("markitai doctor --fix"),
                 ];
                 ("warning", format!("Portable PaddleOCR engine ({engine}): {} of the {} model files the configured ocr.lang needs ({:.1} MB) are not installed; the first OCR downloads them", missing.len(), models.len(), bytes as f64 / 1e6),
-                    "Run markitai doctor --fix to download them now from the official PaddleOCR mirror (each verified by SHA-256)".to_owned(), folder)
+                    "Run markitai doctor --fix to download them now from their official sources (each verified by SHA-256)".to_owned(), folder)
             } else {
                 (
                     "ok",
@@ -709,8 +709,8 @@ fn repair_ocr_models(cfg: &Value) -> bool {
     );
     say!(
         Shape::item(Mark::Action);
-        "Downloading {count} local OCR model file(s) ({megabytes} MB) from the official PaddleOCR mirror into the private Markitai home...",
-        "正在从 PaddleOCR 官方镜像下载 {count} 个本地 OCR 模型文件（{megabytes} MB）到 Markitai 私有目录……"
+        "Downloading {count} local OCR model file(s) ({megabytes} MB) from their official sources into the private Markitai home...",
+        "正在从各模型的官方来源下载 {count} 个本地 OCR 模型文件（{megabytes} MB）到 Markitai 私有目录……"
     );
     match markitai_core::install_local_ocr_models(cfg) {
         Ok(paths) => {

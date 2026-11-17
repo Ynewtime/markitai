@@ -378,8 +378,9 @@ reference downloads. A model lives at
 configured `ocr.lang` need: the default set above (without the qppocr classifier) is 45.2 MB; an explicit
 language needs the detector, the classifier and its recognizer. It names each file
 installed. A normal OCR downloads missing models as it needs them, each download
-announced on standard error with the models' names and size (`Local OCR:
-downloading korean-ppocrv5-rec-mobile (13.5 MB, once) …`). It does not
+announced on standard error with the models' names, size and the hosts they come
+from (`Local OCR: downloading korean-ppocrv5-rec-mobile (13.5 MB, once) from
+www.modelscope.cn …`; qppocr's classifier comes from `huggingface.co`). It does not
 necessarily download all four default files before reading its first image.
 Vision, when chosen, does not inspect or install portable models.
 
