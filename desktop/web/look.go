@@ -2,6 +2,7 @@ package main
 
 import (
 	"runtime"
+	"slices"
 	"strings"
 	"sync/atomic"
 
@@ -96,6 +97,38 @@ func locale(lang string) string {
 		return "zh-Hans"
 	}
 	return lang
+}
+
+// toolkitLanguage is the gettext language of mygo's language (Linux's
+// GTK): Traditional Chinese where mygo says its own words in it, as the
+// portal's file chooser does on such a system, so that GTK's own file
+// chooser does not mix them with Simplified Chinese.
+func toolkitLanguage(locale string) string {
+	switch workbenchLang(locale) {
+	case "zh":
+		if traditional(locale) {
+			return "zh_TW"
+		}
+		return "zh_CN"
+	case "ja":
+		return "ja"
+	}
+	return "en"
+}
+
+// traditional says a Chinese tag is in Traditional characters: zh-Hant,
+// or a region that writes them without the script named.
+func traditional(tag string) bool {
+	tag = strings.ToLower(strings.ReplaceAll(tag, "_", "-"))
+	if strings.Contains(tag, "-hans") {
+		return false
+	}
+	if strings.Contains(tag, "-hant") {
+		return true
+	}
+	return slices.ContainsFunc([]string{"zh-tw", "zh-hk", "zh-mo"}, func(region string) bool {
+		return tag == region || strings.HasPrefix(tag, region+"-")
+	})
 }
 
 // workbenchLang is the workbench's language for a page whose

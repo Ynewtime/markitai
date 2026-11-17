@@ -75,17 +75,6 @@ func prepareToolkit() {
 	})
 }
 
-// toolkitLanguage is the gettext language of a language of the app.
-func toolkitLanguage(locale string) string {
-	switch workbenchLang(locale) {
-	case "zh":
-		return "zh_CN"
-	case "ja":
-		return "ja"
-	}
-	return "en"
-}
-
 // nameToPortal points mygo at the app's installed desktop entry, which it
 // registers with the portal as the app's ID, unless the desktop launched
 // the app from one: mygo otherwise names it after the executable,

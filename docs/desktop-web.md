@@ -180,7 +180,10 @@ through its portal (`xdg-desktop-portal`) when it has one, in the desktop's
 theme and language; otherwise GTK's own, fitted to the window and the
 screen. While the app follows the system's theme it follows the desktop's
 dark preference. GTK's own words, as those of its file chooser, take a
-language chosen in the workbench at the next launch.
+language chosen in the workbench at the next launch. On a system in
+Traditional Chinese they are in Traditional Chinese, as the app's own dialog
+words and the portal's file chooser are, while the workbench shows its
+Chinese.
 
 Files and folders dragged from a file manager onto the workbench wait on
 Convert as in a browser. WebKitGTK 2.52 and later keep a drop's files from

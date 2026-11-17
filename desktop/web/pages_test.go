@@ -216,6 +216,14 @@ func TestLookKeepsTheWorkbenchsValues(t *testing.T) {
 			t.Errorf("workbenchLang(%q) = %q; want %q", tag, got, want)
 		}
 	}
+	for tag, want := range map[string]string{
+		"zh-Hans": "zh_CN", "zh-Hant": "zh_TW", "zh-Hant-TW": "zh_TW", "zh-TW": "zh_TW", "zh_HK": "zh_TW",
+		"zh-Hans-HK": "zh_CN", "zh-CN": "zh_CN", "zh": "zh_CN", "ja": "ja", "en": "en", "de": "en",
+	} {
+		if got := toolkitLanguage(tag); got != want {
+			t.Errorf("toolkitLanguage(%q) = %q; want %q", tag, got, want)
+		}
+	}
 	for lang := range texts {
 		if workbenchLang(locale(lang)) != lang || !slices.Contains(webLanguages, locale(lang)) {
 			t.Errorf("%s does not go through mygo's languages", lang)
