@@ -23,8 +23,9 @@ page workflow below; animated GIF/WebP frames are not treated as document pages.
 
 With both LLM and OCR disabled, CLI image items are skipped with
 `skip_reason="image_only"`; no Markdown file is written. The shared library API
-returns a conversion error explaining `llm=True` and `ocr=True`, matching the
-reference Python API. Missing files still report a missing-file error.
+returns a conversion error asking to enable LLM or OCR, the `llm` or `ocr`
+option of each binding; the reference Python API raises the same error naming
+`llm=True` and `ocr=True`. Missing files still report a missing-file error.
 
 `ocr=True` without LLM selects [local image OCR](ocr.md): the portable engine
 with its model weights on every platform, or Vision on macOS when chosen with

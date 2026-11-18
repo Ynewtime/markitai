@@ -535,10 +535,11 @@ fn convert_inner(
         && !config::enabled(&cfg, "/llm/enabled")
         && !config::enabled(&cfg, "/ocr/enabled")
     {
-        // A file that is not an image at all is an error, not a skip.
+        // A file that is not an image at all is an error, not a skip. The
+        // words name no binding's syntax: every one calls the options llm and ocr.
         formats::check_image(&input_path, &name_extension)?;
         return Err(Error::ImageOnly(format!(
-            "{} is an image file with no text to extract. Enable LLM (llm=True) or OCR (ocr=True) for content extraction.",
+            "{} is an image file with no text to extract. Enable LLM or OCR for content extraction.",
             input_path.file_name().unwrap_or_default().to_string_lossy()
         )));
     }

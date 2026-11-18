@@ -222,7 +222,9 @@ fn image_api_requires_extraction_and_vision_uses_binary_content() {
     image::DynamicImage::new_rgb8(80, 80).save(&path).unwrap();
     let error = convert(path.to_str().unwrap(), options()).unwrap_err();
     assert_eq!(error.code(), "conversion_error");
-    assert!(error.to_string().contains("llm=True"));
+    assert!(error.to_string().ends_with(
+        "is an image file with no text to extract. Enable LLM or OCR for content extraction."
+    ));
     let (base, server) = llm_server(
         200,
         r##"{"choices":[{"message":{"content":"# 图像\n\nRead text from image."}}]}"##,
