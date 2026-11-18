@@ -107,6 +107,9 @@ def _strings(block, encoding):
 
 
 def _linux_environment(pid):
+    # Read once the process has started its program (_linux_process): until then /proc reads it with its
+    # parent's environment, as with its parent's arguments, and the program's comes with its arguments.
+    _linux_process(pid)
     return _strings(Path(f"/proc/{pid}/environ").read_bytes(), "utf-8")
 
 

@@ -273,6 +273,29 @@ class ProcessTests(unittest.TestCase):
             parent.wait(timeout=30)
             parent.stdout.close()
 
+    @unittest.skipUnless(sys.platform.startswith("linux"), "/proc is Linux's")
+    def test_on_linux_a_child_s_environment_is_read_once_it_has_started_its_program(self):
+        # As above, and the program gets an environment of its own: until it starts, /proc reads the
+        # parent's, which has no token.
+        forks = ("import os, sys, time\n"
+                 "child = os.fork()\n"
+                 "if child == 0:\n"
+                 "    time.sleep(0.3)\n"
+                 "    os.execve(sys.executable, [sys.executable, '-c', 'import sys; sys.stdin.read()'],\n"
+                 f"              dict(os.environ, {TOKEN_VARIABLE}='{TOKEN}'))\n"
+                 "print(child, flush=True)\n"
+                 "os.waitpid(child, 0)\n")
+        environment = {name: value for name, value in os.environ.items() if name != TOKEN_VARIABLE}
+        parent = subprocess.Popen([sys.executable, "-c", forks], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                  text=True, env=environment)
+        try:
+            pid = int(parent.stdout.readline())
+            self.assertEqual(serve_token(pid), TOKEN)
+        finally:
+            parent.stdin.close()
+            parent.wait(timeout=30)
+            parent.stdout.close()
+
     def test_on_linux_a_process_starting_its_program_is_read_again(self):
         # What /proc gives for a moment as a child starts its program: its parent's arguments, then the
         # new file with no arguments.
