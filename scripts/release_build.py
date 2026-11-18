@@ -20,6 +20,12 @@
   sums      write SHA256SUMS for the release assets (RELEASE-NOTES.md, the
             `notes` output, is one of them)
 
+`release_build.py SUBCOMMAND -h` lists a subcommand's arguments; a target and
+an output folder are options, as in
+
+  release_build.py cli --target aarch64-apple-darwin --output dist
+  release_build.py smoke --target aarch64-apple-darwin dist/markitai-v*-aarch64-apple-darwin.tar.gz
+
 Archives are `markitai-v<version>-<target>.tar.gz` (`.zip` on Windows) with
 the executables at the root: `markitai` and relative `mkai`/`markitai-mcp`
 links on Unix, three EXEs on Windows, beside the license notices and offline
@@ -776,15 +782,18 @@ def main(argv=None):
     notes.add_argument("--version", required=True)
     notes.add_argument("--output", type=Path, required=True)
     notes.add_argument("--lang", choices=["en", "zh"], default="en", help="zh: from CHANGELOG.zh.md")
-    for name in ["cli", "wheel"]:
-        command = commands.add_parser(name)
-        command.add_argument("--target", required=True)
-        command.add_argument("--output", type=Path, required=True)
+    target = "a Rust target triple, such as x86_64-unknown-linux-gnu"
+    for name, what in [("cli", "the release archive"), ("wheel", "the wheel")]:
+        command = commands.add_parser(name, description=f"Build {what} for one target.")
+        command.add_argument("--target", required=True, help=target)
+        command.add_argument("--output", type=Path, required=True, metavar="DIR",
+                             help=f"the folder {what} is written to (made if missing)")
     sdist = commands.add_parser("sdist")
-    sdist.add_argument("--output", type=Path, required=True)
-    smoke = commands.add_parser("smoke")
-    smoke.add_argument("--target", required=True)
-    smoke.add_argument("archive", type=Path)
+    sdist.add_argument("--output", type=Path, required=True, metavar="DIR",
+                       help="the folder the source distribution is written to (made if missing)")
+    smoke = commands.add_parser("smoke", description="Extract a release archive and exercise the installed CLI.")
+    smoke.add_argument("--target", required=True, help="the archive's target triple")
+    smoke.add_argument("archive", type=Path, help="a markitai-v<version>-<target> archive that `cli` wrote")
     wheel_smoke = commands.add_parser("smoke-wheel")
     wheel_smoke.add_argument("--python", default=sys.executable)
     wheel_smoke.add_argument("--no-tests", action="store_true", help="skip bindings/python/tests")
