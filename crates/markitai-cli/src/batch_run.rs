@@ -2104,7 +2104,11 @@ mod namespace_coordination_tests {
             .stderr(Stdio::inherit())
             .spawn()
             .unwrap();
-        let deadline = Instant::now() + Duration::from_secs(30);
+        // Only a guard against a hang: a case takes under a second, and its
+        // fixtures' own bounded waits fail it with a message sooner. A runner
+        // whose disk stalled once made mixed-backlog take over 30 s, while
+        // every test writing files there was a hundred times slower.
+        let deadline = Instant::now() + Duration::from_secs(120);
         loop {
             if let Some(status) = child.try_wait().unwrap() {
                 assert!(
